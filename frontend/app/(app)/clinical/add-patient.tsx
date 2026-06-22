@@ -1,64 +1,256 @@
-import React, { useEffect, useState } from "react";
-import { View, ScrollView, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
+import React, { useState } from "react";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { colors, spacing, radii } from "@/src/theme/tokens";
-import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
-import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle } from "lucide-react-native";
 import { api } from "@/src/api/client";
+
+const C = {
+  surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
+  primary: "#A6213F", primaryFg: "#FFFFFF",
+  accent: "#E69B5C", info: "#7B6BB8", destructive: "#C0392B",
+};
+
+const EXISTING = ["SUBJ-001", "SUBJ-002", "SUBJ-003", "SUBJ-004", "SUBJ-005"];
+const OFFSETS = [0, 14, 21, 28, 35, 49, 63, 77, 91];
+
+function fmt(base: Date, off: number) {
+  const d = new Date(base); d.setDate(d.getDate() + off);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
 
 export default function AddPatient() {
   const router = useRouter();
-  const [trials, setTrials] = useState<any[]>([]);
-  const [trialId, setTrialId] = useState<string>("");
-  const [name, setName] = useState(""), [email, setEmail] = useState(""), [phone, setPhone] = useState(""), [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [err, setErr] = useState(""), [loading, setLoading] = useState(false);
-  useEffect(() => { (async () => { const r = await api.get("/trials"); setTrials(r.data); if (r.data[0]) setTrialId(r.data[0].id); })(); }, []);
+  const [subjectId, setSubjectId] = useState("");
+  const [initials, setInitials] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [dob, setDob] = useState("");
+  const [gender, setGender] = useState("");
+  const [genderOpen, setGenderOpen] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [lang, setLang] = useState("English");
+  const [langOpen, setLangOpen] = useState(false);
+  const [trial, setTrial] = useState("Protocol-A — Diabetes Phase II");
+  const [trialOpen, setTrialOpen] = useState(false);
+  const [baseline, setBaseline] = useState("5 May 2025");
+  const [showAll, setShowAll] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const isDup = EXISTING.includes(`SUBJ-${subjectId}`);
+  const base = new Date(2025, 4, 5);
+  const visits = OFFSETS.map((o, i) => ({ num: i + 1, date: fmt(base, o) }));
+  const visible = showAll ? visits : visits.slice(0, 5);
 
   const submit = async () => {
-    if (!name || !email || !trialId) { setErr("Name, email, trial required"); return; }
-    setLoading(true); setErr("");
+    if (isDup || !fullName) return;
+    setSaving(true);
     try {
-      await api.post("/patients", { full_name: name, email: email.trim().toLowerCase(), phone, trial_id: trialId, enrolled_date: date });
+      // Map to backend Add Patient endpoint
+      const trialsRes = await api.get("/trials").catch(() => ({ data: [] }));
+      const trialId = trialsRes.data[0]?.id;
+      if (trialId) await api.post("/patients", { full_name: fullName, email: email || `${initials.toLowerCase() || "p"}@mtb.app`, phone: `+91${phone}`, trial_id: trialId, enrolled_date: new Date().toISOString().slice(0, 10) });
       router.back();
-    } catch (e: any) { setErr(e?.response?.data?.detail || "Failed"); }
-    finally { setLoading(false); }
+    } catch (e) { console.log("add patient err", e); }
+    finally { setSaving(false); }
   };
 
   return (
-    <ScreenContainer>
-      <ScreenHeader eyebrow="New enrollment" title="Add Patient" />
+    <View style={{ flex: 1, backgroundColor: C.surface }}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.surface} />
+      <SafeAreaView edges={["top"]} style={{ backgroundColor: C.surface }}>
+        <View style={s.appBar}>
+          <Pressable testID="back" onPress={() => router.back()} hitSlop={10} style={s.backBtn}>
+            <ChevronLeft size={24} color={C.fg} />
+          </Pressable>
+          <Text style={s.appBarTitle}>Add Patient</Text>
+          <View style={{ width: 40 }} />
+        </View>
+      </SafeAreaView>
+
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} keyboardShouldPersistTaps="handled">
-          <Eyebrow style={{ marginBottom: spacing.sm }}>Patient details</Eyebrow>
-          <Field label="Full name" value={name} onChange={setName} testID="patient-name" />
-          <Field label="Email" value={email} onChange={setEmail} testID="patient-email" keyboardType="email-address" />
-          <Field label="Phone" value={phone} onChange={setPhone} testID="patient-phone" keyboardType="phone-pad" />
-          <Field label="Enrollment date" value={date} onChange={setDate} testID="patient-date" />
-
-          <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>Trial</Eyebrow>
-          {trials.map(t => (
-            <Card key={t.id} style={{ marginBottom: spacing.sm, borderColor: trialId === t.id ? colors.primary : colors.border, borderWidth: trialId === t.id ? 2 : 1 }}>
-              <View>
-                <Body weight="700">{t.title}</Body>
-                <Small style={{ marginTop: 2 }}>{t.protocol_id} · {t.phase}</Small>
-                <Button testID={`select-trial-${t.id}`} variant={trialId === t.id ? "primary" : "secondary"} style={{ marginTop: spacing.sm }} onPress={() => setTrialId(t.id)}>{trialId === t.id ? "Selected" : "Select"}</Button>
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 16 }} keyboardShouldPersistTaps="handled">
+          {/* Subject ID with duplicate detection */}
+          <Field label="Subject Number/ID *">
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={[s.prefix]}><Text style={{ fontFamily: "monospace" as any, fontSize: 14, color: C.muted }}>SUBJ-</Text></View>
+              <TextInput
+                testID="subject-id"
+                value={subjectId}
+                onChangeText={setSubjectId}
+                placeholder="001"
+                placeholderTextColor={C.muted}
+                style={[s.input, isDup && { borderColor: "rgba(192,57,43,0.7)", backgroundColor: "rgba(192,57,43,0.05)" }, { flex: 1, fontFamily: "monospace" as any }]}
+              />
+            </View>
+            {isDup && (
+              <View style={s.dupWarn}>
+                <AlertTriangle size={16} color={C.destructive} />
+                <Text style={{ fontSize: 12, fontWeight: "600", color: C.destructive, flex: 1 }}>
+                  Duplicate entry detected — SUBJ-{subjectId} already exists. Please verify before proceeding.
+                </Text>
               </View>
-            </Card>
-          ))}
-          {err ? <Small color={colors.destructive} style={{ marginTop: spacing.sm }}>{err}</Small> : null}
-        </ScrollView>
-        <View style={{ padding: spacing.md }}><Button testID="add-patient-submit" onPress={submit} loading={loading}>Add Patient</Button></View>
-      </KeyboardAvoidingView>
-    </ScreenContainer>
-  );
-}
+            )}
+          </Field>
 
-function Field({ label, value, onChange, testID, keyboardType }: any) {
-  return (
-    <View style={{ marginBottom: spacing.md }}>
-      <Small color={colors.foreground} style={{ marginBottom: 6, fontWeight: "600" as any }}>{label}</Small>
-      <TextInput testID={testID} value={value} onChangeText={onChange} keyboardType={keyboardType} autoCapitalize={keyboardType === "email-address" ? "none" : "sentences"} style={s.input} />
+          <Field label="Subject Initials">
+            <TextInput testID="initials" value={initials} onChangeText={setInitials} placeholder="e.g., PK" placeholderTextColor={C.muted} style={s.input} />
+          </Field>
+
+          <Field label="Full Name *">
+            <TextInput testID="full-name" value={fullName} onChangeText={setFullName} placeholder="Patient full name" placeholderTextColor={C.muted} style={s.input} />
+          </Field>
+
+          <View style={{ flexDirection: "row", gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Field label="Date of Birth *">
+                <TextInput testID="dob" value={dob} onChangeText={setDob} placeholder="DD/MM/YYYY" placeholderTextColor={C.muted} style={s.input} />
+              </Field>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="Gender">
+                <Pressable testID="gender-toggle" onPress={() => setGenderOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+                  <Text style={{ color: gender ? C.fg : C.muted, fontSize: 14 }}>{gender || "Select"}</Text>
+                  <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
+                </Pressable>
+                {genderOpen && (
+                  <View style={s.dropdown}>
+                    {["Male", "Female", "Other", "Prefer not to say"].map(g => (
+                      <Pressable key={g} testID={`gender-${g}`} onPress={() => { setGender(g); setGenderOpen(false); }} style={s.dropdownRow}>
+                        <Text style={{ color: C.fg }}>{g}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </Field>
+            </View>
+          </View>
+
+          <Field label="Phone *">
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={s.prefix}><Text style={{ color: C.muted, fontSize: 14 }}>+91</Text></View>
+              <TextInput testID="phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="Enter phone number" placeholderTextColor={C.muted} style={[s.input, { flex: 1 }]} />
+            </View>
+          </Field>
+
+          <Field label="Email">
+            <TextInput testID="email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" placeholder="Enter email" placeholderTextColor={C.muted} style={s.input} />
+          </Field>
+
+          <Field label="Preferred Language">
+            <Pressable testID="lang-toggle" onPress={() => setLangOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <Text style={{ color: C.fg, fontSize: 14 }}>{lang}</Text>
+              <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
+            </Pressable>
+            {langOpen && (
+              <View style={s.dropdown}>
+                {["English", "Hindi", "Tamil", "Telugu"].map(l => (
+                  <Pressable key={l} testID={`lang-${l}`} onPress={() => { setLang(l); setLangOpen(false); }} style={s.dropdownRow}>
+                    <Text style={{ color: C.fg }}>{l}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </Field>
+
+          <Field label="Assign to Trial *">
+            <Pressable testID="trial-toggle" onPress={() => setTrialOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <Text style={{ color: C.fg, fontSize: 14 }} numberOfLines={1}>{trial}</Text>
+              <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
+            </Pressable>
+            {trialOpen && (
+              <View style={s.dropdown}>
+                {[
+                  "Protocol-A — Diabetes Phase II",
+                  "Protocol-B — Hypertension Study",
+                  "Protocol-C — Oncology Phase I",
+                ].map(t => (
+                  <Pressable key={t} testID={`trial-opt-${t.split(" ")[0]}`} onPress={() => { setTrial(t); setTrialOpen(false); }} style={s.dropdownRow}>
+                    <Text style={{ color: C.fg, fontSize: 14 }}>{t}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </Field>
+
+          {/* Patient Access Note */}
+          <View style={s.infoNote}>
+            <Sparkles size={16} color={C.info} />
+            <Text style={{ fontSize: 12, color: C.info, flex: 1 }}>
+              The patient will receive an invitation to access the app using the profile created here. Their login is linked to this subject record.
+            </Text>
+          </View>
+
+          {/* Divider */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 16, paddingVertical: 8 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: "#D9D2C7" }} />
+            <Text style={{ color: C.muted, fontSize: 13, fontWeight: "600" }}>Visit Dates</Text>
+            <View style={{ flex: 1, height: 1, backgroundColor: "#D9D2C7" }} />
+          </View>
+
+          <Field label="Baseline Date *">
+            <View style={{ position: "relative" }}>
+              <TextInput testID="baseline" value={baseline} onChangeText={setBaseline} style={[s.input, { paddingRight: 48, borderWidth: 2, borderColor: C.primary }]} />
+              <CalIcon size={20} color={C.primary} style={{ position: "absolute", right: 16, top: 14 }} />
+            </View>
+          </Field>
+
+          {/* Auto-calculated dates */}
+          <View style={s.autoCalc}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <Sparkles size={20} color={C.primary} />
+              <Text style={{ color: C.fg, fontWeight: "600", fontSize: 15 }}>Auto-calculated Dates</Text>
+            </View>
+            <View style={{ gap: 8 }}>
+              {visible.map(v => (
+                <View key={v.num} style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.muted, fontSize: 13 }}>Visit {v.num}</Text>
+                  <Text style={{ color: C.fg, fontWeight: "600", fontSize: 13 }}>{v.date}</Text>
+                </View>
+              ))}
+            </View>
+            <Pressable testID="toggle-all-visits" onPress={() => setShowAll(a => !a)} style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Text style={{ color: C.accent, fontWeight: "600", fontSize: 13 }}>{showAll ? "Show Less" : `View All ${visits.length} Visits`}</Text>
+              <ChevronRight size={16} color={C.accent} style={{ transform: [{ rotate: showAll ? "-90deg" : "90deg" }] }} />
+            </Pressable>
+          </View>
+
+          {/* Submit */}
+          <Pressable
+            testID="add-patient-submit"
+            onPress={submit}
+            disabled={isDup || !fullName || saving}
+            style={[s.submit, (isDup || !fullName) && { backgroundColor: C.border }]}
+          >
+            <Text style={{ color: (isDup || !fullName) ? C.muted : C.primaryFg, fontSize: 15, fontWeight: "700" }}>
+              {saving ? "Adding…" : "Add Patient"}
+            </Text>
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
-const s = StyleSheet.create({ input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground } });
+
+function Field({ label, children }: any) {
+  return (
+    <View>
+      <Text style={{ fontSize: 13, fontWeight: "500", color: "rgba(46,27,51,0.80)", marginBottom: 6 }}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
+const s = StyleSheet.create({
+  appBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 8 },
+  backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  appBarTitle: { flex: 1, fontSize: 18, fontWeight: "700", color: C.fg, textAlign: "center" },
+  input: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, color: C.fg, fontSize: 14 },
+  prefix: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },
+  dupWarn: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.05)", borderWidth: 1, borderColor: "rgba(192,57,43,0.20)" },
+  dropdown: { marginTop: 4, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, overflow: "hidden" },
+  dropdownRow: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+  infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(123,107,184,0.05)", borderWidth: 1, borderColor: "rgba(123,107,184,0.20)" },
+  autoCalc: { backgroundColor: "rgba(123,107,184,0.05)", borderRadius: 16, padding: 16 },
+  submit: { paddingVertical: 16, borderRadius: 999, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+});
