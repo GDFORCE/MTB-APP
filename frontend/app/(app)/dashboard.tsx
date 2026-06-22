@@ -113,22 +113,29 @@ export default function Dashboard() {
             ) : <Card><Small>No upcoming visits</Small></Card>
           ) : (
             <>
-              <SectionHeader index="01" label="Your trials" />
+              <SectionHeader index="01" label="Your trials" action={<Pressable testID="open-trials" onPress={() => router.push("/(app)/clinical/my-trials")}><Small color={colors.accent} style={{ fontWeight: "700" as any }}>See all</Small></Pressable>} />
               {trials.length === 0 ? <Card><Small>No trials yet</Small></Card> :
                 trials.slice(0, 3).map(t => (
-                  <Card key={t.id} style={{ marginBottom: spacing.sm }}>
-                    <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <View style={s.trialIcon}><FlaskConical size={20} color={colors.primary} /></View>
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Eyebrow color={colors.accent}>{t.protocol_id}</Eyebrow>
-                        <Body weight="700" style={{ marginTop: 2 }}>{t.title}</Body>
-                        <Small style={{ marginTop: 2 }}>{t.phase} · {t.condition}</Small>
+                  <Pressable key={t.id} testID={`dash-trial-${t.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: t.id } })}>
+                    <Card style={{ marginBottom: spacing.sm }}>
+                      <View style={{ flexDirection: "row", alignItems: "center" }}>
+                        <View style={s.trialIcon}><FlaskConical size={20} color={colors.primary} /></View>
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                          <Eyebrow color={colors.accent}>{t.protocol_id}</Eyebrow>
+                          <Body weight="700" style={{ marginTop: 2 }}>{t.title}</Body>
+                          <Small style={{ marginTop: 2 }}>{t.phase} · {t.condition}</Small>
+                        </View>
+                        <ChevronRight size={18} color={colors.mutedFg} />
                       </View>
-                      <ChevronRight size={18} color={colors.mutedFg} />
-                    </View>
-                  </Card>
+                    </Card>
+                  </Pressable>
                 ))
               }
+              {role === "sponsor" && (
+                <Pressable testID="open-add-trial" onPress={() => router.push("/(app)/sponsor/add-trial")}>
+                  <Card style={{ borderStyle: "dashed", borderColor: colors.primary + "66", backgroundColor: colors.secondary + "44", alignItems: "center" }}><Small weight="700" color={colors.primary}>+ Add new trial</Small></Card>
+                </Pressable>
+              )}
             </>
           )}
         </View>
@@ -136,19 +143,26 @@ export default function Dashboard() {
         {/* Patients (for clinical roles) */}
         {!isPatient && patients.length > 0 && (
           <View style={{ paddingHorizontal: spacing.md, marginTop: spacing.lg }}>
-            <SectionHeader index="02" label="Patients" action={<Small color={colors.accent} style={{ fontWeight: "700" as any }}>See all</Small>} />
+            <SectionHeader index="02" label="Patients" action={<Pressable testID="open-patients" onPress={() => router.push("/(app)/clinical/patients")}><Small color={colors.accent} style={{ fontWeight: "700" as any }}>See all</Small></Pressable>} />
             {patients.slice(0, 4).map(p => (
-              <Card key={p.id} style={{ marginBottom: spacing.sm }}>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <View style={s.avatar}><Body weight="700" color={colors.primary}>{p.avatar_initials}</Body></View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Body weight="700">{p.full_name}</Body>
-                    <Small style={{ marginTop: 2 }}>{p.email}</Small>
+              <Pressable key={p.id} testID={`dash-patient-${p.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p.id } })}>
+                <Card style={{ marginBottom: spacing.sm }}>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <View style={s.avatar}><Body weight="700" color={colors.primary}>{p.avatar_initials}</Body></View>
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Body weight="700">{p.full_name}</Body>
+                      <Small style={{ marginTop: 2 }}>{p.email}</Small>
+                    </View>
+                    <View style={s.statusPill}><Small color={colors.success} style={{ fontWeight: "700" as any }}>Active</Small></View>
                   </View>
-                  <View style={s.statusPill}><Small color={colors.success} style={{ fontWeight: "700" as any }}>Active</Small></View>
-                </View>
-              </Card>
+                </Card>
+              </Pressable>
             ))}
+            {(role === "pi" || role === "crc") && (
+              <Pressable testID="open-add-patient" onPress={() => router.push("/(app)/clinical/add-patient")}>
+                <Card style={{ borderStyle: "dashed", borderColor: colors.primary + "66", backgroundColor: colors.secondary + "44", alignItems: "center" }}><Small weight="700" color={colors.primary}>+ Add patient</Small></Card>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -202,8 +216,11 @@ export default function Dashboard() {
       <View style={s.tabBar}>
         <TabBtn icon={<FlaskConical size={20} color={colors.primary} />} label="Home" active />
         {isPatient && <TabBtn icon={<FlaskConical size={20} color={colors.mutedFg} />} label="My Trial" testID="tab-my-trial" onPress={() => router.push("/(app)/patient/my-trial")} />}
+        {!isPatient && <TabBtn icon={<FlaskConical size={20} color={colors.mutedFg} />} label="Trials" testID="tab-trials" onPress={() => router.push("/(app)/clinical/my-trials")} />}
+        {!isPatient && <TabBtn icon={<Users size={20} color={colors.mutedFg} />} label={role === "sponsor" || role === "cro" ? "Patients" : "People"} testID="tab-people" onPress={() => router.push(role === "crc" ? "/(app)/clinical/schedule-review" : "/(app)/clinical/patients")} />}
         <TabBtn icon={<Calendar size={20} color={colors.mutedFg} />} label="Calendar" testID="tab-calendar" onPress={() => isPatient && router.push("/(app)/patient/calendar")} />
         <TabBtn icon={<MessageCircle size={20} color={colors.mutedFg} />} label="Chat" onPress={() => router.push("/(app)/chat")} testID="tab-chat" />
+        {!isPatient && <TabBtn icon={<Users size={20} color={colors.mutedFg} />} label="Team" testID="tab-team" onPress={() => router.push("/(app)/clinical/team")} />}
         <TabBtn icon={<Bell size={20} color={colors.mutedFg} />} label="Alerts" testID="tab-alerts" onPress={() => router.push("/(app)/notifications")} />
         {isPatient && <TabBtn icon={<User2 size={20} color={colors.mutedFg} />} label="Me" testID="tab-me" onPress={() => router.push("/(app)/patient/profile")} />}
       </View>
