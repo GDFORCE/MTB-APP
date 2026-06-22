@@ -1,30 +1,15 @@
-import { Text, View, StyleSheet, Image } from "react-native";
-
-const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { Redirect } from "expo-router";
+import { useAuth } from "@/src/auth/AuthContext";
+import { View, ActivityIndicator } from "react-native";
+import { colors } from "@/src/theme/tokens";
 
 export default function Index() {
-  console.log(EXPO_PUBLIC_BACKEND_URL, "EXPO_PUBLIC_BACKEND_URL");
-
-  return (
-    <View style={styles.container}>
-      <Image
-        source={require("../assets/images/app-image.png")}
-        style={styles.image}
-      />
-    </View>
-  );
+  const { user, loading } = useAuth();
+  if (loading) return <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: colors.background }}><ActivityIndicator color={colors.primary} /></View>;
+  if (!user) return <Redirect href="/(auth)/welcome" />;
+  const r = user.role;
+  if (r === "patient") return <Redirect href="/(app)/patient/dashboard" />;
+  if (r === "pi" || r === "site") return <Redirect href="/(app)/pi/dashboard" />;
+  if (r === "crc") return <Redirect href="/(app)/crc/dashboard" />;
+  return <Redirect href="/(app)/sponsor/dashboard" />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0c0c0c",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
-  },
-});

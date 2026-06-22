@@ -1,33 +1,45 @@
-import { Stack } from "expo-router";
+import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { LogBox } from "react-native";
-
+import { LogBox, StatusBar } from "react-native";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
+import { AuthProvider, useAuth } from "@/src/auth/AuthContext";
+import { colors } from "@/src/theme/tokens";
 
-
-// Disable logbox errors etc so that users can see the app
-// and agent works as expected.
-LogBox.ignoreAllLogs(true)
-
-// Keep the native splash visible from cold start until icon fonts register.
-// Required because @expo/vector-icons' componentDidMount fallback fires
-// Font.loadAsync against a broken vendor path if any <Icon> mounts before
-// the family is registered — which throws on Android Expo Go.
+LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
+
+function RouterGuard() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+  const segments = useSegments();
+  useEffect(() => {
+    if (loading) return;
+    const inAuth = segments[0] === "(auth)" || (segments[0] as any) === undefined || segments[0] === "index";
+    if (!user && !inAuth) router.replace("/(auth)/welcome");
+    else if (user) {
+      // route to the role dashboard if currently on auth screens
+      if (inAuth || segments.length === 0) {
+        const role = user.role;
+        if (role === "patient") router.replace("/(app)/patient/dashboard");
+        else if (role === "pi" || role === "site") router.replace("/(app)/pi/dashboard");
+        else if (role === "crc") router.replace("/(app)/crc/dashboard");
+        else router.replace("/(app)/sponsor/dashboard");
+      }
+    }
+  }, [user, loading, segments]);
+  return null;
+}
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
-
-  useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded, error]);
-
-  // If the CDN is unreachable we fall through on error rather than wedging
-  // the app — icons will tofu, but the app still boots.
+  useEffect(() => { if (loaded || error) SplashScreen.hideAsync(); }, [loaded, error]);
   if (!loaded && !error) return null;
-
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <AuthProvider>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <RouterGuard />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }} />
+    </AuthProvider>
+  );
 }

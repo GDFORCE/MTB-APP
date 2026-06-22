@@ -1,0 +1,81 @@
+import React, { useState } from "react";
+import { View, TextInput, StyleSheet, ScrollView, Pressable, KeyboardAvoidingView, Platform } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { Eye, EyeOff, ArrowLeft } from "lucide-react-native";
+import { colors, spacing, radii } from "@/src/theme/tokens";
+import { Eyebrow, H1, Body, Small, Button } from "@/src/components/ui";
+import { useAuth } from "@/src/auth/AuthContext";
+
+export default function SignIn() {
+  const router = useRouter();
+  const { signIn } = useAuth();
+  const [email, setEmail] = useState("patient@mtb.app");
+  const [password, setPassword] = useState("Password1!");
+  const [showPw, setShowPw] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    setLoading(true); setError("");
+    try { await signIn(email.trim(), password); }
+    catch (e: any) { setError(e?.response?.data?.detail || "Login failed"); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
+          <Pressable onPress={() => router.back()} hitSlop={12} style={s.back}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
+          <View style={{ alignItems: "center", marginTop: spacing.md }}>
+            <View style={s.logo} />
+            <Eyebrow color={colors.accent} style={{ marginTop: spacing.md }}>My Trial Board</Eyebrow>
+            <H1 style={{ marginTop: 6 }}>Welcome back.</H1>
+            <Small style={{ marginTop: 6 }}>Sign in to open your trial board</Small>
+          </View>
+
+          <View style={{ marginTop: spacing.xl }}>
+            <Small color={colors.foreground} style={{ marginBottom: 6, fontWeight: "600" as any }}>Email or Phone</Small>
+            <TextInput testID="signin-email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" style={s.input} />
+
+            <Small color={colors.foreground} style={{ marginBottom: 6, marginTop: spacing.md, fontWeight: "600" as any }}>Password</Small>
+            <View style={{ position: "relative" }}>
+              <TextInput testID="signin-password" value={password} onChangeText={setPassword} secureTextEntry={!showPw} style={[s.input, { paddingRight: 48 }]} />
+              <Pressable testID="toggle-password" onPress={() => setShowPw(!showPw)} style={s.eye}>
+                {showPw ? <EyeOff size={20} color={colors.mutedFg} /> : <Eye size={20} color={colors.mutedFg} />}
+              </Pressable>
+            </View>
+            {error ? <Small color={colors.destructive} style={{ marginTop: 8 }}>{error}</Small> : null}
+
+            <Pressable onPress={() => router.push("/(auth)/forgot-password")} style={{ alignSelf: "flex-end", marginTop: spacing.md }}>
+              <Small color={colors.accent} style={{ fontWeight: "700" as any }}>Forgot?</Small>
+            </Pressable>
+          </View>
+
+          <View style={{ marginTop: spacing.xl, gap: spacing.md }}>
+            <Button testID="signin-submit-button" onPress={submit} loading={loading}>Sign In</Button>
+            <Pressable onPress={() => router.push("/(auth)/entity-type")}>
+              <Small color={colors.mutedFg} style={{ textAlign: "center" }}>Don't have an account? <Small color={colors.primary} style={{ fontWeight: "700" as any }}>Sign Up</Small></Small>
+            </Pressable>
+          </View>
+
+          <View style={s.demoBox}>
+            <Eyebrow color={colors.mutedFg}>Demo logins</Eyebrow>
+            <Small color={colors.mutedFg} style={{ marginTop: 4 }}>patient@mtb.app · pi@mtb.app · crc@mtb.app · sponsor@mtb.app</Small>
+            <Small color={colors.mutedFg}>Password: Password1!</Small>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  container: { padding: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl, flexGrow: 1 },
+  back: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  logo: { width: 64, height: 64, borderRadius: 16, backgroundColor: colors.primary },
+  input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground },
+  eye: { position: "absolute", right: 12, top: 12 },
+  demoBox: { marginTop: spacing.xl, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+});
