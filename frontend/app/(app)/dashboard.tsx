@@ -3,7 +3,7 @@ import { View, ScrollView, StyleSheet, Pressable, RefreshControl } from "react-n
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { Bell, MessageCircle, Calendar, FlaskConical, Users, LogOut, ChevronRight, Activity, Clock, CheckCircle2 } from "lucide-react-native";
+import { Bell, MessageCircle, Calendar, FlaskConical, Users, LogOut, ChevronRight, Activity, Clock, CheckCircle2, User2 } from "lucide-react-native";
 import { colors, spacing, radii, dawnGradient, shadows } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card, SectionHeader, Button } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
@@ -92,8 +92,8 @@ export default function Dashboard() {
           {isPatient ? (
             upcoming ? (
               <>
-                <SectionHeader index="01" label="Next visit" />
-                <Pressable onPress={() => router.push("/(app)/chat")}>
+                <SectionHeader index="01" label="Next visit" action={<Pressable testID="open-my-trial" onPress={() => router.push("/(app)/patient/my-trial")}><Small color={colors.accent} style={{ fontWeight: "700" as any }}>My Trial →</Small></Pressable>} />
+                <Pressable testID="next-visit-card" onPress={() => router.push({ pathname: "/(app)/patient/visit-detail", params: { id: upcoming.id } })}>
                   <Card>
                     <View style={{ flexDirection: "row", gap: spacing.md }}>
                       <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.dateBlock}>
@@ -201,10 +201,11 @@ export default function Dashboard() {
       {/* Bottom tab */}
       <View style={s.tabBar}>
         <TabBtn icon={<FlaskConical size={20} color={colors.primary} />} label="Home" active />
-        <TabBtn icon={<Calendar size={20} color={colors.mutedFg} />} label="Calendar" />
+        {isPatient && <TabBtn icon={<FlaskConical size={20} color={colors.mutedFg} />} label="My Trial" testID="tab-my-trial" onPress={() => router.push("/(app)/patient/my-trial")} />}
+        <TabBtn icon={<Calendar size={20} color={colors.mutedFg} />} label="Calendar" testID="tab-calendar" onPress={() => isPatient && router.push("/(app)/patient/calendar")} />
         <TabBtn icon={<MessageCircle size={20} color={colors.mutedFg} />} label="Chat" onPress={() => router.push("/(app)/chat")} testID="tab-chat" />
-        {!isPatient && <TabBtn icon={<Users size={20} color={colors.mutedFg} />} label="People" />}
-        <TabBtn icon={<Bell size={20} color={colors.mutedFg} />} label="Alerts" />
+        <TabBtn icon={<Bell size={20} color={colors.mutedFg} />} label="Alerts" testID="tab-alerts" onPress={() => router.push("/(app)/notifications")} />
+        {isPatient && <TabBtn icon={<User2 size={20} color={colors.mutedFg} />} label="Me" testID="tab-me" onPress={() => router.push("/(app)/patient/profile")} />}
       </View>
     </SafeAreaView>
   );

@@ -1,0 +1,47 @@
+import React, { useEffect, useState } from "react";
+import { View, ScrollView, Pressable, StyleSheet } from "react-native";
+import { Bell, MessageCircle, FileText } from "lucide-react-native";
+import { colors, spacing, radii } from "@/src/theme/tokens";
+import { Eyebrow, Body, Small, Card } from "@/src/components/ui";
+import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { api } from "@/src/api/client";
+
+export default function Notifications() {
+  const [items, setItems] = useState<any[]>([]);
+  useEffect(() => { (async () => { const r = await api.get("/notifications"); setItems(r.data); })(); }, []);
+
+  const markRead = async (id: string) => {
+    await api.post(`/notifications/${id}/read`);
+    setItems(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  return (
+    <ScreenContainer>
+      <ScreenHeader eyebrow="Stay updated" title="Notifications" />
+      <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
+        {items.length === 0 ? <Card><Small>No notifications yet</Small></Card> : items.map(n => {
+          const Icon = n.kind === "message" ? MessageCircle : n.kind === "result" ? FileText : Bell;
+          const tone = n.kind === "message" ? colors.violet : n.kind === "result" ? colors.info : colors.accent;
+          return (
+            <Pressable key={n.id} testID={`notif-${n.id}`} onPress={() => markRead(n.id)}>
+              <Card style={{ marginBottom: spacing.sm }}>
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <View style={[s.icon, { backgroundColor: tone + "1A" }]}><Icon size={18} color={tone} /></View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Body weight="700" style={{ flex: 1 }}>{n.title}</Body>
+                      {!n.read && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent }} />}
+                    </View>
+                    <Small style={{ marginTop: 2 }}>{n.body}</Small>
+                    <Small color={colors.mutedFg} style={{ marginTop: 4 }}>{new Date(n.created_at).toLocaleString()}</Small>
+                  </View>
+                </View>
+              </Card>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </ScreenContainer>
+  );
+}
+const s = StyleSheet.create({ icon: { width: 40, height: 40, borderRadius: radii.lg, alignItems: "center", justifyContent: "center" } });
