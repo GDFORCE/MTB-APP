@@ -5,6 +5,7 @@ import { LogBox, StatusBar } from "react-native";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/auth/AuthContext";
 import { colors } from "@/src/theme/tokens";
+import "@/src/i18n";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();

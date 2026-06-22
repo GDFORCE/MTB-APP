@@ -1,26 +1,38 @@
-import React from "react";
-import { View, ScrollView, Pressable, StyleSheet } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, ScrollView, Pressable, Switch, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { User, Lock, Bell, FileText, HelpCircle, ChevronRight, LogOut, Pill, Info } from "lucide-react-native";
+import { User, Lock, Bell, FileText, HelpCircle, ChevronRight, LogOut, Pill, Info, Globe, Check } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { useAuth } from "@/src/auth/AuthContext";
+import { api } from "@/src/api/client";
+import { setLanguage } from "@/src/i18n";
+import { useTranslation } from "react-i18next";
+
+const LANGS = [{ id: "en", label: "English" }, { id: "hi", label: "हिंदी (Hindi)" }];
 
 export default function Profile() {
   const { user, signOut } = useAuth();
   const router = useRouter();
-  if (!user) return null;
+  const { i18n } = useTranslation();
+  const [prefs, setPrefs] = useState<any>({ notifications_email: true, notifications_push: true, notifications_sms: false, language: "en" });
+  const [langOpen, setLangOpen] = useState(false);
 
-  const items: { icon: any; label: string; onPress?: () => void; color?: string }[] = [
-    { icon: User, label: "Edit profile" },
-    { icon: Lock, label: "Change password" },
-    { icon: Bell, label: "Notification preferences" },
-    { icon: Pill, label: "Medication reminder", onPress: () => router.push("/(app)/patient/medication-reminder") },
-    { icon: Info, label: "About this trial", onPress: () => router.push("/(app)/patient/about-trial") },
-    { icon: FileText, label: "Terms & conditions" },
-    { icon: HelpCircle, label: "Help & support" },
-  ];
+  useEffect(() => { (async () => { try { const r = await api.get("/preferences"); setPrefs(r.data); if (r.data.language) i18n.changeLanguage(r.data.language); } catch {} })(); }, []);
+
+  const togglePref = async (k: string) => {
+    const next = { ...prefs, [k]: !prefs[k] }; setPrefs(next);
+    await api.patch("/preferences", { [k]: next[k] });
+  };
+
+  const pickLang = async (lng: string) => {
+    setPrefs((p: any) => ({ ...p, language: lng })); setLangOpen(false);
+    await setLanguage(lng);
+    await api.patch("/preferences", { language: lng });
+  };
+
+  if (!user) return null;
 
   return (
     <ScreenContainer>
@@ -38,8 +50,46 @@ export default function Profile() {
         </Card>
 
         <Card padded={false}>
-          {items.map((it, i) => (
+          <Row icon={Bell} label="Email notifications" right={<Switch testID="pref-email" value={!!prefs.notifications_email} onValueChange={() => togglePref("notifications_email")} trackColor={{ true: colors.primary, false: colors.border }} thumbColor={colors.primaryFg} />} />
+          <Row icon={Bell} label="Push notifications" right={<Switch testID="pref-push" value={!!prefs.notifications_push} onValueChange={() => togglePref("notifications_push")} trackColor={{ true: colors.primary, false: colors.border }} thumbColor={colors.primaryFg} />} />
+          <Row icon={Bell} label="SMS notifications" right={<Switch testID="pref-sms" value={!!prefs.notifications_sms} onValueChange={() => togglePref("notifications_sms")} trackColor={{ true: colors.primary, false: colors.border }} thumbColor={colors.primaryFg} />} last />
+        </Card>
+
+        <Card padded={false}>
+          <Pressable testID="profile-language" onPress={() => setLangOpen(o => !o)} style={s.row}>
+            <View style={s.iconCircle}><Globe size={18} color={colors.primary} /></View>
+            <View style={{ flex: 1 }}>
+              <Body weight="500">Language</Body>
+              <Small style={{ marginTop: 2 }}>{LANGS.find(l => l.id === prefs.language)?.label || "English"}</Small>
+            </View>
+            <ChevronRight size={18} color={colors.mutedFg} />
+          </Pressable>
+          {langOpen && LANGS.map(l => (
+            <Pressable key={l.id} testID={`lang-${l.id}`} onPress={() => pickLang(l.id)} style={[s.row, { borderTopWidth: 1, borderTopColor: colors.border, paddingLeft: 64 }]}>
+              <Body style={{ flex: 1 }}>{l.label}</Body>
+              {prefs.language === l.id && <Check size={16} color={colors.primary} />}
+            </Pressable>
+          ))}
+        </Card>
+
+        <Card padded={false}>
+          {user.role === "patient" && [
+            { icon: Pill, label: "Medication reminder", onPress: () => router.push("/(app)/patient/medication-reminder") },
+            { icon: Info, label: "About this trial", onPress: () => router.push("/(app)/patient/about-trial") },
+          ].map((it, i) => (
             <Pressable key={i} testID={`profile-${it.label.toLowerCase().replace(/\s+/g, "-")}`} onPress={it.onPress} style={[s.row, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
+              <View style={s.iconCircle}><it.icon size={18} color={colors.primary} /></View>
+              <Body weight="500" style={{ flex: 1 }}>{it.label}</Body>
+              <ChevronRight size={18} color={colors.mutedFg} />
+            </Pressable>
+          ))}
+          {[
+            { icon: User, label: "Edit profile" },
+            { icon: Lock, label: "Change password" },
+            { icon: FileText, label: "Terms & conditions" },
+            { icon: HelpCircle, label: "Help & support" },
+          ].map((it, i) => (
+            <Pressable key={`s${i}`} testID={`profile-${it.label.toLowerCase().replace(/\s+/g, "-")}`} style={[s.row, { borderTopWidth: 1, borderTopColor: colors.border }]}>
               <View style={s.iconCircle}><it.icon size={18} color={colors.primary} /></View>
               <Body weight="500" style={{ flex: 1 }}>{it.label}</Body>
               <ChevronRight size={18} color={colors.mutedFg} />
@@ -57,6 +107,16 @@ export default function Profile() {
         </Pressable>
       </ScrollView>
     </ScreenContainer>
+  );
+}
+
+function Row({ icon: Icon, label, right, last }: any) {
+  return (
+    <View style={[s.row, !last && { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+      <View style={s.iconCircle}><Icon size={18} color={colors.primary} /></View>
+      <Body weight="500" style={{ flex: 1 }}>{label}</Body>
+      {right}
+    </View>
   );
 }
 

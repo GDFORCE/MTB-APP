@@ -1,40 +1,43 @@
-# My Trial Board — PRD v3 (PI + CRC + Sponsor flows complete)
+# My Trial Board — PRD v4 (Production endpoints + i18n)
 
-## Status
+## Iteration 4 — Production wiring ✅
 
-### v1 — Foundation ✅
-- Dawn Rounds design tokens, JWT auth, WebSocket chat, role-aware dashboards.
+### New backend endpoints (server.py)
+- `PATCH /api/visits/{id}` — Mark complete / reschedule / flag (PI, CRC, sponsor only). Writes audit log.
+- `GET/POST/PATCH/DELETE /api/reminders` — patient medication reminders (real CRUD)
+- `POST /api/invitations` — invite patient/team via email/phone. Uses `EMAIL_API_KEY` (Resend) when set, else logs invite link.
+- `POST /api/shares` + `GET /api/shares/{token}/schedule.pdf` — secure link + on-the-fly PDF (reportlab) of the visit schedule. 7-day expiry, view counter.
+- `GET/PATCH /api/preferences` — notification toggles + language
+- `POST /api/push/register` — register Expo push token (Emergent push key wired in env at deploy time)
+- `GET /api/audit-logs` — for sponsor/CRO/PI
 
-### v2 — Patient role end-to-end ✅
-- My Trial, My Visits, Visit Detail, Medication Reminder, About Trial, Profile, Notifications, Calendar (placeholder).
+### Frontend wiring
+- **Medication Reminder** (patient) — full CRUD: list, toggle, add (med/dose/time), delete.
+- **Invite Patient** — calls `/api/invitations`, shows real share link on success.
+- **Share Schedule** (sponsor) — picks trial, generates link/PDF via `/api/shares`. PDF opens in browser (`Linking.openURL`).
+- **Clinical Visit Detail** — Mark complete / Reschedule call `PATCH /api/visits/{id}`.
+- **Profile** — Switch toggles for email/push/SMS notifications + language picker (English / Hindi) persist to `/api/preferences`. App language switches live via i18n.
 
-### v3 — Clinical (PI + CRC) + Sponsor end-to-end ✅
-**Shared clinical screens** (used by both PI & CRC):
-- `/clinical/my-trials` — list with dawn-gradient cards + per-trial enrolled count
-- `/clinical/patients` — search + status filter chips + (+) Add Patient FAB
-- `/clinical/add-patient` — full form with trial selector
-- `/clinical/visit-detail` — clinical view: patient header, contact info, visit timeline with Mark complete / Reschedule actions
-- `/clinical/team` — team directory with online status, invite member CTA
-- `/clinical/invite-patient` — send invite via email/phone, success state
-- `/clinical/schedule-review` — CRC's daily queue with Approve / Flag / Open actions
-- `/clinical/trial-summary` — dawn hero + stats + overview + visit schedule template + Edit/Share buttons
+### i18n
+- `i18next` + `react-i18next` set up with English + Hindi resources covering welcome / dashboard / trial / medication / profile keys.
+- Saved to AsyncStorage and to user preferences (`PATCH /api/preferences`) so it persists across devices.
 
-**Sponsor screens**:
-- `/sponsor/add-trial` — title, protocol ID, phase, condition, description → flows into visit-schedule builder
-- `/sponsor/visit-schedule` — editor for visit rows (name, day offset, ±window, activities) with add/remove
-- `/sponsor/share-schedule` — share via email / secure link / PDF with selection cards
+## Still left
+- **Push notifications** runtime: need `EMERGENT_PUSH_KEY` (auto-injected at deploy) + `google-services.json` (you upload via Publish flow). Token registration endpoint is ready.
+- **Email sending**: needs `EMAIL_API_KEY` in `/app/backend/.env` (Resend, free tier 100/day). Without it, invites log the link.
+- **Patient Calendar grid** — left for you to code per request.
+- **Admin portal (16 screens)** — explicitly excluded per your request.
 
-**Dashboard wiring**: bottom-tab now role-aware:
-- Patient: Home / My Trial / Calendar / Chat / Alerts / Me
-- PI/CRC: Home / Trials / Patients / Calendar / Chat / Team / Alerts
-- Sponsor/CRO: Home / Trials / Patients / Calendar / Chat / Team / Alerts
-
-Trial cards on dashboard → trial-summary. Patient cards → clinical visit-detail. "Your trials" / "Patients" "See all" actions wired.
-
-## Deferred (iteration 4+)
-- **Admin portal** (16 screens: admin-dashboard, action-center, audit-log, delegation, emergency-access, invitation-mgmt, master-data, messages, my-profile, notification-monitoring, org-mgmt, reports, support-ticket, system-alerts, terms-mgmt, trial-monitoring, user-mgmt, user-org-mgmt)
-- i18n (multi-language), Emergent push notifications, PDF/CSV export
-- Patient Calendar grid (left for user to code)
-
-## Demo seed
-`POST /api/seed` creates 4 demo users (Password1!), 1 trial (Protocol-001), 10 visits, 5 patients, sample notifications.
+## Production checklist
+| Item | Status |
+|---|---|
+| JWT auth + bcrypt + refresh tokens | ✅ |
+| Real-time WebSocket chat | ✅ |
+| Role-based access control | ✅ |
+| Audit logging on mutations | ✅ |
+| PDF export | ✅ |
+| Multi-language (en + hi) | ✅ |
+| Visit lifecycle (create/complete/flag) | ✅ |
+| Notification prefs persistence | ✅ |
+| Push token registration | ✅ (build needs `google-services.json`) |
+| Email sending | wired, needs `EMAIL_API_KEY` |

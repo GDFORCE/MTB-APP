@@ -1,45 +1,79 @@
-import React, { useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
-import { useRouter } from "expo-router";
-import { Mail, Link as LinkIcon, FileText, Check } from "lucide-react-native";
+import React, { useEffect, useState } from "react";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, Linking, KeyboardAvoidingView, Platform } from "react-native";
+import { useRouter, useLocalSearchParams } from "expo-router";
+import { Mail, Link as LinkIcon, FileText, Check, Copy } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { api, API_BASE } from "@/src/api/client";
 
 export default function ShareSchedule() {
   const router = useRouter();
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const [trials, setTrials] = useState<any[]>([]);
+  const [trialId, setTrialId] = useState<string>(id || "");
   const [emails, setEmails] = useState("");
-  const [via, setVia] = useState<"email" | "link" | "pdf">("email");
-  const [sent, setSent] = useState(false);
-  const onSend = () => { setSent(true); setTimeout(() => router.back(), 1500); };
+  const [via, setVia] = useState<"email" | "link" | "pdf">("link");
+  const [done, setDone] = useState<{ link?: string; pdf?: string } | null>(null);
+  const [loading, setLoading] = useState(false), [err, setErr] = useState("");
+
+  useEffect(() => { (async () => { const r = await api.get("/trials"); setTrials(r.data); if (!trialId && r.data[0]) setTrialId(r.data[0].id); })(); }, []);
+
+  const onSend = async () => {
+    if (!trialId) { setErr("Pick a trial"); return; }
+    setLoading(true); setErr("");
+    try {
+      const r = await api.post("/shares", { trial_id: trialId, via, recipients: emails.split(",").map(s => s.trim()).filter(Boolean) });
+      const pdfUrl = `${API_BASE}${r.data.pdf_link}`;
+      setDone({ link: r.data.share_link, pdf: pdfUrl });
+      if (via === "pdf") Linking.openURL(pdfUrl).catch(() => {});
+    } catch (e: any) { setErr(e?.response?.data?.detail || "Failed"); }
+    finally { setLoading(false); }
+  };
 
   return (
     <ScreenContainer>
       <ScreenHeader eyebrow="Distribute" title="Share Schedule" />
-      {sent ? (
+      {done ? (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
           <View style={s.ok}><Check size={36} color={colors.success} /></View>
           <Body weight="700" style={{ marginTop: spacing.md, fontSize: 18 }}>Shared successfully</Body>
-          <Small style={{ marginTop: 4 }}>Recipients will receive the schedule shortly.</Small>
+          {done.link && (
+            <Card style={{ marginTop: spacing.lg, alignSelf: "stretch" }}>
+              <Eyebrow color={colors.mutedFg}>Secure link (7-day expiry)</Eyebrow>
+              <Small selectable style={{ marginTop: 4 }} color={colors.primary} weight="700">{done.link}</Small>
+            </Card>
+          )}
+          {done.pdf && (
+            <Button testID="open-pdf" variant="secondary" style={{ marginTop: spacing.md, alignSelf: "stretch" }} onPress={() => Linking.openURL(done.pdf!)}><View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><FileText size={14} color={colors.primary} /><Small color={colors.primary} weight="700">Open PDF</Small></View></Button>
+          )}
+          <Button testID="share-done" style={{ marginTop: spacing.md, alignSelf: "stretch" }} onPress={() => router.back()}>Done</Button>
         </View>
       ) : (
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.md }} keyboardShouldPersistTaps="handled">
+            {!id && trials.length > 1 && (
+              <View>
+                <Eyebrow style={{ marginBottom: spacing.sm }}>Pick a trial</Eyebrow>
+                {trials.map(t => (
+                  <Pressable key={t.id} onPress={() => setTrialId(t.id)} testID={`pick-trial-${t.id}`}>
+                    <Card style={{ marginBottom: 6, borderColor: trialId === t.id ? colors.primary : colors.border, borderWidth: trialId === t.id ? 2 : 1 }}><Body weight="700">{t.protocol_id} · {t.title}</Body></Card>
+                  </Pressable>
+                ))}
+              </View>
+            )}
             <Eyebrow>Share via</Eyebrow>
             <View style={{ gap: 8 }}>
               {([
-                { id: "email", icon: Mail, label: "Email", desc: "Send to one or more email addresses" },
                 { id: "link", icon: LinkIcon, label: "Secure link", desc: "Generate a shareable link (expires in 7 days)" },
-                { id: "pdf", icon: FileText, label: "PDF export", desc: "Download a printable PDF" },
+                { id: "pdf", icon: FileText, label: "PDF export", desc: "Open a printable PDF in your browser" },
+                { id: "email", icon: Mail, label: "Email", desc: "Send to one or more email addresses" },
               ] as const).map(opt => (
                 <Pressable key={opt.id} testID={`share-${opt.id}`} onPress={() => setVia(opt.id)}>
                   <Card style={{ borderColor: via === opt.id ? colors.primary : colors.border, borderWidth: via === opt.id ? 2 : 1, marginBottom: 0 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                       <View style={s.iconBox}><opt.icon size={18} color={colors.primary} /></View>
-                      <View style={{ flex: 1 }}>
-                        <Body weight="700">{opt.label}</Body>
-                        <Small style={{ marginTop: 2 }}>{opt.desc}</Small>
-                      </View>
+                      <View style={{ flex: 1 }}><Body weight="700">{opt.label}</Body><Small style={{ marginTop: 2 }}>{opt.desc}</Small></View>
                       {via === opt.id && <View style={s.check}><Check size={12} color={colors.primaryFg} /></View>}
                     </View>
                   </Card>
@@ -52,8 +86,9 @@ export default function ShareSchedule() {
                 <TextInput testID="share-emails" value={emails} onChangeText={setEmails} placeholder="pi@aiims.org, crc@aiims.org" placeholderTextColor={colors.mutedFg} multiline style={s.input} />
               </View>
             )}
+            {err ? <Small color={colors.destructive}>{err}</Small> : null}
           </ScrollView>
-          <View style={{ padding: spacing.md }}><Button testID="share-send" onPress={onSend}>{via === "pdf" ? "Download PDF" : via === "link" ? "Generate link" : "Send"}</Button></View>
+          <View style={{ padding: spacing.md }}><Button testID="share-send" onPress={onSend} loading={loading}>{via === "pdf" ? "Generate PDF" : via === "link" ? "Generate link" : "Send"}</Button></View>
         </KeyboardAvoidingView>
       )}
     </ScreenContainer>

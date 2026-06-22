@@ -78,8 +78,8 @@ export default function ClinicalVisitDetail() {
                 </View>
                 {!done && (
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: colors.border }}>
-                    <Button testID={`mark-${v.num}-done`} variant="primary" style={{ flex: 1, paddingVertical: 10 }}><Small weight="700" color={colors.primaryFg}>Mark complete</Small></Button>
-                    <Button testID={`reschedule-${v.num}`} variant="secondary" style={{ flex: 1, paddingVertical: 10 }}><Small weight="700" color={colors.primary}>Reschedule</Small></Button>
+                    <Button testID={`mark-${v.num}-done`} variant="primary" style={{ flex: 1, paddingVertical: 10 }} onPress={async () => { try { await api.patch(`/visits/${(visits as any).find?.((x: any) => x.num === v.num)?.id || ''}`, { status: "completed" }); } catch {} }}><Small weight="700" color={colors.primaryFg}>Mark complete</Small></Button>
+                    <Button testID={`reschedule-${v.num}`} variant="secondary" style={{ flex: 1, paddingVertical: 10 }} onPress={async () => { try { await api.patch(`/visits/${(visits as any).find?.((x: any) => x.num === v.num)?.id || ''}`, { status: "flagged", note: "Rescheduling requested" }); } catch {} }}><Small weight="700" color={colors.primary}>Reschedule</Small></Button>
                   </View>
                 )}
               </Card>

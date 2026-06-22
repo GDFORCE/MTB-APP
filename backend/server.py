@@ -506,6 +506,165 @@ async def seed_demo():
     await db.meta.insert_one({'key': 'seeded_v1', 'at': now()})
     return {'ok': True, 'users': demo_users, 'password': 'Password1!'}
 
+# ── Visit mutations (mark complete / reschedule / flag) ────────────────────
+class VisitPatch(BaseModel):
+    status: Optional[Literal['completed', 'upcoming', 'missed', 'flagged']] = None
+    scheduled_date: Optional[str] = None
+    note: Optional[str] = None
+
+@api.patch('/visits/{visit_id}')
+async def patch_visit(visit_id: str, body: VisitPatch, user=Depends(require_roles('pi', 'crc', 'sponsor'))):
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if not upd: raise HTTPException(400, 'Nothing to update')
+    upd['updated_by'] = user['id']; upd['updated_at'] = now()
+    r = await db.visits.update_one({'id': visit_id}, {'$set': upd})
+    if r.matched_count == 0: raise HTTPException(404, 'Visit not found')
+    v = await db.visits.find_one({'id': visit_id}, {'_id': 0})
+    # Audit
+    await db.audit_logs.insert_one({'id': str(uuid.uuid4()), 'user_id': user['id'], 'action': 'visit.patch', 'target_id': visit_id, 'changes': upd, 'at': now()})
+    return v
+
+# ── Reminders (patient medication reminders) ──────────────────────────────
+class ReminderIn(BaseModel):
+    medication: str; dosage: str; time: str; enabled: bool = True
+
+@api.get('/reminders')
+async def list_reminders(user=Depends(current_user)):
+    return await db.reminders.find({'user_id': user['id']}, {'_id': 0}).sort('time', 1).to_list(100)
+
+@api.post('/reminders')
+async def create_reminder(body: ReminderIn, user=Depends(current_user)):
+    doc = {'id': str(uuid.uuid4()), 'user_id': user['id'], **body.dict(), 'created_at': now()}
+    await db.reminders.insert_one(doc); return serialize(doc)
+
+@api.patch('/reminders/{rid}')
+async def update_reminder(rid: str, body: dict, user=Depends(current_user)):
+    await db.reminders.update_one({'id': rid, 'user_id': user['id']}, {'$set': {k: v for k, v in body.items() if k in {'enabled', 'time', 'dosage'}}})
+    return {'ok': True}
+
+@api.delete('/reminders/{rid}')
+async def delete_reminder(rid: str, user=Depends(current_user)):
+    await db.reminders.delete_one({'id': rid, 'user_id': user['id']}); return {'ok': True}
+
+# ── Invitations (invite patient/team via email/SMS) ───────────────────────
+class InvitationIn(BaseModel):
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    full_name: Optional[str] = ''
+    role: Optional[Role] = 'patient'
+    trial_id: Optional[str] = None
+
+@api.post('/invitations', dependencies=[Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))])
+async def create_invitation(body: InvitationIn, user=Depends(current_user)):
+    if not body.email and not body.phone:
+        raise HTTPException(400, 'Email or phone required')
+    token = uuid.uuid4().hex
+    doc = {
+        'id': str(uuid.uuid4()), 'token': token,
+        'email': (body.email or '').lower(), 'phone': body.phone or '',
+        'full_name': body.full_name or '', 'role': body.role or 'patient',
+        'trial_id': body.trial_id, 'invited_by': user['id'],
+        'status': 'pending', 'created_at': now(),
+    }
+    await db.invitations.insert_one(doc)
+    # Real email sending is wired via EMAIL_API_KEY env (Resend) — falls back to logging in dev.
+    api_key = os.environ.get('EMAIL_API_KEY')
+    invite_link = f"https://my-trial-board.app/invite/{token}"
+    if api_key and body.email:
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=10) as cli:
+                await cli.post('https://api.resend.com/emails', headers={'Authorization': f'Bearer {api_key}'}, json={
+                    'from': 'My Trial Board <noreply@mytrialboard.app>',
+                    'to': [body.email], 'subject': "You're invited to My Trial Board",
+                    'html': f'<p>Hi {body.full_name or "there"},</p><p>You\'ve been invited to join a clinical trial on My Trial Board.</p><p><a href="{invite_link}">Accept the invitation</a></p>',
+                })
+        except Exception as e: logging.warning(f'Email send failed: {e}')
+    logging.info(f'INVITATION: link={invite_link} email={body.email} phone={body.phone}')
+    return {**serialize(doc), 'invite_link': invite_link}
+
+# ── Shares + PDF export ────────────────────────────────────────────────────
+class ShareIn(BaseModel):
+    trial_id: str
+    via: Literal['email', 'link', 'pdf'] = 'link'
+    recipients: List[EmailStr] = []
+
+@api.post('/shares', dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def create_share(body: ShareIn, user=Depends(current_user)):
+    token = uuid.uuid4().hex
+    doc = {'id': str(uuid.uuid4()), 'token': token, 'trial_id': body.trial_id, 'via': body.via,
+           'recipients': body.recipients, 'created_by': user['id'], 'created_at': now(),
+           'expires_at': now() + timedelta(days=7), 'views': 0}
+    await db.shares.insert_one(doc)
+    base = os.environ.get('PUBLIC_APP_URL', 'https://my-trial-board.app')
+    return {**serialize(doc), 'share_link': f'{base}/s/{token}', 'pdf_link': f'/api/shares/{token}/schedule.pdf'}
+
+@api.get('/shares/{token}/schedule.pdf')
+async def share_pdf(token: str):
+    from fastapi.responses import Response as FastResp
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors as rcolors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    import io
+    s = await db.shares.find_one({'token': token})
+    if not s: raise HTTPException(404, 'Share not found')
+    if s.get('expires_at') and s['expires_at'].replace(tzinfo=timezone.utc) < now():
+        raise HTTPException(410, 'Share link expired')
+    await db.shares.update_one({'token': token}, {'$inc': {'views': 1}})
+    trial = await db.trials.find_one({'id': s['trial_id']}, {'_id': 0}) or {}
+    visits = await db.visits.find({'trial_id': s['trial_id']}, {'_id': 0}).sort('visit_number', 1).to_list(200)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, title=f"Visit Schedule · {trial.get('protocol_id', '')}")
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph(f"<b>{trial.get('protocol_id', 'Trial')} — Visit Schedule</b>", styles['Title']),
+        Paragraph(trial.get('title', ''), styles['Heading3']),
+        Paragraph(f"Phase: {trial.get('phase', '')} · Condition: {trial.get('condition', '')}", styles['Normal']),
+        Spacer(1, 16),
+    ]
+    rows = [['#', 'Visit name', 'Day offset', 'Window', 'Activities']]
+    for v in visits:
+        rows.append([v['visit_number'], v['name'], f"D+{v['day_offset']}", f"±{v.get('window_days', 3)}d", ', '.join(v.get('activities', [])[:3])])
+    t = Table(rows, repeatRows=1, colWidths=[28, 140, 60, 50, 200])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), rcolors.HexColor('#A6213F')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), rcolors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, rcolors.HexColor('#E6D6C5')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [rcolors.HexColor('#FBF2E8'), rcolors.white]),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    story.append(t)
+    doc.build(story)
+    return FastResp(content=buf.getvalue(), media_type='application/pdf', headers={'Content-Disposition': f'inline; filename="schedule-{token[:8]}.pdf"'})
+
+# ── User preferences ──────────────────────────────────────────────────────
+@api.get('/preferences')
+async def get_prefs(user=Depends(current_user)):
+    p = await db.preferences.find_one({'user_id': user['id']}, {'_id': 0}) or {'user_id': user['id'], 'notifications_email': True, 'notifications_push': True, 'notifications_sms': False, 'language': 'en'}
+    return p
+
+@api.patch('/preferences')
+async def patch_prefs(body: dict, user=Depends(current_user)):
+    allow = {'notifications_email', 'notifications_push', 'notifications_sms', 'language'}
+    upd = {k: v for k, v in body.items() if k in allow}
+    await db.preferences.update_one({'user_id': user['id']}, {'$set': upd, '$setOnInsert': {'user_id': user['id']}}, upsert=True)
+    return {'ok': True, **upd}
+
+# ── Push notification token registration (Emergent push - real values at deploy time) ─
+@api.post('/push/register')
+async def register_push(body: dict, user=Depends(current_user)):
+    token = body.get('token')
+    if not token: raise HTTPException(400, 'Token required')
+    await db.push_tokens.update_one({'user_id': user['id'], 'token': token}, {'$set': {'platform': body.get('platform', 'unknown'), 'updated_at': now()}, '$setOnInsert': {'created_at': now()}}, upsert=True)
+    return {'ok': True}
+
+@api.get('/audit-logs')
+async def list_audit(user=Depends(require_roles('sponsor', 'cro', 'pi'))):
+    return await db.audit_logs.find({}, {'_id': 0}).sort('at', -1).to_list(200)
+
 @api.get('/')
 async def root(): return {'app': 'My Trial Board', 'status': 'ok'}
 

@@ -24,7 +24,9 @@ export default function InvitePatient() {
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
           <View style={s.successBox}><CheckCircle2 size={36} color={colors.success} /></View>
           <Body weight="700" style={{ marginTop: spacing.md, fontSize: 18 }}>Invitation sent!</Body>
-          <Small style={{ marginTop: 4 }}>They'll receive a registration link by email/SMS.</Small>
+          <Small style={{ marginTop: 4, textAlign: "center" }}>They'll receive a registration link by email/SMS.</Small>
+          {link ? <Card style={{ marginTop: spacing.lg }}><Small color={colors.mutedFg}>Share link</Small><Small selectable style={{ marginTop: 4 }} color={colors.primary} weight="700">{link}</Small></Card> : null}
+          <Button testID="invite-done" variant="secondary" style={{ marginTop: spacing.lg, alignSelf: "stretch" }} onPress={() => router.back()}>Done</Button>
         </View>
       ) : (
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
@@ -34,18 +36,19 @@ export default function InvitePatient() {
               <Small>The patient receives a secure link to register and download the app. Their record is auto-linked to your trial.</Small>
             </Card>
             <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>Patient details</Eyebrow>
-            <Field label="Full name" value={name} onChange={setName} testID="invite-name" />
-            <Field label="Email" value={email} onChange={setEmail} testID="invite-email" keyboardType="email-address" />
-            <Field label="Phone (optional)" value={phone} onChange={setPhone} testID="invite-phone" keyboardType="phone-pad" />
+            <F label="Full name" value={name} onChange={setName} testID="invite-name" />
+            <F label="Email" value={email} onChange={setEmail} testID="invite-email" keyboardType="email-address" />
+            <F label="Phone (optional)" value={phone} onChange={setPhone} testID="invite-phone" keyboardType="phone-pad" />
+            {err ? <Small color={colors.destructive}>{err}</Small> : null}
           </ScrollView>
-          <View style={{ padding: spacing.md }}><Button testID="invite-send" onPress={send}>Send invitation</Button></View>
+          <View style={{ padding: spacing.md }}><Button testID="invite-send" onPress={send} loading={loading}>Send invitation</Button></View>
         </KeyboardAvoidingView>
       )}
     </ScreenContainer>
   );
 }
 
-function Field({ label, value, onChange, testID, keyboardType }: any) {
+function F({ label, value, onChange, testID, keyboardType }: any) {
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Small color={colors.foreground} style={{ marginBottom: 6, fontWeight: "600" as any }}>{label}</Small>
