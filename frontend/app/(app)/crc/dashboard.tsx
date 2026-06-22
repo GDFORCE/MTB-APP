@@ -87,7 +87,7 @@ export default function CrcDashboard() {
                 <Bell size={20} color={C.primaryFg} />
                 <View style={st.bellBadge}><Text style={st.bellBadgeText}>2</Text></View>
               </Pressable>
-              <Pressable testID="crc-avatar" onPress={() => router.push("/(app)/patient/profile")} style={st.iconBtn}>
+              <Pressable testID="crc-avatar" onPress={() => router.push("/(app)/clinical/profile")} style={st.iconBtn}>
                 <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{initials}</Text>
               </Pressable>
             </View>
@@ -243,7 +243,7 @@ export default function CrcDashboard() {
         <TabItem icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
         <TabItem icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
         <TabItem icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/patient/calendar")} testID="tab-calendar" />
-        <TabItem icon={User} label="Me" onPress={() => router.push("/(app)/patient/profile")} testID="tab-me" />
+        <TabItem icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
     </View>
   );

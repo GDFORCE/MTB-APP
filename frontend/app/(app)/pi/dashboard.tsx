@@ -250,7 +250,7 @@ export default function PiDashboard() {
         <Tab icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
         <Tab icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
         <Tab icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/patient/calendar")} testID="tab-calendar" />
-        <Tab icon={User} label="Me" onPress={() => router.push("/(app)/patient/profile")} testID="tab-me" />
+        <Tab icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
     </View>
   );
