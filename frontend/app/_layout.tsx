@@ -3,6 +3,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { LogBox, StatusBar } from "react-native";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
+import { useAppFonts } from "@/src/hooks/use-app-fonts";
 import { AuthProvider, useAuth } from "@/src/auth/AuthContext";
 import { colors } from "@/src/theme/tokens";
 import "@/src/i18n";
@@ -34,8 +35,10 @@ function RouterGuard() {
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
-  useEffect(() => { if (loaded || error) SplashScreen.hideAsync(); }, [loaded, error]);
-  if (!loaded && !error) return null;
+  const [fontsLoaded, fontsError] = useAppFonts();
+  const ready = (loaded || error) && (fontsLoaded || fontsError);
+  useEffect(() => { if (ready) SplashScreen.hideAsync(); }, [ready]);
+  if (!ready) return null;
   return (
     <AuthProvider>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />

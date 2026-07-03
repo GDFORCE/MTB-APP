@@ -1,53 +1,76 @@
 import React, { useState } from "react";
-import { View, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, StyleSheet, ScrollView, Pressable, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Check, ArrowLeft } from "lucide-react-native";
-import { colors, spacing, radii } from "@/src/theme/tokens";
-import { Eyebrow, H1, Body, Small, Button } from "@/src/components/ui";
+import { Check } from "lucide-react-native";
+import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
+import { Eyebrow, Body } from "@/src/components/ui";
+import { AuthHeader } from "@/src/components/AuthHeader";
+import { Rise } from "@/src/components/Rise";
+import { Springy } from "@/src/components/Springy";
 
+// Entry is by action, not self-declared role: you register an organization as one of
+// these four entities. (Patients self-register elsewhere; PI/CRC come from the Site form.)
 const entities = [
-  { id: "sponsor", label: "Sponsor", desc: "Owns and funds the clinical trial" },
-  { id: "cro", label: "CRO", desc: "Runs the trial on a sponsor's behalf" },
-  { id: "smo", label: "SMO", desc: "Manages a network of trial sites" },
-  { id: "pi", label: "Principal Investigator", desc: "Site lead overseeing the trial" },
-  { id: "crc", label: "Research Coordinator (CRC)", desc: "Site coordinator running visits" },
-  { id: "patient", label: "Patient", desc: "Taking part in a clinical trial" },
+  { id: "sponsor", label: "Sponsor" },
+  { id: "cro", label: "CRO" },
+  { id: "smo", label: "SMO" },
+  { id: "site", label: "Site / Hospital" },
 ];
 
 export default function EntityType() {
   const router = useRouter();
   const [selected, setSelected] = useState<string | null>(null);
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
-      <View style={{ padding: spacing.lg }}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={{ marginBottom: spacing.md }}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
-        <Eyebrow color={colors.accent}>Step 1 of 5</Eyebrow>
-        <H1 style={{ marginTop: 6 }}>I am joining as…</H1>
-        <Small style={{ marginTop: 6 }}>Choose the role that best describes you. Your registration form adapts to it.</Small>
-      </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg }} showsVerticalScrollIndicator={false}>
+      <AuthHeader
+        eyebrow="Step 1 of 5"
+        title="I am joining as…"
+        subtitle="Choose the role that best describes you. Your registration form adapts to it."
+        onBack={() => router.back()}
+        step={1}
+      />
+
+      <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm }} showsVerticalScrollIndicator={false}>
         <View style={s.list}>
           {entities.map((e, i) => {
             const on = selected === e.id;
             return (
-              <Pressable key={e.id} testID={`entity-${e.id}`} onPress={() => setSelected(e.id)} style={[s.row, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }, on && { backgroundColor: colors.secondary + "55" }]}>
-                {on && <View style={s.spine} />}
-                <Body color={on ? colors.accent : colors.mutedFg} style={{ width: 28, fontWeight: "700" as any, fontVariant: ["tabular-nums"] }}>{String(i + 1).padStart(2, "0")}</Body>
-                <View style={{ flex: 1 }}>
-                  <Body weight="700" color={on ? colors.primary : colors.foreground}>{e.label}</Body>
-                  <Small>{e.desc}</Small>
-                </View>
-                <View style={[s.check, on ? { backgroundColor: colors.primary, borderColor: colors.primary } : { borderColor: colors.border, backgroundColor: colors.card }]}>
-                  {on && <Check size={14} color={colors.primaryFg} strokeWidth={3} />}
-                </View>
-              </Pressable>
+              <Rise key={e.id} delay={180 + i * 70}>
+                <Pressable
+                  testID={`entity-${e.id}`}
+                  onPress={() => setSelected(e.id)}
+                  style={[s.row, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }, on && { backgroundColor: colors.secondary + "55" }]}
+                >
+                  {on && <View style={s.spine} />}
+                  <Text style={[s.index, { color: on ? colors.accent : colors.mutedFg + "80" }]}>{String(i + 1).padStart(2, "0")}</Text>
+                  <Body weight="600" color={on ? colors.primary : colors.foreground} style={{ flex: 1, fontSize: 17 }}>
+                    {e.label}
+                  </Body>
+                  <View style={[s.check, on ? { backgroundColor: colors.primary, borderColor: colors.primary } : { borderColor: colors.border, backgroundColor: colors.card }]}>
+                    {on && <Check size={14} color={colors.primaryFg} strokeWidth={3} />}
+                  </View>
+                </Pressable>
+              </Rise>
             );
           })}
         </View>
+
+        <Eyebrow color={colors.mutedFg} style={{ textAlign: "center", marginTop: spacing.lg, opacity: 0.7 }}>
+          Platform access is role-based
+        </Eyebrow>
       </ScrollView>
+
       <View style={{ padding: spacing.lg }}>
-        <Button testID="entity-continue-button" disabled={!selected} onPress={() => router.push({ pathname: "/(auth)/register", params: { role: selected || "" } })}>Continue</Button>
+        <Springy
+          testID="entity-continue-button"
+          disabled={!selected}
+          onPress={() => router.push({ pathname: "/(auth)/register", params: { role: selected || "" } })}
+          style={[s.cta, selected ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}
+        >
+          <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: selected ? colors.primaryFg : colors.mutedFg }}>Continue</Text>
+        </Springy>
       </View>
     </SafeAreaView>
   );
@@ -55,7 +78,9 @@ export default function EntityType() {
 
 const s = StyleSheet.create({
   list: { borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, overflow: "hidden" },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: spacing.md, paddingVertical: 14, position: "relative" },
+  row: { flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: spacing.md + 4, paddingVertical: 26, position: "relative" },
   spine: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, backgroundColor: colors.accent },
+  index: { width: 28, fontFamily: fonts.heading, fontSize: 18, fontVariant: ["tabular-nums"] },
   check: { width: 24, height: 24, borderRadius: 999, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  cta: { paddingVertical: 15, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
 });

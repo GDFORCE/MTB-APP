@@ -4,11 +4,13 @@ import { api, tokenStore } from '../api/client';
 export type Role = 'sponsor' | 'cro' | 'smo' | 'site' | 'pi' | 'crc' | 'patient';
 export type User = { id: string; email: string; full_name: string; role: Role; phone?: string; organization?: string; avatar_initials?: string };
 
+type Session = { access_token: string; refresh_token: string; user: User };
 interface Ctx {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<User>;
   signUp: (data: any) => Promise<User>;
+  applySession: (data: Session) => Promise<User>;
   signOut: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -44,9 +46,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(r.data.user);
     return r.data.user;
   };
+  // Persist tokens + user from a server session payload (used by OTP-verified registration).
+  const applySession = async (data: Session) => {
+    await tokenStore.set('access_token', data.access_token);
+    await tokenStore.set('refresh_token', data.refresh_token);
+    setUser(data.user);
+    return data.user;
+  };
   const signOut = async () => {
     await tokenStore.del('access_token'); await tokenStore.del('refresh_token'); setUser(null);
   };
 
-  return <AuthCtx.Provider value={{ user, loading, signIn, signUp, signOut, refresh }}>{children}</AuthCtx.Provider>;
+  return <AuthCtx.Provider value={{ user, loading, signIn, signUp, applySession, signOut, refresh }}>{children}</AuthCtx.Provider>;
 }

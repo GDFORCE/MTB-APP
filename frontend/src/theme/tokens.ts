@@ -48,11 +48,33 @@ export const shadows = {
   md: { shadowColor: '#2E1B33', shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
 };
 
+// Dawn Rounds type families — Bricolage Grotesque (display/headings), Figtree
+// (UI/body), Spline Sans Mono (OTP + dense numerals). Loaded in app/_layout via
+// use-app-fonts. Custom fonts embed their weight, so we swap FAMILY per weight
+// (fontWeight is ignored once a custom fontFamily is set).
+export const fonts = {
+  display: 'BricolageGrotesque-Bold',
+  heading: 'BricolageGrotesque-SemiBold',
+  regular: 'Figtree-Regular',
+  medium: 'Figtree-Medium',
+  semibold: 'Figtree-SemiBold',
+  bold: 'Figtree-Bold',
+  mono: 'SplineSansMono-Medium',
+};
+
+export function figtreeFamily(weight?: string | number): string {
+  const w = String(weight ?? '400');
+  if (w === '700' || w === 'bold') return fonts.bold;
+  if (w === '600') return fonts.semibold;
+  if (w === '500') return fonts.medium;
+  return fonts.regular;
+}
+
 export const typography = {
-  display: { fontSize: 32, fontWeight: '700' as const, letterSpacing: -0.6 },
-  h1: { fontSize: 26, fontWeight: '700' as const, letterSpacing: -0.4 },
-  h2: { fontSize: 20, fontWeight: '600' as const, letterSpacing: -0.2 },
-  body: { fontSize: 15, fontWeight: '400' as const },
-  small: { fontSize: 13, fontWeight: '400' as const },
-  eyebrow: { fontSize: 11, fontWeight: '700' as const, letterSpacing: 1.4, textTransform: 'uppercase' as const },
+  display: { fontFamily: fonts.display, fontSize: 32, letterSpacing: -0.6 },
+  h1: { fontFamily: fonts.display, fontSize: 26, letterSpacing: -0.4 },
+  h2: { fontFamily: fonts.heading, fontSize: 20, letterSpacing: -0.2 },
+  body: { fontFamily: fonts.regular, fontSize: 15 },
+  small: { fontFamily: fonts.regular, fontSize: 13 },
+  eyebrow: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4, textTransform: 'uppercase' as const },
 };

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ViewStyle, TextStyle, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { colors, radii, spacing, shadows, typography, dawnGradient } from '../theme/tokens';
+import { colors, radii, spacing, shadows, typography, dawnGradient, fonts, figtreeFamily } from '../theme/tokens';
 
 export const Eyebrow = ({ children, style, color }: any) => (
   <Text style={[{ ...typography.eyebrow, color: color || colors.primary }, style]}>{children}</Text>
@@ -16,7 +16,7 @@ export const H1 = ({ children, style, color }: any) => (
 );
 
 export const Body = ({ children, style, color, weight }: any) => (
-  <Text style={[{ ...typography.body, color: color || colors.foreground, fontWeight: weight || '400' }, style]}>{children}</Text>
+  <Text style={[{ ...typography.body, color: color || colors.foreground, fontFamily: figtreeFamily(weight) }, style]}>{children}</Text>
 );
 
 export const Small = ({ children, style, color }: any) => (
@@ -31,7 +31,7 @@ interface BtnProps { children: React.ReactNode; onPress?: () => void; variant?: 
 export function Button({ children, onPress, variant = 'primary', disabled, loading, testID, style }: BtnProps) {
   const body = loading
     ? <ActivityIndicator color={variant === 'primary' || variant === 'dawn' ? colors.primaryFg : colors.primary} />
-    : <Text style={{ color: variant === 'primary' || variant === 'dawn' ? colors.primaryFg : colors.primary, fontWeight: '700', fontSize: 15 }}>{children}</Text>;
+    : <Text style={{ color: variant === 'primary' || variant === 'dawn' ? colors.primaryFg : colors.primary, fontFamily: fonts.bold, fontSize: 15 }}>{children}</Text>;
 
   if (variant === 'dawn') {
     return (
@@ -56,7 +56,7 @@ const btnStyles = StyleSheet.create({
 export function SectionHeader({ index, label, action }: { index: string; label: string; action?: React.ReactNode }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-      <Text style={{ color: colors.accent, fontWeight: '700', fontSize: 14, fontVariant: ['tabular-nums'] }}>{index}</Text>
+      <Text style={{ color: colors.accent, fontFamily: fonts.bold, fontSize: 14, fontVariant: ['tabular-nums'] }}>{index}</Text>
       <Eyebrow>{label}</Eyebrow>
       <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
       {action}
