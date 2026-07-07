@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, json, logging, uuid, asyncio
+import os, re, json, logging, uuid, asyncio
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Literal
@@ -184,6 +184,65 @@ def serialize(d):
     d.pop('security_answer_hash', None)
     return d
 
+# ── Audit trail ──────────────────────────────────────────────────────────────
+async def write_audit(user, action, detail, status='success', **ctx):
+    """Write a standard audit row for any mutation.
+
+    `user` is the acting user document (or None for anonymous/public actions,
+    e.g. a public invitation accept). `action` is dotted `category.verb`
+    (e.g. 'visit.patch'); the category is derived from it unless overridden
+    via ctx. Extra keyword context (target_id, changes, …) is stored verbatim.
+    Returns the audit row id.
+    """
+    user = user or {}
+    doc = {
+        'id': str(uuid.uuid4()),
+        'user_id': user.get('id'),
+        'user_name': user.get('full_name', ''),
+        'role': user.get('role', ''),
+        'org': user.get('organization', ''),
+        'action': action,
+        'category': ctx.pop('category', action.split('.', 1)[0]),
+        'detail': detail,
+        'ip': ctx.pop('ip', ''),
+        'device': ctx.pop('device', ''),
+        'status': status,
+        'created_at': now(),
+        **ctx,
+    }
+    await db.audit_logs.insert_one(doc)
+    return doc['id']
+
+# ── Organizations ────────────────────────────────────────────────────────────
+ORG_TYPES = ('sponsor', 'cro', 'smo', 'site')
+
+def org_type_for_role(role: str) -> str:
+    """sponsor/cro/smo/site users belong to that org type; pi/crc (and anyone
+    else) work at a site."""
+    return role if role in ORG_TYPES else 'site'
+
+async def ensure_organization(name: Optional[str], org_type: str = 'site', actor=None):
+    """Upsert an organization record the first time its name is seen
+    (e.g. when a user registers with an organization we don't know yet)."""
+    name = (name or '').strip()
+    if not name:
+        return
+    oid = str(uuid.uuid4())
+    res = await db.organizations.update_one(
+        {'name': name},
+        {'$setOnInsert': {
+            'id': oid, 'name': name,
+            'type': org_type if org_type in ORG_TYPES else 'site',
+            'address': '', 'contact': '', 'email': '', 'website': '',
+            'status': 'active', 'created_at': now(),
+        }},
+        upsert=True,
+    )
+    if res.upserted_id is not None:
+        await write_audit(actor, 'organization.create',
+                          f'Organization "{name}" auto-created at registration',
+                          target_id=oid)
+
 # ── Auth ─────────────────────────────────────────────────────────────────────
 @api.post('/auth/register')
 async def register(body: RegisterIn):
@@ -205,6 +264,7 @@ async def register(body: RegisterIn):
         'is_online': False,
     }
     await db.users.insert_one(doc)
+    await ensure_organization(body.organization, org_type_for_role(body.role), actor=doc)
     access = make_token(uid, body.role, 'access')
     refresh = make_token(uid, body.role, 'refresh')
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
@@ -403,6 +463,7 @@ async def _finalize_registration(pending: dict) -> dict:
         'is_online': False,
     }
     await db.users.insert_one(doc)
+    await ensure_organization(doc['organization'], org_type_for_role(doc['role']), actor=doc)
     access = make_token(uid, doc['role'], 'access')
     refresh = make_token(uid, doc['role'], 'refresh')
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
@@ -651,11 +712,35 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
     await db.patients.insert_one(doc)
     return serialize(doc)
 
+# ── Organizations directory ─────────────────────────────────────────────────
+@api.get('/organizations')
+async def list_organizations(type: Optional[str] = None, search: Optional[str] = None):
+    """Public directory of known organizations (used by the register screen)."""
+    q: Dict = {}
+    if type:
+        q['type'] = type
+    if search and search.strip():
+        q['name'] = {'$regex': re.escape(search.strip()), '$options': 'i'}
+    return await db.organizations.find(q, {'_id': 0}).sort('name', 1).to_list(200)
+
 # ── Notifications ───────────────────────────────────────────────────────────
 @api.get('/notifications')
 async def my_notifications(user=Depends(current_user)):
     items = await db.notifications.find({'user_id': user['id']}, {'_id': 0}).sort('created_at', -1).to_list(100)
     return items
+
+@api.get('/notifications/unread-count')
+async def unread_notification_count(user=Depends(current_user)):
+    count = await db.notifications.count_documents({'user_id': user['id'], 'read': {'$ne': True}})
+    return {'count': count}
+
+@api.post('/notifications/read-all')
+async def mark_all_notifications_read(user=Depends(current_user)):
+    r = await db.notifications.update_many(
+        {'user_id': user['id'], 'read': {'$ne': True}}, {'$set': {'read': True}})
+    await write_audit(user, 'notifications.read_all',
+                      f'Marked {r.modified_count} notification(s) as read')
+    return {'ok': True, 'count': r.modified_count}
 
 @api.post('/notifications/{nid}/read')
 async def mark_read(nid: str, user=Depends(current_user)):
@@ -888,8 +973,8 @@ async def patch_visit(visit_id: str, body: VisitPatch, user=Depends(require_role
     r = await db.visits.update_one({'id': visit_id}, {'$set': upd})
     if r.matched_count == 0: raise HTTPException(404, 'Visit not found')
     v = await db.visits.find_one({'id': visit_id}, {'_id': 0})
-    # Audit
-    await db.audit_logs.insert_one({'id': str(uuid.uuid4()), 'user_id': user['id'], 'action': 'visit.patch', 'target_id': visit_id, 'changes': upd, 'at': now()})
+    await write_audit(user, 'visit.patch', f'Updated visit {visit_id}: {", ".join(sorted(set(upd) - {"updated_by", "updated_at"}))}',
+                      target_id=visit_id, changes=upd)
     return v
 
 # ── Reminders (patient medication reminders) ──────────────────────────────
@@ -915,12 +1000,25 @@ async def delete_reminder(rid: str, user=Depends(current_user)):
     await db.reminders.delete_one({'id': rid, 'user_id': user['id']}); return {'ok': True}
 
 # ── Invitations (invite patient/team via email/SMS) ───────────────────────
+INVITE_TTL_DAYS = 7
+
 class InvitationIn(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     full_name: Optional[str] = ''
     role: Optional[Role] = 'patient'
     trial_id: Optional[str] = None
+    organization: Optional[str] = None   # defaults to the inviter's org
+    site: Optional[str] = None
+
+def _invite_link(token: str) -> str:
+    base = os.environ.get('PUBLIC_APP_URL', 'https://my-trial-board.app')
+    return f"{base}/invite/{token}"
+
+def _can_manage_invitation(inv: dict, user: dict) -> bool:
+    """The inviter — or anyone in the same organization — may manage it."""
+    return inv.get('invited_by') == user['id'] or \
+        bool(inv.get('org')) and inv.get('org') == user.get('organization')
 
 @api.post('/invitations', dependencies=[Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))])
 async def create_invitation(body: InvitationIn, user=Depends(current_user)):
@@ -932,12 +1030,19 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
         'email': (body.email or '').lower(), 'phone': body.phone or '',
         'full_name': body.full_name or '', 'role': body.role or 'patient',
         'trial_id': body.trial_id, 'invited_by': user['id'],
+        'org': (body.organization or user.get('organization') or '').strip(),
+        'site': (body.site or '').strip(),
         'status': 'pending', 'created_at': now(),
+        'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
+        'resend_count': 0,
     }
     await db.invitations.insert_one(doc)
+    await write_audit(user, 'invitation.create',
+                      f"Invited {doc['email'] or doc['phone']} as {doc['role']}",
+                      target_id=doc['id'])
     # Real email sending is wired via EMAIL_API_KEY env (Resend) — falls back to logging in dev.
     api_key = os.environ.get('EMAIL_API_KEY')
-    invite_link = f"https://my-trial-board.app/invite/{token}"
+    invite_link = _invite_link(token)
     if api_key and body.email:
         try:
             import httpx as _httpx
@@ -950,6 +1055,87 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
         except Exception as e: logging.warning(f'Email send failed: {e}')
     logging.info(f'INVITATION: link={invite_link} email={body.email} phone={body.phone}')
     return {**serialize(doc), 'invite_link': invite_link}
+
+@api.get('/invitations')
+async def list_invitations(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))):
+    """Invitations sent by the caller or anyone in their organization."""
+    org = (user.get('organization') or '').strip()
+    ors = [{'invited_by': user['id']}] + ([{'org': org}] if org else [])
+    return await db.invitations.find({'$or': ors}, {'_id': 0}).sort('created_at', -1).to_list(200)
+
+def _invitation_status(inv: dict) -> str:
+    """Effective status: a pending invitation past its expiry reads as expired."""
+    st = inv.get('status', 'pending')
+    exp = inv.get('expires_at')
+    if st == 'pending' and exp and exp < now():
+        return 'expired'
+    return st
+
+@api.get('/invitations/{token}')
+async def resolve_invitation(token: str):
+    """Public: resolve an invite token for the accept screen."""
+    inv = await db.invitations.find_one({'token': token}, {'_id': 0})
+    if not inv:
+        raise HTTPException(404, 'Invitation not found')
+    inviter = await db.users.find_one({'id': inv.get('invited_by')}, {'_id': 0, 'full_name': 1})
+    return {
+        'org': inv.get('org', ''), 'site': inv.get('site', ''),
+        'role': inv.get('role'), 'inviter': (inviter or {}).get('full_name', ''),
+        'email': inv.get('email', ''), 'status': _invitation_status(inv),
+        'expires_at': iso(inv.get('expires_at')),
+    }
+
+@api.post('/invitations/{token}/accept')
+async def accept_invitation(token: str):
+    """Public: mark an invitation accepted (the invitee then registers/signs in)."""
+    inv = await db.invitations.find_one({'token': token})
+    if not inv:
+        raise HTTPException(404, 'Invitation not found')
+    st = _invitation_status(inv)
+    if st != 'pending':
+        raise HTTPException(400, f'This invitation is {st} and can no longer be accepted')
+    await db.invitations.update_one({'id': inv['id']}, {'$set': {'status': 'accepted', 'accepted_at': now()}})
+    await write_audit(None, 'invitation.accept',
+                      f"Invitation for {inv.get('email') or inv.get('phone')} accepted",
+                      target_id=inv['id'])
+    return {'ok': True, 'status': 'accepted', 'email': inv.get('email', ''),
+            'role': inv.get('role'), 'org': inv.get('org', '')}
+
+@api.post('/invitations/{invitation_id}/resend')
+async def resend_invitation(invitation_id: str, user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))):
+    inv = await db.invitations.find_one({'id': invitation_id})
+    if not inv:
+        raise HTTPException(404, 'Invitation not found')
+    if not _can_manage_invitation(inv, user):
+        raise HTTPException(403, 'You can only manage invitations from your organization')
+    if _invitation_status(inv) not in ('pending', 'expired'):
+        raise HTTPException(400, 'Only pending invitations can be resent')
+    new_exp = now() + timedelta(days=INVITE_TTL_DAYS)
+    await db.invitations.update_one(
+        {'id': invitation_id},
+        {'$set': {'status': 'pending', 'expires_at': new_exp, 'last_sent_at': now()},
+         '$inc': {'resend_count': 1}})
+    invite_link = _invite_link(inv['token'])
+    logging.info(f"INVITATION RESEND: link={invite_link} email={inv.get('email')} phone={inv.get('phone')}")
+    await write_audit(user, 'invitation.resend',
+                      f"Invitation for {inv.get('email') or inv.get('phone')} resent",
+                      target_id=invitation_id)
+    return {'ok': True, 'invite_link': invite_link, 'expires_at': iso(new_exp)}
+
+@api.post('/invitations/{invitation_id}/cancel')
+async def cancel_invitation(invitation_id: str, user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))):
+    inv = await db.invitations.find_one({'id': invitation_id})
+    if not inv:
+        raise HTTPException(404, 'Invitation not found')
+    if not _can_manage_invitation(inv, user):
+        raise HTTPException(403, 'You can only manage invitations from your organization')
+    if inv.get('status') == 'accepted':
+        raise HTTPException(400, 'An accepted invitation cannot be cancelled')
+    await db.invitations.update_one({'id': invitation_id}, {'$set': {'status': 'cancelled', 'cancelled_at': now()}})
+    await write_audit(user, 'invitation.cancel',
+                      f"Invitation for {inv.get('email') or inv.get('phone')} cancelled",
+                      target_id=invitation_id)
+    return {'ok': True, 'status': 'cancelled'}
 
 # ── Shares + PDF export ────────────────────────────────────────────────────
 class ShareIn(BaseModel):
@@ -1036,7 +1222,7 @@ async def register_push(body: dict, user=Depends(current_user)):
 
 @api.get('/audit-logs')
 async def list_audit(user=Depends(require_roles('sponsor', 'cro', 'pi'))):
-    return await db.audit_logs.find({}, {'_id': 0}).sort('at', -1).to_list(200)
+    return await db.audit_logs.find({}, {'_id': 0}).sort('created_at', -1).to_list(200)
 
 # ── App content (config / FAQ / legal) — DB-backed, lazily seeded ─────────────
 # So the app never ships hardcoded copy: these come from the DB and can be edited
