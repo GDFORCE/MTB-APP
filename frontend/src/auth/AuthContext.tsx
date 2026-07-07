@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { api, tokenStore } from '../api/client';
+import { api, tokenStore, setSessionExpiredHandler } from '../api/client';
 
 export type Role = 'sponsor' | 'cro' | 'smo' | 'site' | 'pi' | 'crc' | 'patient';
 export type User = { id: string; email: string; full_name: string; role: Role; phone?: string; organization?: string; avatar_initials?: string };
@@ -31,6 +31,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => { (async () => { await refresh(); setLoading(false); })(); }, [refresh]);
+
+  // Let the API client clear React auth state when a token refresh hard-fails.
+  useEffect(() => {
+    setSessionExpiredHandler(() => setUser(null));
+    return () => setSessionExpiredHandler(null);
+  }, []);
 
   const signIn = async (email: string, password: string) => {
     const r = await api.post('/auth/login', { email, password });

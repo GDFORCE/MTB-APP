@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ViewStyle, TextStyle, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, StyleProp, ViewStyle, TextStyle, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, radii, spacing, shadows, typography, dawnGradient, fonts, figtreeFamily } from '../theme/tokens';
 
@@ -23,7 +23,7 @@ export const Small = ({ children, style, color }: any) => (
   <Text style={[{ ...typography.small, color: color || colors.mutedFg }, style]}>{children}</Text>
 );
 
-export function Card({ children, style, padded = true }: { children: React.ReactNode; style?: ViewStyle; padded?: boolean }) {
+export function Card({ children, style, padded = true }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; padded?: boolean }) {
   return <View style={[{ backgroundColor: colors.card, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, padding: padded ? spacing.md : 0, ...shadows.sm }, style]}>{children}</View>;
 }
 

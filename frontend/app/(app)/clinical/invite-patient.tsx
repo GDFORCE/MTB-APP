@@ -9,6 +9,8 @@ import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 export default function InvitePatient() {
   const router = useRouter();
   const [email, setEmail] = useState(""), [phone, setPhone] = useState(""), [name, setName] = useState(""), [done, setDone] = useState(false);
+  // Demo stub — real impl (POST /api/invitations) will populate these.
+  const link: string | null = null, err: string | null = null, loading = false;
 
   const send = () => {
     if (!email && !phone) return;

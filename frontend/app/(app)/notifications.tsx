@@ -1,18 +1,32 @@
 import React, { useEffect, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
 import { Bell, MessageCircle, FileText } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
-import { Eyebrow, Body, Small, Card } from "@/src/components/ui";
+import { Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { NotificationDetailSheet, AppNotification } from "@/src/components/NotificationDetailSheet";
+import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 
 export default function Notifications() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
+  const [selected, setSelected] = useState<AppNotification | null>(null);
   useEffect(() => { (async () => { const r = await api.get("/notifications"); setItems(r.data); })(); }, []);
 
   const markRead = async (id: string) => {
     await api.post(`/notifications/${id}/read`);
     setItems(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  // "View Visit Details" routes by notification type (and role for visit screens).
+  const viewDetails = (n: AppNotification) => {
+    setSelected(null);
+    if (n.kind === "message") router.push("/(app)/chat");
+    else if (user?.role === "patient") router.push("/(app)/patient/my-visits");
+    else router.push("/(app)/clinical/schedule-review");
   };
 
   return (
@@ -23,7 +37,7 @@ export default function Notifications() {
           const Icon = n.kind === "message" ? MessageCircle : n.kind === "result" ? FileText : Bell;
           const tone = n.kind === "message" ? colors.violet : n.kind === "result" ? colors.info : colors.accent;
           return (
-            <Pressable key={n.id} testID={`notif-${n.id}`} onPress={() => markRead(n.id)}>
+            <Pressable key={n.id} testID={`notif-${n.id}`} onPress={() => setSelected(n)}>
               <Card style={{ marginBottom: spacing.sm }}>
                 <View style={{ flexDirection: "row", gap: 12 }}>
                   <View style={[s.icon, { backgroundColor: tone + "1A" }]}><Icon size={18} color={tone} /></View>
@@ -41,6 +55,12 @@ export default function Notifications() {
           );
         })}
       </ScrollView>
+      <NotificationDetailSheet
+        notification={selected}
+        onClose={() => setSelected(null)}
+        onMarkRead={(id) => { markRead(id); setSelected(null); }}
+        onViewDetails={viewDetails}
+      />
     </ScreenContainer>
   );
 }

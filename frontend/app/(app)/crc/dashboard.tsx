@@ -11,6 +11,7 @@ import {
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
 
 // ── Dawn Rounds palette (matches /app/frontend/src/theme/tokens.ts) ──────────
 const C = {
@@ -43,6 +44,7 @@ const myTrials = [
 export default function CrcDashboard() {
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const unread = useUnreadCount();
   const [patientCount, setPatientCount] = useState(5);
   useEffect(() => { (async () => { try { const r = await api.get("/patients"); setPatientCount(r.data.length); } catch {} })(); }, []);
 
@@ -85,7 +87,9 @@ export default function CrcDashboard() {
               </View>
               <Pressable testID="crc-bell" onPress={() => router.push("/(app)/notifications")} style={st.iconBtn}>
                 <Bell size={20} color={C.primaryFg} />
-                <View style={st.bellBadge}><Text style={st.bellBadgeText}>2</Text></View>
+                {unread != null && unread > 0 && (
+                  <View style={st.bellBadge}><Text style={st.bellBadgeText}>{unread > 9 ? "9+" : unread}</Text></View>
+                )}
               </Pressable>
               <Pressable testID="crc-avatar" onPress={() => router.push("/(app)/clinical/profile")} style={st.iconBtn}>
                 <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{initials}</Text>

@@ -8,6 +8,7 @@ import { colors, spacing, radii, dawnGradient, shadows } from "@/src/theme/token
 import { Eyebrow, H1, Body, Small, Card, SectionHeader, Button } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
 
 const ROLE_LABEL: Record<string, string> = {
   patient: "Patient", pi: "Principal Investigator", crc: "Research Coordinator",
@@ -17,6 +18,7 @@ const ROLE_LABEL: Record<string, string> = {
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const router = useRouter();
+  const unread = useUnreadCount();
   const [trials, setTrials] = useState<any[]>([]);
   const [visits, setVisits] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
@@ -221,7 +223,14 @@ export default function Dashboard() {
         <TabBtn icon={<Calendar size={20} color={colors.mutedFg} />} label="Calendar" testID="tab-calendar" onPress={() => isPatient && router.push("/(app)/patient/calendar")} />
         <TabBtn icon={<MessageCircle size={20} color={colors.mutedFg} />} label="Chat" onPress={() => router.push("/(app)/chat")} testID="tab-chat" />
         {!isPatient && <TabBtn icon={<Users size={20} color={colors.mutedFg} />} label="Team" testID="tab-team" onPress={() => router.push("/(app)/clinical/team")} />}
-        <TabBtn icon={<Bell size={20} color={colors.mutedFg} />} label="Alerts" testID="tab-alerts" onPress={() => router.push("/(app)/notifications")} />
+        <TabBtn icon={
+          <View>
+            <Bell size={20} color={colors.mutedFg} />
+            {unread != null && unread > 0 && (
+              <View style={s.tabBadge}><Small color={colors.destructiveFg} style={{ fontSize: 9, fontWeight: "700" as any }}>{unread > 9 ? "9+" : unread}</Small></View>
+            )}
+          </View>
+        } label="Alerts" testID="tab-alerts" onPress={() => router.push("/(app)/notifications")} />
         {isPatient && <TabBtn icon={<User2 size={20} color={colors.mutedFg} />} label="Me" testID="tab-me" onPress={() => router.push("/(app)/patient/profile")} />}
       </View>
     </SafeAreaView>
@@ -261,4 +270,5 @@ const s = StyleSheet.create({
   notifIcon: { width: 44, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: colors.card, borderTopWidth: 1, borderColor: colors.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
   tabBtn: { flex: 1, alignItems: "center", justifyContent: "center" },
+  tabBadge: { position: "absolute", top: -6, right: -10, minWidth: 16, height: 16, paddingHorizontal: 3, borderRadius: 8, backgroundColor: colors.destructive, alignItems: "center", justifyContent: "center" },
 });

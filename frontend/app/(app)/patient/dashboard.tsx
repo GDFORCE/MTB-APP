@@ -9,6 +9,7 @@ import {
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -23,6 +24,7 @@ const TOTAL = 10;
 export default function PatientDashboard() {
   const router = useRouter();
   const { user } = useAuth();
+  const unread = useUnreadCount();
   const [visits, setVisits] = useState<any[]>([]);
   const [notifs, setNotifs] = useState<any[]>([]);
   useEffect(() => { (async () => {
@@ -85,7 +87,9 @@ export default function PatientDashboard() {
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Pressable testID="patient-bell" onPress={() => router.push("/(app)/notifications")} style={pst.iconBtn}>
                   <Bell size={20} color={C.primaryFg} />
-                  <View style={{ position: "absolute", top: 6, right: 9, width: 8, height: 8, borderRadius: 4, backgroundColor: C.dawnFrom, borderWidth: 2, borderColor: C.primary }} />
+                  {unread != null && unread > 0 && (
+                    <View style={pst.bellBadge}><Text style={pst.bellBadgeText}>{unread > 9 ? "9+" : unread}</Text></View>
+                  )}
                 </Pressable>
                 <Pressable testID="patient-avatar" onPress={() => router.push("/(app)/patient/profile")} style={[pst.iconBtn, { backgroundColor: "rgba(255,255,255,0.20)" }]}>
                   <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{initials}</Text>
@@ -311,6 +315,8 @@ function Tab({ icon: Icon, label, active, onPress, testID }: any) {
 
 const pst = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
+  bellBadge: { position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: "#C0392B", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.primary },
+  bellBadgeText: { color: C.primaryFg, fontSize: 10, fontWeight: "700" },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.20)" },
   chipText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
   card: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },

@@ -10,6 +10,7 @@ import {
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -23,6 +24,7 @@ const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 export default function PiDashboard() {
   const router = useRouter();
   const { user } = useAuth();
+  const unread = useUnreadCount();
   const [trials, setTrials] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   useEffect(() => { (async () => {
@@ -73,7 +75,9 @@ export default function PiDashboard() {
               </View>
               <Pressable testID="pi-bell" onPress={() => router.push("/(app)/notifications")} style={pi.iconBtn}>
                 <Bell size={20} color={C.primaryFg} />
-                <View style={pi.bellBadge}><Text style={pi.bellBadgeText}>3</Text></View>
+                {unread != null && unread > 0 && (
+                  <View style={pi.bellBadge}><Text style={pi.bellBadgeText}>{unread > 9 ? "9+" : unread}</Text></View>
+                )}
               </Pressable>
               <Pressable testID="pi-avatar" onPress={() => router.push("/(app)/patient/profile")} style={pi.iconBtn}>
                 <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{initials}</Text>
