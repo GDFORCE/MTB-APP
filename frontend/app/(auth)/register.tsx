@@ -1,8 +1,9 @@
-import React, { useState } from "react";
-import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
+import React, { useState, useEffect } from "react";
+import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { Check, X, ClipboardCheck, ShieldCheck, FileText, Building2, UserPlus, Mail, Phone, ChevronDown } from "lucide-react-native";
+import { Check, ClipboardCheck, ShieldCheck, FileText, Building2, UserPlus, Mail, Phone, ChevronDown } from "lucide-react-native";
+import { api } from "@/src/api/client";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { AuthHeader } from "@/src/components/AuthHeader";
@@ -21,13 +22,21 @@ function variantFor(role?: string): "sponsor" | "site" | "smo" | "patient" {
   if (role === "patient") return "patient";
   return "sponsor";
 }
+// Demo prefills — convenient while developing, but must NOT ship in production
+// builds. `initFields` returns these only under __DEV__; otherwise empty fields.
+const DEMO_FIELDS: Record<string, Record<string, string>> = {
+  site: { fullName: "Dr. Rajesh Kumar", designation: "Principal Investigator", email: "r.kumar@apollo.com", phone: "98100 12345", orgName: "Apollo Hospitals Mumbai", orgAddress: "", hospitalType: "Private", role: "PI", department: "" },
+  smo: { fullName: "Dr. Rajesh Kumar", designation: "SMO Manager", email: "r.kumar@smo.com", phone: "98100 12345", orgName: "MedSites SMO Pvt Ltd", orgAddress: "" },
+  patient: { fullName: "Priya Kapoor", phone: "98765 43210", email: "", dob: "1985-06-15", gender: "", language: "English" },
+  sponsor: { fullName: "John Doe", designation: "Clinical Research Manager", email: "john.doe@pharmaco.com", phone: "98765 43210", orgName: "PharmaCo Ltd", orgAddress: "21 Business Park, Mumbai 400001" },
+};
 function initFields(variant: string): Record<string, string> {
-  switch (variant) {
-    case "site": return { fullName: "Dr. Rajesh Kumar", designation: "Principal Investigator", email: "r.kumar@apollo.com", phone: "98100 12345", orgName: "Apollo Hospitals Mumbai", orgAddress: "", hospitalType: "Private", role: "PI", department: "" };
-    case "smo": return { fullName: "Dr. Rajesh Kumar", designation: "SMO Manager", email: "r.kumar@smo.com", phone: "98100 12345", orgName: "MedSites SMO Pvt Ltd", orgAddress: "" };
-    case "patient": return { fullName: "Priya Kapoor", phone: "98765 43210", email: "", dob: "1985-06-15", gender: "", language: "English" };
-    default: return { fullName: "John Doe", designation: "Clinical Research Manager", email: "john.doe@pharmaco.com", phone: "98765 43210", orgName: "PharmaCo Ltd", orgAddress: "21 Business Park, Mumbai 400001" };
-  }
+  const shape = DEMO_FIELDS[variant] || DEMO_FIELDS.sponsor;
+  if (__DEV__) return { ...shape };
+  // Production: same field keys, but blank — no demo data leaks into the build.
+  const empty: Record<string, string> = {};
+  for (const k of Object.keys(shape)) empty[k] = k === "hospitalType" ? "Private" : k === "role" ? "PI" : "";
+  return empty;
 }
 
 // Responsibilities shown before an organization fills the form.
@@ -39,32 +48,19 @@ const registrationInstructions = [
   "You are responsible for the accuracy and authenticity of all information provided.",
 ];
 
-// Stand-in for the backend org directory. On Continue we check whether the org (by
-// name) is already onboarded; if so we surface its admin, else offer to create it.
-interface OrgAdmin { name: string; role: string; email: string; phone: string }
-interface DirectoryEntry { name: string; admin: OrgAdmin }
-const ORG_DIRECTORY: Record<string, DirectoryEntry[]> = {
-  sponsor: [
-    { name: "BioGen Research", admin: { name: "Dr. Anita Menon", role: "Sponsor Admin", email: "anita.menon@biogen.com", phone: "+91 98450 11223" } },
-    { name: "Novartis India", admin: { name: "Mr. Rohan Mehta", role: "Sponsor Admin", email: "rohan.mehta@novartis.com", phone: "+91 98670 33445" } },
-    { name: "Medpace CRO", admin: { name: "Ms. Kavya Reddy", role: "CRO Admin", email: "kavya.reddy@medpace.com", phone: "+91 99000 55678" } },
-  ],
-  site: [
-    { name: "Fortis Bangalore", admin: { name: "Dr. Anand Krishnan", role: "Site Admin", email: "a.krishnan@fortishealthcare.com", phone: "+91 98300 34567" } },
-    { name: "Max Healthcare Delhi", admin: { name: "Dr. Sunita Rao", role: "Site Admin", email: "s.rao@maxhealthcare.com", phone: "+91 98200 23456" } },
-    { name: "Manipal Hospital", admin: { name: "Dr. Vikram Shetty", role: "Site Admin", email: "v.shetty@manipalhospitals.com", phone: "+91 98860 77889" } },
-  ],
-  smo: [
-    { name: "ClinOps SMO", admin: { name: "Mr. Sanjay Gupta", role: "SMO Admin", email: "sanjay.gupta@clinops.com", phone: "+91 99100 22334" } },
-    { name: "TrialConnect SMO", admin: { name: "Ms. Deepa Nair", role: "SMO Admin", email: "deepa.nair@trialconnect.com", phone: "+91 99720 44556" } },
-  ],
-};
-ORG_DIRECTORY.cro = ORG_DIRECTORY.sponsor;
-function findOrg(entityType: string | undefined, name: string): DirectoryEntry | null {
-  const list = ORG_DIRECTORY[entityType || ""] || [];
-  const n = name.trim().toLowerCase();
-  return n ? list.find((o) => o.name.toLowerCase() === n) || null : null;
+// An organization from GET /api/organizations. On Continue we check whether the
+// typed org name already matches an onboarded org; if so we surface its contact,
+// else we offer to create it (the org auto-creates server-side at registration).
+interface Org { id: string; name: string; type: string; address?: string; contact?: string; email?: string; website?: string; status?: string }
+// Map the selected role to the org `type` used to narrow the directory search.
+function orgTypeFor(role?: string): string | undefined {
+  if (role === "sponsor") return "sponsor";
+  if (role === "cro") return "cro";
+  if (role === "smo") return "smo";
+  if (role === "site" || role === "pi" || role === "crc") return "site";
+  return undefined;
 }
+const orgTypeLabels: Record<string, string> = { sponsor: "Sponsor", cro: "CRO", smo: "SMO", site: "Site / Hospital" };
 function adminInitials(name: string) {
   const parts = name.replace(/^(Dr\.|Mr\.|Ms\.|Mrs\.)\s+/i, "").trim().split(/\s+/);
   return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase();
@@ -178,12 +174,19 @@ function ModalHead({ icon, eyebrow, title, subtitle }: { icon: React.ReactNode; 
 
 export default function Register() {
   const router = useRouter();
-  const { role } = useLocalSearchParams<{ role: string }>();
+  // `org`/`email` may arrive prefilled when the user came from an accepted invite.
+  const { role, org: orgParam, email: emailParam } = useLocalSearchParams<{ role: string; org?: string; email?: string }>();
   const variant = variantFor(role);
   const isPatient = variant === "patient";
   const orgNoun = variant === "site" ? "site" : variant === "smo" ? "SMO" : "organization";
 
-  const [fld, setFld] = useState<Record<string, string>>(() => initFields(variant));
+  const [fld, setFld] = useState<Record<string, string>>(() => {
+    const base = initFields(variant);
+    // Invite prefills are real user data (not demo defaults) — always apply them.
+    if (orgParam) base.orgName = String(orgParam);
+    if (emailParam) base.email = String(emailParam);
+    return base;
+  });
   const up = (k: string) => (v: string) => setFld((s) => ({ ...s, [k]: v }));
 
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -195,8 +198,47 @@ export default function Register() {
   const [orgCheck, setOrgCheck] = useState<"exists" | "create" | null>(null);
   const [err, setErr] = useState("");
 
+  // ── Live org directory lookup (debounced) ─────────────────────────────────
+  const [orgMatches, setOrgMatches] = useState<Org[]>([]);
+  const [orgSearching, setOrgSearching] = useState(false);
+  const [showOrgSuggestions, setShowOrgSuggestions] = useState(false);
+  useEffect(() => {
+    if (isPatient) return;
+    const q = (fld.orgName || "").trim();
+    if (q.length < 2) { setOrgMatches([]); setOrgSearching(false); return; }
+    setOrgSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const params: Record<string, string> = { search: q };
+        const type = orgTypeFor(role);
+        if (type) params.type = type;
+        const res = await api.get("/organizations", { params });
+        setOrgMatches(Array.isArray(res.data) ? res.data : []);
+      } catch {
+        setOrgMatches([]);
+      } finally {
+        setOrgSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [fld.orgName, role, isPatient]);
+
+  // ── Terms & Conditions content (fetched when the modal opens) ─────────────
+  const [termsBlocks, setTermsBlocks] = useState<{ heading: string; body: string }[] | null>(null);
+  const [termsLoading, setTermsLoading] = useState(false);
+  const [termsError, setTermsError] = useState("");
+  useEffect(() => {
+    if (!showTerms || termsBlocks || termsLoading) return;
+    setTermsLoading(true);
+    setTermsError("");
+    api.get("/legal/terms")
+      .then((res) => setTermsBlocks(Array.isArray(res.data?.blocks) ? res.data.blocks : []))
+      .catch(() => setTermsError("Unable to load the latest terms right now. Please check your connection and try again."))
+      .finally(() => setTermsLoading(false));
+  }, [showTerms, termsBlocks, termsLoading]);
+
   const canContinue = agreedToTerms && declarationAccepted;
-  const matchedOrg = findOrg(role, fld.orgName || "");
+  const matchedOrg = orgMatches.find((o) => o.name.trim().toLowerCase() === (fld.orgName || "").trim().toLowerCase()) || null;
   const declarationText = isPatient
     ? "I confirm that the information I have provided is true, accurate and complete, and I agree to comply with the platform's Terms of Use and Privacy Policy."
     : "I confirm that I am authorized to register and represent this organization, that the information provided is accurate, and I agree to comply with the platform's Terms of Use and Privacy Policy.";
@@ -232,7 +274,14 @@ export default function Register() {
   const handleContinue = () => {
     if (!canContinue || !validate()) return;
     if (isPatient) { proceed(); return; }
-    setOrgCheck(findOrg(role, fld.orgName || "") ? "exists" : "create");
+    setShowOrgSuggestions(false);
+    setOrgCheck(matchedOrg ? "exists" : "create");
+  };
+
+  const onOrgNameChange = (v: string) => { setFld((s) => ({ ...s, orgName: v })); setShowOrgSuggestions(true); };
+  const pickOrg = (o: Org) => {
+    setFld((s) => ({ ...s, orgName: o.name, orgAddress: o.address || s.orgAddress }));
+    setShowOrgSuggestions(false);
   };
 
   return (
@@ -275,7 +324,29 @@ export default function Register() {
                 <Field label="Phone Number" required><PhoneInput value={fld.phone} onChangeText={up("phone")} /></Field>
 
                 <SectionRow title="Organization" />
-                <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required><Input value={fld.orgName} onChangeText={up("orgName")} /></Field>
+                <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required>
+                  <Input value={fld.orgName} onChangeText={onOrgNameChange} onFocus={() => setShowOrgSuggestions(true)} placeholder={`Search or type your ${orgNoun} name`} />
+                  {showOrgSuggestions && (fld.orgName || "").trim().length >= 2 && !matchedOrg && (orgSearching || orgMatches.length > 0) && (
+                    <View style={f.suggestBox}>
+                      {orgSearching && orgMatches.length === 0 ? (
+                        <View style={f.suggestRow}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <Small style={{ marginLeft: 8 }}>Searching…</Small>
+                        </View>
+                      ) : (
+                        orgMatches.slice(0, 6).map((o) => (
+                          <Pressable key={o.id} onPress={() => pickOrg(o)} style={f.suggestRow}>
+                            <View style={f.suggestIcon}><Building2 size={15} color={colors.primary} /></View>
+                            <View style={{ flex: 1 }}>
+                              <Body weight="700" style={{ fontSize: 14 }}>{o.name}</Body>
+                              {o.address ? <Small numberOfLines={1}>{o.address}</Small> : null}
+                            </View>
+                          </Pressable>
+                        ))
+                      )}
+                    </View>
+                  )}
+                </Field>
                 <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required>
                   <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={{ height: 64, textAlignVertical: "top" }} />
                 </Field>
@@ -368,13 +439,22 @@ export default function Register() {
             </Small>
           </View>
         </View>
-        <ScrollView style={{ maxHeight: 280 }} onScroll={onTermsScroll} scrollEventThrottle={16} nestedScrollEnabled showsVerticalScrollIndicator persistentScrollbar keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.md, paddingBottom: 8 }}>
-          {TERMS.map(([h, b]) => (
-            <View key={h} style={{ gap: 4 }}>
-              <Text style={{ fontFamily: fonts.heading, fontSize: 15, color: colors.foreground }}>{h}</Text>
-              <Small style={{ lineHeight: 20 }}>{b}</Small>
+        <ScrollView style={{ maxHeight: 280 }} onScroll={onTermsScroll} scrollEventThrottle={16} onContentSizeChange={(_w, h) => { if (!termsLoading && h <= 280) setTermsScrolled(true); }} nestedScrollEnabled showsVerticalScrollIndicator persistentScrollbar keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.md, paddingBottom: 8 }}>
+          {termsLoading ? (
+            <View style={{ alignItems: "center", paddingVertical: spacing.lg, gap: 8 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Small>Loading the latest terms…</Small>
             </View>
-          ))}
+          ) : termsError ? (
+            <Small color={colors.destructive} style={{ lineHeight: 20 }}>{termsError}</Small>
+          ) : (
+            (termsBlocks || []).map((blk, i) => (
+              <View key={i} style={{ gap: 4 }}>
+                <Text style={{ fontFamily: fonts.heading, fontSize: 15, color: colors.foreground }}>{blk.heading}</Text>
+                <Small style={{ lineHeight: 20 }}>{blk.body}</Small>
+              </View>
+            ))
+          )}
         </ScrollView>
         <View style={{ padding: spacing.lg }}>
           <Pressable disabled={!termsScrolled} onPress={() => { setAgreedToTerms(true); setShowTerms(false); }} style={[f.cta, termsScrolled ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
@@ -391,18 +471,20 @@ export default function Register() {
             {matchedOrg && (
               <View style={{ paddingHorizontal: spacing.lg }}>
                 <View style={f.adminCard}>
-                  <Eyebrow color={colors.mutedFg} style={{ marginBottom: 10 }}>{orgNoun} admin</Eyebrow>
+                  <Eyebrow color={colors.mutedFg} style={{ marginBottom: 10 }}>Registered {orgNoun}</Eyebrow>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                    <View style={f.adminAvatar}><Text style={{ fontFamily: fonts.bold, color: colors.primary, fontSize: 14 }}>{adminInitials(matchedOrg.admin.name)}</Text></View>
+                    <View style={f.adminAvatar}><Text style={{ fontFamily: fonts.bold, color: colors.primary, fontSize: 14 }}>{adminInitials(matchedOrg.name)}</Text></View>
                     <View style={{ flex: 1 }}>
-                      <Body weight="700" style={{ fontSize: 14 }}>{matchedOrg.admin.name}</Body>
-                      <Small>{matchedOrg.admin.role}</Small>
+                      <Body weight="700" style={{ fontSize: 14 }}>{matchedOrg.name}</Body>
+                      <Small>{orgTypeLabels[matchedOrg.type] || matchedOrg.type}</Small>
                     </View>
                   </View>
-                  <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><Mail size={15} color={colors.mutedFg} /><Small>{matchedOrg.admin.email}</Small></View>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><Phone size={15} color={colors.mutedFg} /><Small>{matchedOrg.admin.phone}</Small></View>
-                  </View>
+                  {(matchedOrg.email || matchedOrg.contact) && (
+                    <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 }}>
+                      {matchedOrg.email ? <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><Mail size={15} color={colors.mutedFg} /><Small>{matchedOrg.email}</Small></View> : null}
+                      {matchedOrg.contact ? <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><Phone size={15} color={colors.mutedFg} /><Small>{matchedOrg.contact}</Small></View> : null}
+                    </View>
+                  )}
                 </View>
               </View>
             )}
@@ -425,21 +507,14 @@ export default function Register() {
   );
 }
 
-const TERMS: [string, string][] = [
-  ["1. Acceptance of Terms", "By registering, you agree to be bound by these Terms and Conditions and our Privacy Policy. If you do not agree, do not proceed with registration."],
-  ["2. Data Privacy & PDPA Compliance", "All personal and clinical data collected is handled in accordance with applicable data protection laws. Your data will be used solely for the purposes of clinical trial management and communications related to your participation."],
-  ["3. Data Security", "We employ industry-standard security measures including encryption at rest and in transit. You are responsible for maintaining the confidentiality of your account credentials."],
-  ["4. Use of Platform", "Access is granted strictly for clinical trial management purposes. Any misuse, sharing of credentials, or unauthorized access is prohibited and may result in immediate account termination."],
-  ["5. Audit & Compliance", "All actions performed on the platform are logged for audit and regulatory compliance purposes. These logs may be shared with authorized regulators upon request."],
-  ["6. Consent for Communications", "By registering, you consent to receive communications related to your trial participation including visit reminders, medication alerts, and important protocol updates."],
-  ["7. Contact & Support", "For any questions regarding these terms, contact support@mtb-pvs.com. By scrolling through and tapping Accept, you confirm you have read and understood all terms above in full."],
-];
-
 const f = StyleSheet.create({
   label: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, marginBottom: 6 },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },
   prefix: { paddingHorizontal: 14, justifyContent: "center", borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   segment: { flexDirection: "row", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, borderRadius: radii.md, padding: 4, gap: 4 },
+  suggestBox: { marginTop: 6, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, overflow: "hidden" },
+  suggestRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  suggestIcon: { width: 30, height: 30, borderRadius: 8, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
   segmentBtn: { flex: 1, paddingVertical: 8, borderRadius: radii.sm, alignItems: "center", justifyContent: "center" },
   checkRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginTop: spacing.sm },
   checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, alignItems: "center", justifyContent: "center", marginTop: 2 },
