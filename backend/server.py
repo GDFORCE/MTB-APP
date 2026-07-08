@@ -112,6 +112,13 @@ class ChangePasswordIn(BaseModel):
     current_password: str
     new_password: str
 
+class ChangeContactStartIn(BaseModel):
+    field: Literal['email', 'phone']
+    value: str
+
+class ChangeContactVerifyIn(BaseModel):
+    code: str
+
 class TicketIn(BaseModel):
     category: str
     subject: str
@@ -638,6 +645,82 @@ async def register_resend(body: RegisterResendIn):
          '$inc': {'send_count': 1}},
     )
     return {'ok': True, 'resend_cooldown': OTP_RESEND_COOLDOWN_SEC}
+
+# ── Contact change (email / phone) with OTP verification ─────────────────────
+# Reuses the registration OTP machinery (_deliver_otp / _otp_matches /
+# _enforce_rate_limit / DEV_OTP_MODE). A single pending change per user lives in
+# `pending_contact_changes`; a new /start replaces any earlier one, and rows
+# auto-expire via the TTL index on `expires_at` (see _ensure_indexes).
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+async def _contact_value_taken(field: str, value: str, user_id: str) -> bool:
+    return bool(await db.users.find_one({field: value, 'id': {'$ne': user_id}}))
+
+@api.post('/auth/change-contact/start')
+async def change_contact_start(body: ChangeContactStartIn, user=Depends(current_user)):
+    field = body.field
+    value = (body.value or '').strip()
+    if field == 'email':
+        value = value.lower()
+        if not _EMAIL_RE.match(value):
+            raise HTTPException(400, 'Please enter a valid email address.')
+    elif not value:
+        raise HTTPException(400, 'Please enter a valid phone number.')
+    if await _contact_value_taken(field, value, user['id']):
+        raise HTTPException(409, f'That {field} is already in use by another account.')
+
+    await _enforce_rate_limit(value)
+    # Single pending change per user — a new start supersedes the old one.
+    await db.pending_contact_changes.delete_many({'user_id': user['id']})
+
+    code = otp_service.generate_code()
+    doc = {
+        'id': str(uuid.uuid4()),
+        'user_id': user['id'],
+        'field': field,
+        'value': value,
+        'channel': field,   # email -> email channel, phone -> sms channel
+        'otp_hash': pwd_ctx.hash(code),
+        'attempts': 0,
+        'created_at': now(),
+        'expires_at': now() + timedelta(minutes=otp_service.OTP_TTL_MIN),
+    }
+    # Deliver first — if the send fails we raise and persist nothing.
+    await _deliver_otp(field, value, code)
+    await db.pending_contact_changes.insert_one(doc)
+    return {'field': field, 'value': value, 'channel': field,
+            'expires_in': otp_service.OTP_TTL_MIN * 60}
+
+@api.post('/auth/change-contact/verify')
+async def change_contact_verify(body: ChangeContactVerifyIn, user=Depends(current_user)):
+    pending = await db.pending_contact_changes.find_one({'user_id': user['id']})
+    if not pending:
+        raise HTTPException(404, 'No pending contact change. Please start again.')
+    if pending['expires_at'] < now():
+        await db.pending_contact_changes.delete_one({'id': pending['id']})
+        raise HTTPException(400, 'Your verification code expired. Please start again.')
+    if pending.get('attempts', 0) >= OTP_MAX_VERIFY_ATTEMPTS:
+        await db.pending_contact_changes.delete_one({'id': pending['id']})
+        raise HTTPException(429, 'Too many incorrect attempts. Please start again.')
+    if not _otp_matches(body.code, pending.get('otp_hash')):
+        await db.pending_contact_changes.update_one({'id': pending['id']}, {'$inc': {'attempts': 1}})
+        raise HTTPException(400, 'Incorrect verification code')
+
+    field, value = pending['field'], pending['value']
+    # Re-check uniqueness at commit time (another account may have taken it since).
+    if await _contact_value_taken(field, value, user['id']):
+        await db.pending_contact_changes.delete_one({'id': pending['id']})
+        raise HTTPException(409, f'That {field} is already in use by another account.')
+
+    await db.users.update_one(
+        {'id': user['id']},
+        {'$set': {field: value, f'{field}_verified': True}})
+    await db.pending_contact_changes.delete_one({'id': pending['id']})
+    await write_audit(user, 'contact.change', f'Changed {field} to {value}',
+                      target_id=user['id'], field=field)
+    fresh = await db.users.find_one(
+        {'id': user['id']}, {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0})
+    return {'ok': True, 'field': field, 'value': value, 'user': serialize(fresh)}
 
 # ── Trials ───────────────────────────────────────────────────────────────────
 @api.get('/trials')
@@ -2138,6 +2221,7 @@ async def _ensure_indexes():
     try:
         # Auto-expire abandoned/unverified registrations + throttle windows via TTL.
         await db.pending_registrations.create_index('expires_at', expireAfterSeconds=0)
+        await db.pending_contact_changes.create_index('expires_at', expireAfterSeconds=0)
         await db.otp_throttle.create_index('expires_at', expireAfterSeconds=0)
         # Enforce unique emails at the DB layer (defence-in-depth vs. concurrent signups).
         await db.users.create_index(
