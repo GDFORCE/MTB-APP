@@ -668,11 +668,20 @@ async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro
 
 @api.get('/visits/mine')
 async def my_visits(user=Depends(current_user)):
-    """Return upcoming/completed visits for the logged-in patient."""
+    """Return upcoming/completed visits for the logged-in patient.
+
+    Served from the patient's own `visit_instances` (created at enrollment /
+    startup migration). Falls back to on-the-fly template computation for
+    legacy patient records that were never materialized, keeping the exact
+    field names the mobile app already consumes."""
     if user['role'] != 'patient':
         return []
     patient = await db.patients.find_one({'user_id': user['id']}, {'_id': 0})
     if not patient: return []
+    instances = await db.visit_instances.find({'patient_id': patient['id']}, {'_id': 0}) \
+                                        .sort('seq', 1).to_list(200)
+    if instances:
+        return instances
     visits = await db.visits.find({'trial_id': patient['trial_id']}, {'_id': 0}).sort('visit_number', 1).to_list(200)
     completed = set(patient.get('completed_visit_ids', []))
     result = []
@@ -686,6 +695,78 @@ async def my_visits(user=Depends(current_user)):
             'status': 'completed' if v['id'] in completed else ('upcoming' if scheduled >= now().replace(tzinfo=None) else 'missed'),
         })
     return result
+
+# ── Visit instances (per-patient copies of the trial's visit templates) ─────
+# The shared `visits` docs are TEMPLATES. Mutating them per patient would leak
+# one patient's completion into every other patient's schedule, so on enrollment
+# each patient gets their own `visit_instances` rows, and all per-patient
+# updates go through PATCH /visit-instances/{id}.
+
+async def materialize_visit_instances(patient) -> int:
+    """Create one visit_instance per trial visit template for `patient`.
+
+    Idempotent per patient (no-op if any instances already exist). Honors the
+    legacy `completed_visit_ids` list so migrated patients keep their history;
+    otherwise status derives from the scheduled date vs. now (matching the old
+    GET /visits/mine computation). Returns the number of instances created.
+    """
+    if not patient or not patient.get('id') or not patient.get('trial_id'):
+        return 0
+    if await db.visit_instances.count_documents({'patient_id': patient['id']}, limit=1):
+        return 0
+    templates = await db.visits.find({'trial_id': patient['trial_id']}, {'_id': 0}) \
+                               .sort('visit_number', 1).to_list(500)
+    if not templates:
+        return 0
+    try:
+        base = datetime.fromisoformat(patient.get('enrolled_date') or '')
+    except (TypeError, ValueError):
+        base = now()
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    n = now()
+    completed = set(patient.get('completed_visit_ids') or [])
+    docs = []
+    for t in templates:
+        sched = base + timedelta(days=t.get('day_offset', 0))
+        wd = t.get('window_days', 3)
+        docs.append({
+            'id': str(uuid.uuid4()),
+            'patient_id': patient['id'],
+            'trial_id': patient['trial_id'],
+            'visit_template_id': t['id'],
+            'name': t.get('name', ''),
+            'seq': t.get('visit_number'),
+            # duplicated template fields the RN app reads from /visits/mine
+            'visit_number': t.get('visit_number'),
+            'activities': t.get('activities', []),
+            'window_days': wd,
+            'scheduled_date': sched,
+            'window_start': sched - timedelta(days=wd),
+            'window_end': sched + timedelta(days=wd),
+            'status': 'completed' if t['id'] in completed
+                      else ('upcoming' if sched >= n else 'missed'),
+            'note': '',
+            'updated_by': None,
+            'updated_at': n,
+            'created_at': n,
+        })
+    await db.visit_instances.insert_many(docs)
+    return len(docs)
+
+async def _migrate_visit_instances():
+    """Startup backfill: materialize instances for patients enrolled before the
+    visit_instances collection existed. Idempotent + cheap (skips patients that
+    already have instances); failures only log so the API still boots."""
+    try:
+        have = await db.visit_instances.distinct('patient_id')
+        total = 0
+        async for p in db.patients.find({'id': {'$nin': have}}, {'_id': 0}):
+            total += await materialize_visit_instances(p)
+        if total:
+            logging.info('Visit-instance migration: materialized %d instance(s)', total)
+    except Exception as e:
+        logging.warning('Visit-instance migration deferred (DB unreachable?): %s', e)
 
 # ── Patients ────────────────────────────────────────────────────────────────
 @api.get('/patients')
@@ -710,7 +791,31 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
         'avatar_initials': ''.join([w[0].upper() for w in body.full_name.split()[:2]]) or 'P',
     }
     await db.patients.insert_one(doc)
+    created = await materialize_visit_instances(doc)
+    await write_audit(user, 'patient.enroll',
+                      f"Enrolled {doc['full_name']} in trial {doc['trial_id']} "
+                      f"({created} visit instance(s) materialized)",
+                      target_id=pid, trial_id=doc['trial_id'])
     return serialize(doc)
+
+@api.get('/patients/{patient_id}')
+async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
+    """Patient detail: the patient record + its trial + its visit instances."""
+    p = await db.patients.find_one({'id': patient_id}, {'_id': 0})
+    if not p:
+        raise HTTPException(404, 'Patient not found')
+    trial = await db.trials.find_one({'id': p.get('trial_id')}, {'_id': 0})
+    instances = await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
+                                        .sort('seq', 1).to_list(500)
+    return {**p, 'trial': trial, 'instances': instances}
+
+@api.get('/patients/{patient_id}/visits')
+async def get_patient_visits(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
+    p = await db.patients.find_one({'id': patient_id}, {'_id': 0, 'id': 1})
+    if not p:
+        raise HTTPException(404, 'Patient not found')
+    return await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
+                                   .sort('seq', 1).to_list(500)
 
 # ── Organizations directory ─────────────────────────────────────────────────
 @api.get('/organizations')
@@ -976,6 +1081,178 @@ async def patch_visit(visit_id: str, body: VisitPatch, user=Depends(require_role
     await write_audit(user, 'visit.patch', f'Updated visit {visit_id}: {", ".join(sorted(set(upd) - {"updated_by", "updated_at"}))}',
                       target_id=visit_id, changes=upd)
     return v
+
+# ── Visit-instance mutations (per-patient — never touches the template) ─────
+class VisitInstancePatch(BaseModel):
+    status: Optional[Literal['scheduled', 'upcoming', 'completed', 'missed', 'overdue']] = None
+    scheduled_date: Optional[str] = None
+    note: Optional[str] = None
+
+@api.patch('/visit-instances/{instance_id}')
+async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
+                               user=Depends(require_roles('pi', 'crc', 'sponsor'))):
+    inst = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
+    if not inst:
+        raise HTTPException(404, 'Visit instance not found')
+    upd: Dict = {}
+    if body.status is not None:
+        upd['status'] = body.status
+    if body.note is not None:
+        upd['note'] = body.note
+    if body.scheduled_date is not None:
+        try:
+            sched = datetime.fromisoformat(body.scheduled_date)
+        except ValueError:
+            raise HTTPException(400, 'scheduled_date must be an ISO 8601 date/datetime')
+        if sched.tzinfo is None:
+            sched = sched.replace(tzinfo=timezone.utc)
+        wd = inst.get('window_days', 3)
+        upd['scheduled_date'] = sched
+        upd['window_start'] = sched - timedelta(days=wd)
+        upd['window_end'] = sched + timedelta(days=wd)
+    if not upd:
+        raise HTTPException(400, 'Nothing to update')
+    changed = sorted(upd)
+    upd['updated_by'] = user['id']
+    upd['updated_at'] = now()
+    await db.visit_instances.update_one({'id': instance_id}, {'$set': upd})
+    fresh = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
+    await write_audit(user, 'visit_instance.patch',
+                      f"Updated visit instance {instance_id} ({inst.get('name', '')}): {', '.join(changed)}",
+                      target_id=instance_id, patient_id=inst.get('patient_id'),
+                      trial_id=inst.get('trial_id'),
+                      changes={k: iso(v) for k, v in upd.items()})
+    return fresh
+
+# ── Visit-schedule review (PI approves or flags a trial's schedule) ─────────
+class ScheduleFlagIn(BaseModel):
+    reason: str
+
+async def _notify_trial_sponsors(trial, title, body_text):
+    """Notify the trial's sponsor users: its creator (if sponsor/cro) plus every
+    sponsor-role user in the trial's sponsor organization."""
+    ids = set()
+    creator = await db.users.find_one({'id': trial.get('created_by')}, {'_id': 0, 'id': 1, 'role': 1})
+    if creator and creator.get('role') in ('sponsor', 'cro'):
+        ids.add(creator['id'])
+    sponsor_name = (trial.get('sponsor_name') or '').strip()
+    if sponsor_name:
+        others = await db.users.find({'role': 'sponsor', 'organization': sponsor_name},
+                                     {'_id': 0, 'id': 1}).to_list(200)
+        ids.update(u['id'] for u in others)
+    for uid in ids:
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': uid, 'title': title, 'body': body_text,
+            'kind': 'schedule', 'trial_id': trial['id'], 'read': False, 'created_at': now(),
+        })
+    return len(ids)
+
+async def _review_schedule(trial_id: str, user: dict, new_status: str, reason: str = ''):
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    upd = {'schedule_status': new_status,
+           'schedule_reviewed_by': user['id'], 'schedule_reviewed_at': now()}
+    if new_status == 'flagged':
+        upd['schedule_flag_reason'] = reason
+    await db.trials.update_one({'id': trial_id}, {'$set': upd})
+    label = trial.get('protocol_id') or trial.get('title') or trial_id
+    if new_status == 'approved':
+        title = f'Schedule approved · {label}'
+        body_text = f"{user['full_name']} approved the visit schedule for {label}."
+    else:
+        title = f'Schedule flagged · {label}'
+        body_text = f"{user['full_name']} flagged the visit schedule for {label}: {reason}"
+    notified = await _notify_trial_sponsors(trial, title, body_text)
+    await write_audit(user, f'schedule.{"approve" if new_status == "approved" else "flag"}',
+                      f'Visit schedule for {label} {new_status}' + (f' — {reason}' if reason else ''),
+                      target_id=trial_id, notified=notified)
+    return {'ok': True, 'trial_id': trial_id, 'schedule_status': new_status, 'notified': notified}
+
+@api.post('/schedules/{trial_id}/approve')
+async def approve_schedule(trial_id: str, user=Depends(require_roles('pi'))):
+    return await _review_schedule(trial_id, user, 'approved')
+
+@api.post('/schedules/{trial_id}/flag')
+async def flag_schedule(trial_id: str, body: ScheduleFlagIn, user=Depends(require_roles('pi'))):
+    return await _review_schedule(trial_id, user, 'flagged', reason=body.reason)
+
+# ── Tasks queue (pi/crc action items, computed on read) ─────────────────────
+@api.get('/tasks')
+async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
+    """Action queue for site staff: overdue visit instances, visits due today,
+    trials awaiting schedule review, and an unread-messages rollup. Computed
+    from existing collections on every read — nothing is stored."""
+    q = {'pi_id': user['id']} if user['role'] == 'pi' else {'crc_id': user['id']}
+    patients = await db.patients.find(q, {'_id': 0}).to_list(500)
+    pmap = {p['id']: p for p in patients}
+    tasks = []
+    start_today = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    end_today = start_today + timedelta(days=1)
+
+    if pmap:
+        insts = await db.visit_instances.find({
+            'patient_id': {'$in': list(pmap)},
+            'status': {'$nin': ['completed']},
+            'scheduled_date': {'$lt': end_today},
+        }, {'_id': 0}).sort('scheduled_date', 1).to_list(1000)
+        for i in insts:
+            sd = i.get('scheduled_date')
+            if not isinstance(sd, datetime):
+                continue
+            overdue = sd < start_today
+            ttype = 'overdue_visit' if overdue else 'visit_today'
+            p = pmap.get(i['patient_id'], {})
+            tasks.append({
+                'id': f"{ttype}:{i['id']}",
+                'type': ttype,
+                'title': f"{'Overdue' if overdue else 'Today'}: {i.get('name', 'Visit')}",
+                'subtitle': p.get('full_name', ''),
+                'due': iso(sd),
+                'patient_id': i['patient_id'],
+                'trial_id': i.get('trial_id'),
+                'priority': 'high' if overdue else 'medium',
+            })
+
+    trial_ids = sorted({p['trial_id'] for p in patients if p.get('trial_id')})
+    if trial_ids:
+        pending = await db.trials.find(
+            {'id': {'$in': trial_ids}, 'schedule_status': {'$nin': ['approved', 'flagged']}},
+            {'_id': 0}).to_list(200)
+        for t in pending:
+            tasks.append({
+                'id': f"schedule_review:{t['id']}",
+                'type': 'schedule_review',
+                'title': f"Review visit schedule · {t.get('protocol_id') or t.get('title', '')}",
+                'subtitle': t.get('title', ''),
+                'due': None,
+                'trial_id': t['id'],
+                'priority': 'medium',
+            })
+
+    conv_ids = [c['id'] for c in await db.conversations.find(
+        {'participant_ids': user['id']}, {'_id': 0, 'id': 1}).to_list(500)]
+    unread = 0
+    if conv_ids:
+        unread = await db.messages.count_documents({
+            'conversation_id': {'$in': conv_ids},
+            'sender_id': {'$ne': user['id']},
+            f'read_by.{user["id"]}': {'$exists': False},
+        })
+    if unread:
+        tasks.append({
+            'id': f"unread_messages:{user['id']}",
+            'type': 'unread_messages',
+            'title': f'{unread} unread message{"s" if unread != 1 else ""}',
+            'subtitle': 'Open chat to reply',
+            'due': None,
+            'count': unread,
+            'priority': 'low',
+        })
+
+    rank = {'high': 0, 'medium': 1, 'low': 2}
+    tasks.sort(key=lambda t: (rank.get(t['priority'], 3), t['due'] or '~'))
+    return tasks
 
 # ── Reminders (patient medication reminders) ──────────────────────────────
 class ReminderIn(BaseModel):
@@ -1316,6 +1593,8 @@ async def _ensure_indexes():
             'email', unique=True,
             partialFilterExpression={'email': {'$type': 'string', '$gt': ''}},
         )
+        # Per-patient visit instances are always fetched by patient.
+        await db.visit_instances.create_index('patient_id')
     except Exception as e:
         logging.warning('Index setup deferred (DB unreachable or existing duplicates?): %s', e)
 
@@ -1325,6 +1604,8 @@ async def startup():
         logging.warning('⚠️  DEV_OTP_MODE is ON — fixed OTP "%s" accepted for unconfigured channels. NEVER enable in production.', DEV_OTP_CODE)
     # Fire-and-forget: don't await, so the API serves immediately even if Atlas is down.
     asyncio.create_task(_ensure_indexes())
+    # Backfill visit_instances for pre-existing patients (idempotent; logs on failure).
+    asyncio.create_task(_migrate_visit_instances())
 
 @app.on_event('shutdown')
 async def shutdown(): client.close()
