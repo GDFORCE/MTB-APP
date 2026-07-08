@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -196,31 +196,42 @@ export default function Register() {
   const [showTerms, setShowTerms] = useState(false);
   const [termsScrolled, setTermsScrolled] = useState(false);
   const [orgCheck, setOrgCheck] = useState<"exists" | "create" | null>(null);
+  // True while Continue performs a fresh, awaited org lookup because the debounced
+  // results are still in-flight or stale for the currently typed name.
+  const [checkingOrg, setCheckingOrg] = useState(false);
   const [err, setErr] = useState("");
 
   // ── Live org directory lookup (debounced) ─────────────────────────────────
   const [orgMatches, setOrgMatches] = useState<Org[]>([]);
   const [orgSearching, setOrgSearching] = useState(false);
   const [showOrgSuggestions, setShowOrgSuggestions] = useState(false);
+  // The exact (trimmed) query the current `orgMatches` were fetched for. Used by
+  // Continue to detect when the latest results are stale vs. the typed org name.
+  const lastSearchedQuery = useRef("");
   useEffect(() => {
     if (isPatient) return;
     const q = (fld.orgName || "").trim();
     if (q.length < 2) { setOrgMatches([]); setOrgSearching(false); return; }
     setOrgSearching(true);
+    // Stale-response guard: a slow in-flight response for an older query must not
+    // overwrite newer results. Cleanup flips `ignore` so late responses are dropped.
+    let ignore = false;
     const t = setTimeout(async () => {
       try {
         const params: Record<string, string> = { search: q };
         const type = orgTypeFor(role);
         if (type) params.type = type;
         const res = await api.get("/organizations", { params });
+        if (ignore) return;
         setOrgMatches(Array.isArray(res.data) ? res.data : []);
+        lastSearchedQuery.current = q;
       } catch {
-        setOrgMatches([]);
+        if (!ignore) setOrgMatches([]);
       } finally {
-        setOrgSearching(false);
+        if (!ignore) setOrgSearching(false);
       }
     }, 300);
-    return () => clearTimeout(t);
+    return () => { ignore = true; clearTimeout(t); };
   }, [fld.orgName, role, isPatient]);
 
   // ── Terms & Conditions content (fetched when the modal opens) ─────────────
@@ -271,10 +282,38 @@ export default function Register() {
     });
   };
 
-  const handleContinue = () => {
-    if (!canContinue || !validate()) return;
+  const handleContinue = async () => {
+    if (!canContinue || !validate() || checkingOrg) return;
     if (isPatient) { proceed(); return; }
     setShowOrgSuggestions(false);
+    const q = (fld.orgName || "").trim();
+
+    // The exists-vs-create decision must not read stale/empty debounced results.
+    // If a search is still pending/in-flight for this name, or the latest results
+    // were fetched for a different name, do a fresh awaited lookup before deciding.
+    if (orgSearching || lastSearchedQuery.current.toLowerCase() !== q.toLowerCase()) {
+      setCheckingOrg(true);
+      try {
+        const params: Record<string, string> = { search: q };
+        const type = orgTypeFor(role);
+        if (type) params.type = type;
+        const res = await api.get("/organizations", { params });
+        const list: Org[] = Array.isArray(res.data) ? res.data : [];
+        setOrgMatches(list);
+        lastSearchedQuery.current = q;
+        setOrgSearching(false);
+        const fresh = list.find((o) => o.name.trim().toLowerCase() === q.toLowerCase()) || null;
+        setOrgCheck(fresh ? "exists" : "create");
+      } catch {
+        // Lookup failed — keep the non-blocking free-text path (offer to create).
+        setOrgCheck("create");
+      } finally {
+        setCheckingOrg(false);
+      }
+      return;
+    }
+
+    // Latest debounced results are for the current name — trust the derived match.
     setOrgCheck(matchedOrg ? "exists" : "create");
   };
 
@@ -387,8 +426,12 @@ export default function Register() {
 
         {/* Footer */}
         <View style={f.footer}>
-          <Springy testID="register-submit-button" onPress={handleContinue} disabled={!canContinue} style={[f.cta, canContinue ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: canContinue ? colors.primaryFg : colors.mutedFg }}>Continue</Text>
+          <Springy testID="register-submit-button" onPress={handleContinue} disabled={!canContinue || checkingOrg} style={[f.cta, canContinue ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
+            {checkingOrg ? (
+              <ActivityIndicator color={colors.primaryFg} />
+            ) : (
+              <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: canContinue ? colors.primaryFg : colors.mutedFg }}>Continue</Text>
+            )}
           </Springy>
         </View>
       </KeyboardAvoidingView>
