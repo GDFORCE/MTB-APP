@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument, UpdateOne
 import os, re, json, logging, uuid, asyncio
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
@@ -47,7 +48,7 @@ def now(): return datetime.now(timezone.utc)
 def iso(d): return d.isoformat() if isinstance(d, datetime) else d
 
 # ── Models ───────────────────────────────────────────────────────────────────
-Role = Literal['sponsor', 'cro', 'smo', 'site', 'pi', 'crc', 'patient']
+Role = Literal['sponsor', 'cro', 'smo', 'site', 'pi', 'crc', 'patient', 'admin']
 
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -976,93 +977,339 @@ async def ws_endpoint(websocket: WebSocket, token: str = Query(...)):
         await db.users.update_one({'id': user_id}, {'$set': {'is_online': False, 'last_seen': now()}})
 
 # ── Seed demo data ──────────────────────────────────────────────────────────
+# Every seeded document is keyed on a stable natural key (email, protocol_id,
+# (trial_id, visit_number), (medication_id, date, time), …) and upserted, so
+# POST /api/seed can run any number of times without duplicating rows and
+# without wiping non-seed user data.
+SEED_PASSWORD = 'Password1!'
+
+async def _seed_upsert(coll, key: Dict, insert: Optional[Dict] = None,
+                       update: Optional[Dict] = None) -> Dict:
+    """Upsert one seed doc keyed on `key`. `insert` fields apply only on first
+    creation ($setOnInsert — existing rows are never overwritten); `update`
+    fields are refreshed on every run ($set). Returns the stored document."""
+    ops: Dict = {'$setOnInsert': {'id': str(uuid.uuid4()), **(insert or {})}}
+    if update:
+        ops['$set'] = update
+    return await coll.find_one_and_update(
+        key, ops, upsert=True, return_document=ReturnDocument.AFTER,
+        projection={'_id': 0})
+
 @api.post('/seed')
 async def seed_demo():
-    """Idempotent seed of demo users + a trial + visits + patient + notifications."""
-    seeded = await db.meta.find_one({'key': 'seeded_v1'})
-    if seeded:
-        return {'ok': True, 'already': True}
+    """Idempotent demo seed (rich data for every role):
+
+    - one account per role incl. `admin` (password Password1!), org_admin
+      flags on the sponsor/site accounts
+    - 4 organizations, 3 trials with visit templates
+    - 8 patients across the trials, visit instances curated into a mix of
+      completed / upcoming / missed plus one overdue and visits due today
+      (so GET /api/tasks has items for pi@mtb.app / crc@mtb.app)
+    - medications + 14 days of dose logs → ~93% adherence for patient@mtb.app
+    - notifications of each kind, support tickets in each status, invitations
+      in all four lifecycle statuses, sample audit rows
+    - admin-module fixtures: master-data submissions, terms versions, system
+      alerts, broadcast messages
+    """
+    n = now()
+    today = n.date()
+    start_today = n.replace(hour=0, minute=0, second=0, microsecond=0)
+    pw = pwd_ctx.hash(SEED_PASSWORD)     # one hash — all demo users share the password
+    pet = pwd_ctx.hash('bruno')
+
+    # 1) Organizations — one per org type.
+    for org_name, otype in [('Pfizer Global', 'sponsor'), ('IQVIA India', 'cro'),
+                            ('MedPoint SMO Services', 'smo'), ('AIIMS Delhi', 'site')]:
+        await _seed_upsert(db.organizations, {'name': org_name}, insert={
+            'type': otype, 'address': 'Sector 12, New Delhi',
+            'contact': '+91 11 2658 0000',
+            'email': f"contact@{org_name.split()[0].lower()}.example",
+            'website': '', 'status': 'active', 'created_at': n, 'seed': True})
+
+    # 2) Users — one per role. org_admin marks the org-console owners.
     demo_users = [
-        ('sponsor@mtb.app', 'sponsor', 'Sarah Chen', 'Pfizer Global'),
-        ('pi@mtb.app',      'pi',      'Dr. Rajesh Sharma', 'AIIMS Delhi'),
-        ('crc@mtb.app',     'crc',     'Anita Verma', 'AIIMS Delhi'),
-        ('patient@mtb.app', 'patient', 'Priya Kumar', ''),
+        ('admin@mtb.app',   'admin',   'Meera Nair',        'MTB Health Technologies', {}),
+        ('sponsor@mtb.app', 'sponsor', 'Sarah Chen',        'Pfizer Global',           {'org_admin': True}),
+        ('cro@mtb.app',     'cro',     'David Okafor',      'IQVIA India',             {}),
+        ('smo@mtb.app',     'smo',     'Kavita Rao',        'MedPoint SMO Services',   {}),
+        ('site@mtb.app',    'site',    'Vikram Malhotra',   'AIIMS Delhi',             {'org_admin': True}),
+        ('pi@mtb.app',      'pi',      'Dr. Rajesh Sharma', 'AIIMS Delhi',             {}),
+        ('crc@mtb.app',     'crc',     'Anita Verma',       'AIIMS Delhi',             {}),
+        ('patient@mtb.app', 'patient', 'Priya Kumar',       '',                        {}),
     ]
-    ids = {}
-    for email, role, name, org in demo_users:
-        uid = str(uuid.uuid4())
-        ids[role] = uid
-        await db.users.insert_one({
-            'id': uid, 'email': email, 'role': role, 'full_name': name,
-            'organization': org, 'phone': '+91 98765 43210',
-            'hashed_password': pwd_ctx.hash('Password1!'),
-            'avatar_initials': ''.join([w[0].upper() for w in name.split()[:2]]),
-            'security_question': "What is the name of your first pet?",
-            'security_answer_hash': pwd_ctx.hash('bruno'),
-            'created_at': now(), 'is_online': False,
-        })
-    # Trial
-    tid = str(uuid.uuid4())
-    await db.trials.insert_one({
-        'id': tid, 'protocol_id': 'Protocol-001', 'title': 'A Phase II Trial of MTB-Diab-Rx in Type-2 Diabetes',
-        'phase': 'Phase II', 'condition': 'Type-2 Diabetes',
-        'description': 'A randomized, double-blind study of MTB-Diab-Rx vs placebo.',
-        'sponsor_name': 'Pfizer Global', 'created_by': ids['sponsor'],
-        'created_at': now(), 'status': 'active',
-    })
-    # Visits
-    visits_spec = [
-        (1, 'Screening', 0, ['Informed consent', 'Medical history', 'Vitals', 'Blood draw']),
-        (2, 'Baseline', 7, ['Physical exam', 'ECG', 'Blood draw', 'Study drug dispense']),
-        (3, 'Week 2', 14, ['Vitals', 'Adverse-event review']),
-        (4, 'Week 4', 28, ['Vitals', 'Blood draw', 'Adverse-event review']),
-        (5, 'Week 8', 56, ['Vitals', 'Blood draw', 'Drug accountability']),
-        (6, 'Week 12', 84, ['Vitals', 'Blood draw', 'Drug accountability']),
-        (7, 'Week 16 · Follow-Up', 112, ['Vitals', 'Blood draw', 'Adherence review']),
-        (8, 'Week 20', 140, ['Vitals', 'Blood draw']),
-        (9, 'Week 24', 168, ['Vitals', 'Blood draw', 'ECG']),
-        (10, 'End of Study', 196, ['Final exam', 'Drug return', 'Final assessment']),
+    users: Dict[str, dict] = {}
+    for email, role, name, org, extra in demo_users:
+        users[role] = await _seed_upsert(db.users, {'email': email}, insert={
+            'role': role, 'full_name': name, 'organization': org,
+            'phone': '+91 98765 43210', 'hashed_password': pw,
+            'avatar_initials': ''.join(w[0].upper() for w in name.replace('Dr. ', '').split()[:2]) or 'U',
+            'security_question': 'What is the name of your first pet?',
+            'security_answer_hash': pet,
+            'created_at': n, 'is_online': False,
+        }, update=extra or None)
+
+    # 3) Trials + their visit templates (keyed on trial_id + visit_number).
+    trials_spec = [
+        ('Protocol-001', 'A Phase II Trial of MTB-Diab-Rx in Type-2 Diabetes',
+         'Phase II', 'Type-2 Diabetes',
+         'A randomized, double-blind study of MTB-Diab-Rx vs placebo.',
+         [(1, 'Screening', 0, ['Informed consent', 'Medical history', 'Vitals', 'Blood draw']),
+          (2, 'Baseline', 7, ['Physical exam', 'ECG', 'Blood draw', 'Study drug dispense']),
+          (3, 'Week 2', 14, ['Vitals', 'Adverse-event review']),
+          (4, 'Week 4', 28, ['Vitals', 'Blood draw', 'Adverse-event review']),
+          (5, 'Week 8', 56, ['Vitals', 'Blood draw', 'Drug accountability']),
+          (6, 'Week 12', 84, ['Vitals', 'Blood draw', 'Drug accountability']),
+          (7, 'Week 16 · Follow-Up', 112, ['Vitals', 'Blood draw', 'Adherence review']),
+          (8, 'Week 20', 140, ['Vitals', 'Blood draw']),
+          (9, 'Week 24', 168, ['Vitals', 'Blood draw', 'ECG']),
+          (10, 'End of Study', 196, ['Final exam', 'Drug return', 'Final assessment'])]),
+        ('Protocol-002', 'A Phase III Study of MTB-HTN-24 in Resistant Hypertension',
+         'Phase III', 'Hypertension',
+         'A multicentre, open-label study of MTB-HTN-24 in resistant hypertension.',
+         [(1, 'Screening', 0, ['Informed consent', 'Vitals', 'ABPM setup']),
+          (2, 'Baseline', 7, ['Physical exam', 'Blood draw', 'Study drug dispense']),
+          (3, 'Week 4', 28, ['Vitals', 'Adverse-event review']),
+          (4, 'Week 8', 56, ['Vitals', 'Blood draw']),
+          (5, 'Week 12', 84, ['Vitals', 'Drug accountability']),
+          (6, 'End of Study', 112, ['Final exam', 'Drug return'])]),
+        ('Protocol-003', 'A Phase I Dose-Escalation Study of MTB-Onc-7',
+         'Phase I', 'Solid Tumours',
+         'First-in-human dose-escalation and safety study of MTB-Onc-7.',
+         [(1, 'Screening', 0, ['Informed consent', 'Tumour imaging', 'Blood draw']),
+          (2, 'Cycle 1 Day 1', 3, ['Dosing', 'PK sampling', 'Vitals']),
+          (3, 'Cycle 1 Day 8', 10, ['PK sampling', 'Adverse-event review']),
+          (4, 'Cycle 2 Day 1', 24, ['Dosing', 'Vitals', 'Blood draw']),
+          (5, 'End of Cycle 2', 45, ['Tumour imaging', 'Final assessment'])]),
     ]
-    for n, name, off, acts in visits_spec:
-        await db.visits.insert_one({
-            'id': str(uuid.uuid4()), 'trial_id': tid, 'visit_number': n,
-            'name': name, 'day_offset': off, 'window_days': 3, 'activities': acts,
-            'created_at': now(),
-        })
-    # Patient record
-    enrolled = (now() - timedelta(days=70)).date().isoformat()
-    await db.patients.insert_one({
-        'id': str(uuid.uuid4()), 'user_id': ids['patient'],
-        'full_name': 'Priya Kumar', 'email': 'patient@mtb.app',
-        'phone': '+91 98765 43210', 'trial_id': tid,
-        'pi_id': ids['pi'], 'crc_id': ids['crc'],
-        'enrolled_date': enrolled, 'completed_visit_ids': [],
-        'avatar_initials': 'PK', 'created_at': now(),
-    })
-    # 4 more patients for the PI/CRC list
-    for fn in ['Ravi Patel', 'Sunita Iyer', 'Arjun Singh', 'Meera Joshi']:
-        await db.patients.insert_one({
-            'id': str(uuid.uuid4()), 'user_id': None,
-            'full_name': fn, 'email': fn.lower().replace(' ', '.') + '@mtb.app',
-            'phone': '+91 98765 00000', 'trial_id': tid,
-            'pi_id': ids['pi'], 'crc_id': ids['crc'],
-            'enrolled_date': (now() - timedelta(days=40)).date().isoformat(),
-            'completed_visit_ids': [], 'avatar_initials': ''.join([w[0] for w in fn.split()[:2]]).upper(),
-            'created_at': now(),
-        })
-    # Notifications for patient
-    for title, body, kind in [
-        ('Visit 7 tomorrow', 'Follow-Up Visit at AIIMS Delhi · 23 May', 'reminder'),
-        ('Message from Dr. Sharma', 'Please fast for 8 hours before your Visit 7 blood draw.', 'message'),
-        ('Lab results available', 'Your Visit 6 results have been reviewed.', 'result'),
+    trial_ids: Dict[str, str] = {}
+    for protocol, title, phase, condition, desc, visits in trials_spec:
+        t = await _seed_upsert(db.trials, {'protocol_id': protocol}, insert={
+            'title': title, 'phase': phase, 'condition': condition,
+            'description': desc, 'sponsor_name': 'Pfizer Global',
+            'created_by': users['sponsor']['id'], 'created_at': n, 'status': 'active'})
+        trial_ids[protocol] = t['id']
+        for num, vname, off, acts in visits:
+            await _seed_upsert(db.visits, {'trial_id': t['id'], 'visit_number': num}, insert={
+                'name': vname, 'day_offset': off, 'window_days': 3,
+                'activities': acts, 'created_at': n})
+
+    # 4) Patients — 8 across the 3 trials. pi/crc ids are re-pointed on every
+    #    run so scoping and the tasks queue always resolve to the demo staff.
+    staff = {'pi_id': users['pi']['id'], 'crc_id': users['crc']['id']}
+    patients_spec = [
+        ('Priya Kumar',   'patient@mtb.app',       'Protocol-001', 70, users['patient']['id']),
+        ('Ravi Patel',    'ravi.patel@mtb.app',    'Protocol-001', 40, None),
+        ('Sunita Iyer',   'sunita.iyer@mtb.app',   'Protocol-001', 40, None),
+        ('Arjun Singh',   'arjun.singh@mtb.app',   'Protocol-001', 40, None),
+        ('Meera Joshi',   'meera.joshi@mtb.app',   'Protocol-001', 40, None),
+        ('Karan Mehta',   'karan.mehta@mtb.app',   'Protocol-002', 30, None),
+        ('Fatima Sheikh', 'fatima.sheikh@mtb.app', 'Protocol-002', 10, None),
+        ('Rohan Das',     'rohan.das@mtb.app',     'Protocol-003', 3,  None),
+    ]
+    pids: Dict[str, str] = {}
+    for fname, email, protocol, days_ago, linked_user_id in patients_spec:
+        p = await _seed_upsert(db.patients, {'email': email}, insert={
+            'full_name': fname, 'phone': '+91 98765 00000',
+            'trial_id': trial_ids[protocol],
+            'enrolled_date': (n - timedelta(days=days_ago)).date().isoformat(),
+            'completed_visit_ids': [],
+            'avatar_initials': ''.join(w[0].upper() for w in fname.split()[:2]),
+            'created_at': n,
+        }, update={**staff, 'user_id': linked_user_id})
+        pids[email] = p['id']
+        await materialize_visit_instances(p)   # no-op if already materialized
+
+    # 5) Curate visit instances into the demo status mix. Deterministic $set
+    #    updates keyed on (patient_id, seq) — reruns re-align, never duplicate.
+    def _sched(days_from_today: int) -> Dict:
+        sd = start_today + timedelta(days=days_from_today, hours=10)
+        return {'status': 'upcoming', 'scheduled_date': sd,
+                'window_start': sd - timedelta(days=3),
+                'window_end': sd + timedelta(days=3)}
+
+    async def _curate(email: str, updates: Dict[int, Dict]):
+        await db.visit_instances.bulk_write([
+            UpdateOne({'patient_id': pids[email], 'seq': seq}, {'$set': fields})
+            for seq, fields in updates.items()])
+
+    done = {'status': 'completed'}
+    await _curate('patient@mtb.app', {1: done, 2: done, 3: done,
+                                      4: _sched(-2),    # overdue → tasks queue
+                                      5: _sched(0)})    # due today
+    await _curate('ravi.patel@mtb.app', {1: done, 2: done, 3: done, 4: done})
+    await _curate('karan.mehta@mtb.app', {1: done, 2: done})
+    await _curate('rohan.das@mtb.app', {1: done, 2: _sched(0)})
+    # (sunita/arjun/meera/fatima keep their materialized missed/upcoming mix)
+
+    # 6) Medications + 14 days of dose logs for patient@mtb.app.
+    #    3 slots/day × 14 days = 42 expected; 3 non-taken → 39/42 ≈ 93%.
+    #    The misses sit 10–11 days back so streak_days stays ≥ 10. start_date
+    #    is re-pinned to today-13 on every run to keep the window aligned.
+    priya = pids['patient@mtb.app']
+    med_start = (today - timedelta(days=13)).isoformat()
+    med_common = {'route': 'oral', 'end_date': None, 'active': True,
+                  'created_by': users['crc']['id'], 'created_at': n}
+    med1 = await _seed_upsert(db.medications, {'patient_id': priya, 'name': 'MTB-Diab-Rx'},
+                              insert={'trial_id': trial_ids['Protocol-001'], 'dosage': '500 mg',
+                                      'schedule': [{'time': '08:00', 'label': 'Morning'},
+                                                   {'time': '20:00', 'label': 'Evening'}],
+                                      **med_common},
+                              update={'start_date': med_start})
+    med2 = await _seed_upsert(db.medications, {'patient_id': priya, 'name': 'Metformin'},
+                              insert={'trial_id': trial_ids['Protocol-001'], 'dosage': '850 mg',
+                                      'schedule': [{'time': '08:00', 'label': 'Morning'}],
+                                      **med_common},
+                              update={'start_date': med_start})
+    # Keep the demo adherence deterministic: stray meds added to the demo
+    # patient outside the seed are deactivated (never deleted).
+    await db.medications.update_many(
+        {'patient_id': priya, 'name': {'$nin': ['MTB-Diab-Rx', 'Metformin']}, 'active': True},
+        {'$set': {'active': False}})
+
+    dose_ops = []
+    def _dose(med, day_offset, slot, status_):
+        dose_ops.append(UpdateOne(
+            {'medication_id': med['id'],
+             'date': (today - timedelta(days=day_offset)).isoformat(), 'time': slot},
+            {'$set': {'status': status_, 'logged_at': n},
+             '$setOnInsert': {'id': str(uuid.uuid4()), 'patient_id': med['patient_id']}},
+            upsert=True))
+    for k in range(14):
+        _dose(med1, k, '08:00', 'not_taken' if k == 11 else 'taken')
+        _dose(med1, k, '20:00', 'skipped' if k == 10 else 'taken')
+        _dose(med2, k, '08:00', 'skipped' if k == 11 else 'taken')
+    # A second patient on medication so staff screens have variety.
+    med3 = await _seed_upsert(db.medications, {'patient_id': pids['karan.mehta@mtb.app'], 'name': 'Amlodipine'},
+                              insert={'trial_id': trial_ids['Protocol-002'], 'dosage': '5 mg',
+                                      'schedule': [{'time': '09:00', 'label': 'Morning'}],
+                                      **med_common},
+                              update={'start_date': (today - timedelta(days=2)).isoformat()})
+    for k in range(3):
+        _dose(med3, k, '09:00', 'taken')
+    await db.dose_logs.bulk_write(dose_ops)
+
+    # 7) Notifications — one of each kind, spread across roles.
+    for role, title, body_text, kind in [
+        ('patient', 'Visit due today', 'Your Week 8 visit at AIIMS Delhi is scheduled today.', 'reminder'),
+        ('patient', 'Message from Dr. Sharma', 'Please fast for 8 hours before your blood draw.', 'message'),
+        ('patient', 'Lab results reviewed', 'Your Week 4 results have been reviewed by your care team.', 'result'),
+        ('pi',      'Schedule review pending', 'Protocol-002 visit schedule is awaiting your review.', 'schedule'),
+        ('crc',     'New patient enrolled', 'Rohan Das was enrolled in Protocol-003.', 'system'),
+        ('sponsor', 'Schedule approved · Protocol-001', 'Dr. Rajesh Sharma approved the visit schedule.', 'schedule'),
+        ('admin',   'OTP delivery failures', '3 OTP deliveries failed in the last 24 hours.', 'system'),
     ]:
-        await db.notifications.insert_one({
-            'id': str(uuid.uuid4()), 'user_id': ids['patient'],
-            'title': title, 'body': body, 'kind': kind, 'read': False,
-            'created_at': now() - timedelta(hours=2),
-        })
-    await db.meta.insert_one({'key': 'seeded_v1', 'at': now()})
-    return {'ok': True, 'users': demo_users, 'password': 'Password1!'}
+        await _seed_upsert(db.notifications,
+                           {'user_id': users[role]['id'], 'title': title, 'seed': True},
+                           insert={'body': body_text, 'kind': kind, 'read': False,
+                                   'created_at': n - timedelta(hours=2)})
+
+    # 8) Support tickets — one per status (status refreshed each run).
+    for role, cat, subject, ticket_status in [
+        ('patient', 'Technical', 'App shows a blank screen after login', 'Open'),
+        ('crc',     'Account',   'Unable to update phone number', 'In Progress'),
+        ('pi',      'General',   'Question about visit-window rules', 'Resolved'),
+    ]:
+        await _seed_upsert(db.support_tickets,
+                           {'user_id': users[role]['id'], 'subject': subject, 'seed': True},
+                           insert={'ticket_id': f"#TKT-{n.strftime('%Y%m%d')}-{str(uuid.uuid4().int)[:4]}",
+                                   'category': cat,
+                                   'description': f'Seeded demo ticket ({ticket_status.lower()}).',
+                                   'created_at': n - timedelta(days=1)},
+                           update={'status': ticket_status})
+
+    # 9) Invitations — one per lifecycle status. The pending one has its
+    #    expiry pushed forward on every run so it stays genuinely pending.
+    async def _seed_invite(email, role, inv_status, extra=None, refresh=None):
+        await _seed_upsert(db.invitations, {'email': email}, insert={
+            'token': uuid.uuid4().hex, 'phone': '', 'full_name': '',
+            'role': role, 'trial_id': None, 'invited_by': users['pi']['id'],
+            'org': 'AIIMS Delhi', 'site': 'AIIMS Delhi', 'status': inv_status,
+            'created_at': n, 'resend_count': 0, 'seed': True, **(extra or {})},
+            update=refresh)
+
+    await _seed_invite('invitee.pending@mtb.app', 'crc', 'pending',
+                       refresh={'expires_at': n + timedelta(days=INVITE_TTL_DAYS)})
+    await _seed_invite('invitee.accepted@mtb.app', 'patient', 'accepted',
+                       {'expires_at': n + timedelta(days=INVITE_TTL_DAYS),
+                        'accepted_at': n - timedelta(days=1)})
+    await _seed_invite('invitee.expired@mtb.app', 'patient', 'pending',
+                       {'expires_at': n - timedelta(days=1)})   # reads as expired
+    await _seed_invite('invitee.cancelled@mtb.app', 'crc', 'cancelled',
+                       {'expires_at': n + timedelta(days=INVITE_TTL_DAYS),
+                        'cancelled_at': n - timedelta(days=2)})
+
+    # 10) Sample audit rows across categories (write_audit shape).
+    for role, action, detail, audit_status in [
+        ('patient', 'login.success', 'Signed in from the mobile app', 'success'),
+        ('patient', 'login.failed', 'Wrong password (2 attempts)', 'failure'),
+        ('crc',     'visit.patch', 'Marked Baseline visit completed for Ravi Patel', 'success'),
+        ('crc',     'patient.enroll', 'Enrolled Rohan Das in Protocol-003', 'success'),
+        ('sponsor', 'trial.create', 'Created trial Protocol-002', 'success'),
+        ('patient', 'account.update', 'Updated phone number', 'success'),
+        (None,      'system.backup', 'Nightly database backup completed', 'success'),
+    ]:
+        actor = users.get(role) or {}
+        await _seed_upsert(db.audit_logs,
+                           {'action': action, 'detail': detail, 'seed': True},
+                           insert={'user_id': actor.get('id'),
+                                   'user_name': actor.get('full_name', ''),
+                                   'role': actor.get('role', ''),
+                                   'org': actor.get('organization', ''),
+                                   'category': action.split('.', 1)[0],
+                                   'ip': '103.27.9.44', 'device': 'iPhone 15 · MTB app',
+                                   'status': audit_status,
+                                   'created_at': n - timedelta(hours=6)})
+
+    # 11) Admin-module fixtures. Field names follow the admin API audit
+    #     (docs/superpowers/audits/2026-07-07-admin-api-audit.md §4/5/7/14);
+    #     the admin backend task will formalize these collections later.
+    # Master-data "Others: specify" submissions (§4)
+    for field_type, value, md_status, action_by, reject in [
+        ('designation', 'Clinical Research Fellow', 'pending', None, ''),
+        ('department', 'Endocrinology Research Wing', 'approved', 'Meera Nair', ''),
+        ('designation', 'Wellness Consultant', 'rejected', 'Meera Nair', 'Not a recognised clinical designation'),
+    ]:
+        await _seed_upsert(db.master_data_submissions,
+                           {'fieldType': field_type, 'value': value},
+                           insert={'submittedBy': users['crc']['full_name'], 'org': 'AIIMS Delhi',
+                                   'dateSubmitted': n - timedelta(days=2), 'status': md_status,
+                                   'actionBy': action_by, 'rejectReason': reject, 'seed': True})
+
+    # Terms & privacy versions (§5) — v1.0 of each, active.
+    for doc_type in ('ToS', 'Privacy'):
+        await _seed_upsert(db.terms_versions, {'type': doc_type, 'version': '1.0'},
+                           insert={'status': 'active', 'createdAt': n - timedelta(days=30),
+                                   'activatedAt': n - timedelta(days=30), 'acceptedBy': 6,
+                                   'content': f'{doc_type} v1.0 — demo content; rendered document at /api/legal.',
+                                   'seed': True})
+
+    # System alerts (§7)
+    for alert_type, desc, affected, severity, alert_status in [
+        ('OTP failure', 'SMS OTP delivery failed 3 times in a row', 'patient@mtb.app', 'high', 'open'),
+        ('Invite failure', 'Invitation email bounced', 'invitee.pending@mtb.app', 'medium', 'open'),
+        ('Session anomaly', 'Login from a new device and location', 'crc@mtb.app', 'low', 'resolved'),
+    ]:
+        await _seed_upsert(db.system_alerts, {'type': alert_type, 'description': desc},
+                           insert={'affected': affected, 'severity': severity,
+                                   'status': alert_status, 'timestamp': n - timedelta(hours=4),
+                                   'seed': True})
+
+    # Broadcast messages (§14)
+    for msg_type, subject, body_text, target in [
+        ('general', 'Welcome to My Trial Board', 'The MTB platform is now live for all study teams.', 'all'),
+        ('compliance', 'Annual GCP refresher due', 'Please complete your GCP refresher training by month end.', 'role:pi'),
+        ('urgent', 'Planned maintenance tonight', 'The platform will be read-only 02:00–03:00 IST.', 'all'),
+    ]:
+        await _seed_upsert(db.broadcast_messages, {'subject': subject},
+                           insert={'type': msg_type, 'body': body_text, 'target': target,
+                                   'allowReplies': msg_type != 'urgent', 'scheduleAt': None,
+                                   'status': 'sent', 'sent_at': n - timedelta(days=1),
+                                   'created_by': users['admin']['id'], 'seed': True})
+
+    await db.meta.update_one({'key': 'seeded_v2'}, {'$set': {'at': n}}, upsert=True)
+    return {'ok': True,
+            'users': [{'email': e, 'role': r} for e, r, _n, _o, _x in demo_users],
+            'password': SEED_PASSWORD}
 
 # ── Visit mutations (mark complete / reschedule / flag) ────────────────────
 class VisitPatch(BaseModel):

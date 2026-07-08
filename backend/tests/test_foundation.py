@@ -305,3 +305,136 @@ class TestInvitationLifecycle:
                 r2 = await cli.post(f"/api/invitations/{inv['id']}/cancel", headers=patient_headers)
                 assert r2.status_code == 403
         run(flow())
+
+
+# ── Seed expansion (Task 1.4) ────────────────────────────────────────────────
+# The seed writes the durable demo dataset (natural-key upserts), so nothing
+# here is cleaned up in teardown — reruns must simply never duplicate rows.
+SEED_EMAILS = ['admin@mtb.app', 'sponsor@mtb.app', 'cro@mtb.app', 'smo@mtb.app',
+               'site@mtb.app', 'pi@mtb.app', 'crc@mtb.app', 'patient@mtb.app']
+SEED_PROTOCOLS = ['Protocol-001', 'Protocol-002', 'Protocol-003']
+
+
+async def _seed_once():
+    async with make_client() as cli:
+        r = await cli.post('/api/seed')
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def _snapshot():
+    """Row counts across every collection the seed touches, keyed so a rerun
+    that duplicates anything shows up as a diff."""
+    db = server.db
+    trial_ids = [t['id'] async for t in db.trials.find(
+        {'protocol_id': {'$in': SEED_PROTOCOLS}}, {'id': 1})]
+    pids = [p['id'] async for p in db.patients.find(
+        {'email': {'$regex': r'@mtb\.app$'}}, {'id': 1})]
+    return {
+        'users': await db.users.count_documents({'email': {'$in': SEED_EMAILS}}),
+        'orgs': await db.organizations.count_documents({'seed': True}),
+        'trials': len(trial_ids),
+        'visits': await db.visits.count_documents({'trial_id': {'$in': trial_ids}}),
+        'patients': len(pids),
+        'instances': await db.visit_instances.count_documents({'patient_id': {'$in': pids}}),
+        'medications': await db.medications.count_documents({'patient_id': {'$in': pids}}),
+        'dose_logs': await db.dose_logs.count_documents({'patient_id': {'$in': pids}}),
+        'notifications': await db.notifications.count_documents({'seed': True}),
+        'tickets': await db.support_tickets.count_documents({'seed': True}),
+        'invitations': await db.invitations.count_documents({'seed': True}),
+        'audits': await db.audit_logs.count_documents({'seed': True}),
+        'master_data': await db.master_data_submissions.count_documents({'seed': True}),
+        'terms': await db.terms_versions.count_documents({'seed': True}),
+        'alerts': await db.system_alerts.count_documents({'seed': True}),
+        'broadcasts': await db.broadcast_messages.count_documents({'seed': True}),
+    }
+
+
+async def _login(email):
+    async with make_client() as cli:
+        r = await cli.post('/api/auth/login', json={'email': email, 'password': PASSWORD})
+    assert r.status_code == 200, f'{email}: {r.text}'
+    return r.json()
+
+
+@pytest.fixture(scope='module')
+def seeded():
+    return run(_seed_once())
+
+
+class TestSeedExpansion:
+    def test_seed_twice_no_duplicates(self, seeded):
+        async def flow():
+            await _seed_once()
+            snap1 = await _snapshot()
+            await _seed_once()
+            snap2 = await _snapshot()
+            assert snap1 == snap2, f'seed rerun changed row counts:\n{snap1}\nvs\n{snap2}'
+            assert snap1['users'] == 8       # one per role incl. admin
+            assert snap1['orgs'] == 4
+            assert snap1['trials'] == 3
+            assert snap1['patients'] == 8
+            for key, val in snap1.items():
+                assert val > 0, f'no seed rows for {key}'
+        run(flow())
+
+    def test_admin_login_works(self, seeded):
+        async def flow():
+            j = await _login('admin@mtb.app')
+            assert j['user']['role'] == 'admin'
+            async with make_client() as cli:
+                r = await cli.get('/api/auth/me',
+                                  headers={'Authorization': f"Bearer {j['access_token']}"})
+            assert r.status_code == 200, r.text
+            assert r.json()['email'] == 'admin@mtb.app'
+        run(flow())
+
+    def test_existing_demo_accounts_still_login(self, seeded):
+        async def flow():
+            for email, role in [('patient@mtb.app', 'patient'), ('pi@mtb.app', 'pi'),
+                                ('crc@mtb.app', 'crc'), ('sponsor@mtb.app', 'sponsor'),
+                                ('cro@mtb.app', 'cro'), ('smo@mtb.app', 'smo'),
+                                ('site@mtb.app', 'site')]:
+                j = await _login(email)
+                assert j['user']['role'] == role, f'{email} has role {j["user"]["role"]}'
+        run(flow())
+
+    def test_org_admin_flags_on_sponsor_and_site(self, seeded):
+        async def flow():
+            for email in ('sponsor@mtb.app', 'site@mtb.app'):
+                u = await server.db.users.find_one({'email': email}, {'_id': 0})
+                assert u and u.get('org_admin') is True, f'{email} missing org_admin flag'
+        run(flow())
+
+    def test_patient_adherence_about_93(self, seeded):
+        async def flow():
+            j = await _login('patient@mtb.app')
+            async with make_client() as cli:
+                r = await cli.get('/api/adherence',
+                                  headers={'Authorization': f"Bearer {j['access_token']}"})
+            assert r.status_code == 200, r.text
+            a = r.json()
+            assert 90 <= a['rate'] <= 95, f'expected ~93% adherence, got {a}'
+            assert a['total'] > 0
+            assert a['streak_days'] >= 1
+            assert len(a['last7']) == 7
+        run(flow())
+
+    def test_seed_invitations_cover_all_statuses(self, seeded):
+        async def flow():
+            invs = await server.db.invitations.find({'seed': True}, {'_id': 0}).to_list(50)
+            statuses = {server._invitation_status(i) for i in invs}
+            assert statuses >= {'pending', 'accepted', 'expired', 'cancelled'}, statuses
+        run(flow())
+
+    def test_pi_tasks_include_overdue_and_today(self, seeded):
+        async def flow():
+            j = await _login('pi@mtb.app')
+            async with make_client() as cli:
+                r = await cli.get('/api/tasks',
+                                  headers={'Authorization': f"Bearer {j['access_token']}"})
+            assert r.status_code == 200, r.text
+            types = {t['type'] for t in r.json()}
+            assert 'overdue_visit' in types, types
+            assert 'visit_today' in types, types
+        run(flow())
