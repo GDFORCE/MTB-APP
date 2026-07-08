@@ -1,43 +1,140 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, ScrollView, StyleSheet, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { Check, Clock, Calendar as CalIcon, Building2, Phone, Home, Pill, Sparkles } from "lucide-react-native";
+import { Check, Calendar as CalIcon, Building2, Phone, Home, Pill, Sparkles } from "lucide-react-native";
 import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
-import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
+import { Eyebrow, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 
-type Med = { id: string; name: string; dosage: string; time: string; status: "taken" | "pending" | "notTaken" | "skipped"; takenAt?: string };
+type Slot = { time: string; label?: string };
+type Med = { id: string; name: string; dosage: string; route?: string; schedule?: Slot[]; start_date?: string; end_date?: string | null; active?: boolean };
+type Dose = { id?: string; medication_id: string; date: string; time: string; status: string; logged_at?: string };
+type UiStatus = "taken" | "pending" | "notTaken" | "skipped";
+
+// Adherence days are UTC-based (product decision) — anchor "today" and dose logs to UTC.
+const todayStr = new Date().toISOString().slice(0, 10);
+
+const uiStatus = (s?: string): UiStatus =>
+  s === "taken" ? "taken" : s === "skipped" ? "skipped" : s === "not_taken" ? "notTaken" : "pending";
+
+function fmtTime(t?: string): string {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  if (isNaN(h)) return t;
+  const ap = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m || 0).padStart(2, "0")} ${ap}`;
+}
+
+function fmtLoggedAt(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+function fmtDate(ymd?: string | null): string {
+  if (!ymd) return "";
+  const d = new Date(ymd + "T00:00:00Z");
+  if (isNaN(d.getTime())) return ymd;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+const HIST = {
+  taken: { t: "Taken ✓", c: colors.success },
+  skipped: { t: "Skipped", c: colors.warning },
+  not_taken: { t: "Not taken", c: colors.destructive },
+  remind_later: { t: "Remind later", c: colors.info },
+} as const;
 
 export default function MyTrial() {
   const router = useRouter();
   const [visits, setVisits] = useState<any[]>([]);
+  const [meds, setMeds] = useState<Med[]>([]);
+  const [doses, setDoses] = useState<Dose[]>([]);
+  const [adherence, setAdherence] = useState<any>(null);
+  const [trial, setTrial] = useState<any>(null);
   const [tab, setTab] = useState<"visits" | "medications" | "progress">("visits");
   const [medTab, setMedTab] = useState<"today" | "schedule" | "history">("today");
-  const [meds, setMeds] = useState<Med[]>([
-    { id: "m1", name: "Metformin", dosage: "500mg", time: "8:00 AM", status: "taken", takenAt: "8:03 AM" },
-    { id: "m2", name: "Aspirin", dosage: "75mg", time: "2:00 PM", status: "pending" },
-    { id: "m3", name: "Metformin", dosage: "500mg", time: "8:00 PM", status: "pending" },
-  ]);
 
-  useEffect(() => { (async () => { try { const r = await api.get("/visits/mine"); setVisits(r.data); } catch {} })(); }, []);
+  useEffect(() => { (async () => {
+    const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const [v, m, a, t] = await Promise.all([
+      api.get("/visits/mine").then(r => r.data).catch(() => []),
+      api.get("/medications").then(r => r.data).catch(() => []),
+      api.get("/adherence").then(r => r.data).catch(() => null),
+      api.get("/trials").then(r => r.data).catch(() => []),
+    ]);
+    setVisits(v || []); setMeds(m || []); setAdherence(a);
+    setTrial(Array.isArray(t) ? t[0] ?? null : null);
+    const doseLists = await Promise.all((m || []).map((med: Med) =>
+      api.get(`/medications/${med.id}/doses`, { params: { from, to: todayStr } }).then(r => r.data).catch(() => [])));
+    setDoses(doseLists.flat());
+  })(); }, []);
+
+  const refreshAdherence = () => api.get("/adherence").then(r => setAdherence(r.data)).catch(() => {});
 
   const completed = visits.filter(v => v.status === "completed").length;
   const total = visits.length || 10;
   const next = visits.find(v => v.status === "upcoming");
   const pct = Math.round((completed / total) * 100);
-  const takenCount = meds.filter(m => m.status === "taken").length;
-  const allDone = takenCount === meds.length;
+  const trialLine = trial ? [trial.protocol_id, trial.condition].filter(Boolean).join(" · ") : "";
 
-  const setMedStatus = (id: string, st: Med["status"]) => {
-    const t = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-    setMeds(prev => prev.map(m => m.id === id ? { ...m, status: st, takenAt: st === "taken" ? t : undefined } : m));
+  const activeMeds = useMemo(
+    () => meds.filter(m => m.active !== false && (m.schedule?.length ?? 0) > 0),
+    [meds],
+  );
+
+  // Today's expected doses = one row per (med, schedule slot), status from today's logs.
+  const todayEntries = useMemo(() => {
+    const list = activeMeds.flatMap(m => (m.schedule || []).map(s => {
+      const log = doses.find(d => d.medication_id === m.id && d.date === todayStr && d.time === s.time);
+      return {
+        key: `${m.id}|${s.time}`, medId: m.id, name: m.name, dosage: m.dosage,
+        time: s.time, status: uiStatus(log?.status), loggedAt: log?.logged_at,
+      };
+    }));
+    return list.sort((a, b) => a.time.localeCompare(b.time));
+  }, [activeMeds, doses]);
+
+  const takenCount = todayEntries.filter(e => e.status === "taken").length;
+  const allDone = todayEntries.length > 0 && takenCount === todayEntries.length;
+
+  const medById = useMemo(() => Object.fromEntries(meds.map(m => [m.id, m])), [meds]);
+  const history = useMemo(() => {
+    const byDate: Record<string, Dose[]> = {};
+    doses.forEach(d => { (byDate[d.date] ||= []).push(d); });
+    return Object.keys(byDate).sort().reverse().map(date => ({
+      date,
+      items: byDate[date].slice().sort((a, b) => a.time.localeCompare(b.time)).map(d => ({
+        name: `${medById[d.medication_id]?.name ?? "Medication"} ${medById[d.medication_id]?.dosage ?? ""}`.trim(),
+        time: fmtTime(d.time),
+        status: d.status,
+      })),
+    }));
+  }, [doses, medById]);
+
+  // Optimistic dose log with revert on error.
+  const logDose = async (medId: string, time: string, backend: "taken" | "not_taken" | "skipped") => {
+    const prev = doses;
+    const nowIso = new Date().toISOString();
+    setDoses(cur => [
+      ...cur.filter(d => !(d.medication_id === medId && d.date === todayStr && d.time === time)),
+      { medication_id: medId, date: todayStr, time, status: backend, logged_at: nowIso },
+    ]);
+    try {
+      await api.post(`/medications/${medId}/doses`, { date: todayStr, time, status: backend });
+      refreshAdherence();
+    } catch {
+      setDoses(prev);
+    }
   };
 
   return (
     <ScreenContainer>
-      <ScreenHeader eyebrow="Protocol-001 · Dr. Sharma" title="My Trial" />
+      <ScreenHeader eyebrow={trialLine} title="My Trial" />
       <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} showsVerticalScrollIndicator={false}>
         {/* Journey progress */}
         <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.hero}>
@@ -65,6 +162,9 @@ export default function MyTrial() {
         {tab === "visits" && (
           <View>
             <Eyebrow style={{ marginTop: spacing.md, marginBottom: spacing.sm }}>The road ahead</Eyebrow>
+            {visits.length === 0 && (
+              <Card><Small color={colors.mutedFg}>No visits scheduled yet</Small></Card>
+            )}
             {visits.map((v, i) => {
               const done = v.status === "completed";
               const isNext = v.status === "upcoming";
@@ -100,10 +200,14 @@ export default function MyTrial() {
           <View>
             <Card style={{ marginTop: spacing.md }}>
               <Eyebrow style={{ marginBottom: 10 }}>Today's medications</Eyebrow>
-              <View style={{ flexDirection: "row", gap: 6 }}>
-                {meds.map(m => <View key={m.id} style={[s.dot, { backgroundColor: m.status === "taken" ? colors.success : m.status === "pending" ? colors.border : m.status === "skipped" ? colors.warning : colors.destructive }]} />)}
-                <Small style={{ marginLeft: "auto", fontWeight: "700" as any }}>{allDone ? "All done ✓" : `${takenCount}/${meds.length}`}</Small>
-              </View>
+              {todayEntries.length === 0 ? (
+                <Small color={colors.mutedFg}>No medications prescribed</Small>
+              ) : (
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {todayEntries.map(e => <View key={e.key} style={[s.dot, { backgroundColor: e.status === "taken" ? colors.success : e.status === "pending" ? colors.border : e.status === "skipped" ? colors.warning : colors.destructive }]} />)}
+                  <Small style={{ marginLeft: "auto", fontWeight: "700" as any }}>{allDone ? "All done ✓" : `${takenCount}/${todayEntries.length}`}</Small>
+                </View>
+              )}
             </Card>
             <View style={s.tabs}>
               {(["today", "schedule", "history"] as const).map(t => (
@@ -112,47 +216,56 @@ export default function MyTrial() {
                 </Pressable>
               ))}
             </View>
-            {medTab === "today" && (allDone ? (
+            {medTab === "today" && (todayEntries.length === 0 ? (
+              <Card style={{ marginTop: spacing.md, alignItems: "center", paddingVertical: 24 }}>
+                <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" }}><Pill size={22} color={colors.primary} /></View>
+                <Body weight="700" style={{ marginTop: 10 }}>No medications yet</Body>
+                <Small>Your care team hasn't prescribed any</Small>
+              </Card>
+            ) : allDone ? (
               <Card style={{ marginTop: spacing.md, alignItems: "center", paddingVertical: 24 }}>
                 <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.success + "26", alignItems: "center", justifyContent: "center" }}><Sparkles size={22} color={colors.success} /></View>
                 <Body weight="700" style={{ marginTop: 10 }}>All medications done for today!</Body>
                 <Small>Great job keeping up 💪</Small>
               </Card>
-            ) : meds.map(med => (
-              <Card key={med.id} style={{ marginTop: spacing.sm, borderColor: med.status === "taken" ? colors.success + "55" : med.status === "skipped" ? colors.warning + "55" : med.status === "notTaken" ? colors.destructive + "55" : colors.border }}>
+            ) : todayEntries.map(e => (
+              <Card key={e.key} style={{ marginTop: spacing.sm, borderColor: e.status === "taken" ? colors.success + "55" : e.status === "skipped" ? colors.warning + "55" : e.status === "notTaken" ? colors.destructive + "55" : colors.border }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                   <View style={s.medIcon}><Pill size={20} color={colors.primary} /></View>
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                      <Body weight="700">{med.name} {med.dosage}</Body>
-                      <View style={[s.pill, { backgroundColor: med.status === "taken" ? colors.success + "22" : med.status === "skipped" ? colors.warning + "22" : med.status === "notTaken" ? colors.destructive + "22" : colors.surface }]}>
-                        <Small weight="700" color={med.status === "taken" ? colors.success : med.status === "skipped" ? colors.warning : med.status === "notTaken" ? colors.destructive : colors.mutedFg}>{med.status === "taken" ? "Taken ✓" : med.status === "notTaken" ? "Not taken" : med.status === "skipped" ? "Skipped" : "Pending"}</Small>
+                      <Body weight="700">{e.name} {e.dosage}</Body>
+                      <View style={[s.pill, { backgroundColor: e.status === "taken" ? colors.success + "22" : e.status === "skipped" ? colors.warning + "22" : e.status === "notTaken" ? colors.destructive + "22" : colors.surface }]}>
+                        <Small weight="700" color={e.status === "taken" ? colors.success : e.status === "skipped" ? colors.warning : e.status === "notTaken" ? colors.destructive : colors.mutedFg}>{e.status === "taken" ? "Taken ✓" : e.status === "notTaken" ? "Not taken" : e.status === "skipped" ? "Skipped" : "Pending"}</Small>
                       </View>
                     </View>
-                    <Small style={{ marginTop: 2 }}>{med.time}{med.takenAt ? ` · logged ${med.takenAt}` : ""}</Small>
+                    <Small style={{ marginTop: 2 }}>{fmtTime(e.time)}{e.status === "taken" && e.loggedAt ? ` · logged ${fmtLoggedAt(e.loggedAt)}` : ""}</Small>
                   </View>
                 </View>
-                {med.status === "pending" && (
+                {e.status === "pending" && (
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: colors.border }}>
-                    <Pressable testID={`med-${med.id}-taken`} onPress={() => setMedStatus(med.id, "taken")} style={[s.medBtn, { backgroundColor: colors.success }]}><Small weight="700" color={colors.successFg}>✓ Taken</Small></Pressable>
-                    <Pressable testID={`med-${med.id}-not`} onPress={() => setMedStatus(med.id, "notTaken")} style={[s.medBtn, { borderWidth: 1, borderColor: colors.destructive + "66" }]}><Small weight="700" color={colors.destructive}>✗ Not taken</Small></Pressable>
-                    <Pressable testID={`med-${med.id}-skip`} onPress={() => setMedStatus(med.id, "skipped")} style={[s.medBtn, { borderWidth: 1, borderColor: colors.warning + "66" }]}><Small weight="700" color={colors.warning}>Skip</Small></Pressable>
+                    <Pressable testID={`med-${e.key}-taken`} onPress={() => logDose(e.medId, e.time, "taken")} style={[s.medBtn, { backgroundColor: colors.success }]}><Small weight="700" color={colors.successFg}>✓ Taken</Small></Pressable>
+                    <Pressable testID={`med-${e.key}-not`} onPress={() => logDose(e.medId, e.time, "not_taken")} style={[s.medBtn, { borderWidth: 1, borderColor: colors.destructive + "66" }]}><Small weight="700" color={colors.destructive}>✗ Not taken</Small></Pressable>
+                    <Pressable testID={`med-${e.key}-skip`} onPress={() => logDose(e.medId, e.time, "skipped")} style={[s.medBtn, { borderWidth: 1, borderColor: colors.warning + "66" }]}><Small weight="700" color={colors.warning}>Skip</Small></Pressable>
                   </View>
                 )}
               </Card>
             )))}
             {medTab === "schedule" && (
               <View style={{ marginTop: spacing.md }}>
-                {[{name:"Metformin",dose:"500mg",freq:"Twice daily: 8:00 AM & 8:00 PM",ins:"Take with food",per:"1 Mar 2025 – 18 Aug 2025"},{name:"Aspirin",dose:"75mg",freq:"Once daily: 2:00 PM",ins:"After meals",per:"1 Mar 2025 – 18 Aug 2025"}].map((m,i) => (
-                  <Card key={i} style={{ marginBottom: spacing.sm }}>
+                {activeMeds.length === 0 && (
+                  <Card><Small color={colors.mutedFg}>No medications prescribed</Small></Card>
+                )}
+                {activeMeds.map(m => (
+                  <Card key={m.id} style={{ marginBottom: spacing.sm }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                       <View style={s.medIcon}><Pill size={18} color={colors.primary} /></View>
-                      <Body weight="700" style={{ flex: 1 }}>{m.name} {m.dose}</Body>
+                      <Body weight="700" style={{ flex: 1 }}>{m.name} {m.dosage}</Body>
                     </View>
                     <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderColor: colors.border, gap: 4 }}>
-                      <Small>{m.freq}</Small>
-                      <Small>Instructions: {m.ins}</Small>
-                      <Small color={colors.mutedFg}>Period: {m.per}</Small>
+                      <Small>{(m.schedule || []).map(sl => fmtTime(sl.time)).join(" · ") || "No schedule"}</Small>
+                      {!!m.route && <Small>Route: {m.route}</Small>}
+                      <Small color={colors.mutedFg}>Period: {fmtDate(m.start_date)}{m.end_date ? ` – ${fmtDate(m.end_date)}` : " – ongoing"}</Small>
                     </View>
                   </Card>
                 ))}
@@ -160,16 +273,22 @@ export default function MyTrial() {
             )}
             {medTab === "history" && (
               <View style={{ marginTop: spacing.md }}>
-                {[{date:"25 May 2025", items:[["Metformin 500mg","8:00 AM","taken"],["Aspirin 75mg","2:00 PM","taken"],["Metformin 500mg","8:00 PM","taken"]]},{date:"24 May 2025", items:[["Metformin 500mg","8:00 AM","taken"],["Aspirin 75mg","2:00 PM","skipped"],["Metformin 500mg","8:00 PM","taken"]]}].map((d,i) => (
+                {history.length === 0 && (
+                  <Card><Small color={colors.mutedFg}>No dose history yet</Small></Card>
+                )}
+                {history.map((d, i) => (
                   <View key={i} style={{ marginBottom: spacing.md }}>
-                    <Eyebrow style={{ marginBottom: 8 }}>{d.date}</Eyebrow>
+                    <Eyebrow style={{ marginBottom: 8 }}>{fmtDate(d.date)}</Eyebrow>
                     <Card padded={false}>
-                      {d.items.map(([n,t,st], j) => (
-                        <View key={j} style={[{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: spacing.md }, j > 0 && { borderTopWidth: 1, borderColor: colors.border }]}>
-                          <View><Body weight="700">{n}</Body><Small>{t}</Small></View>
-                          <View style={[s.pill, { backgroundColor: st === "taken" ? colors.success + "22" : colors.warning + "22" }]}><Small weight="700" color={st === "taken" ? colors.success : colors.warning}>{st === "taken" ? "Taken ✓" : "Skipped"}</Small></View>
-                        </View>
-                      ))}
+                      {d.items.map((it, j) => {
+                        const meta = HIST[it.status as keyof typeof HIST] ?? { t: it.status, c: colors.mutedFg };
+                        return (
+                          <View key={j} style={[{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: spacing.md }, j > 0 && { borderTopWidth: 1, borderColor: colors.border }]}>
+                            <View><Body weight="700">{it.name}</Body><Small>{it.time}</Small></View>
+                            <View style={[s.pill, { backgroundColor: meta.c + "22" }]}><Small weight="700" color={meta.c}>{meta.t}</Small></View>
+                          </View>
+                        );
+                      })}
                     </Card>
                   </View>
                 ))}
@@ -182,7 +301,7 @@ export default function MyTrial() {
         {tab === "progress" && (
           <View style={{ marginTop: spacing.md }}>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-              {[{v:completed,l:"Completed",c:colors.accent},{v:visits.filter(v=>v.status==="upcoming").length,l:"Upcoming",c:colors.warning},{v:Math.max(0,total-completed-visits.filter(v=>v.status==="upcoming").length),l:"Remaining",c:colors.foreground},{v:"93%",l:"Med. rate",c:colors.info}].map((s2,i) => (
+              {[{v:completed,l:"Completed",c:colors.accent},{v:visits.filter(v=>v.status==="upcoming").length,l:"Upcoming",c:colors.warning},{v:Math.max(0,total-completed-visits.filter(v=>v.status==="upcoming").length),l:"Remaining",c:colors.foreground},{v:adherence?.rate != null ? `${adherence.rate}%` : "—",l:"Med. rate",c:colors.info}].map((s2,i) => (
                 <View key={i} style={[s.statBox, { borderColor: s2.c + "33" }]}>
                   <Body weight="700" color={s2.c} style={{ fontSize: 28 }}>{s2.v}</Body>
                   <Small>{s2.l}</Small>
@@ -195,9 +314,10 @@ export default function MyTrial() {
               <Small style={{ marginTop: 4 }}>{completed} of {total} visits complete ({pct}%)</Small>
             </Card>
             <Card style={{ marginTop: spacing.md }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}><Body weight="700">Medication adherence · this week</Body><Small color={colors.success} weight="700">Excellent!</Small></View>
-              <View style={[s.barTrackLight, { marginTop: 8 }]}><View style={[s.barFillInfo, { width: "93%" }]} /></View>
-              <Small style={{ marginTop: 4 }}>13 of 14 doses (93%)</Small>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}><Body weight="700">Medication adherence</Body>{adherence?.rate != null && adherence.rate >= 90 && <Small color={colors.success} weight="700">Excellent!</Small>}</View>
+              <View style={[s.barTrackLight, { marginTop: 8 }]}><View style={[s.barFillInfo, { width: `${adherence?.rate ?? 0}%` }]} /></View>
+              <Small style={{ marginTop: 4 }}>{adherence?.total ? `${adherence.taken} of ${adherence.total} doses (${adherence.rate}%)` : "No doses expected yet"}</Small>
+              {!!adherence?.streak_days && <Small color={colors.mutedFg} style={{ marginTop: 2 }}>🔥 {adherence.streak_days}-day streak</Small>}
             </Card>
           </View>
         )}

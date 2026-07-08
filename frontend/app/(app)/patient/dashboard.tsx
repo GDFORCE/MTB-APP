@@ -21,18 +21,38 @@ const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 
 const TOTAL = 10;
 
+function timeAgo(iso?: string): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "";
+  const diff = Math.max(0, Date.now() - then);
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "Just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
 export default function PatientDashboard() {
   const router = useRouter();
   const { user } = useAuth();
   const unread = useUnreadCount();
   const [visits, setVisits] = useState<any[]>([]);
   const [notifs, setNotifs] = useState<any[]>([]);
+  const [adherence, setAdherence] = useState<any>(null);
+  const [trial, setTrial] = useState<any>(null);
   useEffect(() => { (async () => {
-    const [v, n] = await Promise.all([
+    const [v, n, a, t] = await Promise.all([
       api.get("/visits/mine").catch(() => ({ data: [] })),
       api.get("/notifications").catch(() => ({ data: [] })),
+      api.get("/adherence").catch(() => ({ data: null })),
+      api.get("/trials").catch(() => ({ data: [] })),
     ]);
-    setVisits(v.data); setNotifs(n.data);
+    setVisits(v.data); setNotifs(n.data); setAdherence(a.data);
+    setTrial(Array.isArray(t.data) ? t.data[0] ?? null : null);
   })(); }, []);
 
   const completed = visits.filter(v => v.status === "completed").length;
@@ -41,8 +61,14 @@ export default function PatientDashboard() {
   const pct = Math.round((completed / total) * 100);
   const firstName = (user?.full_name || "Priya").split(" ")[0];
   const initials = user?.avatar_initials || "PK";
-  const daysToNext = next ? Math.max(0, Math.ceil((new Date(next.scheduled_date).getTime() - Date.now()) / 86400000)) : 4;
-  const nextDate = next ? new Date(next.scheduled_date) : new Date(2025, 4, 23);
+  const adherenceRate: number | null = adherence?.rate ?? null;
+  const trialLine = trial ? [trial.protocol_id, trial.condition].filter(Boolean).join(" · ") : "";
+  const daysToNext = next ? Math.max(0, Math.ceil((new Date(next.scheduled_date).getTime() - Date.now()) / 86400000)) : 0;
+  const nextDate = next ? new Date(next.scheduled_date) : new Date();
+  const winStart = next?.window_start ? new Date(next.window_start) : nextDate;
+  const winEnd = next?.window_end ? new Date(next.window_end) : nextDate;
+  const fmtDay = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const trialFooter = trial ? [trial.protocol_id, trial.phase, trial.condition].filter(Boolean).join(" · ") : "";
 
   // Calendar mini (current month)
   const calendarMonth = new Date(nextDate.getFullYear(), nextDate.getMonth(), 1);
@@ -82,7 +108,7 @@ export default function PatientDashboard() {
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: "rgba(251,242,232,0.80)", fontSize: 11, fontWeight: "700", letterSpacing: 1.5 }}>WELCOME BACK</Text>
                 <Text style={{ color: C.primaryFg, fontSize: 30, fontWeight: "700", lineHeight: 36, letterSpacing: -0.6, marginTop: 4 }}>Hi, {firstName}</Text>
-                <Text style={{ color: "rgba(251,242,232,0.75)", fontSize: 13, marginTop: 4 }}>Protocol-001 · Dr. Sharma</Text>
+                {!!trialLine && <Text style={{ color: "rgba(251,242,232,0.75)", fontSize: 13, marginTop: 4 }}>{trialLine}</Text>}
               </View>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Pressable testID="patient-bell" onPress={() => router.push("/(app)/notifications")} style={pst.iconBtn}>
@@ -104,8 +130,10 @@ export default function PatientDashboard() {
                 <Text style={{ color: "rgba(251,242,232,0.75)", fontSize: 11, fontWeight: "700", letterSpacing: 1.5 }}>YOUR PROGRESS</Text>
                 <Text style={{ color: C.primaryFg, fontSize: 17, fontWeight: "700", marginTop: 4 }}>Visit {completed} of {total} completed</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                  <View style={pst.chip}><Activity size={11} color={C.primaryFg} /><Text style={pst.chipText}>93% adherence</Text></View>
-                  <View style={pst.chip}><Text style={pst.chipText}>Next in {daysToNext} days</Text></View>
+                  {adherenceRate != null && (
+                    <View style={pst.chip}><Activity size={11} color={C.primaryFg} /><Text style={pst.chipText}>{adherenceRate}% adherence</Text></View>
+                  )}
+                  {next && <View style={pst.chip}><Text style={pst.chipText}>Next in {daysToNext} days</Text></View>}
                 </View>
               </View>
             </View>
@@ -115,6 +143,7 @@ export default function PatientDashboard() {
         {/* ── 01 · Next visit ── */}
         <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
           <SectionHead index="01" label="NEXT VISIT" />
+          {next ? (
           <Pressable testID="next-visit-card" onPress={() => router.push("/(app)/patient/my-trial")}>
             <View style={pst.card}>
               <View style={{ flexDirection: "row", gap: 16 }}>
@@ -124,28 +153,35 @@ export default function PatientDashboard() {
                 </LinearGradient>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={{ color: C.accent, fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }}>IN {daysToNext} DAYS</Text>
+                    <Text style={{ color: C.accent, fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }}>{daysToNext === 0 ? "TODAY" : `IN ${daysToNext} DAYS`}</Text>
                     <View style={{ paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(216,154,60,0.15)" }}>
                       <Text style={{ color: C.warning, fontSize: 11, fontWeight: "700" }}>Upcoming</Text>
                     </View>
                   </View>
-                  <Text style={{ color: C.fg, fontSize: 17, fontWeight: "700", marginTop: 4 }}>Visit {next?.visit_number || 7} · {next?.name || "Follow-up Visit"}</Text>
-                  <Text style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>AIIMS Delhi · Dr. Sharma</Text>
+                  <Text style={{ color: C.fg, fontSize: 17, fontWeight: "700", marginTop: 4 }}>Visit {next.visit_number} · {next.name}</Text>
+                  {!!(next.activities?.length) && (
+                    <Text style={{ color: C.muted, fontSize: 12, marginTop: 4 }} numberOfLines={1}>{next.activities.join(" · ")}</Text>
+                  )}
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
                     <Clock size={11} color={C.muted} />
-                    <Text style={{ color: C.muted, fontSize: 12 }}>Window 20 – 26 {nextDate.toLocaleString("en-US", { month: "short" })}</Text>
+                    <Text style={{ color: C.muted, fontSize: 12 }}>Window {fmtDay(winStart)} – {fmtDay(winEnd)}</Text>
                   </View>
                 </View>
               </View>
+              {!!trialFooter && (
               <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                <Text style={{ color: C.muted, fontSize: 12 }}>Protocol-001 · Phase II · Diabetes</Text>
+                <Text style={{ color: C.muted, fontSize: 12 }}>{trialFooter}</Text>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
                   <Text style={{ color: C.accent, fontSize: 14, fontWeight: "600" }}>View details</Text>
                   <ChevronRight size={16} color={C.accent} />
                 </View>
               </View>
+              )}
             </View>
           </Pressable>
+          ) : (
+            <View style={pst.card}><Text style={{ color: C.muted, fontSize: 13 }}>No upcoming visits scheduled</Text></View>
+          )}
         </View>
 
         {/* ── 02 · Calendar mini ── */}
@@ -202,10 +238,10 @@ export default function PatientDashboard() {
             </Pressable>
           } />
           <View style={{ gap: 12 }}>
-            {(notifs.length > 0 ? notifs.slice(0, 3) : [
-              { id: "x1", kind: "reminder", title: "Visit 7 Tomorrow", body: "Follow-Up Visit at AIIMS Delhi · 23 May 2025", read: false },
-              { id: "x2", kind: "message", title: "Message from Dr. Sharma", body: "Please fast for 8 hours before your Visit 7 blood draw.", read: false },
-            ]).map(n => {
+            {notifs.length === 0 && (
+              <View style={pst.card}><Text style={{ color: C.muted, fontSize: 13 }}>No notifications yet</Text></View>
+            )}
+            {notifs.slice(0, 3).map(n => {
               const Icon = n.kind === "message" ? MessageCircle : Bell;
               const tone = n.kind === "message" ? C.violet : C.accent;
               return (
@@ -220,7 +256,7 @@ export default function PatientDashboard() {
                         {!n.read && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.accent, marginLeft: 8 }} />}
                       </View>
                       <Text style={{ color: C.muted, fontSize: 14, marginTop: 2 }} numberOfLines={2}>{n.body}</Text>
-                      <Text style={{ color: "rgba(123,95,115,0.70)", fontSize: 11, marginTop: 4 }}>2h ago</Text>
+                      {!!timeAgo(n.created_at) && <Text style={{ color: "rgba(123,95,115,0.70)", fontSize: 11, marginTop: 4 }}>{timeAgo(n.created_at)}</Text>}
                     </View>
                     <ChevronRight size={16} color="rgba(123,95,115,0.40)" style={{ marginTop: 4 }} />
                   </View>
