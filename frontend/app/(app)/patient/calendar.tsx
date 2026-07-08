@@ -25,7 +25,12 @@ const firstOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const startOfWeek = (d: Date) => addDays(startOfDay(d), -d.getDay());
 const dateFromKey = (key: string) => { const [y, m, dd] = key.split("-").map(Number); return new Date(y, m - 1, dd); };
-const fmtUTCShort = (iso?: string) => { if (!iso) return ""; const d = new Date(iso); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; };
+// Some backend paths (legacy fallback) emit tz-NAIVE ISO like "2025-05-19T00:00:00".
+// JS parses those as LOCAL time, so UTC getters shift the day back in positive-offset
+// zones (IST midnight → previous day). If the string carries no tz designator (no 'Z'
+// and no ±HH:MM offset), treat it as UTC by appending 'Z' before parsing.
+const parseISO = (iso: string) => new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`);
+const fmtUTCShort = (iso?: string) => { if (!iso) return ""; const d = parseISO(iso); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; };
 
 type Visit = {
   id: string; name?: string; visit_number?: number; seq?: number;
@@ -86,7 +91,7 @@ export default function PatientCalendar() {
     const m: Record<string, Visit[]> = {};
     for (const v of visits) {
       if (!v?.scheduled_date) continue;
-      const key = ymdUTC(new Date(v.scheduled_date));
+      const key = ymdUTC(parseISO(v.scheduled_date));
       (m[key] ||= []).push(v);
     }
     return m;
@@ -102,7 +107,7 @@ export default function PatientCalendar() {
       || visits.find(v => v.status === "missed" || v.status === "overdue")
       || visits[visits.length - 1];
     if (target?.scheduled_date) {
-      const d = dateFromKey(ymdUTC(new Date(target.scheduled_date)));
+      const d = dateFromKey(ymdUTC(parseISO(target.scheduled_date)));
       setSelected(d);
       setMonth(firstOfMonth(d));
     }
@@ -341,7 +346,7 @@ function VisitCard({ v, variant, router }: { v: Visit; variant: "full" | "week" 
   const meta = statusMeta(v.status);
   const upcoming = v.status === "upcoming";
   const missed = v.status === "missed" || v.status === "overdue";
-  const d = v.scheduled_date ? new Date(v.scheduled_date) : null;
+  const d = v.scheduled_date ? parseISO(v.scheduled_date) : null;
   const window = v.window_start && v.window_end ? `${fmtUTCShort(v.window_start)} – ${fmtUTCShort(v.window_end)}` : null;
 
   return (
