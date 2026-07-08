@@ -321,6 +321,39 @@ class TestVisitsMine:
             assert [v['status'] for v in visits] == ['missed', 'upcoming', 'upcoming']
         run(flow())
 
+    def test_enriches_with_site_pi_and_checklist(self, sponsor, pi):
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        async def flow():
+            # fresh trial with a template that carries a checklist
+            t, _ = await _make_trial(sp_headers, templates=())
+            prep = ['Fast 8 hours', 'Bring your ID card']
+            async with make_client() as cli:
+                rv = await cli.post('/api/visits', headers=sp_headers, json={
+                    'trial_id': t['id'], 'visit_number': 1,
+                    'name': f'Checklist Visit {RUN_ID}', 'day_offset': 3,
+                    'window_days': 3, 'activities': ['Vitals'], 'checklist': prep,
+                })
+            assert rv.status_code == 200, rv.text
+            assert rv.json().get('checklist') == prep     # template stores checklist
+            pt_user, pt_headers = await _register('patient')
+            patient = await _enroll(pi_headers, t['id'], pi_id=pi_user['id'], days_ago=5)
+            await server.db.patients.update_one({'id': patient['id']},
+                                                {'$set': {'user_id': pt_user['id']}})
+            async with make_client() as cli:
+                r = await cli.get('/api/visits/mine', headers=pt_headers)
+            assert r.status_code == 200, r.text
+            visits = r.json()
+            assert visits
+            for v in visits:
+                for key in ('site', 'pi_name', 'pi_phone', 'pi_email', 'checklist'):
+                    assert key in v, f'missing enrichment field {key}'
+                assert v['pi_name'] == pi_user['full_name']   # joined from PI user
+                assert v['site'] == pi_user['organization']
+                assert v['pi_email'] == pi_user['email']
+                assert v['checklist'] == prep                 # joined from template
+        run(flow())
+
     def test_falls_back_to_templates_when_no_instances(self, trial):
         trial_doc, tpls = trial
         async def flow():

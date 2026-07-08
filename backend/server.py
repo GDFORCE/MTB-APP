@@ -132,6 +132,7 @@ class VisitIn(BaseModel):
     day_offset: int
     window_days: int = 3
     activities: List[str] = []
+    checklist: List[str] = []   # "before you come in" patient-prep steps
 
 class PatientIn(BaseModel):
     full_name: str
@@ -671,6 +672,31 @@ async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro
     await db.visits.insert_one(doc)
     return serialize(doc)
 
+async def _patient_care_context(patient) -> dict:
+    """Site + PI contact for a patient, joined from their assigned PI user.
+
+    Enriches GET /visits/mine so the mobile app renders the real site name and
+    PI (name / phone / email for tel:+mailto: links) instead of hardcoding
+    "AIIMS Delhi / Dr. Sharma". All keys are always present (empty string when
+    the patient has no PI assigned) so the client can rely on the shape."""
+    pi = None
+    if patient.get('pi_id'):
+        pi = await db.users.find_one({'id': patient['pi_id']}, {'_id': 0})
+    pi = pi or {}
+    return {
+        'site': pi.get('organization') or '',
+        'pi_name': pi.get('full_name') or '',
+        'pi_phone': pi.get('phone') or '',
+        'pi_email': pi.get('email') or '',
+    }
+
+async def _trial_checklist_map(trial_id) -> dict:
+    """Map of visit-template id -> its `checklist` prep steps (empty list when
+    the template carries none), used to enrich per-patient visit instances."""
+    tpls = await db.visits.find({'trial_id': trial_id},
+                                {'_id': 0, 'id': 1, 'checklist': 1}).to_list(500)
+    return {t['id']: (t.get('checklist') or []) for t in tpls}
+
 @api.get('/visits/mine')
 async def my_visits(user=Depends(current_user)):
     """Return upcoming/completed visits for the logged-in patient.
@@ -678,15 +704,21 @@ async def my_visits(user=Depends(current_user)):
     Served from the patient's own `visit_instances` (created at enrollment /
     startup migration). Falls back to on-the-fly template computation for
     legacy patient records that were never materialized, keeping the exact
-    field names the mobile app already consumes."""
+    field names the mobile app already consumes. Each visit is additively
+    enriched with site/pi_name/pi_phone/pi_email (joined from the patient's PI)
+    and the visit template's `checklist`."""
     if user['role'] != 'patient':
         return []
     patient = await db.patients.find_one({'user_id': user['id']}, {'_id': 0})
     if not patient: return []
+    care = await _patient_care_context(patient)
+    checklists = await _trial_checklist_map(patient['trial_id'])
     instances = await db.visit_instances.find({'patient_id': patient['id']}, {'_id': 0}) \
                                         .sort('seq', 1).to_list(200)
     if instances:
-        return instances
+        return [{**inst, **care,
+                 'checklist': checklists.get(inst.get('visit_template_id'), [])}
+                for inst in instances]
     visits = await db.visits.find({'trial_id': patient['trial_id']}, {'_id': 0}).sort('visit_number', 1).to_list(200)
     completed = set(patient.get('completed_visit_ids', []))
     result = []
@@ -694,9 +726,10 @@ async def my_visits(user=Depends(current_user)):
     for v in visits:
         scheduled = base_date + timedelta(days=v['day_offset'])
         result.append({
-            **v,
+            **v, **care,
             'patient_id': patient['id'],
             'scheduled_date': scheduled.isoformat(),
+            'checklist': v.get('checklist') or [],
             'status': 'completed' if v['id'] in completed else ('upcoming' if scheduled >= now().replace(tzinfo=None) else 'missed'),
         })
     return result
@@ -1053,6 +1086,14 @@ async def seed_demo():
         }, update=extra or None)
 
     # 3) Trials + their visit templates (keyed on trial_id + visit_number).
+    #    Every seeded template carries the same "before you come in" checklist
+    #    (refreshed via $set so existing seeded rows pick it up on re-seed).
+    DEFAULT_VISIT_CHECKLIST = [
+        'Fast for 8 hours before your visit',
+        'Bring your patient ID card',
+        'Wear comfortable clothing',
+        'Take your regular medications unless told otherwise',
+    ]
     trials_spec = [
         ('Protocol-001', 'A Phase II Trial of MTB-Diab-Rx in Type-2 Diabetes',
          'Phase II', 'Type-2 Diabetes',
@@ -1095,7 +1136,8 @@ async def seed_demo():
         for num, vname, off, acts in visits:
             await _seed_upsert(db.visits, {'trial_id': t['id'], 'visit_number': num}, insert={
                 'name': vname, 'day_offset': off, 'window_days': 3,
-                'activities': acts, 'created_at': n})
+                'activities': acts, 'created_at': n},
+                update={'checklist': DEFAULT_VISIT_CHECKLIST})
 
     # 4) Patients — 8 across the 3 trials. pi/crc ids are re-pointed on every
     #    run so scoping and the tasks queue always resolve to the demo staff.
