@@ -17,7 +17,7 @@ import os, re, json, logging, uuid, asyncio
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Literal
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 from passlib.context import CryptContext
 import jwt
 
@@ -1276,6 +1276,255 @@ async def update_reminder(rid: str, body: dict, user=Depends(current_user)):
 async def delete_reminder(rid: str, user=Depends(current_user)):
     await db.reminders.delete_one({'id': rid, 'user_id': user['id']}); return {'ok': True}
 
+# ── Medications + dose logs + adherence ────────────────────────────────────
+DOSE_STATUSES = ('taken', 'skipped', 'not_taken', 'remind_later')
+_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+_TIME_RE = re.compile(r'^\d{2}:\d{2}$')
+
+class ScheduleSlot(BaseModel):
+    time: str                      # "08:00"
+    label: Optional[str] = ''      # "Morning" / "Evening"
+
+class MedicationIn(BaseModel):
+    patient_id: str
+    name: str
+    dosage: str
+    route: Optional[str] = 'oral'
+    schedule: List[ScheduleSlot] = []
+    start_date: Optional[str] = None   # "YYYY-MM-DD"; defaults to today (UTC)
+    end_date: Optional[str] = None     # "YYYY-MM-DD", inclusive
+    active: bool = True
+
+class DoseLogIn(BaseModel):
+    date: str                          # "YYYY-MM-DD"
+    time: str                          # "HH:MM" — a slot from the med's schedule
+    status: Literal['taken', 'skipped', 'not_taken', 'remind_later']
+
+def _parse_ymd(value: Optional[str], field: str) -> Optional[date]:
+    if value is None:
+        return None
+    if not _DATE_RE.match(value):
+        raise HTTPException(400, f'{field} must be formatted YYYY-MM-DD')
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(400, f'{field} is not a valid calendar date')
+
+async def _own_patient_record(user) -> dict:
+    """The `patients` row linked to the signed-in patient user."""
+    p = await db.patients.find_one({'user_id': user['id']}, {'_id': 0})
+    if not p:
+        raise HTTPException(404, 'No patient record linked to this account')
+    return p
+
+async def _staff_scoped_patient(user, patient_id: Optional[str]) -> dict:
+    """pi/crc access check: the patient must be one of THEIR patients
+    (same scoping GET /patients applies — pi_id / crc_id match)."""
+    if not patient_id:
+        raise HTTPException(400, 'patient_id is required for staff')
+    p = await db.patients.find_one({'id': patient_id}, {'_id': 0})
+    if not p:
+        raise HTTPException(404, 'Patient not found')
+    key = 'pi_id' if user['role'] == 'pi' else 'crc_id'
+    if p.get(key) != user['id']:
+        raise HTTPException(403, 'You do not manage this patient')
+    return p
+
+async def _resolve_patient_scope(user, patient_id: Optional[str]) -> dict:
+    """Patient → own record (ignores ?patient_id=); pi/crc → their patient."""
+    if user['role'] == 'patient':
+        return await _own_patient_record(user)
+    return await _staff_scoped_patient(user, patient_id)
+
+@api.get('/medications')
+async def list_medications(patient_id: Optional[str] = None,
+                           user=Depends(require_roles('patient', 'pi', 'crc'))):
+    p = await _resolve_patient_scope(user, patient_id)
+    return await db.medications.find({'patient_id': p['id']}, {'_id': 0}) \
+                               .sort('created_at', 1).to_list(200)
+
+@api.post('/medications')
+async def create_medication(body: MedicationIn, user=Depends(require_roles('pi', 'crc'))):
+    p = await _staff_scoped_patient(user, body.patient_id)
+    start = _parse_ymd(body.start_date, 'start_date') or now().date()
+    end = _parse_ymd(body.end_date, 'end_date')
+    if end and end < start:
+        raise HTTPException(400, 'end_date cannot be before start_date')
+    for slot in body.schedule:
+        if not _TIME_RE.match(slot.time):
+            raise HTTPException(400, 'schedule times must be formatted HH:MM')
+    mid = str(uuid.uuid4())
+    doc = {
+        'id': mid,
+        'patient_id': p['id'],
+        'trial_id': p.get('trial_id'),
+        'name': body.name.strip(),
+        'dosage': body.dosage.strip(),
+        'route': (body.route or 'oral').strip(),
+        'schedule': [{'time': s.time, 'label': s.label or ''} for s in body.schedule],
+        'start_date': start.isoformat(),
+        'end_date': end.isoformat() if end else None,
+        'active': body.active,
+        'created_by': user['id'],
+        'created_at': now(),
+    }
+    await db.medications.insert_one(doc)
+    await write_audit(user, 'medication.create',
+                      f"Prescribed {doc['name']} {doc['dosage']} to {p.get('full_name', p['id'])}",
+                      target_id=mid, patient_id=p['id'], trial_id=doc['trial_id'])
+    return serialize(doc)
+
+async def _med_for_access(medication_id: str, user) -> dict:
+    """Load a medication and enforce access: the patient it belongs to, or
+    pi/crc staff who manage that patient."""
+    med = await db.medications.find_one({'id': medication_id}, {'_id': 0})
+    if not med:
+        raise HTTPException(404, 'Medication not found')
+    if user['role'] == 'patient':
+        p = await _own_patient_record(user)
+        if med['patient_id'] != p['id']:
+            raise HTTPException(403, 'This medication belongs to another patient')
+    else:
+        await _staff_scoped_patient(user, med['patient_id'])
+    return med
+
+@api.post('/medications/{medication_id}/doses')
+async def log_dose(medication_id: str, body: DoseLogIn,
+                   user=Depends(require_roles('patient'))):
+    """Idempotent upsert keyed on (medication_id, date, time): re-logging the
+    same slot replaces its status (same row id), never duplicates."""
+    med = await _med_for_access(medication_id, user)
+    _parse_ymd(body.date, 'date')
+    if not _TIME_RE.match(body.time):
+        raise HTTPException(400, 'time must be formatted HH:MM')
+    n = now()
+    key = {'medication_id': medication_id, 'date': body.date, 'time': body.time}
+    await db.dose_logs.update_one(
+        key,
+        {'$set': {'status': body.status, 'logged_at': n},
+         '$setOnInsert': {'id': str(uuid.uuid4()), 'patient_id': med['patient_id'], **key}},
+        upsert=True,
+    )
+    log = await db.dose_logs.find_one(key, {'_id': 0})
+    await write_audit(user, 'dose.log',
+                      f"Logged {med['name']} {body.date} {body.time} as {body.status}",
+                      target_id=log['id'], medication_id=medication_id,
+                      patient_id=med['patient_id'])
+    return log
+
+@api.get('/medications/{medication_id}/doses')
+async def list_doses(medication_id: str,
+                     from_: Optional[str] = Query(None, alias='from'),
+                     to: Optional[str] = Query(None, alias='to'),
+                     user=Depends(require_roles('patient', 'pi', 'crc'))):
+    """Dose history for one medication, optionally windowed by ?from=&to=
+    (inclusive YYYY-MM-DD bounds — lexicographic compare is safe for ISO dates)."""
+    await _med_for_access(medication_id, user)
+    q: Dict = {'medication_id': medication_id}
+    date_q: Dict = {}
+    if _parse_ymd(from_, 'from'):
+        date_q['$gte'] = from_
+    if _parse_ymd(to, 'to'):
+        date_q['$lte'] = to
+    if date_q:
+        q['date'] = date_q
+    return await db.dose_logs.find(q, {'_id': 0}).sort([('date', -1), ('time', 1)]).to_list(1000)
+
+async def compute_adherence(patient_id: str) -> dict:
+    """Adherence summary for one patient. THE formula (frontend contract):
+
+    - Expected doses ("total"): for every ACTIVE medication, each calendar day
+      D with start_date <= D <= min(today, end_date) contributes
+      len(schedule) expected doses (meds with an empty schedule contribute 0;
+      a future start_date contributes 0 until it arrives). Days are UTC dates,
+      inclusive on both ends — a med started today with 2 slots expects 2 today.
+    - "taken": dose_logs with status == 'taken' whose (date, time) fall on an
+      expected slot of that med (date within the active window AND time equal
+      to one of the med's schedule times). Upsert semantics guarantee at most
+      one log per (medication_id, date, time), so taken <= total always.
+    - "rate": round(taken / total * 100) as an int; 0 when total == 0
+      (e.g. 13/14 -> 93).
+    - "streak_days": consecutive fully-adherent days (every expected dose that
+      day logged 'taken') counting backwards from today; if today is not yet
+      complete the streak ends at yesterday instead (an in-progress day never
+      breaks the streak). Days with zero expected doses stop the streak.
+      Capped at 365.
+    - "last7": exactly 7 entries, oldest first, ending today:
+      [{date: "YYYY-MM-DD", taken: int, total: int}].
+    """
+    today = now().date()
+    meds = await db.medications.find({'patient_id': patient_id, 'active': True},
+                                     {'_id': 0}).to_list(200)
+    windows = []                      # (start, end, slot_times) per scorable med
+    for m in meds:
+        slots = {s['time'] for s in (m.get('schedule') or []) if s.get('time')}
+        if not slots:
+            continue
+        try:
+            start = _parse_ymd(m.get('start_date'), 'start_date')
+            end = _parse_ymd(m.get('end_date'), 'end_date') or today
+        except HTTPException:
+            continue                  # malformed stored dates never break the summary
+        if not start or start > today:
+            continue
+        end = min(end, today)
+        if end < start:
+            continue
+        windows.append((m['id'], start, end, slots))
+
+    def expected_on(d: date) -> int:
+        return sum(len(slots) for _, s, e, slots in windows if s <= d <= e)
+
+    total = sum(((e - s).days + 1) * len(slots) for _, s, e, slots in windows)
+
+    logs = await db.dose_logs.find({'patient_id': patient_id, 'status': 'taken'},
+                                   {'_id': 0}).to_list(5000)
+    slot_map = {mid: (s, e, slots) for mid, s, e, slots in windows}
+    taken_by_day: Dict[str, int] = {}
+    taken = 0
+    for log in logs:
+        w = slot_map.get(log.get('medication_id'))
+        if not w:
+            continue
+        s, e, slots = w
+        try:
+            d = date.fromisoformat(log.get('date') or '')
+        except ValueError:
+            continue
+        if s <= d <= e and log.get('time') in slots:
+            taken += 1
+            taken_by_day[log['date']] = taken_by_day.get(log['date'], 0) + 1
+
+    def day_stats(d: date):
+        return taken_by_day.get(d.isoformat(), 0), expected_on(d)
+
+    rate = round(taken / total * 100) if total else 0
+
+    streak = 0
+    t_taken, t_total = day_stats(today)
+    cursor = today if (t_total and t_taken >= t_total) else today - timedelta(days=1)
+    while streak < 365:
+        d_taken, d_total = day_stats(cursor)
+        if not d_total or d_taken < d_total:
+            break
+        streak += 1
+        cursor -= timedelta(days=1)
+
+    last7 = []
+    for k in range(6, -1, -1):
+        d = today - timedelta(days=k)
+        d_taken, d_total = day_stats(d)
+        last7.append({'date': d.isoformat(), 'taken': d_taken, 'total': d_total})
+
+    return {'rate': rate, 'taken': taken, 'total': total,
+            'streak_days': streak, 'last7': last7}
+
+@api.get('/adherence')
+async def get_adherence(patient_id: Optional[str] = None,
+                        user=Depends(require_roles('patient', 'pi', 'crc'))):
+    p = await _resolve_patient_scope(user, patient_id)
+    return await compute_adherence(p['id'])
+
 # ── Invitations (invite patient/team via email/SMS) ───────────────────────
 INVITE_TTL_DAYS = 7
 
@@ -1595,6 +1844,11 @@ async def _ensure_indexes():
         )
         # Per-patient visit instances are always fetched by patient.
         await db.visit_instances.create_index('patient_id')
+        # Medications are fetched per patient; the dose upsert key is also
+        # unique at the DB layer (defence-in-depth vs. concurrent logging).
+        await db.medications.create_index('patient_id')
+        await db.dose_logs.create_index(
+            [('medication_id', 1), ('date', 1), ('time', 1)], unique=True)
     except Exception as e:
         logging.warning('Index setup deferred (DB unreachable or existing duplicates?): %s', e)
 
