@@ -1193,7 +1193,7 @@ async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
     if pmap:
         insts = await db.visit_instances.find({
             'patient_id': {'$in': list(pmap)},
-            'status': {'$nin': ['completed']},
+            'status': {'$nin': ['completed', 'missed']},
             'scheduled_date': {'$lt': end_today},
         }, {'_id': 0}).sort('scheduled_date', 1).to_list(1000)
         for i in insts:

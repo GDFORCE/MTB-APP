@@ -416,6 +416,12 @@ class TestTasks:
                                        crc_id=crc_user['id'], days_ago=10)
             today_pt = await _enroll(pi_headers, t['id'], pi_id=pi_user['id'],
                                      crc_id=crc_user['id'], days_ago=0)
+            # materialization stamps past-dated visits 'missed' (incl. earlier
+            # today); flip both to 'scheduled' so they represent genuinely
+            # pending — not written-off — visits, which is what the queue shows
+            await server.db.visit_instances.update_many(
+                {'patient_id': {'$in': [overdue_pt['id'], today_pt['id']]}},
+                {'$set': {'status': 'scheduled'}})
             # one unread chat message for the pi
             cid = str(uuid.uuid4())
             _conversation_ids.append(cid)
@@ -457,6 +463,25 @@ class TestTasks:
             assert rc.status_code == 200
             assert any(x['type'] == 'overdue_visit' and x.get('patient_id') == overdue_pt['id']
                        for x in rc.json())
+        run(flow())
+
+    def test_missed_instance_leaves_the_overdue_queue(self, sponsor, pi):
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        async def flow():
+            t, _ = await _make_trial(sp_headers, templates=((0, 'Only Visit'),))
+            # enrolled 10 days ago with day_offset 0 -> materialized as 'missed'
+            missed_pt = await _enroll(pi_headers, t['id'], pi_id=pi_user['id'], days_ago=10)
+            inst = await server.db.visit_instances.find_one(
+                {'patient_id': missed_pt['id']}, {'_id': 0})
+            assert inst and inst['status'] == 'missed'
+            async with make_client() as cli:
+                r = await cli.get('/api/tasks', headers=pi_headers)
+            assert r.status_code == 200, r.text
+            assert not any(x['type'] in ('overdue_visit', 'visit_today')
+                           and x.get('patient_id') == missed_pt['id']
+                           for x in r.json()), \
+                'missed visit instance must not surface in the tasks queue'
         run(flow())
 
     def test_approved_schedule_leaves_the_queue(self, sponsor, pi):
