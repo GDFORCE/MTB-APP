@@ -247,6 +247,8 @@ async def ensure_organization(name: Optional[str], org_type: str = 'site', actor
 # ── Auth ─────────────────────────────────────────────────────────────────────
 @api.post('/auth/register')
 async def register(body: RegisterIn):
+    if body.role == 'admin':
+        raise HTTPException(403, 'This role cannot self-register')
     if await db.users.find_one({'email': body.email.lower()}):
         raise HTTPException(400, 'Email already registered')
     uid = str(uuid.uuid4())
@@ -471,6 +473,8 @@ async def _finalize_registration(pending: dict) -> dict:
 
 @api.post('/auth/register/start')
 async def register_start(body: RegisterStartIn):
+    if body.role == 'admin':
+        raise HTTPException(403, 'This role cannot self-register')
     channels = required_channels(body.role)
     email = (body.email or '').lower().strip() or None
     phone = (body.phone or '').strip() or None
@@ -1171,9 +1175,18 @@ async def seed_demo():
         dose_ops.append(UpdateOne(
             {'medication_id': med['id'],
              'date': (today - timedelta(days=day_offset)).isoformat(), 'time': slot},
-            {'$set': {'status': status_, 'logged_at': n},
+            {'$set': {'status': status_, 'logged_at': n, 'seed': True},
              '$setOnInsert': {'id': str(uuid.uuid4()), 'patient_id': med['patient_id']}},
             upsert=True))
+    # Re-running the seed on a later calendar day mints new dose rows (keyed on
+    # today−k). Prune the demo patient's seed-marked rows that fell OUTSIDE the
+    # current 14-day window so old dates can't accumulate and drift adherence.
+    window_start = (today - timedelta(days=13)).isoformat()
+    window_end = today.isoformat()
+    await db.dose_logs.delete_many({
+        'patient_id': priya, 'seed': True,
+        '$or': [{'date': {'$lt': window_start}}, {'date': {'$gt': window_end}}],
+    })
     for k in range(14):
         _dose(med1, k, '08:00', 'not_taken' if k == 11 else 'taken')
         _dose(med1, k, '20:00', 'skipped' if k == 10 else 'taken')

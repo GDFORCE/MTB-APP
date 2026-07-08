@@ -154,6 +154,39 @@ class TestOrganizations:
         run(flow())
 
 
+# ── Admin self-registration is blocked ───────────────────────────────────────
+class TestAdminSelfRegistrationBlocked:
+    def test_public_register_rejects_admin(self):
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/auth/register', json={
+                    'email': f'test-{RUN_ID}-admin-{uuid.uuid4().hex[:6]}@example.com',
+                    'password': PASSWORD, 'full_name': f'Sneaky Admin {RUN_ID}',
+                    'role': 'admin', 'organization': ORG_HOSPITAL,
+                })
+            assert r.status_code == 403, r.text
+            assert 'self-register' in r.json()['detail']
+        run(flow())
+
+    def test_register_start_rejects_admin(self):
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/auth/register/start', json={
+                    'full_name': f'Sneaky Admin {RUN_ID}', 'role': 'admin',
+                    'email': f'test-{RUN_ID}-admin-{uuid.uuid4().hex[:6]}@example.com',
+                    'password': PASSWORD, 'organization': ORG_HOSPITAL,
+                })
+            assert r.status_code == 403, r.text
+            assert 'self-register' in r.json()['detail']
+        run(flow())
+
+    def test_non_admin_roles_still_register(self):
+        async def flow():
+            user, _ = await _register('pi', org=ORG_HOSPITAL)
+            assert user['role'] == 'pi'
+        run(flow())
+
+
 # ── Notification counts ──────────────────────────────────────────────────────
 class TestNotificationCounts:
     def test_unread_count_and_read_all(self):
@@ -418,6 +451,27 @@ class TestSeedExpansion:
             assert a['total'] > 0
             assert a['streak_days'] >= 1
             assert len(a['last7']) == 7
+        run(flow())
+
+    def test_reseed_prunes_stale_seed_dose_logs(self, seeded):
+        async def flow():
+            db = server.db
+            priya = (await db.patients.find_one({'email': 'patient@mtb.app'}, {'id': 1}))['id']
+            stale_date = (server.now().date() - server.timedelta(days=90)).isoformat()
+            stale_id = f'stale-{RUN_ID}-{uuid.uuid4().hex[:6]}'
+            # An old seed-marked row (out of window) must be pruned on reseed…
+            await db.dose_logs.insert_one({
+                'id': stale_id, 'patient_id': priya, 'medication_id': 'x',
+                'date': stale_date, 'time': '08:00', 'status': 'taken', 'seed': True})
+            # …but a non-seed old row for the same patient must be left untouched.
+            keep_id = f'keep-{RUN_ID}-{uuid.uuid4().hex[:6]}'
+            await db.dose_logs.insert_one({
+                'id': keep_id, 'patient_id': priya, 'medication_id': 'x',
+                'date': stale_date, 'time': '09:00', 'status': 'taken'})
+            await _seed_once()
+            assert await db.dose_logs.find_one({'id': stale_id}) is None, 'stale seed row not pruned'
+            assert await db.dose_logs.find_one({'id': keep_id}), 'non-seed row wrongly deleted'
+            await db.dose_logs.delete_one({'id': keep_id})   # teardown our own crumb
         run(flow())
 
     def test_seed_invitations_cover_all_statuses(self, seeded):
