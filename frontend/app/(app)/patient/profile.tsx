@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import {
@@ -103,33 +103,103 @@ export default function Profile() {
   const [lastTicketId, setLastTicketId] = useState("");
   const [tickets, setTickets] = useState<any[]>([]);
 
+  // Legal (T&C / Privacy) + FAQ fetched from the API
+  type LegalDoc = { version: string; effective_date: string; blocks: { heading: string; body: string }[] };
+  const [legal, setLegal] = useState<Record<string, LegalDoc>>({});
+  const [legalLoading, setLegalLoading] = useState(false);
+  const [legalError, setLegalError] = useState(false);
+  const [faqs, setFaqs] = useState(FAQS);
+
+  // Contact-change OTP flow (email / phone edits require verification)
+  const [loaded, setLoaded] = useState({ phone: "", email: "" });
+  type OtpItem = { field: "email" | "phone"; value: string };
+  const [otp, setOtp] = useState<{ open: boolean; field: "email" | "phone"; value: string; code: string; step: "sending" | "code"; error: string; busy: boolean }>(
+    { open: false, field: "email", value: "", code: "", step: "sending", error: "", busy: false });
+  const [otpQueue, setOtpQueue] = useState<OtpItem[]>([]);
+
   useEffect(() => {
     (async () => {
       try {
         const me = (await api.get("/auth/me")).data;
         const pf = me.profile || {};
         setProf({ fullName: me.full_name || "", dob: pf.dob || "", gender: pf.gender || "", phone: (me.phone || "").replace(/^\+91\s?/, ""), email: me.email || "", language: pf.language || "English" });
+        setLoaded({ phone: me.phone || "", email: me.email || "" });
       } catch {}
       try { const pr = (await api.get("/preferences")).data; setPrefs((p: any) => ({ ...p, ...pr })); } catch {}
       try { setTickets((await api.get("/support/tickets")).data); } catch {}
+      try { const fq = (await api.get("/faq")).data; if (Array.isArray(fq) && fq.length) setFaqs(fq); } catch {}
     })();
   }, []);
+
+  // Fetch legal copy the first time each doc's section is opened.
+  useEffect(() => {
+    if (section !== "terms" && section !== "privacy") return;
+    if (legal[section]) return;
+    let cancelled = false;
+    (async () => {
+      setLegalLoading(true); setLegalError(false);
+      try {
+        const data = (await api.get(`/legal/${section}`)).data as LegalDoc;
+        if (!cancelled) setLegal(l => ({ ...l, [section]: data }));
+      } catch { if (!cancelled) setLegalError(true); }
+      finally { if (!cancelled) setLegalLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [section]);
 
   const initials = useMemo(() => (prof.fullName || user?.full_name || "P").trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "P", [prof.fullName, user]);
 
   const saveProfile = async () => {
     setSavingProfile(true);
     try {
+      const newEmail = prof.email.trim().toLowerCase();
+      const newPhone = prof.phone ? "+91" + prof.phone.replace(/\D/g, "") : "";
+      // Non-contact fields save immediately; email/phone changes require OTP.
       await api.patch("/auth/me", {
-        full_name: prof.fullName,
-        email: prof.email.trim().toLowerCase(),
-        phone: prof.phone ? "+91" + prof.phone.replace(/\D/g, "") : "",
-        dob: prof.dob, gender: prof.gender, language: prof.language,
+        full_name: prof.fullName, dob: prof.dob, gender: prof.gender, language: prof.language,
       });
       await refresh();
-      setSection("main");
+      const queue: OtpItem[] = [];
+      if (newEmail && newEmail !== loaded.email) queue.push({ field: "email", value: newEmail });
+      if (newPhone && newPhone !== loaded.phone) queue.push({ field: "phone", value: newPhone });
+      if (queue.length) beginOtpQueue(queue);
+      else setSection("main");
     } catch {} finally { setSavingProfile(false); }
   };
+
+  // ── Contact-change OTP flow ──────────────────────────────────────────────
+  const beginOtpQueue = (queue: OtpItem[]) => {
+    if (!queue.length) { setSection("main"); return; }
+    setOtpQueue(queue);
+    startContact(queue[0]);
+  };
+  const startContact = async (item: OtpItem) => {
+    setOtp({ open: true, field: item.field, value: item.value, code: "", step: "sending", error: "", busy: true });
+    try {
+      await api.post("/auth/change-contact/start", { field: item.field, value: item.value });
+      setOtp(o => ({ ...o, step: "code", busy: false }));
+    } catch (e: any) {
+      setOtp(o => ({ ...o, step: "code", busy: false, error: e?.response?.data?.detail || "Could not send the verification code." }));
+    }
+  };
+  const verifyContact = async () => {
+    setOtp(o => ({ ...o, busy: true, error: "" }));
+    try {
+      await api.post("/auth/change-contact/verify", { code: otp.code });
+      const { field, value } = otp;
+      setLoaded(l => ({ ...l, [field]: value }));
+      if (field === "email") setProf(p => ({ ...p, email: value }));
+      else setProf(p => ({ ...p, phone: value.replace(/^\+91\s?/, "") }));
+      await refresh();
+      const rest = otpQueue.slice(1);
+      setOtpQueue(rest);
+      if (rest.length) startContact(rest[0]);
+      else { setOtp(o => ({ ...o, open: false, busy: false })); setSection("main"); }
+    } catch (e: any) {
+      setOtp(o => ({ ...o, busy: false, error: e?.response?.data?.detail || "Incorrect code. Please try again." }));
+    }
+  };
+  const cancelOtp = () => { setOtp(o => ({ ...o, open: false })); setOtpQueue([]); };
 
   const passStrength = passwordRules.filter(r => r.test(pw.next)).length;
   const passLabel = passStrength <= 2 ? "Weak" : passStrength <= 3 ? "Medium" : "Strong";
@@ -234,6 +304,38 @@ export default function Profile() {
               ))}
             </View>
           </Pressable>
+        </Modal>
+
+        {/* Contact-change OTP verification */}
+        <Modal visible={otp.open} transparent animationType="fade" onRequestClose={cancelOtp}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+            <View style={p.dialogOverlay}>
+              <Pressable style={StyleSheet.absoluteFill} onPress={otp.busy ? undefined : cancelOtp} />
+              <View style={p.dialog}>
+                <View style={[p.iconCircle, { backgroundColor: colors.primary + "1A", marginBottom: 12 }]}>
+                  {otp.field === "email" ? <Mail size={22} color={colors.primary} /> : <Phone size={22} color={colors.primary} />}
+                </View>
+                <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.foreground, marginBottom: 6 }}>Verify your {otp.field === "email" ? "email" : "phone"}</Text>
+                <Small style={{ marginBottom: 16, lineHeight: 20 }}>
+                  {otp.step === "sending" ? "Sending a verification code…" : `Enter the 6-digit code sent to ${otp.value}.`}
+                </Small>
+                <TextInput
+                  value={otp.code}
+                  onChangeText={v => setOtp(o => ({ ...o, code: v.replace(/\D/g, "").slice(0, 6), error: "" }))}
+                  keyboardType="number-pad" placeholder="000000" placeholderTextColor={colors.mutedFg + "99"}
+                  editable={otp.step === "code" && !otp.busy}
+                  style={[p.input, { textAlign: "center", letterSpacing: 8, fontSize: 20, marginBottom: 10 }]}
+                />
+                {otp.error ? <Small color={colors.destructive} style={{ marginBottom: 10 }}>{otp.error}</Small> : null}
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <Springy onPress={cancelOtp} style={[p.dialogBtn, { borderWidth: 1, borderColor: colors.border }]}><Small weight="700" color={colors.foreground}>Cancel</Small></Springy>
+                  <Springy onPress={verifyContact} disabled={otp.busy || otp.code.length < 6} style={[p.dialogBtn, { backgroundColor: (otp.busy || otp.code.length < 6) ? colors.surface : colors.primaryDeep }]}>
+                    <Small weight="700" color={(otp.busy || otp.code.length < 6) ? colors.mutedFg : colors.primaryFg}>{otp.busy ? "Verifying…" : "Verify"}</Small>
+                  </Springy>
+                </View>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
         </Modal>
       </SafeAreaView>
     );
@@ -348,7 +450,7 @@ export default function Profile() {
 
   if (section === "terms" || section === "privacy") {
     const isTerms = section === "terms";
-    const blocks = isTerms ? [
+    const fallback: [string, string][] = isTerms ? [
       ["1. Use of Application", "This app helps patients manage clinical-trial visit schedules, medication reminders, and communication with research teams."],
       ["2. Privacy", "Your personal health information is protected in accordance with applicable privacy laws including HIPAA and GDPR."],
       ["3. Data Security", "We use industry-standard security. All communications are encrypted using TLS 1.3."],
@@ -360,13 +462,29 @@ export default function Profile() {
       ["Data Sharing", "Shared only with your designated research team and the trial sponsor as required by your protocol."],
       ["Your Rights", "You may access, correct, or request deletion of your personal data at any time via your research team."],
     ];
+    const doc = legal[section];
+    const version = doc?.version || "2.1";
+    const effective = doc?.effective_date || "01 Jan 2025";
+    const blocks: [string, string][] = doc ? doc.blocks.map(b => [b.heading, b.body]) : fallback;
     return (
       <SafeAreaView style={p.container} edges={["top"]}>
         <Header title={isTerms ? "Terms & Conditions" : "Privacy Policy"} eyebrow="Legal" onBack={() => setSection("main")} />
         <ScrollView contentContainerStyle={p.body}>
+          {legalLoading && !doc ? (
+            <View style={{ alignItems: "center", paddingVertical: 24, gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Small color={colors.mutedFg}>Loading latest document…</Small>
+            </View>
+          ) : null}
+          {legalError && !doc ? (
+            <View style={[p.warn, { marginBottom: spacing.md }]}>
+              <AlertTriangle size={14} color={colors.warning} />
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load the latest version. Showing a saved copy.</Small>
+            </View>
+          ) : null}
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.md }}>
-            <Eyebrow color={colors.mutedFg}>Version 2.1</Eyebrow>
-            <Small style={{ fontFamily: fonts.mono }}>Effective 01 Jan 2025</Small>
+            <Eyebrow color={colors.mutedFg}>Version {version}</Eyebrow>
+            <Small style={{ fontFamily: fonts.mono }}>Effective {effective}</Small>
           </View>
           {blocks.map(([hd, bd], i) => (
             <Rise key={hd} delay={40 + i * 60}>
@@ -387,7 +505,7 @@ export default function Profile() {
       <SafeAreaView style={p.container} edges={["top"]}>
         <Header title="FAQ" eyebrow="Help & support" onBack={() => setSection("help")} />
         <ScrollView contentContainerStyle={p.body}>
-          {FAQS.map((f, i) => {
+          {faqs.map((f, i) => {
             const open = faqOpen === i;
             return (
               <Rise key={i} delay={40 + i * 60}>
