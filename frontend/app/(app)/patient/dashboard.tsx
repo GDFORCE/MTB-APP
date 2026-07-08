@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -44,15 +44,20 @@ export default function PatientDashboard() {
   const [notifs, setNotifs] = useState<any[]>([]);
   const [adherence, setAdherence] = useState<any>(null);
   const [trial, setTrial] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => { (async () => {
-    const [v, n, a, t] = await Promise.all([
-      api.get("/visits/mine").catch(() => ({ data: [] })),
-      api.get("/notifications").catch(() => ({ data: [] })),
-      api.get("/adherence").catch(() => ({ data: null })),
-      api.get("/trials").catch(() => ({ data: [] })),
-    ]);
-    setVisits(v.data); setNotifs(n.data); setAdherence(a.data);
-    setTrial(Array.isArray(t.data) ? t.data[0] ?? null : null);
+    try {
+      const [v, n, a, t] = await Promise.all([
+        api.get("/visits/mine").catch(() => ({ data: [] })),
+        api.get("/notifications").catch(() => ({ data: [] })),
+        api.get("/adherence").catch(() => ({ data: null })),
+        api.get("/trials").catch(() => ({ data: [] })),
+      ]);
+      setVisits(v.data); setNotifs(n.data); setAdherence(a.data);
+      setTrial(Array.isArray(t.data) ? t.data[0] ?? null : null);
+    } finally {
+      setLoading(false);
+    }
   })(); }, []);
 
   const completed = visits.filter(v => v.status === "completed").length;
@@ -143,7 +148,9 @@ export default function PatientDashboard() {
         {/* ── 01 · Next visit ── */}
         <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
           <SectionHead index="01" label="NEXT VISIT" />
-          {next ? (
+          {loading ? (
+            <View style={[pst.card, pst.loadingCard]}><ActivityIndicator color={C.primary} /></View>
+          ) : next ? (
           <Pressable testID="next-visit-card" onPress={() => router.push("/(app)/patient/my-trial")}>
             <View style={pst.card}>
               <View style={{ flexDirection: "row", gap: 16 }}>
@@ -238,10 +245,13 @@ export default function PatientDashboard() {
             </Pressable>
           } />
           <View style={{ gap: 12 }}>
-            {notifs.length === 0 && (
+            {loading && (
+              <View style={[pst.card, pst.loadingCard]}><ActivityIndicator color={C.primary} /></View>
+            )}
+            {!loading && notifs.length === 0 && (
               <View style={pst.card}><Text style={{ color: C.muted, fontSize: 13 }}>No notifications yet</Text></View>
             )}
-            {notifs.slice(0, 3).map(n => {
+            {!loading && notifs.slice(0, 3).map(n => {
               const Icon = n.kind === "message" ? MessageCircle : Bell;
               const tone = n.kind === "message" ? C.violet : C.accent;
               return (
@@ -270,7 +280,10 @@ export default function PatientDashboard() {
         <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
           <SectionHead index="04" label="RECENT ACTIVITY" />
           <View style={[pst.card, { padding: 0 }]}>
-            {visits.filter(v => v.status === "completed").slice(-2).reverse().map((v, i) => (
+            {loading && (
+              <View style={pst.loadingCard}><ActivityIndicator color={C.primary} /></View>
+            )}
+            {!loading && visits.filter(v => v.status === "completed").slice(-2).reverse().map((v, i) => (
               <View key={v.id} style={[{ padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, i > 0 && { borderTopWidth: 1, borderTopColor: C.border }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                   <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(92,154,110,0.15)", alignItems: "center", justifyContent: "center" }}>
@@ -286,7 +299,7 @@ export default function PatientDashboard() {
                 </View>
               </View>
             ))}
-            {visits.filter(v => v.status === "completed").length === 0 && (
+            {!loading && visits.filter(v => v.status === "completed").length === 0 && (
               <View style={{ padding: 16 }}><Text style={{ color: C.muted, fontSize: 13 }}>No completed visits yet</Text></View>
             )}
           </View>
@@ -356,6 +369,7 @@ const pst = StyleSheet.create({
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.20)" },
   chipText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
   card: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  loadingCard: { alignItems: "center", justifyContent: "center", paddingVertical: 28 },
   dateBlock: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
 });

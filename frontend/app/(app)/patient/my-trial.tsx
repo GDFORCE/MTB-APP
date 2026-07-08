@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, ScrollView, StyleSheet, Pressable } from "react-native";
+import { View, ScrollView, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { Check, Calendar as CalIcon, Building2, Phone, Home, Pill, Sparkles } from "lucide-react-native";
@@ -58,20 +58,26 @@ export default function MyTrial() {
   const [trial, setTrial] = useState<any>(null);
   const [tab, setTab] = useState<"visits" | "medications" | "progress">("visits");
   const [medTab, setMedTab] = useState<"today" | "schedule" | "history">("today");
+  const [loading, setLoading] = useState(true);
+  const [doseError, setDoseError] = useState<string | null>(null);
 
   useEffect(() => { (async () => {
-    const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const [v, m, a, t] = await Promise.all([
-      api.get("/visits/mine").then(r => r.data).catch(() => []),
-      api.get("/medications").then(r => r.data).catch(() => []),
-      api.get("/adherence").then(r => r.data).catch(() => null),
-      api.get("/trials").then(r => r.data).catch(() => []),
-    ]);
-    setVisits(v || []); setMeds(m || []); setAdherence(a);
-    setTrial(Array.isArray(t) ? t[0] ?? null : null);
-    const doseLists = await Promise.all((m || []).map((med: Med) =>
-      api.get(`/medications/${med.id}/doses`, { params: { from, to: todayStr } }).then(r => r.data).catch(() => [])));
-    setDoses(doseLists.flat());
+    try {
+      const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const [v, m, a, t] = await Promise.all([
+        api.get("/visits/mine").then(r => r.data).catch(() => []),
+        api.get("/medications").then(r => r.data).catch(() => []),
+        api.get("/adherence").then(r => r.data).catch(() => null),
+        api.get("/trials").then(r => r.data).catch(() => []),
+      ]);
+      setVisits(v || []); setMeds(m || []); setAdherence(a);
+      setTrial(Array.isArray(t) ? t[0] ?? null : null);
+      const doseLists = await Promise.all((m || []).map((med: Med) =>
+        api.get(`/medications/${med.id}/doses`, { params: { from, to: todayStr } }).then(r => r.data).catch(() => [])));
+      setDoses(doseLists.flat());
+    } finally {
+      setLoading(false);
+    }
   })(); }, []);
 
   const refreshAdherence = () => api.get("/adherence").then(r => setAdherence(r.data)).catch(() => {});
@@ -116,19 +122,26 @@ export default function MyTrial() {
     }));
   }, [doses, medById]);
 
-  // Optimistic dose log with revert on error.
+  // Optimistic dose log with scoped revert on error (touches only this slot).
   const logDose = async (medId: string, time: string, backend: "taken" | "not_taken" | "skipped") => {
-    const prev = doses;
+    const isSlot = (d: Dose) => d.medication_id === medId && d.date === todayStr && d.time === time;
+    const prevSlot = doses.find(isSlot); // restore only this slot's prior state on failure
     const nowIso = new Date().toISOString();
     setDoses(cur => [
-      ...cur.filter(d => !(d.medication_id === medId && d.date === todayStr && d.time === time)),
+      ...cur.filter(d => !isSlot(d)),
       { medication_id: medId, date: todayStr, time, status: backend, logged_at: nowIso },
     ]);
     try {
       await api.post(`/medications/${medId}/doses`, { date: todayStr, time, status: backend });
+      setDoseError(null); // clear on next successful action
       refreshAdherence();
     } catch {
-      setDoses(prev);
+      // Revert ONLY the failed slot so other slots' concurrent optimistic entries survive.
+      setDoses(cur => [
+        ...cur.filter(d => !isSlot(d)),
+        ...(prevSlot ? [prevSlot] : []),
+      ]);
+      setDoseError("Couldn't save — try again");
     }
   };
 
@@ -162,10 +175,13 @@ export default function MyTrial() {
         {tab === "visits" && (
           <View>
             <Eyebrow style={{ marginTop: spacing.md, marginBottom: spacing.sm }}>The road ahead</Eyebrow>
-            {visits.length === 0 && (
+            {loading && (
+              <Card style={s.loadingCard}><ActivityIndicator color={colors.primary} /></Card>
+            )}
+            {!loading && visits.length === 0 && (
               <Card><Small color={colors.mutedFg}>No visits scheduled yet</Small></Card>
             )}
-            {visits.map((v, i) => {
+            {!loading && visits.map((v, i) => {
               const done = v.status === "completed";
               const isNext = v.status === "upcoming";
               const Icon = v.name?.includes("Telephonic") ? Phone : v.name?.includes("Home") ? Home : Building2;
@@ -200,7 +216,9 @@ export default function MyTrial() {
           <View>
             <Card style={{ marginTop: spacing.md }}>
               <Eyebrow style={{ marginBottom: 10 }}>Today's medications</Eyebrow>
-              {todayEntries.length === 0 ? (
+              {loading ? (
+                <ActivityIndicator color={colors.primary} style={{ alignSelf: "flex-start" }} />
+              ) : todayEntries.length === 0 ? (
                 <Small color={colors.mutedFg}>No medications prescribed</Small>
               ) : (
                 <View style={{ flexDirection: "row", gap: 6 }}>
@@ -216,7 +234,14 @@ export default function MyTrial() {
                 </Pressable>
               ))}
             </View>
-            {medTab === "today" && (todayEntries.length === 0 ? (
+            {doseError && (
+              <View style={s.errorBanner}>
+                <Small weight="700" color={colors.destructive}>{doseError}</Small>
+              </View>
+            )}
+            {medTab === "today" && (loading ? (
+              <Card style={[s.loadingCard, { marginTop: spacing.md }]}><ActivityIndicator color={colors.primary} /></Card>
+            ) : todayEntries.length === 0 ? (
               <Card style={{ marginTop: spacing.md, alignItems: "center", paddingVertical: 24 }}>
                 <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" }}><Pill size={22} color={colors.primary} /></View>
                 <Body weight="700" style={{ marginTop: 10 }}>No medications yet</Body>
@@ -253,10 +278,13 @@ export default function MyTrial() {
             )))}
             {medTab === "schedule" && (
               <View style={{ marginTop: spacing.md }}>
-                {activeMeds.length === 0 && (
+                {loading && (
+                  <Card style={s.loadingCard}><ActivityIndicator color={colors.primary} /></Card>
+                )}
+                {!loading && activeMeds.length === 0 && (
                   <Card><Small color={colors.mutedFg}>No medications prescribed</Small></Card>
                 )}
-                {activeMeds.map(m => (
+                {!loading && activeMeds.map(m => (
                   <Card key={m.id} style={{ marginBottom: spacing.sm }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                       <View style={s.medIcon}><Pill size={18} color={colors.primary} /></View>
@@ -273,10 +301,13 @@ export default function MyTrial() {
             )}
             {medTab === "history" && (
               <View style={{ marginTop: spacing.md }}>
-                {history.length === 0 && (
+                {loading && (
+                  <Card style={s.loadingCard}><ActivityIndicator color={colors.primary} /></Card>
+                )}
+                {!loading && history.length === 0 && (
                   <Card><Small color={colors.mutedFg}>No dose history yet</Small></Card>
                 )}
-                {history.map((d, i) => (
+                {!loading && history.map((d, i) => (
                   <View key={i} style={{ marginBottom: spacing.md }}>
                     <Eyebrow style={{ marginBottom: 8 }}>{fmtDate(d.date)}</Eyebrow>
                     <Card padded={false}>
@@ -344,4 +375,6 @@ const s = StyleSheet.create({
   medBtn: { flex: 1, paddingVertical: 8, borderRadius: 12, alignItems: "center" },
   dot: { flex: 1, height: 10, borderRadius: 5 },
   statBox: { flex: 1, minWidth: "47%", padding: 14, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, alignItems: "center" },
+  loadingCard: { alignItems: "center", justifyContent: "center", paddingVertical: 28 },
+  errorBanner: { marginTop: spacing.sm, padding: spacing.sm, borderRadius: radii.lg, backgroundColor: colors.destructive + "14", borderWidth: 1, borderColor: colors.destructive + "40" },
 });
