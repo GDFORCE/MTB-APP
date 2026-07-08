@@ -1849,6 +1849,8 @@ async def _ensure_indexes():
         await db.medications.create_index('patient_id')
         await db.dose_logs.create_index(
             [('medication_id', 1), ('date', 1), ('time', 1)], unique=True)
+        # Adherence (GET /api/adherence) scans dose_logs by patient.
+        await db.dose_logs.create_index('patient_id')
     except Exception as e:
         logging.warning('Index setup deferred (DB unreachable or existing duplicates?): %s', e)
 
