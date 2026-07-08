@@ -1,12 +1,12 @@
-import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle } from "react-native-svg";
 import {
   Bell, Sun, Users, FileText, Stethoscope, ArrowUpRight, ChevronRight, FilePlus2, UserPlus, Send,
-  ListTodo, AlertTriangle, Clock, CheckCircle, Check, Home, MessageCircle, Calendar as CalIcon, User,
+  ListTodo, AlertTriangle, ClipboardCheck, Home, MessageCircle, Calendar as CalIcon, User,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -21,34 +21,49 @@ const C = {
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 
+// GET /api/tasks item — action queue computed server-side for site staff.
+type Task = {
+  id: string;
+  type: "overdue_visit" | "visit_today" | "schedule_review" | "unread_messages";
+  title: string;
+  subtitle: string;
+  due: string | null;
+  patient_id?: string;
+  trial_id?: string;
+  priority: "high" | "medium" | "low";
+  count?: number;
+};
+
 export default function PiDashboard() {
   const router = useRouter();
   const { user } = useAuth();
   const unread = useUnreadCount();
   const [trials, setTrials] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => { (async () => {
-    const [t, p] = await Promise.all([api.get("/trials").catch(() => ({ data: [] })), api.get("/patients").catch(() => ({ data: [] }))]);
-    setTrials(t.data); setPatients(p.data);
+    const [t, p, k] = await Promise.all([
+      api.get("/trials").catch(() => ({ data: [] })),
+      api.get("/patients").catch(() => ({ data: [] })),
+      api.get("/tasks").catch(() => ({ data: [] })),
+    ]);
+    setTrials(t.data); setPatients(p.data); setTasks(k.data);
+    setLoading(false);
   })(); }, []);
 
-  // Today queue (demo — these aren't backed yet)
-  const todayReviews = [
-    { id: "R1", patient: "SUBJ-001", initials: "P.K.", visit: "Visit 6", protocol: "Protocol-001", time: "9:00 AM", action: "eCRF Sign-off", done: false },
-    { id: "R2", patient: "SUBJ-003", initials: "A.P.", visit: "Visit 2", protocol: "Protocol-001", time: "11:30 AM", action: "AE Review", done: false },
-    { id: "R3", patient: "SUBJ-004", initials: "V.S.", visit: "Visit 5", protocol: "Protocol-005", time: "2:00 PM", action: "Safety Review", done: true, by: "Dr. Sharma", at: "2:40 PM" },
-  ];
-  const sponsors = 2;
-  const totalPatients = patients.length || 12;
-  const totalTrials = trials.length || 3;
-  const doneToday = todayReviews.filter(r => r.done).length;
-  const dayProgress = todayReviews.length ? doneToday / todayReviews.length : 0;
-  const tasksDue = 5;
-  const overdue = 1;
+  const trialById = useMemo(() => Object.fromEntries(trials.map((t: any) => [t.id, t])), [trials]);
+  // PI review queue = trials awaiting schedule sign-off (server type schedule_review).
+  const reviews = useMemo(() => tasks.filter(t => t.type === "schedule_review"), [tasks]);
+  const overdueVisits = useMemo(() => tasks.filter(t => t.type === "overdue_visit"), [tasks]);
+  const sponsorCount = useMemo(() => new Set(trials.map((t: any) => t.sponsor_name).filter(Boolean)).size, [trials]);
 
-  const firstName = (user?.full_name || "Dr. Sharma").split(" ").pop() || "Sharma";
-  const initials = user?.avatar_initials || "RS";
+  const firstName = (user?.full_name || "").split(" ").pop() || "";
+  const initials = user?.avatar_initials || (user?.full_name || "").split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase() || "?";
   const todayLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+  // The queue lists only pending work, so the ring fills once the review queue is clear.
+  const dayProgress = loading ? 0 : reviews.length === 0 ? 1 : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -69,7 +84,7 @@ export default function PiDashboard() {
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={pi.eyebrowLight}>PRINCIPAL INVESTIGATOR</Text>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-                  <Text style={pi.heroTitle}>Hi, Dr. {firstName}</Text>
+                  <Text style={pi.heroTitle}>{firstName ? `Hi, Dr. ${firstName}` : "Hello"}</Text>
                   <Sun size={20} color="rgba(255,255,255,0.80)" />
                 </View>
               </View>
@@ -85,16 +100,16 @@ export default function PiDashboard() {
             </View>
             <View style={pi.dayDeck}>
               <Ring value={dayProgress} size={84} stroke={7}>
-                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 22, lineHeight: 24, fontVariant: ["tabular-nums"] }}>{doneToday}/{todayReviews.length}</Text>
+                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 22, lineHeight: 24, fontVariant: ["tabular-nums"] }}>{loading ? "–" : reviews.length}</Text>
                 <Text style={{ color: "rgba(255,255,255,0.70)", fontSize: 8, fontWeight: "700", letterSpacing: 1.4, marginTop: 2 }}>REVIEWS</Text>
               </Ring>
               <View style={{ flex: 1, minWidth: 0, marginLeft: 16 }}>
                 <Text style={pi.eyebrowLight}>{todayLabel.toUpperCase()}</Text>
                 <Text style={pi.heroSubtitle}>Your review queue</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <View style={pi.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{tasksDue} pending</Text></View>
-                  <View style={[pi.heroChip, overdue > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
-                    <AlertTriangle size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{overdue} overdue</Text>
+                  <View style={pi.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : tasks.length} pending</Text></View>
+                  <View style={[pi.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
+                    <AlertTriangle size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : overdueVisits.length} overdue</Text>
                   </View>
                 </View>
               </View>
@@ -105,9 +120,9 @@ export default function PiDashboard() {
         <View style={{ marginTop: -40, paddingHorizontal: 16, paddingBottom: 24 }}>
           {/* Stat tiles */}
           <View style={{ flexDirection: "row", gap: 10 }}>
-            <Stat icon={Users} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={totalPatients} label="My Patients" />
-            <Stat icon={FileText} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={totalTrials} label="Trials" />
-            <Stat icon={Stethoscope} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={sponsors} label="Sponsors" />
+            <Stat icon={Users} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? "–" : patients.length} label="My Patients" />
+            <Stat icon={FileText} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? "–" : trials.length} label="Trials" />
+            <Stat icon={Stethoscope} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? "–" : sponsorCount} label="Sponsors" />
           </View>
 
           {/* Quick actions */}
@@ -126,7 +141,9 @@ export default function PiDashboard() {
             </Pressable>
           } />
           <View style={{ gap: 10 }}>
-            {patients.slice(0, 3).map(p => (
+            {loading && <LoadingCard />}
+            {!loading && patients.length === 0 && <EmptyCard text="No patients assigned yet" />}
+            {!loading && patients.slice(0, 3).map(p => (
               <Pressable key={p.id} testID={`patient-${p.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p.id } })}>
                 <View style={pi.patientCard}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -144,72 +161,61 @@ export default function PiDashboard() {
                 </View>
               </Pressable>
             ))}
-            {patients.length === 0 && <View style={pi.patientCard}><Text style={{ color: C.muted }}>No patients yet</Text></View>}
           </View>
 
-          {/* Today's Reviews */}
-          <Section label="TODAY'S REVIEWS" action={<Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{doneToday}/{todayReviews.length} DONE</Text>} />
-          <View>
-            {todayReviews.map((r, i) => {
-              const isNext = !r.done && todayReviews.find(x => !x.done)?.id === r.id;
-              const last = i === todayReviews.length - 1;
-              return (
-                <View key={r.id} style={{ flexDirection: "row", gap: 12 }}>
-                  <View style={{ alignItems: "center", paddingTop: 4 }}>
-                    <View style={[
-                      { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, zIndex: 1, overflow: "hidden" },
-                      r.done ? { borderColor: "transparent" } : isNext ? { backgroundColor: C.card, borderColor: C.info } : { backgroundColor: C.card, borderColor: C.border },
-                    ]}>
-                      {r.done && <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />}
-                      {r.done ? <Check size={14} color={C.primaryFg} strokeWidth={3} /> : <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(123,95,115,0.30)" }} />}
-                    </View>
-                    {!last && <View style={{ width: 2, flex: 1, marginVertical: 4, borderRadius: 1, backgroundColor: r.done ? C.dawnMid : C.border }} />}
-                  </View>
-                  <View style={[pi.reviewCard, isNext && { borderColor: "rgba(123,107,184,0.40)" }]}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                          <Text style={{ fontFamily: "monospace" as any, fontSize: 14, fontWeight: "700", color: C.fg }}>{r.patient}</Text>
-                          <Text style={{ fontSize: 12, color: C.muted }}>· {r.initials}</Text>
-                          {isNext && (
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
-                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.info }} />
-                              <Text style={{ fontSize: 10, fontWeight: "700", color: C.info }}>Up next</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{r.protocol} · {r.action}</Text>
-                        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 6, flexWrap: "wrap" }}>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.surface, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
-                            <Clock size={11} color={C.muted} /><Text style={{ fontSize: 11, fontFamily: "monospace" as any, fontWeight: "600", color: C.fg }}>{r.time}</Text>
-                          </View>
-                          <Text style={{ fontSize: 11, color: C.muted }}>{r.visit}</Text>
-                        </View>
+          {/* Today's Reviews — trials awaiting the PI's schedule sign-off */}
+          <Section label="TODAY'S REVIEWS" action={!loading ? <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{reviews.length} PENDING</Text> : undefined} />
+          {loading && <LoadingCard />}
+          {!loading && reviews.length === 0 && <EmptyCard text="No reviews awaiting sign-off — you're all caught up" />}
+          {!loading && (
+            <View>
+              {reviews.map((r, i) => {
+                const isNext = i === 0;
+                const last = i === reviews.length - 1;
+                const trial = r.trial_id ? trialById[r.trial_id] : null;
+                const protocol = trial?.protocol_id || r.title.replace(/^Review visit schedule · /, "");
+                return (
+                  <View key={r.id} style={{ flexDirection: "row", gap: 12 }}>
+                    <View style={{ alignItems: "center", paddingTop: 4 }}>
+                      <View style={[
+                        { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, zIndex: 1 },
+                        { backgroundColor: C.card, borderColor: isNext ? C.info : C.border },
+                      ]}>
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(123,95,115,0.30)" }} />
                       </View>
-                      {r.done ? (
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                          <CheckCircle size={14} color={C.success} />
-                          <Text style={{ fontSize: 12, color: C.success, fontWeight: "700" }}>Done</Text>
+                      {!last && <View style={{ width: 2, flex: 1, marginVertical: 4, borderRadius: 1, backgroundColor: C.border }} />}
+                    </View>
+                    <View style={[pi.reviewCard, isNext && { borderColor: "rgba(123,107,184,0.40)" }]}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                            <Text style={{ fontFamily: "monospace" as any, fontSize: 14, fontWeight: "700", color: C.fg }}>{protocol}</Text>
+                            {isNext && (
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
+                                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.info }} />
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: C.info }}>Up next</Text>
+                              </View>
+                            )}
+                          </View>
+                          {r.subtitle ? <Text style={{ fontSize: 12, color: C.fg, fontWeight: "600", marginTop: 3 }} numberOfLines={2}>{r.subtitle}</Text> : null}
+                          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 6, flexWrap: "wrap" }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.surface, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                              <ClipboardCheck size={11} color={C.muted} /><Text style={{ fontSize: 11, fontWeight: "600", color: C.fg }}>Visit schedule</Text>
+                            </View>
+                          </View>
                         </View>
-                      ) : (
                         <Pressable testID={`review-${r.id}`} onPress={() => router.push("/(app)/clinical/schedule-review")}>
                           <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pi.actionBtn}>
                             <Text style={{ color: C.primaryFg, fontSize: 12, fontWeight: "700" }}>Review</Text>
                           </LinearGradient>
                         </Pressable>
-                      )}
-                    </View>
-                    {r.done && r.by && (
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.border }}>
-                        <CheckCircle size={12} color={C.success} />
-                        <Text style={{ fontSize: 11, color: C.muted }}>Signed off by <Text style={{ color: C.fg, fontWeight: "600" }}>{r.by}</Text> · {r.at}</Text>
                       </View>
-                    )}
+                    </View>
                   </View>
-                </View>
-              );
-            })}
-          </View>
+                );
+              })}
+            </View>
+          )}
 
           {/* My Trials */}
           <Section label="MY TRIALS" action={
@@ -219,32 +225,36 @@ export default function PiDashboard() {
             </Pressable>
           } />
           <View style={{ gap: 12 }}>
-            {trials.slice(0, 2).map(tr => (
-              <Pressable key={tr.id} testID={`trial-${tr.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: tr.id } })}>
-                <View style={pi.trialPanel}>
-                  <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6 }} />
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(240,215,220,0.55)" }}>
-                      <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{tr.protocol_id}</Text>
+            {loading && <LoadingCard />}
+            {!loading && trials.length === 0 && <EmptyCard text="No trials assigned yet" />}
+            {!loading && trials.slice(0, 2).map(tr => {
+              const status = tr.status ? tr.status.charAt(0).toUpperCase() + tr.status.slice(1) : "Active";
+              return (
+                <Pressable key={tr.id} testID={`trial-${tr.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: tr.id } })}>
+                  <View style={pi.trialPanel}>
+                    <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6 }} />
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(240,215,220,0.55)" }}>
+                        <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{tr.protocol_id}</Text>
+                      </View>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
+                          <Text style={{ fontSize: 11, fontWeight: "700", color: C.success }}>{status}</Text>
+                        </View>
+                        <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" }}>
+                          <ArrowUpRight size={14} color="rgba(123,95,115,0.7)" />
+                        </View>
+                      </View>
                     </View>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
-                        <Text style={{ fontSize: 11, fontWeight: "700", color: C.success }}>{tr.status || "Active"}</Text>
-                      </View>
-                      <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" }}>
-                        <ArrowUpRight size={14} color="rgba(123,95,115,0.7)" />
-                      </View>
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: C.fg, marginBottom: 10 }} numberOfLines={2}>{tr.title}</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {tr.phase ? <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={tr.phase} /> : null}
+                      {tr.condition ? <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={tr.condition} /> : null}
                     </View>
                   </View>
-                  <Text style={{ fontSize: 16, fontWeight: "700", color: C.fg, marginBottom: 10 }}>{tr.title}</Text>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                    <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={tr.phase} />
-                    <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={tr.condition} />
-                    <Tag bg="rgba(142,91,180,0.10)" fg={C.violet} label="Metformin XR" />
-                  </View>
-                </View>
-              </Pressable>
-            ))}
+                </Pressable>
+              );
+            })}
           </View>
         </View>
       </ScrollView>
@@ -253,9 +263,25 @@ export default function PiDashboard() {
         <Tab icon={Home} label="Dashboard" active />
         <Tab icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
         <Tab icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/patient/calendar")} testID="tab-calendar" />
+        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/clinical/team-calendar" as any)} testID="tab-calendar" />
         <Tab icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
+    </View>
+  );
+}
+
+function LoadingCard() {
+  return (
+    <View style={[pi.reviewCard, { alignItems: "center", justifyContent: "center", paddingVertical: 28, marginBottom: 0 }]}>
+      <ActivityIndicator color={C.primary} />
+    </View>
+  );
+}
+
+function EmptyCard({ text }: { text: string }) {
+  return (
+    <View style={[pi.reviewCard, { marginBottom: 0 }]}>
+      <Text style={{ color: C.muted, fontSize: 13 }}>{text}</Text>
     </View>
   );
 }

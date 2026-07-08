@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -7,7 +7,7 @@ import Svg, { Path, Circle } from "react-native-svg";
 import {
   Bell, Sun, FileText, Building2, Stethoscope, ArrowUpRight,
   FilePlus2, UserPlus, Send, ListTodo, AlertTriangle, ChevronRight,
-  Check, Clock, CheckCircle, Home, Users, MessageCircle, Calendar as CalIcon, User,
+  Clock, Home, Users, MessageCircle, Calendar as CalIcon, User,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -27,32 +27,58 @@ const C = {
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 
-// Tasks / overdue (demo data — these tables don't exist in backend yet)
-const tasksDueToday = 4;
-const overdueCount = 1;
-const todayVisits = [
-  { id: "V1", patient: "SUBJ-001", initials: "P.K.", protocol: "Protocol-001", pi: "Dr. Sharma", time: "9:00 AM", visit: "Visit 6", type: "Efficacy Assessment", done: false },
-  { id: "V2", patient: "SUBJ-003", initials: "A.P.", protocol: "Protocol-001", pi: "Dr. Sharma", time: "11:30 AM", visit: "Visit 2", type: "Safety Follow-up", done: false },
-  { id: "V3", patient: "SUBJ-004", initials: "V.S.", protocol: "Protocol-005", pi: "Dr. Sharma", time: "2:00 PM", visit: "Visit 5", type: "Lab & Vitals", done: true, by: "Priya Desai", at: "2:35 PM" },
-];
-const overduePatients = [{ id: "SUBJ-002", name: "Rahul Mehta", visit: "Visit 4", daysOverdue: 3, lastContact: "19 May" }];
-const myTrials = [
-  { id: "Protocol-001", title: "Diabetes Phase II", phase: "Phase II", disease: "Type 2 Diabetes", drug: "Metformin XR", sponsor: "PharmaCo Ltd", pi: "Dr. Sharma", site: "Apollo Hospital Chennai", department: "Endocrinology", status: "Active" },
-  { id: "Protocol-005", title: "Asthma Maintenance Study", phase: "Phase III", disease: "Asthma", drug: "Budesonide", sponsor: "Respira Labs", pi: "Dr. Sharma", site: "Apollo Hospital Chennai", department: "Pulmonology", status: "Active" },
-];
+// GET /api/tasks item — action queue computed server-side for site staff.
+type Task = {
+  id: string;
+  type: "overdue_visit" | "visit_today" | "schedule_review" | "unread_messages";
+  title: string;
+  subtitle: string;
+  due: string | null;
+  patient_id?: string;
+  trial_id?: string;
+  priority: "high" | "medium" | "low";
+  count?: number;
+};
+
+const fmtTime = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+const fmtDate = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
+const daysLate = (iso: string | null) =>
+  iso ? Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 86400000)) : 1;
 
 export default function CrcDashboard() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const unread = useUnreadCount();
-  const [patientCount, setPatientCount] = useState(5);
-  useEffect(() => { (async () => { try { const r = await api.get("/patients"); setPatientCount(r.data.length); } catch {} })(); }, []);
+  const [trials, setTrials] = useState<any[]>([]);
+  const [patients, setPatients] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const doneToday = todayVisits.filter(v => v.done).length;
-  const dayProgress = todayVisits.length ? doneToday / todayVisits.length : 0;
-  const firstName = (user?.full_name || "Meera").split(" ")[0];
-  const initials = user?.avatar_initials || "MC";
+  useEffect(() => { (async () => {
+    const [t, p, k] = await Promise.all([
+      api.get("/trials").catch(() => ({ data: [] })),
+      api.get("/patients").catch(() => ({ data: [] })),
+      api.get("/tasks").catch(() => ({ data: [] })),
+    ]);
+    setTrials(t.data); setPatients(p.data); setTasks(k.data);
+    setLoading(false);
+  })(); }, []);
+
+  const trialById = useMemo(() => Object.fromEntries(trials.map((t: any) => [t.id, t])), [trials]);
+  const patientById = useMemo(() => Object.fromEntries(patients.map((p: any) => [p.id, p])), [patients]);
+  const visitsToday = useMemo(() => tasks.filter(t => t.type === "visit_today"), [tasks]);
+  const overdueVisits = useMemo(() => tasks.filter(t => t.type === "overdue_visit"), [tasks]);
+  const sponsorCount = useMemo(() => new Set(trials.map((t: any) => t.sponsor_name).filter(Boolean)).size, [trials]);
+  const piCount = useMemo(() => new Set(patients.map((p: any) => p.pi_id).filter(Boolean)).size, [patients]);
+
+  const fullName = user?.full_name || "";
+  const firstName = fullName.split(" ")[0] || "";
+  const initials = user?.avatar_initials || fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase() || "?";
   const todayLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+  // The queue only lists pending work, so the ring fills once today's visit queue is clear.
+  const dayProgress = loading ? 0 : visitsToday.length === 0 ? 1 : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -81,7 +107,7 @@ export default function CrcDashboard() {
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={st.eyebrowLight}>RESEARCH TEAM · CRC</Text>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-                  <Text style={st.heroTitle}>Hi, {firstName}</Text>
+                  <Text style={st.heroTitle}>{firstName ? `Hi, ${firstName}` : "Hello"}</Text>
                   <Sun size={20} color={C.w80} />
                 </View>
               </View>
@@ -99,16 +125,16 @@ export default function CrcDashboard() {
             {/* Day deck */}
             <View style={st.dayDeck}>
               <ProgressRing value={dayProgress} size={84} stroke={7}>
-                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 22, lineHeight: 24, fontVariant: ["tabular-nums"] }}>{doneToday}/{todayVisits.length}</Text>
+                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 22, lineHeight: 24, fontVariant: ["tabular-nums"] }}>{loading ? "–" : visitsToday.length}</Text>
                 <Text style={{ color: C.w70, fontSize: 8, fontWeight: "700", letterSpacing: 1.4, marginTop: 2 }}>VISITS</Text>
               </ProgressRing>
               <View style={{ flex: 1, minWidth: 0, marginLeft: 16 }}>
                 <Text style={st.eyebrowLight}>{todayLabel.toUpperCase()}</Text>
                 <Text style={st.heroSubtitle}>Your day at the site</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <View style={st.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{tasksDueToday} tasks due</Text></View>
-                  <View style={[st.heroChip, overdueCount > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
-                    <AlertTriangle size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{overdueCount} overdue</Text>
+                  <View style={st.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : tasks.length} tasks due</Text></View>
+                  <View style={[st.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
+                    <AlertTriangle size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : overdueVisits.length} overdue</Text>
                   </View>
                 </View>
               </View>
@@ -120,9 +146,9 @@ export default function CrcDashboard() {
         <View style={{ marginTop: -40, paddingHorizontal: 16, paddingBottom: 24 }}>
           {/* Stat tiles */}
           <View style={{ flexDirection: "row", gap: 10 }}>
-            <StatTile icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={myTrials.length} label="Total Trials" />
-            <StatTile icon={Building2} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={3} label="Sponsors" />
-            <StatTile icon={Stethoscope} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={2} label="PI's" />
+            <StatTile icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? "–" : trials.length} label="Total Trials" />
+            <StatTile icon={Building2} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? "–" : sponsorCount} label="Sponsors" />
+            <StatTile icon={Stethoscope} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? "–" : piCount} label="PI's" />
           </View>
 
           {/* Quick Actions */}
@@ -141,96 +167,96 @@ export default function CrcDashboard() {
             </Pressable>
           } />
           <View style={{ gap: 12 }}>
-            {myTrials.slice(0, 2).map(tr => <TrialPanel key={tr.id} tr={tr} onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: tr.id } })} />)}
+            {loading && <LoadingCard />}
+            {!loading && trials.length === 0 && <EmptyCard text="No trials assigned yet" />}
+            {!loading && trials.slice(0, 2).map((tr: any) => (
+              <TrialPanel
+                key={tr.id}
+                tr={tr}
+                patientCount={patients.filter((p: any) => p.trial_id === tr.id).length}
+                onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: tr.id } })}
+              />
+            ))}
           </View>
 
           {/* Today's Visits */}
-          <SectionLabel label="TODAY'S VISITS" action={<Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{doneToday}/{todayVisits.length} DONE</Text>} />
-          <View>
-            {todayVisits.map((v, i) => {
-              const isNext = !v.done && todayVisits.find(x => !x.done)?.id === v.id;
-              const last = i === todayVisits.length - 1;
-              return (
-                <View key={v.id} style={{ flexDirection: "row", gap: 12 }}>
-                  <View style={{ alignItems: "center", paddingTop: 4 }}>
-                    <View style={[
-                      { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, zIndex: 1 },
-                      v.done ? { borderColor: "transparent" } : isNext ? { backgroundColor: C.card, borderColor: C.info } : { backgroundColor: C.card, borderColor: C.border },
-                    ]}>
-                      {v.done ? (
-                        <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ position: "absolute", inset: 0, borderRadius: 14 }} />
-                      ) : null}
-                      {v.done ? <Check size={14} color={C.primaryFg} strokeWidth={3} /> : <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(123,95,115,0.30)" }} />}
-                    </View>
-                    {!last && <View style={[{ width: 2, flex: 1, marginVertical: 4, borderRadius: 1 }, v.done ? { backgroundColor: C.dawnMid } : { backgroundColor: C.border }]} />}
-                  </View>
-                  <View style={[st.visitCard, isNext && { borderColor: "rgba(123,107,184,0.40)" }]}>
-                    <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                          <Text style={{ fontFamily: "monospace" as any, fontSize: 14, fontWeight: "700", color: C.fg }}>{v.patient}</Text>
-                          <Text style={{ fontSize: 12, color: C.muted }}>· {v.initials}</Text>
-                          {isNext && (
-                            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
-                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.info }} />
-                              <Text style={{ fontSize: 10, fontWeight: "700", color: C.info }}>Up next</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{v.protocol} · {v.pi}</Text>
-                        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 6, flexWrap: "wrap" }}>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.surface, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
-                            <Clock size={11} color={C.muted} /><Text style={{ fontSize: 11, fontFamily: "monospace" as any, fontWeight: "600", color: C.fg }}>{v.time}</Text>
-                          </View>
-                          <Text style={{ fontSize: 11, color: C.muted }}>{v.visit} · {v.type}</Text>
-                        </View>
+          <SectionLabel label="TODAY'S VISITS" action={!loading ? <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{visitsToday.length} PENDING</Text> : undefined} />
+          {loading && <LoadingCard />}
+          {!loading && visitsToday.length === 0 && <EmptyCard text="No visits scheduled for today — you're all clear" />}
+          {!loading && (
+            <View>
+              {visitsToday.map((v, i) => {
+                const isNext = i === 0;
+                const last = i === visitsToday.length - 1;
+                const trial = v.trial_id ? trialById[v.trial_id] : null;
+                const patient = v.patient_id ? patientById[v.patient_id] : null;
+                const visitName = v.title.replace(/^Today: /, "");
+                return (
+                  <View key={v.id} style={{ flexDirection: "row", gap: 12 }}>
+                    <View style={{ alignItems: "center", paddingTop: 4 }}>
+                      <View style={[
+                        { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, zIndex: 1 },
+                        { backgroundColor: C.card, borderColor: isNext ? C.info : C.border },
+                      ]}>
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(123,95,115,0.30)" }} />
                       </View>
-                      {v.done ? (
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                          <CheckCircle size={14} color={C.success} />
-                          <Text style={{ fontSize: 12, color: C.success, fontWeight: "700" }}>Done</Text>
+                      {!last && <View style={{ width: 2, flex: 1, marginVertical: 4, borderRadius: 1, backgroundColor: C.border }} />}
+                    </View>
+                    <View style={[st.visitCard, isNext && { borderColor: "rgba(123,107,184,0.40)" }]}>
+                      <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subtitle}</Text>
+                            {patient?.avatar_initials ? <Text style={{ fontSize: 12, color: C.muted }}>· {patient.avatar_initials}</Text> : null}
+                            {isNext && (
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
+                                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.info }} />
+                                <Text style={{ fontSize: 10, fontWeight: "700", color: C.info }}>Up next</Text>
+                              </View>
+                            )}
+                          </View>
+                          {trial ? <Text style={{ fontSize: 11, color: C.muted, marginTop: 2 }} numberOfLines={1}>{trial.protocol_id} · {trial.title}</Text> : null}
+                          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 6, flexWrap: "wrap" }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.surface, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                              <Clock size={11} color={C.muted} /><Text style={{ fontSize: 11, fontFamily: "monospace" as any, fontWeight: "600", color: C.fg }}>{fmtTime(v.due)}</Text>
+                            </View>
+                            <Text style={{ fontSize: 11, color: C.muted }}>{visitName}</Text>
+                          </View>
                         </View>
-                      ) : (
-                        <Pressable testID={`update-${v.id}`} onPress={() => router.push("/(app)/clinical/schedule-review")}>
+                        <Pressable testID={`update-${v.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: v.patient_id || "" } })}>
                           <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.updateBtn}>
                             <Text style={{ color: C.primaryFg, fontSize: 12, fontWeight: "700" }}>Update</Text>
                           </LinearGradient>
                         </Pressable>
-                      )}
-                    </View>
-                    {v.done && v.by && (
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.border }}>
-                        <CheckCircle size={12} color={C.success} />
-                        <Text style={{ fontSize: 11, color: C.muted }}>Completed by <Text style={{ color: C.fg, fontWeight: "600" }}>{v.by}</Text> (CRC) · {v.at}</Text>
                       </View>
-                    )}
+                    </View>
                   </View>
-                </View>
-              );
-            })}
-          </View>
+                );
+              })}
+            </View>
+          )}
 
           {/* Overdue */}
-          {overduePatients.length > 0 && (
+          {!loading && overdueVisits.length > 0 && (
             <>
               <SectionLabel label="OVERDUE" tone={C.destructive} action={
                 <View style={{ minWidth: 20, height: 20, borderRadius: 10, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}>
-                  <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 10 }}>{overduePatients.length}</Text>
+                  <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 10 }}>{overdueVisits.length}</Text>
                 </View>
               } />
-              {overduePatients.map(p => (
-                <View key={p.id} style={st.overdueCard}>
+              {overdueVisits.map(v => (
+                <View key={v.id} style={st.overdueCard}>
                   <View style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6, backgroundColor: C.destructive }} />
                   <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, padding: 16, paddingLeft: 20 }}>
                     <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" }}>
                       <AlertTriangle size={20} color={C.destructive} />
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{p.name}</Text>
-                      <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{p.id} · {p.visit}</Text>
-                      <Text style={{ fontSize: 12, color: C.destructive, marginTop: 4, fontWeight: "600" }}>{p.daysOverdue} days overdue · Last contact {p.lastContact}</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subtitle}</Text>
+                      <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{v.title.replace(/^Overdue: /, "")}{v.trial_id && trialById[v.trial_id] ? ` · ${trialById[v.trial_id].protocol_id}` : ""}</Text>
+                      <Text style={{ fontSize: 12, color: C.destructive, marginTop: 4, fontWeight: "600" }}>{daysLate(v.due)} {daysLate(v.due) === 1 ? "day" : "days"} overdue · Was due {fmtDate(v.due)}</Text>
                     </View>
-                    <Pressable testID={`review-${p.id}`} style={{ backgroundColor: C.destructive, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 }}>
+                    <Pressable testID={`review-${v.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: v.patient_id || "" } })} style={{ backgroundColor: C.destructive, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 }}>
                       <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 12 }}>Review</Text>
                     </Pressable>
                   </View>
@@ -246,7 +272,7 @@ export default function CrcDashboard() {
         <TabItem icon={Home} label="Dashboard" active />
         <TabItem icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
         <TabItem icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <TabItem icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/patient/calendar")} testID="tab-calendar" />
+        <TabItem icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/clinical/team-calendar" as any)} testID="tab-calendar" />
         <TabItem icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
     </View>
@@ -256,6 +282,22 @@ export default function CrcDashboard() {
 // ── Sub-components ──────────────────────────────────────────────────────────
 function Text(props: any) {
   return <RNText {...props} style={[{ color: C.fg }, props.style]} />;
+}
+
+function LoadingCard() {
+  return (
+    <View style={[st.visitCard, { alignItems: "center", justifyContent: "center", paddingVertical: 28, marginBottom: 0 }]}>
+      <ActivityIndicator color={C.primary} />
+    </View>
+  );
+}
+
+function EmptyCard({ text }: { text: string }) {
+  return (
+    <View style={[st.visitCard, { marginBottom: 0 }]}>
+      <Text style={{ color: C.muted, fontSize: 13 }}>{text}</Text>
+    </View>
+  );
 }
 
 function SectionLabel({ label, action, tone }: { label: string; action?: React.ReactNode; tone?: string }) {
@@ -291,11 +333,6 @@ function StatTile({ icon: Icon, iconColor, iconBg, glow, value, label }: any) {
 }
 
 function QuickAction({ icon: Icon, bgGradient, bgColor, iconColor, label, onPress, testID }: any) {
-  const inner = (
-    <View style={{ alignItems: "center", justifyContent: "center", height: 48, width: 48 }}>
-      <Icon size={22} color={iconColor} />
-    </View>
-  );
   return (
     <Pressable testID={testID} onPress={onPress} style={st.quickAction}>
       {bgGradient ? (
@@ -312,34 +349,34 @@ function QuickAction({ icon: Icon, bgGradient, bgColor, iconColor, label, onPres
   );
 }
 
-function TrialPanel({ tr, onPress }: any) {
+function TrialPanel({ tr, patientCount, onPress }: any) {
+  const status = tr.status ? tr.status.charAt(0).toUpperCase() + tr.status.slice(1) : "Active";
   return (
     <Pressable testID={`trial-${tr.id}`} onPress={onPress} style={st.trialPanel}>
       <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6 }} />
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(240,215,220,0.55)" }}>
-          <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{tr.id}</Text>
+          <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{tr.protocol_id}</Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
-            <Text style={{ fontSize: 11, fontWeight: "700", color: C.success }}>{tr.status}</Text>
+            <Text style={{ fontSize: 11, fontWeight: "700", color: C.success }}>{status}</Text>
           </View>
           <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" }}>
             <ArrowUpRight size={14} color="rgba(123,95,115,0.7)" />
           </View>
         </View>
       </View>
-      <Text style={{ fontSize: 16, fontWeight: "700", color: C.fg, marginBottom: 10 }}>{tr.title}</Text>
+      <Text style={{ fontSize: 16, fontWeight: "700", color: C.fg, marginBottom: 10 }} numberOfLines={2}>{tr.title}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-        <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={tr.phase} />
-        <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={tr.disease} />
-        <Tag bg="rgba(142,91,180,0.10)" fg={C.violet} label={tr.drug} />
+        {tr.phase ? <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={tr.phase} /> : null}
+        {tr.condition ? <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={tr.condition} /> : null}
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border }}>
         {[
-          { label: "SPONSOR", val: tr.sponsor }, { label: "PI", val: tr.pi },
-          { label: "SITE", val: tr.site }, { label: "DEPARTMENT", val: tr.department },
-        ].map((f, i) => (
+          { label: "SPONSOR", val: tr.sponsor_name || "—" },
+          { label: "MY PATIENTS", val: `${patientCount} enrolled` },
+        ].map(f => (
           <View key={f.label} style={{ width: "50%", marginBottom: 8 }}>
             <Text style={{ fontSize: 9, fontWeight: "700", letterSpacing: 1.2, color: "rgba(123,95,115,0.65)" }}>{f.label}</Text>
             <Text style={{ fontSize: 12, fontWeight: "500", color: C.fg, marginTop: 2 }} numberOfLines={1}>{f.val}</Text>
