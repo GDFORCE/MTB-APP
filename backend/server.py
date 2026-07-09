@@ -890,6 +890,52 @@ async def _migrate_visit_instances():
         logging.warning('Visit-instance migration deferred (DB unreachable?): %s', e)
 
 # ── Patients ────────────────────────────────────────────────────────────────
+# Statuses that still need action (as opposed to 'completed' / 'missed', which
+# are terminal for a given visit instance).
+_ACTIONABLE_VISIT_STATUSES = ('scheduled', 'upcoming', 'overdue')
+
+
+def _derive_patient_status(instances, start_today):
+    """Reduce a patient's visit instances to a single list-level status plus
+    the soonest actionable visit (`next_visit`), both computed on read.
+
+    - no instances                       → 'no_visits'
+    - a pending visit already past-due    → 'overdue'
+    - a pending visit still ahead         → 'active'
+    - every instance completed            → 'completed'
+    - otherwise (only missed remain)      → 'active'
+    `next_visit` is the soonest actionable instance (past-due first, else the
+    next upcoming), or None when nothing is actionable.
+    """
+    if not instances:
+        return 'no_visits', None
+    actionable = [i for i in instances
+                  if i.get('status') in _ACTIONABLE_VISIT_STATUSES
+                  and isinstance(i.get('scheduled_date'), datetime)]
+    actionable.sort(key=lambda i: i['scheduled_date'])
+    next_visit = None
+    if actionable:
+        nv = actionable[0]
+        next_visit = {
+            'id': nv['id'],
+            'name': nv.get('name', ''),
+            'seq': nv.get('seq'),
+            'scheduled_date': iso(nv.get('scheduled_date')),
+            'status': nv.get('status'),
+        }
+    overdue = any(i['scheduled_date'] < start_today or i.get('status') == 'overdue'
+                  for i in actionable)
+    if overdue:
+        status = 'overdue'
+    elif actionable:
+        status = 'active'
+    elif all(i.get('status') == 'completed' for i in instances):
+        status = 'completed'
+    else:
+        status = 'active'
+    return status, next_visit
+
+
 @api.get('/patients')
 async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
     q = {}
@@ -898,6 +944,18 @@ async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'
     elif user['role'] == 'crc':
         q = {'crc_id': user['id']}
     patients = await db.patients.find(q, {'_id': 0}).to_list(500)
+    if patients:
+        pids = [p['id'] for p in patients]
+        insts = await db.visit_instances.find(
+            {'patient_id': {'$in': pids}}, {'_id': 0}).sort('seq', 1).to_list(5000)
+        by_patient: Dict[str, list] = {}
+        for i in insts:
+            by_patient.setdefault(i['patient_id'], []).append(i)
+        start_today = now().replace(hour=0, minute=0, second=0, microsecond=0)
+        for p in patients:
+            status, next_visit = _derive_patient_status(by_patient.get(p['id'], []), start_today)
+            p['status'] = status
+            p['next_visit'] = next_visit
     return patients
 
 @api.post('/patients', dependencies=[Depends(require_roles('pi', 'crc'))])

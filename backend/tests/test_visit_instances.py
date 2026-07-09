@@ -544,3 +544,73 @@ class TestTasks:
                 r2 = await cli.get('/api/tasks', headers=sp_headers)
                 assert r2.status_code == 403
         run(flow())
+
+
+# ── GET /patients enrichment: derived status + next_visit ────────────────────
+class TestPatientsListEnrichment:
+    def _row(self, rows, patient_id):
+        return next((p for p in rows if p['id'] == patient_id), None)
+
+    def test_active_with_next_upcoming_visit(self, pi, trial):
+        # enrolled 5 days ago, templates day 0/7/14 → day0 missed, 7&14 upcoming
+        trial_doc, tpls = trial
+        pi_user, pi_headers = pi
+        async def flow():
+            patient = await _enroll(pi_headers, trial_doc['id'], pi_id=pi_user['id'], days_ago=5)
+            async with make_client() as cli:
+                r = await cli.get('/api/patients', headers=pi_headers)
+            assert r.status_code == 200, r.text
+            row = self._row(r.json(), patient['id'])
+            assert row is not None, 'enrolled patient missing from own-scoped list'
+            assert row['status'] == 'active'
+            nv = row['next_visit']
+            assert nv is not None, 'active patient should surface a next visit'
+            assert nv['seq'] == 2                       # day-7 is the soonest upcoming
+            assert nv['name'] == tpls[1]['name']
+            assert nv['status'] == 'upcoming'
+            assert nv['scheduled_date']                 # ISO string present
+            assert 'id' in nv
+        run(flow())
+
+    def test_overdue_when_pending_visit_is_past_due(self, pi, trial):
+        trial_doc, _ = trial
+        pi_user, pi_headers = pi
+        async def flow():
+            patient = await _enroll(pi_headers, trial_doc['id'], pi_id=pi_user['id'], days_ago=5)
+            # day-0 (seq 1) materialized 'missed'; flip to 'scheduled' → genuinely
+            # pending yet past-due, i.e. overdue.
+            await server.db.visit_instances.update_one(
+                {'patient_id': patient['id'], 'seq': 1}, {'$set': {'status': 'scheduled'}})
+            async with make_client() as cli:
+                r = await cli.get('/api/patients', headers=pi_headers)
+            row = self._row(r.json(), patient['id'])
+            assert row['status'] == 'overdue'
+            assert row['next_visit']['seq'] == 1        # the past-due visit is next actionable
+        run(flow())
+
+    def test_completed_when_all_instances_done(self, pi, trial):
+        trial_doc, _ = trial
+        pi_user, pi_headers = pi
+        async def flow():
+            patient = await _enroll(pi_headers, trial_doc['id'], pi_id=pi_user['id'], days_ago=5)
+            await server.db.visit_instances.update_many(
+                {'patient_id': patient['id']}, {'$set': {'status': 'completed'}})
+            async with make_client() as cli:
+                r = await cli.get('/api/patients', headers=pi_headers)
+            row = self._row(r.json(), patient['id'])
+            assert row['status'] == 'completed'
+            assert row['next_visit'] is None
+        run(flow())
+
+    def test_no_visits_status_when_trial_has_no_templates(self, sponsor, pi):
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        async def flow():
+            bare, _ = await _make_trial(sp_headers, templates=())
+            patient = await _enroll(pi_headers, bare['id'], pi_id=pi_user['id'])
+            async with make_client() as cli:
+                r = await cli.get('/api/patients', headers=pi_headers)
+            row = self._row(r.json(), patient['id'])
+            assert row['status'] == 'no_visits'
+            assert row['next_visit'] is None
+        run(flow())
