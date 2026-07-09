@@ -2448,9 +2448,133 @@ async def register_push(body: dict, user=Depends(current_user)):
     await db.push_tokens.update_one({'user_id': user['id'], 'token': token}, {'$set': {'platform': body.get('platform', 'unknown'), 'updated_at': now()}, '$setOnInsert': {'created_at': now()}}, upsert=True)
     return {'ok': True}
 
+def _deidentify_audit_row(row: dict, patient: Optional[dict]) -> dict:
+    """Return a sponsor-safe copy of an audit row.
+
+    A sponsor/CRO may audit its own trials but must NEVER see patient PII. We
+    (1) drop any direct PII columns, (2) scrub the patient's identifiers out of
+    the free-text `detail` and `user_name` (a patient-actor row carries the
+    patient's own name), replacing them with a trial-level subject label, and
+    (3) relabel a patient actor's name outright. Fail-safe: even with no patient
+    row resolved, direct PII columns and a patient-actor name are still stripped.
+    """
+    row = dict(row)
+    for k in ('full_name', 'email', 'phone', 'dob', 'patient_name'):
+        row.pop(k, None)
+    label = 'Subject'
+    pii = []
+    if patient:
+        label = (patient.get('subject_id') or patient.get('avatar_initials')
+                 or 'Subject')
+        row['subject_label'] = label
+        pii = [patient.get('full_name'), patient.get('email'),
+               patient.get('phone'), patient.get('dob')]
+    for field in ('detail', 'user_name'):
+        val = row.get(field)
+        if isinstance(val, str):
+            for pv in pii:
+                if pv:
+                    val = val.replace(str(pv), label)
+            row[field] = val
+    if row.get('role') == 'patient':           # actor's own name must not leak
+        row['user_name'] = label
+    row['deidentified'] = True
+    return row
+
+
+async def _scope_audit_logs(user: dict, rows: list) -> list:
+    """Fail-closed row-level scoping of audit entries for the calling role.
+
+    patient  → own actions, or rows whose subject is their own patient record.
+    pi/crc   → own action rows + rows referencing a patient/trial they own
+               (reuses _can_access_patient / _pi_owns_trial — never cross-site).
+    sponsor/cro → rows for a trial in their org, DE-IDENTIFIED.
+    admin    → unrestricted.
+    any other role → nothing.
+    """
+    role = user['role']
+    if role == 'admin':
+        return rows
+    if role == 'patient':
+        own = await db.patients.find_one({'user_id': user['id']}, {'_id': 0, 'id': 1})
+        own_pid = own['id'] if own else None
+        return [r for r in rows
+                if r.get('user_id') == user['id']
+                or (own_pid and r.get('patient_id') == own_pid)]
+    if role not in ('pi', 'crc', 'sponsor', 'cro'):
+        return []
+
+    pcache: Dict[str, Optional[dict]] = {}
+    tcache: Dict[str, bool] = {}
+
+    async def _patient(pid):
+        if pid not in pcache:
+            pcache[pid] = await db.patients.find_one({'id': pid}, {'_id': 0})
+        return pcache[pid]
+
+    async def _trial_ok(tid):
+        if tid not in tcache:
+            if role in ('sponsor', 'cro'):
+                tcache[tid] = await _trial_in_caller_org(user, tid)
+            else:                              # pi/crc: PI-ownership tie to trial
+                trial = await db.trials.find_one({'id': tid}, {'_id': 0})
+                tcache[tid] = bool(trial) and await _pi_owns_trial(user, trial)
+        return tcache[tid]
+
+    out = []
+    for r in rows:
+        pid, tid = r.get('patient_id'), r.get('trial_id')
+        patient = await _patient(pid) if pid else None
+        allowed = r.get('user_id') == user['id']          # own action
+        if not allowed and patient is not None:
+            allowed = await _can_access_patient(user, patient)
+        if not allowed and tid:
+            allowed = await _trial_ok(tid)
+        if not allowed:
+            continue
+        if role in ('sponsor', 'cro'):
+            # Resolve the subject for scrubbing even when the writer linked the
+            # patient only via target_id (e.g. patient.enroll) — a sponsor's
+            # free-text detail must never carry a patient name.
+            scrub = patient
+            if scrub is None and r.get('target_id'):
+                scrub = await _patient(r['target_id'])
+            out.append(_deidentify_audit_row(r, scrub))
+        else:
+            out.append(r)
+    return out
+
+
 @api.get('/audit-logs')
-async def list_audit(user=Depends(require_roles('sponsor', 'cro', 'pi'))):
-    return await db.audit_logs.find({}, {'_id': 0}).sort('created_at', -1).to_list(200)
+async def list_audit(category: Optional[str] = None,
+                     from_: Optional[str] = Query(None, alias='from'),
+                     to: Optional[str] = Query(None, alias='to'),
+                     user=Depends(current_user)):
+    """Role-scoped audit trail. Open to every authenticated role; the returned
+    rows are scoped fail-closed per role (see _scope_audit_logs) so no caller
+    can read another tenant's / site's activity, and a sponsor's view is
+    de-identified. ?category= is an exact match; ?from=&to= are inclusive
+    YYYY-MM-DD timestamp bounds (same parse + range guard as the calendar)."""
+    f = _parse_ymd(from_, 'from')
+    t = _parse_ymd(to, 'to')
+    if f is not None and t is not None and t < f:
+        raise HTTPException(400, 'to must be on or after from')
+
+    q: Dict = {}
+    if category:
+        q['category'] = category
+    if f is not None or t is not None:
+        rng: Dict = {}
+        if f is not None:
+            rng['$gte'] = datetime(f.year, f.month, f.day, tzinfo=timezone.utc)
+        if t is not None:
+            rng['$lt'] = datetime(t.year, t.month, t.day,
+                                  tzinfo=timezone.utc) + timedelta(days=1)
+        q['created_at'] = rng
+
+    rows = await db.audit_logs.find(q, {'_id': 0}).sort('created_at', -1).to_list(500)
+    scoped = await _scope_audit_logs(user, rows)
+    return scoped[:200]
 
 # ── App content (config / FAQ / legal) — DB-backed, lazily seeded ─────────────
 # So the app never ships hardcoded copy: these come from the DB and can be edited
