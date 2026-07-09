@@ -149,6 +149,11 @@ class PatientIn(BaseModel):
     pi_id: Optional[str] = None
     crc_id: Optional[str] = None
     enrolled_date: Optional[str] = None
+    subject_id: Optional[str] = None
+    dob: Optional[str] = None
+    gender: Optional[str] = None
+    language: Optional[str] = None
+    baseline_date: Optional[str] = None   # anchors visit-instance scheduling
 
 class MessageIn(BaseModel):
     conversation_id: str
@@ -839,9 +844,17 @@ async def materialize_visit_instances(patient) -> int:
                                .sort('visit_number', 1).to_list(500)
     if not templates:
         return 0
-    try:
-        base = datetime.fromisoformat(patient.get('enrolled_date') or '')
-    except (TypeError, ValueError):
+    # Visit dates anchor on the baseline date when the patient has one, else the
+    # enrolment date (legacy / seed patients), else now.
+    base = None
+    for cand in (patient.get('baseline_date'), patient.get('enrolled_date')):
+        if cand:
+            try:
+                base = datetime.fromisoformat(cand)
+                break
+            except (TypeError, ValueError):
+                continue
+    if base is None:
         base = now()
     if base.tzinfo is None:
         base = base.replace(tzinfo=timezone.utc)
@@ -960,6 +973,14 @@ async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'
 
 @api.post('/patients', dependencies=[Depends(require_roles('pi', 'crc'))])
 async def add_patient(body: PatientIn, user=Depends(current_user)):
+    # Server-side duplicate subject-ID guard (scoped to the trial) — the client
+    # warns optimistically, but the DB is the source of truth.
+    if body.subject_id:
+        dup = await db.patients.find_one(
+            {'trial_id': body.trial_id, 'subject_id': body.subject_id},
+            {'_id': 0, 'id': 1})
+        if dup:
+            raise HTTPException(409, f'Subject ID {body.subject_id} already exists in this trial')
     pid = str(uuid.uuid4())
     doc = {
         'id': pid, **body.dict(),
@@ -1075,6 +1096,55 @@ async def get_messages(cid: str, user=Depends(current_user)):
 async def list_users(user=Depends(current_user)):
     users = await db.users.find({}, {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0, 'reset_otp': 0}).to_list(500)
     return [u for u in users if u['id'] != user['id']]
+
+TEAM_ROLES = ['pi', 'crc', 'sponsor', 'cro', 'smo', 'site']
+
+@api.get('/team')
+async def list_team(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 'smo', 'site'))):
+    """Org- and trial-scoped clinical team for the caller — NOT the whole user
+    directory. A member qualifies when they either share the caller's
+    organization or collaborate on a trial the caller is connected to (its
+    creator/sponsor, or the PI/CRC of any patient enrolled in it). Patients and
+    unrelated accounts are never included."""
+    org = (user.get('organization') or '').strip()
+
+    # Trials the caller is connected to: ones they created / sponsor, plus ones
+    # they staff as PI/CRC on a patient record.
+    trial_ids: set = set()
+    trial_or = [{'created_by': user['id']}] + ([{'sponsor_name': org}] if org else [])
+    async for t in db.trials.find({'$or': trial_or}, {'_id': 0, 'id': 1}):
+        trial_ids.add(t['id'])
+    async for p in db.patients.find(
+            {'$or': [{'pi_id': user['id']}, {'crc_id': user['id']}]},
+            {'_id': 0, 'trial_id': 1}):
+        if p.get('trial_id'):
+            trial_ids.add(p['trial_id'])
+
+    # Collaborator user-ids on those trials.
+    collaborator_ids: set = set()
+    if trial_ids:
+        tid_list = list(trial_ids)
+        async for t in db.trials.find({'id': {'$in': tid_list}}, {'_id': 0, 'created_by': 1}):
+            if t.get('created_by'):
+                collaborator_ids.add(t['created_by'])
+        async for p in db.patients.find({'trial_id': {'$in': tid_list}},
+                                        {'_id': 0, 'pi_id': 1, 'crc_id': 1}):
+            for k in ('pi_id', 'crc_id'):
+                if p.get(k):
+                    collaborator_ids.add(p[k])
+
+    ors = []
+    if org:
+        ors.append({'organization': org})
+    if collaborator_ids:
+        ors.append({'id': {'$in': list(collaborator_ids)}})
+    if not ors:
+        return []
+    members = await db.users.find(
+        {'role': {'$in': TEAM_ROLES}, '$or': ors},
+        {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0, 'reset_otp': 0}
+    ).to_list(500)
+    return [m for m in members if m['id'] != user['id']]
 
 # ── WebSocket chat ──────────────────────────────────────────────────────────
 class WSManager:

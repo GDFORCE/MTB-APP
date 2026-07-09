@@ -33,6 +33,8 @@ LOOP = asyncio.new_event_loop()
 
 # ids of invitations we create, so teardown can purge their audit rows too
 _created_invitation_ids = []
+# ids of patients we create via POST /patients, purged (+ their visit instances)
+_created_patient_ids = []
 
 
 def run(coro):
@@ -71,6 +73,9 @@ def _cleanup():
         await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
         await db.invitations.delete_many({'email': {'$regex': RUN_ID}})
         await db.notifications.delete_many({'title': {'$regex': RUN_ID}})
+        if _created_patient_ids:
+            await db.visit_instances.delete_many({'patient_id': {'$in': _created_patient_ids}})
+            await db.patients.delete_many({'id': {'$in': _created_patient_ids}})
         await db.audit_logs.delete_many({'$or': [
             {'user_name': {'$regex': RUN_ID}},
             {'target_id': {'$in': _created_invitation_ids}},
@@ -517,4 +522,102 @@ class TestSeedExpansion:
             types = {t['type'] for t in r.json()}
             assert 'overdue_visit' in types, types
             assert 'visit_today' in types, types
+        run(flow())
+
+
+# ── Add-patient: extra fields + baseline scheduling + duplicate subject-ID ────
+class TestAddPatientFields:
+    async def _pi_and_trial(self):
+        j = await _login('pi@mtb.app')
+        headers = {'Authorization': f"Bearer {j['access_token']}"}
+        async with make_client() as cli:
+            r = await cli.get('/api/trials', headers=headers)
+        assert r.status_code == 200, r.text
+        return headers, r.json()[0]['id']
+
+    def test_stores_all_fields_and_baseline_drives_first_visit(self, seeded):
+        async def flow():
+            headers, trial_id = await self._pi_and_trial()
+            subj = f'SUBJ-{RUN_ID}-A'
+            baseline = '2025-05-05'
+            async with make_client() as cli:
+                r = await cli.post('/api/patients', headers=headers, json={
+                    'full_name': f'Fields Patient {RUN_ID}',
+                    'email': f'test-{RUN_ID}-fields@example.com',
+                    'phone': '+910000000000', 'trial_id': trial_id,
+                    'subject_id': subj, 'dob': '1990-01-01', 'gender': 'Female',
+                    'language': 'Hindi', 'baseline_date': baseline,
+                })
+            assert r.status_code == 200, r.text
+            created = r.json()
+            _created_patient_ids.append(created['id'])
+            # all new fields round-tripped
+            for k, v in [('subject_id', subj), ('dob', '1990-01-01'),
+                         ('gender', 'Female'), ('language', 'Hindi'),
+                         ('baseline_date', baseline)]:
+                assert created.get(k) == v, f'{k}: {created.get(k)!r} != {v!r}'
+            assert created['trial_id'] == trial_id      # the SELECTED trial is used
+            # baseline_date (not enrolled_date) anchors visit-instance scheduling:
+            # the first template has day_offset 0, so it lands on the baseline day.
+            async with make_client() as cli:
+                r2 = await cli.get(f"/api/patients/{created['id']}", headers=headers)
+            assert r2.status_code == 200, r2.text
+            insts = sorted(r2.json()['instances'], key=lambda i: i['seq'])
+            assert insts, 'no visit instances materialized'
+            assert insts[0]['scheduled_date'][:10] == baseline, insts[0]['scheduled_date']
+        run(flow())
+
+    def test_duplicate_subject_id_in_trial_409(self, seeded):
+        async def flow():
+            headers, trial_id = await self._pi_and_trial()
+            subj = f'SUBJ-{RUN_ID}-DUP'
+            body = {
+                'full_name': f'Dup One {RUN_ID}',
+                'email': f'test-{RUN_ID}-dup1@example.com',
+                'trial_id': trial_id, 'subject_id': subj,
+            }
+            async with make_client() as cli:
+                r1 = await cli.post('/api/patients', headers=headers, json=body)
+                assert r1.status_code == 200, r1.text
+                _created_patient_ids.append(r1.json()['id'])
+                # same subject-id, same trial, different email → rejected
+                r2 = await cli.post('/api/patients', headers=headers, json={
+                    **body, 'email': f'test-{RUN_ID}-dup2@example.com',
+                    'full_name': f'Dup Two {RUN_ID}'})
+            assert r2.status_code == 409, r2.text
+            assert subj in r2.json()['detail']
+        run(flow())
+
+
+# ── Team directory: org- + trial-scoped, NOT the whole user list ─────────────
+class TestTeam:
+    def test_team_is_org_and_trial_scoped(self, seeded):
+        async def flow():
+            j = await _login('pi@mtb.app')          # AIIMS Delhi, staffs Protocol-001
+            headers = {'Authorization': f"Bearer {j['access_token']}"}
+            async with make_client() as cli:
+                r = await cli.get('/api/team', headers=headers)
+            assert r.status_code == 200, r.text
+            emails = {m['email'] for m in r.json()}
+            # same-org staff
+            assert 'crc@mtb.app' in emails
+            assert 'site@mtb.app' in emails
+            # trial collaborator (Protocol-001 created_by = sponsor)
+            assert 'sponsor@mtb.app' in emails
+            # NOT the whole directory: patients, admin, unrelated orgs excluded
+            assert 'patient@mtb.app' not in emails
+            assert 'admin@mtb.app' not in emails
+            assert 'cro@mtb.app' not in emails
+            assert 'smo@mtb.app' not in emails
+            # caller never lists themselves
+            assert 'pi@mtb.app' not in emails
+        run(flow())
+
+    def test_team_requires_staff_role(self, seeded):
+        async def flow():
+            j = await _login('patient@mtb.app')
+            headers = {'Authorization': f"Bearer {j['access_token']}"}
+            async with make_client() as cli:
+                r = await cli.get('/api/team', headers=headers)
+            assert r.status_code == 403, r.text
         run(flow())
