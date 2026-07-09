@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Plus, Trash2, Check, Sparkles } from "lucide-react-native";
@@ -8,19 +8,68 @@ import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 
-type Row = { name: string; day_offset: string; window_days: string; activities: string };
+// A row carries the id of its saved visit TEMPLATE once loaded/created, so the
+// editor can diff-save (create new rows, update changed rows, delete removed
+// rows) instead of blindly re-POSTing — which used to pile up duplicate
+// templates + visit instances on every save.
+type Row = { id?: string; name: string; day_offset: string; window_days: string; activities: string };
 type ExtractedVisit = { name: string; day_offset: number; window_days: number; activities: string[] };
+
+const DEFAULT_ROWS: Row[] = [
+  { name: "Screening", day_offset: "0", window_days: "3", activities: "Informed consent, Vitals" },
+  { name: "Baseline", day_offset: "7", window_days: "3", activities: "Physical exam, Blood draw" },
+  { name: "Week 4", day_offset: "28", window_days: "3", activities: "Vitals, Blood draw" },
+];
+
+const templateToRow = (t: any): Row => ({
+  id: t.id,
+  name: t.name ?? "",
+  day_offset: String(t.day_offset ?? 0),
+  window_days: String(t.window_days ?? 3),
+  activities: (t.activities ?? []).join(", "),
+});
+
+// Field-level equality (ignoring id) so an unchanged row is skipped on save —
+// keeping a re-save of the SAME schedule idempotent.
+const sameRow = (a: Row, b: Row) =>
+  a.name.trim() === b.name.trim() &&
+  (parseInt(a.day_offset || "0", 10)) === (parseInt(b.day_offset || "0", 10)) &&
+  (parseInt(a.window_days || "3", 10)) === (parseInt(b.window_days || "3", 10)) &&
+  a.activities.trim() === b.activities.trim();
 
 export default function VisitScheduleEditor() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [rows, setRows] = useState<Row[]>([
-    { name: "Screening", day_offset: "0", window_days: "3", activities: "Informed consent, Vitals" },
-    { name: "Baseline", day_offset: "7", window_days: "3", activities: "Physical exam, Blood draw" },
-    { name: "Week 4", day_offset: "28", window_days: "3", activities: "Vitals, Blood draw" },
-  ]);
+  const [rows, setRows] = useState<Row[]>(DEFAULT_ROWS);
+  // Snapshot of the templates loaded on entry — the baseline the diff-save is
+  // computed against (which ids to PUT vs. DELETE).
+  const [original, setOriginal] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true), [loadErr, setLoadErr] = useState("");
   const [saving, setSaving] = useState(false), [err, setErr] = useState("");
   const [extracting, setExtracting] = useState(false), [extractErr, setExtractErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setLoadErr("");
+    try {
+      const r = await api.get(`/trials/${id}/visits`);
+      const tpls: any[] = r.data ?? [];
+      if (tpls.length) {
+        const loaded = tpls.map(templateToRow);
+        setRows(loaded);
+        setOriginal(loaded);
+      } else {
+        // New trial with no schedule yet — offer sensible defaults to edit.
+        setRows(DEFAULT_ROWS);
+        setOriginal([]);
+      }
+    } catch (e: any) {
+      setLoadErr(e?.response?.data?.detail || "Couldn't load the existing schedule.");
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
 
   const upd = (i: number, k: keyof Row, v: string) => setRows(prev => prev.map((r, j) => j === i ? { ...r, [k]: v } : r));
   const add = () => setRows(prev => [...prev, { name: `Visit ${prev.length + 1}`, day_offset: "0", window_days: "3", activities: "" }]);
@@ -28,7 +77,10 @@ export default function VisitScheduleEditor() {
 
   // AI-assisted: upload the protocol PDF, let Claude extract its Schedule of
   // Assessments, and pre-fill the rows below for the sponsor to review + edit.
-  // Nothing is saved until they hit "Save & preview" via the normal flow.
+  // The extracted visits replace the current rows as NEW (unsaved, id-less)
+  // rows, so on save they're created via POST and any previously-loaded
+  // templates they replace are deleted by the diff. Nothing is saved until the
+  // sponsor hits "Save & preview" via the normal flow.
   const autofill = async () => {
     setExtractErr("");
     let asset: DocumentPicker.DocumentPickerAsset;
@@ -73,18 +125,53 @@ export default function VisitScheduleEditor() {
   const save = async () => {
     setSaving(true); setErr("");
     try {
+      const keptIds = new Set(rows.filter(r => r.id).map(r => r.id));
+      // 1) Delete templates that were loaded but are no longer in the editor.
+      for (const o of original) {
+        if (o.id && !keptIds.has(o.id)) await api.delete(`/visits/${o.id}`);
+      }
+      // 2) Create new rows (POST), update changed existing rows (PUT), skip
+      //    unchanged rows so re-saving the same schedule is a no-op.
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
-        await api.post("/visits", {
-          trial_id: id, visit_number: i + 1, name: r.name,
-          day_offset: parseInt(r.day_offset || "0", 10), window_days: parseInt(r.window_days || "3", 10),
+        const payload = {
+          name: r.name,
+          day_offset: parseInt(r.day_offset || "0", 10),
+          window_days: parseInt(r.window_days || "3", 10),
           activities: r.activities.split(",").map(s => s.trim()).filter(Boolean),
-        });
+        };
+        if (r.id) {
+          const prev = original.find(o => o.id === r.id);
+          if (!prev || !sameRow(prev, r)) await api.put(`/visits/${r.id}`, payload);
+        } else {
+          await api.post("/visits", { trial_id: id, visit_number: i + 1, ...payload });
+        }
       }
       router.replace({ pathname: "/(app)/clinical/trial-summary", params: { id } });
     } catch (e: any) { setErr(e?.response?.data?.detail || "Save failed"); }
     finally { setSaving(false); }
   };
+
+  if (loading) {
+    return (
+      <ScreenContainer>
+        <ScreenHeader eyebrow="Build schedule" title="Visit Schedule" />
+        <View style={s.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+      </ScreenContainer>
+    );
+  }
+
+  if (loadErr) {
+    return (
+      <ScreenContainer>
+        <ScreenHeader eyebrow="Build schedule" title="Visit Schedule" />
+        <View style={s.center}>
+          <Small color={colors.destructive} style={{ textAlign: "center", marginBottom: spacing.md }}>{loadErr}</Small>
+          <Button testID="retry-load" variant="secondary" onPress={load}>Try again</Button>
+        </View>
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer>
@@ -103,8 +190,13 @@ export default function VisitScheduleEditor() {
             <Small color={colors.mutedFg} style={{ marginTop: 6 }}>Upload the protocol and we'll draft the visit schedule from its Schedule of Assessments. Review and edit before saving.</Small>
             {extractErr ? <Small color={colors.destructive} style={{ marginTop: 6 }}>{extractErr}</Small> : null}
           </Card>
+          {rows.length === 0 ? (
+            <Card style={{ marginTop: spacing.md }}>
+              <Small color={colors.mutedFg} style={{ textAlign: "center" }}>No visits yet — add one below or auto-fill from the protocol PDF.</Small>
+            </Card>
+          ) : null}
           {rows.map((r, i) => (
-            <Card key={i} style={{ marginTop: spacing.md }}>
+            <Card key={r.id ?? `new-${i}`} style={{ marginTop: spacing.md }}>
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
                 <Body weight="700">Visit {i + 1}</Body>
                 <Pressable testID={`remove-visit-${i}`} onPress={() => rm(i)} hitSlop={8}><Trash2 size={18} color={colors.destructive} /></Pressable>
@@ -135,6 +227,7 @@ export default function VisitScheduleEditor() {
 }
 
 const s = StyleSheet.create({
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
   input: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.foreground },
   addBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.primary + "55", borderStyle: "dashed", marginTop: spacing.md, backgroundColor: colors.secondary + "44" },
   aiBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.primary + "55", marginTop: spacing.md, backgroundColor: colors.primary + "12" },
