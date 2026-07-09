@@ -182,6 +182,15 @@ def world():
             'pi_a': _audit_doc(pi_a, 'patient.enroll', f'Enrolled {NAME_A} in trial',
                                n - timedelta(hours=3),
                                patient_id=patient_a['id'], trial_id=trial_a['id']),
+            # site-A enroll row shaped EXACTLY like the real patient.enroll writer:
+            # the subject is linked via target_id (NOT patient_id) with the name in
+            # free text. This forces the sponsor de-id target_id FALLBACK that
+            # production actually relies on — the patient_id path above would mask a
+            # regression in that fallback.
+            'enroll_tid': _audit_doc(pi_a, 'patient.enroll',
+                               f'Enrolled {NAME_A} in trial',
+                               n - timedelta(hours=3),
+                               target_id=patient_a['id'], trial_id=trial_a['id']),
             # site-B staff row about patient_b (FOREIGN to site A + sponsor A)
             'pi_b': _audit_doc(pi_b, 'patient.enroll', f'Enrolled {NAME_B} in trial',
                                n - timedelta(hours=3),
@@ -286,7 +295,7 @@ class TestSponsorScope:
     def test_sponsor_response_is_deidentified(self, world):
         """No patient full_name / email / phone appears ANYWHERE in a sponsor's
         audit payload — neither in free-text detail nor a patient-actor user_name."""
-        sp_a_h = world['sp_a'][1]
+        sp_a_h, rows = world['sp_a'][1], world['rows']
         pt_email = world['patient_a']['email']
         async def flow():
             r = await _get(sp_a_h)
@@ -294,6 +303,15 @@ class TestSponsorScope:
             blob = json.dumps(r.json())
             assert NAME_A not in blob, 'patient full_name leaked to sponsor'
             assert pt_email not in blob, 'patient email leaked to sponsor'
+            # The real-writer-shaped row (subject via target_id, no patient_id) must
+            # REACH the sponsor and be scrubbed — otherwise the NAME_A assertion above
+            # never exercises the target_id de-id fallback production depends on.
+            enroll_row = next(
+                (row for row in r.json() if row['id'] == rows['enroll_tid']), None)
+            assert enroll_row is not None, \
+                'target_id-linked enroll row must reach the sponsor (else fallback untested)'
+            assert NAME_A not in json.dumps(enroll_row), \
+                'target_id de-id fallback failed — enrollee name leaked to sponsor'
             # de-identified rows carry a subject label instead
             deid = [row for row in r.json() if row.get('patient_id')]
             assert deid, 'expected at least one patient-referencing row'
