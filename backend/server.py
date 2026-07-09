@@ -7,7 +7,7 @@ Production-grade FastAPI app with:
 - Real-time chat over WebSocket (1-to-1 + group, typing, read receipts)
 - MongoDB persistence
 """
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -24,6 +24,7 @@ import jwt
 
 import otp_service
 import protocol_extraction as pe
+import storage as file_storage
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2939,6 +2940,166 @@ async def accept_legal(user=Depends(current_user)):
     n = now()
     await db.users.update_one({'id': user['id']}, {'$set': {'terms_accepted_at': n}})
     return {'accepted_at': iso(n)}
+
+# ── File uploads (storage abstraction — Task 5.1) ────────────────────────────
+# Uploaded files may carry PHI, so download is scope-checked (never a public
+# link on the local backend) and delete is owner/admin-only. Storage backend is
+# pluggable (local disk now, S3-ready) via storage.get_storage().
+FILE_MAX_BYTES = 10 * 1024 * 1024   # 10 MB
+# extension -> (allowed content-types, magic-byte prefixes). Both the extension
+# AND the declared content-type must be allowed, and the bytes must match the
+# type's magic (defence-in-depth against a spoofed content-type / extension).
+_ALLOWED_UPLOADS = {
+    'pdf':  ({'application/pdf', 'application/octet-stream'}, (b'%PDF-',)),
+    'png':  ({'image/png', 'application/octet-stream'}, (b'\x89PNG\r\n\x1a\n',)),
+    'jpg':  ({'image/jpeg', 'application/octet-stream'}, (b'\xff\xd8\xff',)),
+    'jpeg': ({'image/jpeg', 'application/octet-stream'}, (b'\xff\xd8\xff',)),
+    'docx': ({'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              'application/zip', 'application/octet-stream'}, (b'PK\x03\x04',)),
+}
+_FILE_SCOPE_TYPES = ('user', 'trial', 'ticket')
+
+
+async def _caller_in_trial(user: dict, trial_id: Optional[str]) -> bool:
+    """Whether the caller legitimately belongs to a trial (for trial-scoped file
+    access). sponsor/cro: their org owns it. pi: _pi_owns_trial. crc: they are a
+    listed CRC on an enrolled patient, created it, or share the trial's org.
+    Fail-closed for everyone else."""
+    if not trial_id:
+        return False
+    role = user['role']
+    if role in ('sponsor', 'cro'):
+        return await _trial_in_caller_org(user, trial_id)
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        return False
+    if role == 'pi':
+        return await _pi_owns_trial(user, trial)
+    if role == 'crc':
+        if trial.get('created_by') == user['id']:
+            return True
+        org = (user.get('organization') or '').strip()
+        if org and (trial.get('sponsor_name') or '').strip() == org:
+            return True
+        mine = await db.patients.find_one(
+            {'trial_id': trial_id, 'crc_id': user['id']}, {'_id': 0, 'id': 1})
+        return mine is not None
+    return False
+
+
+async def _file_access_allowed(user: dict, doc: dict) -> bool:
+    """Scope gate for GET /api/files/{id}. Owner and admin always pass; otherwise
+    the caller must satisfy the file's scope. Fail-closed (unknown scope → deny)."""
+    if user['role'] == 'admin' or doc.get('owner_id') == user['id']:
+        return True
+    scope = doc.get('scope') or {}
+    stype, sid = scope.get('type'), scope.get('id')
+    if stype == 'user':
+        return sid == user['id']
+    if stype == 'trial':
+        return await _caller_in_trial(user, sid)
+    if stype == 'ticket':
+        return False   # only owner/admin (handled above); no broad ticket access
+    return False
+
+
+@api.post('/files')
+async def upload_file(file: UploadFile = File(...),
+                      scope_type: str = Form('user'),
+                      scope_id: Optional[str] = Form(None),
+                      user=Depends(current_user)):
+    """Upload a file (any authenticated role). 10 MB cap; pdf/png/jpg/docx only
+    (validated by extension AND content-type AND magic bytes). The blob is stored
+    under a uuid key via the configured storage backend and indexed in `files`
+    with a scope (default {type:'user', id: caller}). Returns
+    {id, name, size, content_type, url} — url is the presigned link (S3) or the
+    authenticated API GET path (local)."""
+    name = (file.filename or '').strip() or 'file'
+    ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+    spec = _ALLOWED_UPLOADS.get(ext)
+    if not spec:
+        raise HTTPException(400, 'Unsupported file type (allowed: pdf, png, jpg, docx)')
+    allowed_cts, magics = spec
+    ctype = (file.content_type or '').lower().split(';')[0].strip()
+    if ctype and ctype not in allowed_cts:
+        raise HTTPException(400, 'Content-type does not match the file extension')
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, 'The uploaded file is empty')
+    if len(data) > FILE_MAX_BYTES:
+        raise HTTPException(413, 'File is too large (max 10 MB)')
+    if not any(data.startswith(m) for m in magics):
+        raise HTTPException(400, 'File contents do not match the declared type')
+
+    stype = (scope_type or 'user').strip().lower()
+    if stype not in _FILE_SCOPE_TYPES:
+        raise HTTPException(400, 'Invalid scope type')
+    # Default scope is {type:'user', id: caller}; a scope id is required for
+    # trial/ticket scopes and defaults to the caller for a user scope.
+    sid = (scope_id or '').strip() or user['id']
+    scope = {'type': stype, 'id': sid}
+
+    # Prefer the declared content-type; fall back to a canonical one per ext.
+    stored_ct = ctype or next(iter(allowed_cts - {'application/octet-stream'}), 'application/octet-stream')
+    key = str(uuid.uuid4())
+    st = file_storage.get_storage()
+    await st.save(key, data, stored_ct)
+    doc = {
+        'id': str(uuid.uuid4()), 'key': key, 'owner_id': user['id'],
+        'scope': scope, 'name': name, 'content_type': stored_ct,
+        'size': len(data), 'created_at': now(),
+    }
+    await db.files.insert_one(doc)
+    await write_audit(user, 'file.upload',
+                      f'Uploaded {name} ({len(data)} bytes, scope {stype})',
+                      target_id=doc['id'])
+    url = st.url(key) or f"/api/files/{doc['id']}"
+    return {'id': doc['id'], 'name': name, 'size': len(data),
+            'content_type': stored_ct, 'url': url}
+
+
+@api.get('/files/{file_id}')
+async def download_file(file_id: str, user=Depends(current_user)):
+    """Scope-checked download. Missing → 404; foreign scope → 403. Streams the
+    bytes (local) or redirects to the presigned URL (S3)."""
+    from fastapi.responses import Response as FastResp, RedirectResponse
+    doc = await db.files.find_one({'id': file_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'File not found')
+    if not await _file_access_allowed(user, doc):
+        raise HTTPException(403, 'You do not have access to this file')
+    st = file_storage.get_storage()
+    presigned = st.url(doc['key'])
+    if presigned:
+        return RedirectResponse(presigned, status_code=307)
+    try:
+        data, _ct = await st.open(doc['key'])
+    except FileNotFoundError:
+        raise HTTPException(404, 'File blob is missing')
+    name = doc.get('name', 'file').replace('"', '')
+    return FastResp(
+        content=data, media_type=doc.get('content_type', 'application/octet-stream'),
+        headers={'Content-Disposition': f'inline; filename="{name}"'})
+
+
+@api.delete('/files/{file_id}')
+async def delete_file(file_id: str, user=Depends(current_user)):
+    """Delete a file blob + its db doc. Owner or admin only (else 403)."""
+    doc = await db.files.find_one({'id': file_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'File not found')
+    if user['role'] != 'admin' and doc.get('owner_id') != user['id']:
+        raise HTTPException(403, 'Only the owner or an admin can delete this file')
+    try:
+        await file_storage.get_storage().delete(doc['key'])
+    except Exception as e:
+        logging.warning('File blob delete failed for %s: %s', doc['key'], e)
+    await db.files.delete_one({'id': file_id})
+    await write_audit(user, 'file.delete', f"Deleted {doc.get('name', file_id)}",
+                      target_id=file_id)
+    return {'ok': True, 'id': file_id}
+
 
 @api.get('/')
 async def root(): return {'app': 'My Trial Board', 'status': 'ok'}

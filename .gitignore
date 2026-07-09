@@ -78,6 +78,10 @@ agenthub/agents/youtube/db
 
 memory/test_credentials.md
 
+# Uploaded files (blobs may contain PHI — never commit them; dir kept via .gitkeep)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
 # Mobile development
 android-sdk/
 .env
