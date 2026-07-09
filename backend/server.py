@@ -1020,10 +1020,15 @@ async def _require_patient(user: dict, patient_id: Optional[str]) -> dict:
     return p
 
 async def _pi_owns_trial(user: dict, trial: dict) -> bool:
-    """Whether a PI may review a trial's visit schedule: they created it, share
-    its sponsor org, are a listed PI on it (own a patient enrolled in it), or the
-    trial has no site PI assigned yet (unclaimed). Once any PI is listed on the
-    trial, cross-site PIs are locked out."""
+    """Whether a PI may review a trial's visit schedule. FAIL-CLOSED: the PI must
+    belong to the trial via one of three legitimate ties —
+      1. they created it (`created_by`), or
+      2. their org matches the trial's org (`sponsor_name`) — this is the
+         pre-enrollment approval path (valid even for an unclaimed trial), or
+      3. they are a listed PI on it (own a patient enrolled in it).
+    A PI whose org differs from the trial's org, who is not the creator, and who
+    has no enrolled patient gets no access — even on an 'unclaimed' trial (no
+    prior 'unclaimed -> any PI' allow-path)."""
     if trial.get('created_by') == user['id']:
         return True
     org = (user.get('organization') or '').strip()
@@ -1031,20 +1036,26 @@ async def _pi_owns_trial(user: dict, trial: dict) -> bool:
         return True
     mine = await db.patients.find_one(
         {'trial_id': trial['id'], 'pi_id': user['id']}, {'_id': 0, 'id': 1})
-    if mine:
-        return True
-    claimed = await db.patients.find_one(
-        {'trial_id': trial['id'], 'pi_id': {'$nin': [None, '']}}, {'_id': 0, 'id': 1})
-    return claimed is None
+    return mine is not None
 
 
 @api.get('/patients')
 async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
-    q = {}
     if user['role'] == 'pi':
         q = {'pi_id': user['id']}
     elif user['role'] == 'crc':
         q = {'crc_id': user['id']}
+    else:
+        # sponsor/cro: FAIL-CLOSED — only patients enrolled in a trial owned by
+        # the caller's org (created by them, or sponsor_name == their org), the
+        # same tie the detail endpoint enforces via _trial_in_caller_org. An
+        # empty org / no org trials yields an empty list, never every patient.
+        org = (user.get('organization') or '').strip()
+        trial_or = [{'created_by': user['id']}]
+        if org:
+            trial_or.append({'sponsor_name': org})
+        trials = await db.trials.find({'$or': trial_or}, {'_id': 0, 'id': 1}).to_list(2000)
+        q = {'trial_id': {'$in': [t['id'] for t in trials]}}
     patients = await db.patients.find(q, {'_id': 0}).to_list(500)
     if patients:
         pids = [p['id'] for p in patients]
@@ -1753,7 +1764,7 @@ async def _review_schedule(trial_id: str, user: dict, new_status: str, reason: s
     if not trial:
         raise HTTPException(404, 'Trial not found')
     # Ownership: PI-only is enforced by the route; on top of that the PI must
-    # belong to this trial (creator, listed PI, same org, or an unclaimed trial).
+    # belong to this trial (creator, same org, or a listed PI) — fail-closed.
     if not await _pi_owns_trial(user, trial):
         raise HTTPException(403, 'You do not have access to this trial')
     upd = {'schedule_status': new_status,

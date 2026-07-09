@@ -385,6 +385,11 @@ class TestScheduleReview:
         pi_user, pi_headers = pi
         async def flow():
             t, _ = await _make_trial(sp_headers, templates=())
+            # Fail-closed schedule authz (Task 3.75 C2): the PI must belong to the
+            # trial to review it. Establish that tie by enrolling a PI-assigned
+            # patient before approving (the removed 'unclaimed -> any PI' path is
+            # a security bug, not a valid flow).
+            await _enroll(pi_headers, t['id'], pi_id=pi_user['id'])
             async with make_client() as cli:
                 r = await cli.post(f"/api/schedules/{t['id']}/approve", headers=pi_headers)
             assert r.status_code == 200, r.text
@@ -403,6 +408,9 @@ class TestScheduleReview:
         pi_user, pi_headers = pi
         async def flow():
             t, _ = await _make_trial(sp_headers, templates=())
+            # Fail-closed schedule authz (Task 3.75 C2): give the PI a legitimate
+            # tie to the trial before flagging (see approve test above).
+            await _enroll(pi_headers, t['id'], pi_id=pi_user['id'])
             reason = f'Window too tight {RUN_ID}'
             async with make_client() as cli:
                 r_missing = await cli.post(f"/api/schedules/{t['id']}/flag",

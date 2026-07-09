@@ -130,9 +130,18 @@ def world():
         crc_b, crc_b_h = await _register('crc', org=ORG_SITE_B)
         sp_a, sp_a_h = await _register('sponsor', org=ORG_SPONSOR_A)
         sp_b, sp_b_h = await _register('sponsor', org=ORG_SPONSOR_B)
+        # A second, unassigned PI at Site A (same site org as pi_a, but not the
+        # pi_id/crc_id/creator of patient_a) — exercises the org-match branch.
+        pi_a2, pi_a2_h = await _register('pi', org=ORG_SITE_A)
+        # A PI whose org == the sponsor's org (ORG_SPONSOR_A) — the legitimate
+        # same-org pre-enrollment approver for an unclaimed trial.
+        pi_sp_a, pi_sp_a_h = await _register('pi', org=ORG_SPONSOR_A)
 
         trial_a = await _make_trial(sp_a_h, ORG_SPONSOR_A)
         trial_b = await _make_trial(sp_b_h, ORG_SPONSOR_B)
+        # An UNCLAIMED trial in sponsor_A's org: has a schedule but zero enrolled
+        # patients, so no patient carries a pi_id yet.
+        trial_a_unclaimed = await _make_trial(sp_a_h, ORG_SPONSOR_A)
 
         patient_a = await _enroll(pi_a_h, trial_a['id'], pi_id=pi_a['id'], crc_id=crc_a['id'])
         patient_b = await _enroll(pi_b_h, trial_b['id'], pi_id=pi_b['id'], crc_id=crc_b['id'])
@@ -143,8 +152,10 @@ def world():
         return {
             'pi_a': (pi_a, pi_a_h), 'crc_a': (crc_a, crc_a_h),
             'pi_b': (pi_b, pi_b_h), 'crc_b': (crc_b, crc_b_h),
+            'pi_a2': (pi_a2, pi_a2_h), 'pi_sp_a': (pi_sp_a, pi_sp_a_h),
             'sp_a': (sp_a, sp_a_h), 'sp_b': (sp_b, sp_b_h),
             'trial_a': trial_a, 'trial_b': trial_b,
+            'trial_a_unclaimed': trial_a_unclaimed,
             'patient_a': patient_a, 'patient_b': patient_b, 'inst_a': inst_a,
         }
     return run(build())
@@ -171,6 +182,17 @@ class TestPatientDetailScoping:
                 for _, headers in (world['pi_b'], world['crc_b']):
                     r = await cli.get(f'/api/patients/{pid}', headers=headers)
                     assert r.status_code == 403, r.text
+        run(flow())
+
+    def test_same_org_unassigned_pi_get_200(self, world):
+        """M2: a PI at the same site as the patient, but not its pi_id/crc_id/
+        creator, still resolves 200 via the org-match branch."""
+        pid = world['patient_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.get(f'/api/patients/{pid}', headers=world['pi_a2'][1])
+                assert r.status_code == 200, r.text
+                assert r.json()['id'] == pid
         run(flow())
 
 
@@ -240,6 +262,31 @@ class TestScheduleReviewScoping:
                 assert r_flag.status_code == 403, r_flag.text
         run(flow())
 
+    def test_foreign_org_pi_cannot_approve_or_flag_unclaimed_trial(self, world):
+        """C2 fail-closed: a trial with ZERO pi-assigned patients ('unclaimed')
+        must NOT be approvable/flaggable by a PI from a different org. The old
+        'unclaimed -> any PI' fallback made this return 200; it must be 403."""
+        tid = world['trial_a_unclaimed']['id']   # sponsor_A org, no patients
+        async def flow():
+            async with make_client() as cli:
+                r_app = await cli.post(f'/api/schedules/{tid}/approve', headers=world['pi_b'][1])
+                assert r_app.status_code == 403, r_app.text
+                r_flag = await cli.post(f'/api/schedules/{tid}/flag', headers=world['pi_b'][1],
+                                        json={'reason': f'nope {RUN_ID}'})
+                assert r_flag.status_code == 403, r_flag.text
+        run(flow())
+
+    def test_same_org_pi_can_approve_unclaimed_trial(self, world):
+        """The legitimate pre-enrollment flow still works: a PI whose org matches
+        the trial's org (sponsor_name) may approve an unclaimed trial -> 200."""
+        tid = world['trial_a_unclaimed']['id']
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post(f'/api/schedules/{tid}/approve', headers=world['pi_sp_a'][1])
+                assert r.status_code == 200, r.text
+                assert r.json()['schedule_status'] == 'approved'
+        run(flow())
+
 
 # ── Sponsor org-trial scoping ────────────────────────────────────────────────
 class TestSponsorScoping:
@@ -263,4 +310,29 @@ class TestSponsorScoping:
                 # and vice-versa
                 r2 = await cli.get(f'/api/patients/{pid_a}', headers=world['sp_b'][1])
                 assert r2.status_code == 403, r2.text
+        run(flow())
+
+    def test_sponsor_list_excludes_foreign_org_patients(self, world):
+        """C1 fail-closed: GET /patients for a sponsor returns ONLY patients in
+        that sponsor's own-org trials — never a foreign org's patient (whose
+        full_name/email/phone/dob would otherwise leak)."""
+        pid_a = world['patient_a']['id']   # sponsor_A's org trial
+        pid_b = world['patient_b']['id']   # sponsor_B's org trial
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.get('/api/patients', headers=world['sp_a'][1])
+                assert r.status_code == 200, r.text
+                ids = {p['id'] for p in r.json()}
+                assert pid_b not in ids, 'sponsor_A leaked a foreign-org patient'
+                assert pid_a in ids, 'sponsor_A should still see its own-org patient'
+        run(flow())
+
+    def test_sponsor_without_org_trials_gets_empty_list(self, world):
+        """A sponsor whose org owns no trials sees an empty list, not everyone."""
+        async def flow():
+            _, headers = await _register('sponsor', org=f'TESTORG-{RUN_ID} Empty Pharma')
+            async with make_client() as cli:
+                r = await cli.get('/api/patients', headers=headers)
+                assert r.status_code == 200, r.text
+                assert r.json() == [], r.text
         run(flow())
