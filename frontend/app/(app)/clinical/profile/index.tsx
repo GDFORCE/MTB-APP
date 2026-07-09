@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -8,6 +8,9 @@ import {
   Building2, FlaskConical, FileText, HelpCircle, BarChart2, Users,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
+import { api } from "@/src/api/client";
+
+const ORG_TYPE_LABEL: Record<string, string> = { sponsor: "Sponsor", cro: "CRO", smo: "SMO", site: "Site / Hospital" };
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -21,14 +24,27 @@ export default function SiteUserProfile() {
   const router = useRouter();
   const { user, signOut } = useAuth();
 
+  // Real entity data: org name comes from the user record; address + entity type
+  // are resolved from the organizations directory (falls back gracefully).
+  const [org, setOrg] = useState<{ address: string; type: string }>({ address: "", type: "Site / Hospital" });
+  useEffect(() => {
+    if (!user?.organization) return;
+    (async () => {
+      try {
+        const r = await api.get("/organizations", { params: { search: user.organization } });
+        const match = (r.data || []).find((o: any) => o.name === user.organization) || (r.data || [])[0];
+        if (match) setOrg({ address: match.address || "", type: ORG_TYPE_LABEL[match.type] || "Site / Hospital" });
+      } catch {}
+    })();
+  }, [user?.organization]);
+
   if (!user) return null;
   const isPi = user.role === "pi";
   const designation = isPi ? "Principal Investigator" : "Clinical Research Coordinator";
-  const entityType = "Site / Hospital";
-  const orgName = user.organization || "Apollo Hospital";
-  const orgAddress = "21 Greams Lane, Chennai 600006";
+  const entityType = org.type;
+  const orgName = user.organization || "—";
+  const orgAddress = org.address || "—";
   const role = isPi ? "PI" : "Research Team";
-  const department = isPi ? "Endocrinology" : "";
 
   const account = [
     { icon: UserPen, label: "Edit Profile", onPress: () => router.push("/(app)/clinical/profile/edit"), bg: "rgba(123,107,184,0.10)", ic: C.info },
@@ -47,13 +63,12 @@ export default function SiteUserProfile() {
   ];
 
   const detailRows = [
-    { label: "Phone Number", val: user.phone || "+91 98765 43210", verify: true },
+    { label: "Phone Number", val: user.phone || "—", verify: true },
     { label: "Email ID", val: user.email, verify: true },
     { label: "Entity Type", val: entityType },
     { label: "Org. Name", val: orgName },
     { label: "Org. Address", val: orgAddress },
     { label: "Role", val: role },
-    ...(isPi ? [{ label: "Department", val: department || "—" }] : []),
   ];
 
   return (
