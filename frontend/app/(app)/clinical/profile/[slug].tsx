@@ -77,6 +77,9 @@ function EditProfile() {
   const [entity, setEntity] = useState({ type: "Site / Hospital", orgName: "—", orgAddress: "—", role: "" });
   const [loaded, setLoaded] = useState({ phone: "", email: "" });
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   type OtpItem = { field: "email" | "phone"; value: string };
   const [otp, setOtp] = useState<{ open: boolean; field: "email" | "phone"; value: string; code: string; step: "sending" | "code"; error: string; busy: boolean }>(
@@ -84,9 +87,12 @@ function EditProfile() {
   const [otpQueue, setOtpQueue] = useState<OtpItem[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      setLoading(true); setLoadError(false);
       try {
         const me = (await api.get("/auth/me")).data;
+        if (cancelled) return;
         setProf({ fullName: me.full_name || "", phone: (me.phone || "").replace(/^\+91\s?/, ""), email: me.email || "" });
         setLoaded({ phone: me.phone || "", email: me.email || "" });
         const role = me.role === "pi" ? "PI" : "Research Team";
@@ -95,11 +101,13 @@ function EditProfile() {
           try {
             const r = await api.get("/organizations", { params: { search: me.organization } });
             const match = (r.data || []).find((o: any) => o.name === me.organization) || (r.data || [])[0];
-            if (match) setEntity(e => ({ ...e, orgAddress: match.address || "—", type: ORG_TYPE_LABEL[match.type] || e.type }));
+            if (!cancelled && match) setEntity(e => ({ ...e, orgAddress: match.address || "—", type: ORG_TYPE_LABEL[match.type] || e.type }));
           } catch {}
         }
-      } catch {}
+      } catch { if (!cancelled) setLoadError(true); }
+      finally { if (!cancelled) setLoading(false); }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const beginOtpQueue = (queue: OtpItem[]) => {
@@ -136,18 +144,23 @@ function EditProfile() {
   const cancelOtp = () => { setOtp(o => ({ ...o, open: false })); setOtpQueue([]); };
 
   const save = async () => {
-    setSaving(true);
+    setSaving(true); setSaveError("");
     try {
       const newEmail = prof.email.trim().toLowerCase();
-      const newPhone = prof.phone ? "+91" + prof.phone.replace(/\D/g, "") : "";
+      const loadedEmail = (loaded.email || "").trim().toLowerCase();
+      const newPhoneDigits = prof.phone.replace(/\D/g, "");
+      const loadedPhoneDigits = (loaded.phone || "").replace(/\D/g, "");
+      const newPhone = newPhoneDigits ? "+91" + newPhoneDigits : "";
       await api.patch("/auth/me", { full_name: prof.fullName });
       await refresh();
       const queue: OtpItem[] = [];
-      if (newEmail && newEmail !== loaded.email) queue.push({ field: "email", value: newEmail });
-      if (newPhone && newPhone !== loaded.phone) queue.push({ field: "phone", value: newPhone });
+      if (newEmail && newEmail !== loadedEmail) queue.push({ field: "email", value: newEmail });
+      if (newPhoneDigits && newPhoneDigits !== loadedPhoneDigits) queue.push({ field: "phone", value: newPhone });
       if (queue.length) beginOtpQueue(queue);
       else router.back();
-    } catch {} finally { setSaving(false); }
+    } catch (e: any) {
+      setSaveError(e?.response?.data?.detail || "Could not save your changes. Please try again.");
+    } finally { setSaving(false); }
   };
 
   return (
@@ -156,6 +169,18 @@ function EditProfile() {
       <SubHeader eyebrow="Account" title="Edit Profile" rightLabel={saving ? "Saving…" : "Save"} onRight={save} />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={p.body} keyboardShouldPersistTaps="handled">
+          {loading ? (
+            <View style={{ alignItems: "center", paddingVertical: 24, gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Small color={colors.mutedFg}>Loading your profile…</Small>
+            </View>
+          ) : null}
+          {loadError ? (
+            <View style={[p.warn, { marginBottom: spacing.md }]}>
+              <AlertTriangle size={14} color={colors.warning} />
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your profile. Some details may be missing.</Small>
+            </View>
+          ) : null}
           <Rise delay={40}>
             <View style={p.card}>
               <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => setProf({ ...prof, fullName: v })} style={p.input} /></Field>
@@ -200,6 +225,7 @@ function EditProfile() {
               </Springy>
             </View>
           </Rise>
+          {saveError ? <Small color={colors.destructive} style={{ marginTop: spacing.md }}>{saveError}</Small> : null}
         </ScrollView>
         <View style={p.footer}>
           <Springy onPress={save} disabled={saving} style={[p.cta, { backgroundColor: colors.primaryDeep }]}>
@@ -252,21 +278,28 @@ function EntityChange() {
   const [form, setForm] = useState<{ field: string; newValue: string }>({ field: "Entity Type", newValue: "" });
   const [warn, setWarn] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      setLoading(true); setLoadError(false);
       try {
         const me = (await api.get("/auth/me")).data;
+        if (cancelled) return;
         setCurrent(c => ({ ...c, orgName: me.organization || "—" }));
         if (me.organization) {
           try {
             const r = await api.get("/organizations", { params: { search: me.organization } });
             const match = (r.data || []).find((o: any) => o.name === me.organization) || (r.data || [])[0];
-            if (match) setCurrent(c => ({ ...c, type: ORG_TYPE_LABEL[match.type] || c.type }));
+            if (!cancelled && match) setCurrent(c => ({ ...c, type: ORG_TYPE_LABEL[match.type] || c.type }));
           } catch {}
         }
-      } catch {}
+      } catch { if (!cancelled) setLoadError(true); }
+      finally { if (!cancelled) setLoading(false); }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const isType = form.field === "Entity Type";
@@ -279,6 +312,18 @@ function EntityChange() {
       <SubHeader eyebrow="Account" title="Entity Change" />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={p.body} keyboardShouldPersistTaps="handled">
+          {loading ? (
+            <View style={{ alignItems: "center", paddingVertical: 24, gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Small color={colors.mutedFg}>Loading your entity details…</Small>
+            </View>
+          ) : null}
+          {loadError ? (
+            <View style={[p.warn, { marginBottom: spacing.md }]}>
+              <AlertTriangle size={14} color={colors.warning} />
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your current entity details.</Small>
+            </View>
+          ) : null}
           <Small style={{ marginBottom: spacing.md, lineHeight: 20 }}>Request a change to your registered entity details. Our team verifies each request before it takes effect.</Small>
 
           <Field label="What are you changing?">
@@ -455,18 +500,25 @@ function Notifications() {
     reminders_visits: true, trial_updates: true, system_notifs: false,
     notifications_email: true, notifications_sms: false, notifications_push: true,
   });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
+      setLoading(true); setLoadError(false);
       try {
         const pr = (await api.get("/preferences")).data || {};
+        if (cancelled) return;
         setPrefs(prev => {
           const next = { ...prev };
           Object.keys(prev).forEach(k => { if (typeof pr[k] === "boolean") next[k] = pr[k]; });
           return next;
         });
-      } catch {}
+      } catch { if (!cancelled) setLoadError(true); }
+      finally { if (!cancelled) setLoading(false); }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const togglePref = async (k: string) => {
@@ -494,6 +546,18 @@ function Notifications() {
       <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SubHeader eyebrow="Account" title="Notifications" />
       <ScrollView contentContainerStyle={p.body}>
+        {loading ? (
+          <View style={{ alignItems: "center", paddingVertical: 24, gap: 10 }}>
+            <ActivityIndicator color={colors.primary} />
+            <Small color={colors.mutedFg}>Loading your preferences…</Small>
+          </View>
+        ) : null}
+        {loadError ? (
+          <View style={[p.warn, { marginBottom: spacing.md }]}>
+            <AlertTriangle size={14} color={colors.warning} />
+            <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your preferences. Showing defaults.</Small>
+          </View>
+        ) : null}
         {groups.map((g, gi) => (
           <Rise key={g.title} delay={40 + gi * 80}>
             <View style={[p.card, { marginBottom: spacing.md }]}>
@@ -635,26 +699,38 @@ function Help() {
   const [lastTicketId, setLastTicketId] = useState("");
   const [tickets, setTickets] = useState<any[]>([]);
   const [support, setSupport] = useState({ email: "support@mytrialboard.app", phone: "1800-123-4567", hours: "Mon – Fri, 9:00 AM – 6:00 PM" });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [ticketError, setTicketError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      try { const fq = (await api.get("/faq")).data; if (Array.isArray(fq) && fq.length) setFaqs(fq); } catch {}
-      try { setTickets((await api.get("/support/tickets")).data); } catch {}
+      setLoading(true); setLoadError(false);
+      let failed = false;
+      try { const fq = (await api.get("/faq")).data; if (!cancelled && Array.isArray(fq) && fq.length) setFaqs(fq); } catch { failed = true; }
+      try { const tk = (await api.get("/support/tickets")).data; if (!cancelled) setTickets(tk); } catch { failed = true; }
       try {
         const cfg = (await api.get("/app/config")).data || {};
-        setSupport(s => ({ email: cfg.support_email || s.email, phone: cfg.support_phone || s.phone, hours: cfg.support_hours || s.hours }));
+        if (!cancelled) setSupport(s => ({ email: cfg.support_email || s.email, phone: cfg.support_phone || s.phone, hours: cfg.support_hours || s.hours }));
       } catch {}
+      if (!cancelled) { setLoadError(failed); setLoading(false); }
     })();
+    return () => { cancelled = true; };
   }, []);
 
   const submitTicket = async () => {
+    setSubmitting(true); setTicketError("");
     try {
       const r = await api.post("/support/tickets", contact);
       setLastTicketId(r.data.ticket_id || r.data.id);
       setTicketSubmitted(true);
       setContact({ category: "Login Issue", subject: "", description: "" });
       try { setTickets((await api.get("/support/tickets")).data); } catch {}
-    } catch {}
+    } catch (e: any) {
+      setTicketError(e?.response?.data?.detail || "Couldn't submit your ticket. Please try again.");
+    } finally { setSubmitting(false); }
   };
 
   const statusTone = (s: string) => s === "Resolved" ? colors.success : s === "In Progress" ? colors.warning : colors.info;
@@ -666,6 +742,18 @@ function Help() {
         <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
         <SubHeader eyebrow="Help & support" title="FAQ" onBack={() => setView("menu")} />
         <ScrollView contentContainerStyle={p.body}>
+          {loading ? (
+            <View style={{ alignItems: "center", paddingVertical: 24, gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Small color={colors.mutedFg}>Loading help articles…</Small>
+            </View>
+          ) : null}
+          {loadError ? (
+            <View style={[p.warn, { marginBottom: spacing.md }]}>
+              <AlertTriangle size={14} color={colors.warning} />
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load the latest content. Showing saved help.</Small>
+            </View>
+          ) : null}
           {faqs.map((f, i) => {
             const open = faqOpen === i;
             return (
@@ -720,9 +808,10 @@ function Help() {
               <Field label="Subject"><TextInput value={contact.subject} onChangeText={v => setContact({ ...contact, subject: v })} placeholder="Brief subject" placeholderTextColor={colors.mutedFg + "99"} style={p.input} /></Field>
               <Field label="Description"><TextInput value={contact.description} onChangeText={v => setContact({ ...contact, description: v })} placeholder="Describe your issue…" placeholderTextColor={colors.mutedFg + "99"} multiline style={[p.input, { height: 110, textAlignVertical: "top" }]} /></Field>
             </View>
+            {ticketError ? <Small color={colors.destructive} style={{ marginTop: spacing.md }}>{ticketError}</Small> : null}
           </ScrollView>
           <View style={p.footer}>
-            <Springy onPress={submitTicket} style={[p.cta, { backgroundColor: colors.primaryDeep }]}><Text style={p.ctaText}>Submit Ticket</Text></Springy>
+            <Springy onPress={submitTicket} disabled={submitting} style={[p.cta, { backgroundColor: colors.primaryDeep }]}><Text style={p.ctaText}>{submitting ? "Submitting…" : "Submit Ticket"}</Text></Springy>
           </View>
         </KeyboardAvoidingView>
       </View>
@@ -736,6 +825,18 @@ function Help() {
         <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
         <SubHeader eyebrow="Help & support" title="My Tickets" onBack={() => setView("menu")} />
         <ScrollView contentContainerStyle={p.body}>
+          {loading ? (
+            <View style={{ alignItems: "center", paddingVertical: 24, gap: 10 }}>
+              <ActivityIndicator color={colors.primary} />
+              <Small color={colors.mutedFg}>Loading your tickets…</Small>
+            </View>
+          ) : null}
+          {loadError ? (
+            <View style={[p.warn, { marginBottom: spacing.md }]}>
+              <AlertTriangle size={14} color={colors.warning} />
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your tickets. Pull back later to retry.</Small>
+            </View>
+          ) : null}
           {tickets.length === 0 ? (
             <View style={[p.card, { alignItems: "center", paddingVertical: 32, gap: 8 }]}><Ticket size={32} color={colors.mutedFg + "66"} /><Small>You haven't raised any tickets yet.</Small></View>
           ) : tickets.map((t, i) => (
