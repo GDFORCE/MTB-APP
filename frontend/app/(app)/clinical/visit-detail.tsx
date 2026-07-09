@@ -57,6 +57,9 @@ export default function ClinicalVisitDetail() {
   const [editing, setEditing] = useState<Instance | null>(null);
   const [form, setForm] = useState<{ dateISO: string; status: string; note: string }>({ dateISO: "", status: "", note: "" });
   const [saving, setSaving] = useState(false);
+  // Error surfaced INSIDE the update sheet (the full-screen modal covers the
+  // main-scroll error card, so a save failure must render within the sheet).
+  const [sheetError, setSheetError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -96,6 +99,7 @@ export default function ClinicalVisitDetail() {
 
   const openSheet = (inst: Instance) => {
     setError(null);
+    setSheetError(null);
     setForm({ dateISO: (inst.scheduled_date || "").slice(0, 10), status: inst.status, note: inst.note || "" });
     setEditing(inst);
   };
@@ -109,6 +113,7 @@ export default function ClinicalVisitDetail() {
     if (Object.keys(patch).length === 0) { setEditing(null); return; }
 
     setSaving(true);
+    setSheetError(null);
     const prev = visits;
     // Optimistic local apply (server returns canonical window/date on success).
     applyLocal(editing.id, {
@@ -121,8 +126,10 @@ export default function ClinicalVisitDetail() {
       applyLocal(editing.id, r.data);
       setEditing(null);
     } catch {
+      // Revert the optimistic change and surface the error inside the sheet so
+      // the user can correct (e.g. a bad date) and retry without losing input.
       setVisits(prev);
-      setError("Couldn't save the visit update. Please try again.");
+      setSheetError("Couldn't save the visit update. Check the date (YYYY-MM-DD) and try again.");
     } finally {
       setSaving(false);
     }
@@ -232,6 +239,14 @@ export default function ClinicalVisitDetail() {
           </View>
 
           <ScrollView contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.md }} keyboardShouldPersistTaps="handled">
+            {/* Inline save error — rendered inside the sheet so it stays visible
+                above the modal while the user fixes their input and retries. */}
+            {sheetError && (
+              <View testID="sheet-error" style={s.sheetError}>
+                <Small color={colors.destructive} weight="700">{sheetError}</Small>
+              </View>
+            )}
+
             {/* Trial context (read-only) */}
             <View style={s.context}>
               {[
@@ -320,4 +335,5 @@ const s = StyleSheet.create({
   context: { flexDirection: "row", gap: spacing.sm, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.sm },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.background, paddingHorizontal: 12, paddingVertical: 10, color: colors.foreground, fontSize: 15 },
   statusChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 1, backgroundColor: colors.card },
+  sheetError: { backgroundColor: colors.destructive + "14", borderWidth: 1, borderColor: colors.destructive + "55", borderRadius: radii.md, padding: spacing.sm },
 });

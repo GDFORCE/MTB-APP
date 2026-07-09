@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -58,7 +58,7 @@ export default function PatientList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { (async () => {
+  const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const r = await api.get("/patients");
@@ -71,12 +71,14 @@ export default function PatientList() {
       }));
       setRows(mapped);
     } catch {
-      setError("Couldn't load patients. Pull to retry.");
+      setError("Couldn't load patients. Tap Retry to try again.");
       setRows([]);
     } finally {
       setLoading(false);
     }
-  })(); }, []);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const counts = {
     all: rows.length,
@@ -138,8 +140,11 @@ export default function PatientList() {
               <ActivityIndicator color={C.primary} />
             </View>
           ) : error ? (
-            <View style={{ padding: 24, alignItems: "center" }}>
+            <View style={{ padding: 24, alignItems: "center", gap: 12 }}>
               <Text style={{ color: C.destructive, textAlign: "center" }}>{error}</Text>
+              <Pressable testID="patients-retry" onPress={load} style={s.retryBtn}>
+                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 14 }}>Retry</Text>
+              </Pressable>
             </View>
           ) : (
             <View style={s.listCard}>
@@ -198,5 +203,6 @@ const s = StyleSheet.create({
   row: { padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  retryBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 24, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   fab: { position: "absolute", bottom: 28, right: 16, height: 48, paddingHorizontal: 20, borderRadius: 24, backgroundColor: C.primary, alignItems: "center", justifyContent: "center", shadowColor: "#2E1B33", shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
 });
