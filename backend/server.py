@@ -750,6 +750,27 @@ async def list_trials(user=Depends(current_user)):
         enrolled = await db.patients.find({'user_id': user['id']}, {'_id': 0, 'trial_id': 1}).to_list(100)
         ids = {p['trial_id'] for p in enrolled}
         trials = [t for t in trials if t['id'] in ids]
+
+    # Batched enrolment counts — one grouped query over db.patients (no per-trial
+    # N+1). enrolled_count is an aggregate (not patient PII), fine for sponsors.
+    trial_ids = [t['id'] for t in trials]
+    counts: Dict[str, int] = {}
+    if trial_ids:
+        async for row in db.patients.aggregate([
+            {'$match': {'trial_id': {'$in': trial_ids}}},
+            {'$group': {'_id': '$trial_id', 'n': {'$sum': 1}}},
+        ]):
+            counts[row['_id']] = row['n']
+
+    for t in trials:
+        t['enrolled_count'] = counts.get(t['id'], 0)
+        # target_enrollment is NOT captured at trial creation (POST /trials is frozen
+        # and TrialIn has no target field; the seed doesn't set one either). Surface
+        # it only when a trial doc genuinely carries it, else null — never fabricate
+        # a target. Keying it explicitly makes the null obvious and consistent.
+        t['target_enrollment'] = t.get('target_enrollment')
+        # schedule_status (approved/flagged/…) is already on `t` when stored — the
+        # find() above returns the full doc, so we neither add nor fabricate it.
     return trials
 
 @api.post('/trials', dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
