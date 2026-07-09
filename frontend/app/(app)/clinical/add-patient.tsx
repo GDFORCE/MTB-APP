@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle } from "lucide-react-native";
@@ -11,12 +11,28 @@ const C = {
   accent: "#E69B5C", info: "#7B6BB8", destructive: "#C0392B",
 };
 
-const EXISTING = ["SUBJ-001", "SUBJ-002", "SUBJ-003", "SUBJ-004", "SUBJ-005"];
 const OFFSETS = [0, 14, 21, 28, 35, 49, 63, 77, 91];
+
+type Trial = { id: string; title?: string; protocol_id?: string; condition?: string; phase?: string };
 
 function fmt(base: Date, off: number) {
   const d = new Date(base); d.setDate(d.getDate() + off);
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Accepts "5 May 2025", "2025-05-05" or "05/05/2025" → Date (or null).
+function parseDate(s: string): Date | null {
+  const t = s.trim();
+  const dmy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) { const d = new Date(+dmy[3], +dmy[2] - 1, +dmy[1]); return isNaN(d.getTime()) ? null : d; }
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d;
+}
+const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+function trialLabel(t: Trial) {
+  const head = t.protocol_id || t.title || "Trial";
+  return t.condition ? `${head} — ${t.condition}` : head;
 }
 
 export default function AddPatient() {
@@ -31,28 +47,62 @@ export default function AddPatient() {
   const [email, setEmail] = useState("");
   const [lang, setLang] = useState("English");
   const [langOpen, setLangOpen] = useState(false);
-  const [trial, setTrial] = useState("Protocol-A — Diabetes Phase II");
+  const [trials, setTrials] = useState<Trial[]>([]);
+  const [trialsLoading, setTrialsLoading] = useState(true);
+  const [trialId, setTrialId] = useState<string | null>(null);
   const [trialOpen, setTrialOpen] = useState(false);
   const [baseline, setBaseline] = useState("5 May 2025");
   const [showAll, setShowAll] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const isDup = EXISTING.includes(`SUBJ-${subjectId}`);
-  const base = new Date(2025, 4, 5);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.get("/trials");
+        if (!alive) return;
+        setTrials(r.data);
+        if (r.data.length) setTrialId(r.data[0].id);
+      } catch { if (alive) setError("Couldn't load trials. Pull back and retry."); }
+      finally { if (alive) setTrialsLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const selectedTrial = trials.find(t => t.id === trialId);
+  const base = parseDate(baseline) || new Date();
   const visits = OFFSETS.map((o, i) => ({ num: i + 1, date: fmt(base, o) }));
   const visible = showAll ? visits : visits.slice(0, 5);
+  const canSubmit = !!fullName && !!trialId && !saving;
 
   const submit = async () => {
-    if (isDup || !fullName) return;
+    if (!fullName || !trialId) return;
+    setError(null);
     setSaving(true);
     try {
-      // Map to backend Add Patient endpoint
-      const trialsRes = await api.get("/trials").catch(() => ({ data: [] }));
-      const trialId = trialsRes.data[0]?.id;
-      if (trialId) await api.post("/patients", { full_name: fullName, email: email || `${initials.toLowerCase() || "p"}@mtb.app`, phone: `+91${phone}`, trial_id: trialId, enrolled_date: new Date().toISOString().slice(0, 10) });
+      const parsedBaseline = parseDate(baseline);
+      const parsedDob = parseDate(dob);
+      await api.post("/patients", {
+        full_name: fullName,
+        email: email || `${initials.toLowerCase() || "p"}@mtb.app`,
+        phone: `+91${phone}`,
+        trial_id: trialId,                                  // the SELECTED trial
+        subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
+        dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
+        gender: gender || undefined,
+        language: lang || undefined,
+        baseline_date: parsedBaseline ? toISO(parsedBaseline) : undefined,
+        enrolled_date: new Date().toISOString().slice(0, 10),
+      });
       router.back();
-    } catch (e) { console.log("add patient err", e); }
-    finally { setSaving(false); }
+    } catch (e: any) {
+      if (e?.response?.status === 409) {
+        setError(e.response.data?.detail || `SUBJ-${subjectId} already exists in this trial.`);
+      } else {
+        setError("Couldn't add patient. Please check the details and try again.");
+      }
+    } finally { setSaving(false); }
   };
 
   return (
@@ -77,20 +127,12 @@ export default function AddPatient() {
               <TextInput
                 testID="subject-id"
                 value={subjectId}
-                onChangeText={setSubjectId}
+                onChangeText={t => { setSubjectId(t); if (error) setError(null); }}
                 placeholder="001"
                 placeholderTextColor={C.muted}
-                style={[s.input, isDup && { borderColor: "rgba(192,57,43,0.7)", backgroundColor: "rgba(192,57,43,0.05)" }, { flex: 1, fontFamily: "monospace" as any }]}
+                style={[s.input, { flex: 1, fontFamily: "monospace" as any }]}
               />
             </View>
-            {isDup && (
-              <View style={s.dupWarn}>
-                <AlertTriangle size={16} color={C.destructive} />
-                <Text style={{ fontSize: 12, fontWeight: "600", color: C.destructive, flex: 1 }}>
-                  Duplicate entry detected — SUBJ-{subjectId} already exists. Please verify before proceeding.
-                </Text>
-              </View>
-            )}
           </Field>
 
           <Field label="Subject Initials">
@@ -154,19 +196,21 @@ export default function AddPatient() {
           </Field>
 
           <Field label="Assign to Trial *">
-            <Pressable testID="trial-toggle" onPress={() => setTrialOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-              <Text style={{ color: C.fg, fontSize: 14 }} numberOfLines={1}>{trial}</Text>
+            <Pressable testID="trial-toggle" disabled={trialsLoading || !trials.length} onPress={() => setTrialOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              {trialsLoading ? (
+                <ActivityIndicator size="small" color={C.primary} />
+              ) : (
+                <Text style={{ color: selectedTrial ? C.fg : C.muted, fontSize: 14 }} numberOfLines={1}>
+                  {selectedTrial ? trialLabel(selectedTrial) : "No trials available"}
+                </Text>
+              )}
               <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
             </Pressable>
-            {trialOpen && (
+            {trialOpen && trials.length > 0 && (
               <View style={s.dropdown}>
-                {[
-                  "Protocol-A — Diabetes Phase II",
-                  "Protocol-B — Hypertension Study",
-                  "Protocol-C — Oncology Phase I",
-                ].map(t => (
-                  <Pressable key={t} testID={`trial-opt-${t.split(" ")[0]}`} onPress={() => { setTrial(t); setTrialOpen(false); }} style={s.dropdownRow}>
-                    <Text style={{ color: C.fg, fontSize: 14 }}>{t}</Text>
+                {trials.map(t => (
+                  <Pressable key={t.id} testID={`trial-opt-${t.id}`} onPress={() => { setTrialId(t.id); setTrialOpen(false); }} style={s.dropdownRow}>
+                    <Text style={{ color: C.fg, fontSize: 14 }}>{trialLabel(t)}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -215,14 +259,22 @@ export default function AddPatient() {
             </Pressable>
           </View>
 
+          {/* Error banner (server duplicate 409 or generic failure) */}
+          {error && (
+            <View testID="add-patient-error" style={s.dupWarn}>
+              <AlertTriangle size={16} color={C.destructive} />
+              <Text style={{ fontSize: 12, fontWeight: "600", color: C.destructive, flex: 1 }}>{error}</Text>
+            </View>
+          )}
+
           {/* Submit */}
           <Pressable
             testID="add-patient-submit"
             onPress={submit}
-            disabled={isDup || !fullName || saving}
-            style={[s.submit, (isDup || !fullName) && { backgroundColor: C.border }]}
+            disabled={!canSubmit}
+            style={[s.submit, !canSubmit && { backgroundColor: C.border }]}
           >
-            <Text style={{ color: (isDup || !fullName) ? C.muted : C.primaryFg, fontSize: 15, fontWeight: "700" }}>
+            <Text style={{ color: !canSubmit ? C.muted : C.primaryFg, fontSize: 15, fontWeight: "700" }}>
               {saving ? "Adding…" : "Add Patient"}
             </Text>
           </Pressable>

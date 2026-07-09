@@ -1,35 +1,62 @@
 import React, { useState } from "react";
 import { View, ScrollView, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
 import { useRouter } from "expo-router";
-import { CheckCircle2 } from "lucide-react-native";
+import { CheckCircle2, Link2 } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { api } from "@/src/api/client";
 
 export default function InvitePatient() {
   const router = useRouter();
-  const [email, setEmail] = useState(""), [phone, setPhone] = useState(""), [name, setName] = useState(""), [done, setDone] = useState(false);
-  // Demo stub — real impl (POST /api/invitations) will populate these.
-  const link: string | null = null, err: string | null = null, loading = false;
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
+  const [done, setDone] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const send = () => {
-    if (!email && !phone) return;
-    // Demo: just acknowledge — real impl would call POST /api/invitations.
-    setDone(true);
-    setTimeout(() => router.back(), 1500);
+  const send = async () => {
+    if (!email && !phone) { setErr("Enter an email or phone number to send the invitation."); return; }
+    setErr(null);
+    setLoading(true);
+    try {
+      const r = await api.post("/invitations", {
+        email: email || undefined,
+        phone: phone || undefined,
+        full_name: name || undefined,
+        role: "patient",
+      });
+      setLink(r.data?.invite_link || null);
+      setDone(true);
+    } catch (e: any) {
+      setErr(e?.response?.data?.detail || "Couldn't send the invitation. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <ScreenContainer>
       <ScreenHeader eyebrow="Send invitation" title="Invite Patient" />
       {done ? (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg }}>
+        <ScrollView contentContainerStyle={{ alignItems: "center", padding: spacing.lg, paddingBottom: spacing.xxl }}>
           <View style={s.successBox}><CheckCircle2 size={36} color={colors.success} /></View>
           <Body weight="700" style={{ marginTop: spacing.md, fontSize: 18 }}>Invitation sent!</Body>
           <Small style={{ marginTop: 4, textAlign: "center" }}>They'll receive a registration link by email/SMS.</Small>
-          {link ? <Card style={{ marginTop: spacing.lg }}><Small color={colors.mutedFg}>Share link</Small><Small selectable style={{ marginTop: 4 }} color={colors.primary} weight="700">{link}</Small></Card> : null}
+          {link ? (
+            <Card style={{ marginTop: spacing.lg, alignSelf: "stretch" }}>
+              <Small color={colors.mutedFg}>Registration link</Small>
+              <View style={s.linkBox}>
+                <Link2 size={16} color={colors.primary} style={{ marginTop: 2 }} />
+                <Small testID="invite-link" selectable color={colors.primary} weight="700" style={{ flex: 1 }}>{link}</Small>
+              </View>
+              <Small color={colors.mutedFg} style={{ marginTop: spacing.sm }}>Long-press the link to copy and share it with the patient.</Small>
+            </Card>
+          ) : null}
           <Button testID="invite-done" variant="secondary" style={{ marginTop: spacing.lg, alignSelf: "stretch" }} onPress={() => router.back()}>Done</Button>
-        </View>
+        </ScrollView>
       ) : (
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }} keyboardShouldPersistTaps="handled">
@@ -39,9 +66,9 @@ export default function InvitePatient() {
             </Card>
             <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>Patient details</Eyebrow>
             <F label="Full name" value={name} onChange={setName} testID="invite-name" />
-            <F label="Email" value={email} onChange={setEmail} testID="invite-email" keyboardType="email-address" />
-            <F label="Phone (optional)" value={phone} onChange={setPhone} testID="invite-phone" keyboardType="phone-pad" />
-            {err ? <Small color={colors.destructive}>{err}</Small> : null}
+            <F label="Email" value={email} onChange={(v: string) => { setEmail(v); if (err) setErr(null); }} testID="invite-email" keyboardType="email-address" />
+            <F label="Phone (optional)" value={phone} onChange={(v: string) => { setPhone(v); if (err) setErr(null); }} testID="invite-phone" keyboardType="phone-pad" />
+            {err ? <Small testID="invite-error" color={colors.destructive}>{err}</Small> : null}
           </ScrollView>
           <View style={{ padding: spacing.md }}><Button testID="invite-send" onPress={send} loading={loading}>Send invitation</Button></View>
         </KeyboardAvoidingView>
@@ -62,4 +89,5 @@ function F({ label, value, onChange, testID, keyboardType }: any) {
 const s = StyleSheet.create({
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground },
   successBox: { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.success + "1A", alignItems: "center", justifyContent: "center" },
+  linkBox: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: spacing.sm, padding: spacing.sm, backgroundColor: colors.surface, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border },
 });

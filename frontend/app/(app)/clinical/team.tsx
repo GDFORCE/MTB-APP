@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { UserPlus, Mail, Phone } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
@@ -12,10 +12,22 @@ export default function Team() {
   const router = useRouter();
   const { user } = useAuth();
   const [members, setMembers] = useState<any[]>([]);
-  useEffect(() => { (async () => {
-    const r = await api.get("/users");
-    setMembers(r.data.filter((u: any) => ["pi", "crc", "sponsor"].includes(u.role)));
-  })(); }, []);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.get("/team");   // org- + trial-scoped, not the whole directory
+        if (alive) setMembers(r.data);
+      } catch {
+        if (alive) setError("Couldn't load your team. Please try again.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   return (
     <ScreenContainer>
@@ -34,6 +46,17 @@ export default function Team() {
               </View>
             </View>
           </Card>
+        )}
+        {loading && (
+          <View style={{ paddingVertical: spacing.lg, alignItems: "center" }}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        )}
+        {!loading && error && (
+          <Card style={{ marginBottom: spacing.sm }}><Small color={colors.destructive}>{error}</Small></Card>
+        )}
+        {!loading && !error && members.length === 0 && (
+          <Card style={{ marginBottom: spacing.sm }}><Small>No teammates yet. Invite a colleague to get started.</Small></Card>
         )}
         {members.map(m => (
           <Pressable key={m.id} testID={`team-${m.id}`} onPress={() => router.push("/(app)/chat")}>
