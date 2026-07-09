@@ -142,6 +142,15 @@ class VisitIn(BaseModel):
     activities: List[str] = []
     checklist: List[str] = []   # "before you come in" patient-prep steps
 
+class VisitUpdate(BaseModel):
+    """Partial edit of an existing visit TEMPLATE (Task 4.1 edit mode). Only the
+    fields present are applied; visit_number/trial_id are immutable here."""
+    name: Optional[str] = None
+    day_offset: Optional[int] = None
+    window_days: Optional[int] = None
+    activities: Optional[List[str]] = None
+    checklist: Optional[List[str]] = None
+
 class PatientIn(BaseModel):
     full_name: str
     email: EmailStr
@@ -805,6 +814,79 @@ async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro
     await db.visits.insert_one(doc)
     return serialize(doc)
 
+
+async def _require_schedule_owner(user: dict, trial: dict):
+    """Trial-ownership gate shared by the schedule CRUD endpoints. sponsor/cro
+    own via their org (_trial_in_caller_org); pi owns via _pi_owns_trial. Raises
+    403 for a foreign trial (fail-closed)."""
+    if user['role'] in ('sponsor', 'cro'):
+        owns = await _trial_in_caller_org(user, trial['id'])
+    else:  # pi
+        owns = await _pi_owns_trial(user, trial)
+    if not owns:
+        raise HTTPException(403, 'You do not have access to this trial')
+
+
+@api.get('/trials/{trial_id}/visits')
+async def list_trial_visits(trial_id: str,
+                            user=Depends(require_roles('sponsor', 'cro', 'pi'))):
+    """The trial's visit TEMPLATES, sorted by visit_number — the schedule the
+    edit screen loads on entry. Trial-ownership scoped (403 for a foreign trial)."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    await _require_schedule_owner(user, trial)
+    return await db.visits.find({'trial_id': trial_id}, {'_id': 0}) \
+                          .sort('visit_number', 1).to_list(500)
+
+
+@api.put('/visits/{visit_id}')
+async def update_visit(visit_id: str, body: VisitUpdate,
+                       user=Depends(require_roles('sponsor', 'cro', 'pi'))):
+    """Update a visit TEMPLATE (name/day_offset/window_days/activities/checklist)
+    and re-materialize the trial's future-pending instances. Trial-ownership
+    scoped (403 for a foreign trial)."""
+    tpl = await db.visits.find_one({'id': visit_id}, {'_id': 0})
+    if not tpl:
+        raise HTTPException(404, 'Visit template not found')
+    trial = await db.trials.find_one({'id': tpl.get('trial_id')}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    await _require_schedule_owner(user, trial)
+    fields = {k: v for k, v in body.dict().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, 'Nothing to update')
+    await db.visits.update_one({'id': visit_id}, {'$set': fields})
+    fresh = await db.visits.find_one({'id': visit_id}, {'_id': 0})
+    remat = await _rematerialize_template_change(fresh)
+    await write_audit(user, 'visit.update',
+                      f"Updated visit template {fresh.get('name', '')} "
+                      f"({remat} future instance(s) re-materialized)",
+                      target_id=visit_id, trial_id=tpl.get('trial_id'),
+                      changes={k: iso(v) for k, v in fields.items()})
+    return serialize(fresh)
+
+
+@api.delete('/visits/{visit_id}')
+async def delete_visit(visit_id: str,
+                       user=Depends(require_roles('sponsor', 'cro', 'pi'))):
+    """Delete a visit TEMPLATE and remove its future-pending instances (completed
+    / missed / past ones are kept as history). Trial-ownership scoped (403)."""
+    tpl = await db.visits.find_one({'id': visit_id}, {'_id': 0})
+    if not tpl:
+        raise HTTPException(404, 'Visit template not found')
+    trial = await db.trials.find_one({'id': tpl.get('trial_id')}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    await _require_schedule_owner(user, trial)
+    removed = await _rematerialize_template_delete(tpl)
+    await db.visits.delete_one({'id': visit_id})
+    await write_audit(user, 'visit.delete',
+                      f"Deleted visit template {tpl.get('name', '')} "
+                      f"({removed} future instance(s) removed)",
+                      target_id=visit_id, trial_id=tpl.get('trial_id'))
+    return {'deleted': True, 'instances_removed': removed}
+
 async def _patient_care_context(patient) -> dict:
     """Site + PI contact for a patient, joined from their assigned PI user.
 
@@ -873,6 +955,25 @@ async def my_visits(user=Depends(current_user)):
 # each patient gets their own `visit_instances` rows, and all per-patient
 # updates go through PATCH /visit-instances/{id}.
 
+def _patient_visit_anchor(patient) -> datetime:
+    """The date a patient's visit schedule anchors on: their baseline date when
+    present, else the enrolment date (legacy / seed patients), else now. Always
+    returned tz-aware (UTC) so date math is stable."""
+    base = None
+    for cand in (patient.get('baseline_date'), patient.get('enrolled_date')):
+        if cand:
+            try:
+                base = datetime.fromisoformat(cand)
+                break
+            except (TypeError, ValueError):
+                continue
+    if base is None:
+        base = now()
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    return base
+
+
 async def materialize_visit_instances(patient) -> int:
     """Create one visit_instance per trial visit template for `patient`.
 
@@ -889,20 +990,7 @@ async def materialize_visit_instances(patient) -> int:
                                .sort('visit_number', 1).to_list(500)
     if not templates:
         return 0
-    # Visit dates anchor on the baseline date when the patient has one, else the
-    # enrolment date (legacy / seed patients), else now.
-    base = None
-    for cand in (patient.get('baseline_date'), patient.get('enrolled_date')):
-        if cand:
-            try:
-                base = datetime.fromisoformat(cand)
-                break
-            except (TypeError, ValueError):
-                continue
-    if base is None:
-        base = now()
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
+    base = _patient_visit_anchor(patient)
     n = now()
     completed = set(patient.get('completed_visit_ids') or [])
     docs = []
@@ -932,6 +1020,81 @@ async def materialize_visit_instances(patient) -> int:
         })
     await db.visit_instances.insert_many(docs)
     return len(docs)
+
+
+def _instance_is_repointable(inst, n) -> bool:
+    """Whether a visit_instance may be safely re-materialized when its template
+    changes. FAIL-CLOSED: only FUTURE, still-pending instances that no one has
+    touched are eligible. Completed / missed / rescheduled / past instances and
+    any instance carrying patient activity (a note, or an explicit
+    updated_by from a PATCH) are treated as history and left untouched."""
+    if inst.get('updated_by'):        # someone patched it (reschedule/complete/…)
+        return False
+    if inst.get('note'):              # carries patient/staff activity
+        return False
+    if inst.get('status') not in ('upcoming', 'scheduled'):
+        return False
+    sched = inst.get('scheduled_date')
+    if sched is None:
+        return False
+    if isinstance(sched, str):
+        try:
+            sched = datetime.fromisoformat(sched)
+        except ValueError:
+            return False
+    if sched.tzinfo is None:
+        sched = sched.replace(tzinfo=timezone.utc)
+    return sched >= n                 # future only
+
+
+async def _rematerialize_template_change(template) -> int:
+    """Propagate a TEMPLATE edit to the trial's future-pending visit_instances.
+
+    Recomputes name/activities/window/scheduled_date for every eligible instance
+    (see `_instance_is_repointable`) off each patient's own visit anchor, so a
+    schedule edit flows through to patients who haven't yet had the visit —
+    without ever clobbering completed/missed/past/touched history. Returns the
+    number of instances updated."""
+    n = now()
+    updated = 0
+    anchors: Dict[str, datetime] = {}
+    async for inst in db.visit_instances.find(
+            {'visit_template_id': template['id']}, {'_id': 0}):
+        if not _instance_is_repointable(inst, n):
+            continue
+        pid = inst['patient_id']
+        if pid not in anchors:
+            patient = await db.patients.find_one({'id': pid}, {'_id': 0})
+            anchors[pid] = _patient_visit_anchor(patient) if patient else n
+        sched = anchors[pid] + timedelta(days=template.get('day_offset', 0))
+        wd = template.get('window_days', 3)
+        await db.visit_instances.update_one({'id': inst['id']}, {'$set': {
+            'name': template.get('name', ''),
+            'activities': template.get('activities', []),
+            'window_days': wd,
+            'scheduled_date': sched,
+            'window_start': sched - timedelta(days=wd),
+            'window_end': sched + timedelta(days=wd),
+            'status': 'upcoming' if sched >= n else 'missed',
+            'updated_at': n,
+        }})
+        updated += 1
+    return updated
+
+
+async def _rematerialize_template_delete(template) -> int:
+    """Remove the future-pending visit_instances of a DELETED template. Completed
+    / missed / past / patient-touched instances are kept as history. Returns the
+    number of instances removed."""
+    n = now()
+    removed = 0
+    async for inst in db.visit_instances.find(
+            {'visit_template_id': template['id']}, {'_id': 0}):
+        if _instance_is_repointable(inst, n):
+            await db.visit_instances.delete_one({'id': inst['id']})
+            removed += 1
+    return removed
+
 
 async def _migrate_visit_instances():
     """Startup backfill: materialize instances for patients enrolled before the
