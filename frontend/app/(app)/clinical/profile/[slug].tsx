@@ -149,7 +149,7 @@ function EditProfile() {
       const newEmail = prof.email.trim().toLowerCase();
       const loadedEmail = (loaded.email || "").trim().toLowerCase();
       const newPhoneDigits = prof.phone.replace(/\D/g, "");
-      const loadedPhoneDigits = (loaded.phone || "").replace(/\D/g, "");
+      const loadedPhoneDigits = (loaded.phone || "").replace(/^\+91\s?/, "").replace(/\D/g, "");
       const newPhone = newPhoneDigits ? "+91" + newPhoneDigits : "";
       await api.patch("/auth/me", { full_name: prof.fullName });
       await refresh();
