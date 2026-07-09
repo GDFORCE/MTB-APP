@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, StatusBar, Text } from "react-native";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Search, ChevronLeft } from "lucide-react-native";
@@ -8,72 +8,91 @@ import { api } from "@/src/api/client";
 const C = {
   bg: "#F4E5D3", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
   primary: "#A6213F", primaryDeep: "#6B1437", primaryFg: "#FFFFFF",
-  accent: "#E69B5C", info: "#7B6BB8", destructive: "#C0392B",
+  accent: "#E69B5C", info: "#7B6BB8", success: "#5C9A6E", destructive: "#C0392B",
 };
 
-type Status = "Scheduled" | "Overdue" | "Active" | "Screen Fail" | "Withdrawn";
+// Derived per-patient status — computed by the backend from visit instances.
+type DerivedStatus = "active" | "overdue" | "completed" | "no_visits";
+
+type NextVisit = { id: string; name: string; seq: number; scheduled_date: string; status: string };
+type PatientRow = {
+  id: string;
+  full_name: string;
+  avatar_initials?: string;
+  status: DerivedStatus;
+  next_visit: NextVisit | null;
+};
+
+const STATUS_META: Record<DerivedStatus, { label: string; bg: string; fg: string }> = {
+  active: { label: "Active", bg: "rgba(230,155,92,0.12)", fg: C.accent },
+  overdue: { label: "⚠ Overdue", bg: "rgba(192,57,43,0.12)", fg: C.destructive },
+  completed: { label: "Completed", bg: "rgba(92,154,110,0.14)", fg: C.success },
+  no_visits: { label: "No visits", bg: "rgba(123,95,115,0.10)", fg: C.muted },
+};
+
+const FILTERS: { id: string; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "overdue", label: "Overdue" },
+  { id: "completed", label: "Completed" },
+];
+
+function fmtDate(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function nextVisitLabel(nv: NextVisit | null): string {
+  if (!nv) return "No upcoming visits";
+  const date = fmtDate(nv.scheduled_date);
+  return date ? `${nv.name} · ${date}` : nv.name;
+}
 
 export default function PatientList() {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [active, setActive] = useState<string>("all");
-  const [rows, setRows] = useState<any[]>([]);
+  const [rows, setRows] = useState<PatientRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { (async () => {
+    setLoading(true); setError(null);
     try {
       const r = await api.get("/patients");
-      // Map backend → display, supplementing demo subjects when needed.
-      const baseDemo = [
-        { id: "SUBJ-001", initials: "PK", name: "Priya K.", visit: "Visit 3 · 23 May", status: "Scheduled" as Status },
-        { id: "SUBJ-002", initials: "RS", name: "Rahul S.", visit: "Visit 1 · Today", status: "Overdue" as Status },
-        { id: "SUBJ-003", initials: "AM", name: "Anjali M.", visit: "Visit 5 · 2 Jun", status: "Active" as Status },
-        { id: "SUBJ-004", initials: "VG", name: "Vikram G.", visit: "—", status: "Screen Fail" as Status },
-        { id: "SUBJ-005", initials: "NK", name: "Neha K.", visit: "—", status: "Withdrawn" as Status },
-      ];
-      const fromApi = r.data.slice(0, 7).map((p: any, i: number) => ({
-        id: `SUBJ-${String(i + 1).padStart(3, "0")}`,
-        initials: p.avatar_initials, name: p.full_name, visit: "Visit 2 · 5 Jun", status: "Active" as Status,
-        _backendId: p.id,
+      const mapped: PatientRow[] = (r.data || []).map((p: any) => ({
+        id: p.id,
+        full_name: p.full_name || "Unknown",
+        avatar_initials: p.avatar_initials,
+        status: (p.status as DerivedStatus) || "no_visits",
+        next_visit: p.next_visit || null,
       }));
-      setRows([...baseDemo.slice(0, 2), ...fromApi, ...baseDemo.slice(3)]);
-    } catch { setRows([]); }
+      setRows(mapped);
+    } catch {
+      setError("Couldn't load patients. Pull to retry.");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
   })(); }, []);
 
   const counts = {
     all: rows.length,
-    active: rows.filter(r => r.status === "Active" || r.status === "Scheduled").length,
-    "screen-fail": rows.filter(r => r.status === "Screen Fail").length,
-    withdrawn: rows.filter(r => r.status === "Withdrawn").length,
+    active: rows.filter(r => r.status === "active").length,
+    overdue: rows.filter(r => r.status === "overdue").length,
+    completed: rows.filter(r => r.status === "completed").length,
   };
-  const filters = [
-    { id: "all", label: "All" },
-    { id: "active", label: "Active" },
-    { id: "screen-fail", label: "Screen Fail" },
-    { id: "withdrawn", label: "Withdrawn" },
-  ];
-  const filtered = rows.filter(r => {
-    if (active === "all") return true;
-    if (active === "active") return r.status === "Active" || r.status === "Scheduled";
-    if (active === "screen-fail") return r.status === "Screen Fail";
-    if (active === "withdrawn") return r.status === "Withdrawn";
-    return true;
-  }).filter(r => q === "" || r.id.toLowerCase().includes(q.toLowerCase()) || r.name.toLowerCase().includes(q.toLowerCase()));
 
-  const statusStyle = (st: Status) => {
-    switch (st) {
-      case "Scheduled": return { bg: "rgba(123,107,184,0.10)", fg: C.primary };
-      case "Overdue": return { bg: "rgba(192,57,43,0.10)", fg: C.destructive };
-      case "Active": return { bg: "rgba(230,155,92,0.10)", fg: C.accent };
-      case "Screen Fail": return { bg: "rgba(192,57,43,0.10)", fg: C.destructive };
-      case "Withdrawn": return { bg: "rgba(123,95,115,0.10)", fg: C.muted };
-    }
-  };
+  const filtered = rows
+    .filter(r => active === "all" || r.status === active)
+    .filter(r => q === "" || r.full_name.toLowerCase().includes(q.toLowerCase()));
 
   return (
     <View style={{ flex: 1, backgroundColor: C.surface }}>
       <StatusBar barStyle="dark-content" backgroundColor={C.surface} />
       <SafeAreaView edges={["top"]} style={{ backgroundColor: C.surface }}>
-        {/* AppBar — light surface, plum back, title centered-ish */}
         <View style={s.appBar}>
           <Pressable testID="back" onPress={() => router.back()} hitSlop={10} style={s.backBtn}>
             <ChevronLeft size={24} color={C.fg} />
@@ -92,7 +111,7 @@ export default function PatientList() {
               testID="patient-search"
               value={q}
               onChangeText={setQ}
-              placeholder="Search by Subject ID..."
+              placeholder="Search by name..."
               placeholderTextColor={C.muted}
               style={{ flex: 1, color: C.fg, fontSize: 15 }}
             />
@@ -101,7 +120,7 @@ export default function PatientList() {
 
         {/* Filter chips */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, gap: 8 }}>
-          {filters.map(f => {
+          {FILTERS.map(f => {
             const on = active === f.id;
             const count = (counts as any)[f.id];
             return (
@@ -114,37 +133,47 @@ export default function PatientList() {
 
         {/* Patient list */}
         <View style={{ paddingHorizontal: 16 }}>
-          <View style={s.listCard}>
-            {filtered.map((p, i) => {
-              const st = statusStyle(p.status);
-              return (
-                <Pressable
-                  key={p.id}
-                  testID={`patient-${p.id}`}
-                  onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p._backendId || p.id } })}
-                  style={[s.row, i > 0 && { borderTopWidth: 1, borderTopColor: C.border }]}
-                >
-                  <View style={s.avatar}>
-                    <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{p.initials}</Text>
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ color: C.fg, fontSize: 15, fontWeight: "700" }}>{p.id}</Text>
-                    <Text style={{ color: C.muted, fontSize: 13, marginTop: 2 }} numberOfLines={1}>{p.name} • {p.visit}</Text>
-                  </View>
-                  <View style={[s.statusPill, { backgroundColor: st.bg }]}>
-                    <Text style={{ color: st.fg, fontSize: 11, fontWeight: "600" }}>
-                      {p.status === "Overdue" ? "⚠ Overdue" : p.status}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-            {filtered.length === 0 && (
-              <View style={{ padding: 24, alignItems: "center" }}>
-                <Text style={{ color: C.muted }}>No patients match your filters</Text>
-              </View>
-            )}
-          </View>
+          {loading ? (
+            <View style={{ padding: 40, alignItems: "center" }}>
+              <ActivityIndicator color={C.primary} />
+            </View>
+          ) : error ? (
+            <View style={{ padding: 24, alignItems: "center" }}>
+              <Text style={{ color: C.destructive, textAlign: "center" }}>{error}</Text>
+            </View>
+          ) : (
+            <View style={s.listCard}>
+              {filtered.map((p, i) => {
+                const meta = STATUS_META[p.status];
+                return (
+                  <Pressable
+                    key={p.id}
+                    testID={`patient-${p.id}`}
+                    onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p.id } })}
+                    style={[s.row, i > 0 && { borderTopWidth: 1, borderTopColor: C.border }]}
+                  >
+                    <View style={s.avatar}>
+                      <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{p.avatar_initials || p.full_name.slice(0, 2).toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ color: C.fg, fontSize: 15, fontWeight: "700" }} numberOfLines={1}>{p.full_name}</Text>
+                      <Text style={{ color: C.muted, fontSize: 13, marginTop: 2 }} numberOfLines={1}>{nextVisitLabel(p.next_visit)}</Text>
+                    </View>
+                    <View style={[s.statusPill, { backgroundColor: meta.bg }]}>
+                      <Text style={{ color: meta.fg, fontSize: 11, fontWeight: "600" }}>{meta.label}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+              {filtered.length === 0 && (
+                <View style={{ padding: 24, alignItems: "center" }}>
+                  <Text style={{ color: C.muted }}>
+                    {rows.length === 0 ? "No patients enrolled yet" : "No patients match your filters"}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
       </ScrollView>
 
