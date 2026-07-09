@@ -1639,6 +1639,89 @@ async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
     tasks.sort(key=lambda t: (rank.get(t['priority'], 3), t['due'] or '~'))
     return tasks
 
+# ── Team calendar (site-wide visit schedule for pi/crc) ─────────────────────
+TEAM_CALENDAR_MAX_DAYS = 100
+
+@api.get('/calendar/team')
+async def team_calendar(from_: Optional[str] = Query(None, alias='from'),
+                        to: Optional[str] = Query(None, alias='to'),
+                        user=Depends(require_roles('pi', 'crc'))):
+    """Read-only site schedule: visit instances for the caller's OWN patients
+    (pi_id / crc_id scoping — same rule as GET /patients) within a bounded
+    date range, joined with privacy-safe patient identifiers (initials +
+    subject label, never full names) and the trial's protocol / condition.
+
+    ?from=&to= are inclusive YYYY-MM-DD bounds. Both omitted → the current
+    UTC month; one omitted → a window extending from the other. The span is
+    capped at 100 days so a single call can never sweep the whole collection.
+    Read-only, so no audit row is written."""
+    f = _parse_ymd(from_, 'from')
+    t = _parse_ymd(to, 'to')
+    if f is None and t is None:                    # default: current month
+        f = now().date().replace(day=1)
+        t = (f + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    elif f is None:                                # only `to` given → window back
+        assert t is not None
+        f = t - timedelta(days=TEAM_CALENDAR_MAX_DAYS - 1)
+    elif t is None:                               # only `from` given → window forward
+        t = f + timedelta(days=TEAM_CALENDAR_MAX_DAYS - 1)
+    assert f is not None and t is not None        # both resolved above (type-narrowing)
+    if t < f:
+        raise HTTPException(400, 'to must be on or after from')
+    if (t - f).days + 1 > TEAM_CALENDAR_MAX_DAYS:
+        raise HTTPException(400, f'range cannot exceed {TEAM_CALENDAR_MAX_DAYS} days')
+
+    key = 'pi_id' if user['role'] == 'pi' else 'crc_id'
+    patients = await db.patients.find({key: user['id']}, {'_id': 0}).to_list(500)
+    if not patients:
+        return []
+    pmap = {p['id']: p for p in patients}
+
+    start_dt = datetime(f.year, f.month, f.day, tzinfo=timezone.utc)
+    end_dt = datetime(t.year, t.month, t.day, tzinfo=timezone.utc) + timedelta(days=1)
+    insts = await db.visit_instances.find({
+        'patient_id': {'$in': list(pmap)},
+        'scheduled_date': {'$gte': start_dt, '$lt': end_dt},
+    }, {'_id': 0}).sort([('scheduled_date', 1), ('seq', 1)]).to_list(2000)
+
+    # Joins: one query per collection, not per row.
+    pi_ids = sorted({p['pi_id'] for p in patients if p.get('pi_id')})
+    pi_map = {u['id']: u async for u in db.users.find(
+        {'id': {'$in': pi_ids}}, {'_id': 0, 'id': 1, 'full_name': 1, 'organization': 1})}
+    trial_ids = sorted({p['trial_id'] for p in patients if p.get('trial_id')}
+                       | {i['trial_id'] for i in insts if i.get('trial_id')})
+    trial_map = {tr['id']: tr async for tr in db.trials.find(
+        {'id': {'$in': trial_ids}}, {'_id': 0, 'id': 1, 'protocol_id': 1, 'condition': 1})}
+
+    out = []
+    for i in insts:
+        p = pmap.get(i['patient_id'], {})
+        tr = trial_map.get(i.get('trial_id') or p.get('trial_id'), {})
+        assigned_pi = pi_map.get(p.get('pi_id'), {})
+        initials = p.get('avatar_initials') \
+            or ''.join(w[0].upper() for w in (p.get('full_name') or '').split()[:2]) or 'P'
+        out.append({
+            'id': i.get('id'),
+            'patient_id': i['patient_id'],
+            'trial_id': i.get('trial_id') or p.get('trial_id'),
+            'name': i.get('name', ''),
+            'seq': i.get('seq'),
+            'visit_number': i.get('visit_number'),
+            'scheduled_date': iso(i.get('scheduled_date')),
+            'window_start': iso(i.get('window_start')),
+            'window_end': iso(i.get('window_end')),
+            'status': i.get('status'),
+            'activities': i.get('activities', []),
+            # privacy-safe patient identifiers — initials + short subject code
+            'patient_initials': initials,
+            'subject_label': f"SUBJ-{(i['patient_id'] or '')[:4].upper()}",
+            'protocol_id': tr.get('protocol_id', ''),
+            'condition': tr.get('condition', ''),
+            'pi_name': assigned_pi.get('full_name', ''),
+            'site': assigned_pi.get('organization', ''),
+        })
+    return out
+
 # ── Reminders (patient medication reminders) ──────────────────────────────
 class ReminderIn(BaseModel):
     medication: str; dosage: str; time: str; enabled: bool = True
