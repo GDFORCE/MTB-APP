@@ -1,0 +1,266 @@
+"""Authorization ownership scoping — Task 3.75 (SECURITY).
+
+Cross-tenant / cross-site patient-data isolation for the single-resource staff
+endpoints that were previously under-scoped:
+
+  - GET   /api/patients/{id}
+  - GET   /api/patients/{id}/visits
+  - PATCH /api/visit-instances/{id}
+  - POST  /api/schedules/{trial_id}/approve|flag
+
+Rule mirrored from the GET /patients list: a pi/crc reaches only patients at
+their own site (assigned pi_id/crc_id, enrolled by them, or same site org); a
+sponsor reaches only patients enrolled in a trial belonging to their org; a PI
+reviews a schedule only for a trial they belong to. Foreign access → 403.
+
+Same harness as test_visit_instances.py: in-process ASGITransport against the
+real Atlas DB, RUN_ID-marked data, single module-level event loop (Motor pins
+its io_loop on first use — never asyncio.run here), module teardown cleanup.
+"""
+import asyncio
+import sys
+import uuid
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BACKEND_DIR))
+
+import httpx  # noqa: E402
+import server  # noqa: E402
+
+RUN_ID = uuid.uuid4().hex[:8]
+PASSWORD = 'Password1!'
+ORG_SITE_A = f'TESTORG-{RUN_ID} Site A Hospital'
+ORG_SITE_B = f'TESTORG-{RUN_ID} Site B Hospital'
+ORG_SPONSOR_A = f'TESTORG-{RUN_ID} Pharma A'
+ORG_SPONSOR_B = f'TESTORG-{RUN_ID} Pharma B'
+
+LOOP = asyncio.new_event_loop()
+_trial_ids = []
+
+
+def run(coro):
+    return LOOP.run_until_complete(coro)
+
+
+def make_client():
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=server.app), base_url='http://testserver'
+    )
+
+
+async def _register(role, org=None):
+    email = f'test-{RUN_ID}-{role}-{uuid.uuid4().hex[:6]}@example.com'
+    async with make_client() as cli:
+        r = await cli.post('/api/auth/register', json={
+            'email': email, 'password': PASSWORD,
+            'full_name': f'Test {role.upper()} {RUN_ID}',
+            'role': role, 'organization': org,
+        })
+    assert r.status_code == 200, r.text
+    j = r.json()
+    return j['user'], {'Authorization': f"Bearer {j['access_token']}"}
+
+
+async def _make_trial(sponsor_headers, sponsor_name,
+                      templates=((0, 'Screening'), (7, 'Baseline'))):
+    async with make_client() as cli:
+        r = await cli.post('/api/trials', headers=sponsor_headers, json={
+            'title': f'Test Trial {RUN_ID}', 'protocol_id': f'TEST-{RUN_ID}-{uuid.uuid4().hex[:4]}',
+            'phase': 'Phase II', 'condition': 'Testing', 'sponsor_name': sponsor_name,
+        })
+        assert r.status_code == 200, r.text
+        trial = r.json()
+        _trial_ids.append(trial['id'])
+        for i, (off, name) in enumerate(templates, start=1):
+            rv = await cli.post('/api/visits', headers=sponsor_headers, json={
+                'trial_id': trial['id'], 'visit_number': i, 'name': name,
+                'day_offset': off, 'window_days': 3, 'activities': ['Vitals'],
+            })
+            assert rv.status_code == 200, rv.text
+    return trial
+
+
+async def _enroll(staff_headers, trial_id, pi_id=None, crc_id=None, days_ago=5):
+    enrolled = (server.now() - timedelta(days=days_ago)).date().isoformat()
+    async with make_client() as cli:
+        r = await cli.post('/api/patients', headers=staff_headers, json={
+            'full_name': f'Test PATIENT {RUN_ID}',
+            'email': f'test-{RUN_ID}-enrollee-{uuid.uuid4().hex[:6]}@example.com',
+            'trial_id': trial_id, 'pi_id': pi_id, 'crc_id': crc_id,
+            'enrolled_date': enrolled,
+        })
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _cleanup():
+    yield
+    async def clean():
+        db = server.db
+        await db.users.delete_many({'email': {'$regex': f'^test-{RUN_ID}-'}})
+        await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
+        await db.trials.delete_many({'id': {'$in': _trial_ids}})
+        await db.visits.delete_many({'trial_id': {'$in': _trial_ids}})
+        await db.patients.delete_many({'email': {'$regex': f'test-{RUN_ID}-'}})
+        await db.visit_instances.delete_many({'trial_id': {'$in': _trial_ids}})
+        await db.notifications.delete_many({'trial_id': {'$in': _trial_ids}})
+        await db.audit_logs.delete_many({'user_name': {'$regex': RUN_ID}})
+    run(clean())
+    LOOP.close()
+
+
+@pytest.fixture(scope='module')
+def world():
+    """Two isolated sites + sponsors, each with its own trial + enrolled patient.
+
+    Site A: pi_A / crc_A (ORG_SITE_A), sponsor_A (ORG_SPONSOR_A), trial_A,
+            patient_A (pi_id=pi_A, crc_id=crc_A) — a legitimately-shared patient.
+    Site B: pi_B / crc_B (ORG_SITE_B), sponsor_B (ORG_SPONSOR_B), trial_B,
+            patient_B (pi_id=pi_B, crc_id=crc_B).
+    """
+    async def build():
+        pi_a, pi_a_h = await _register('pi', org=ORG_SITE_A)
+        crc_a, crc_a_h = await _register('crc', org=ORG_SITE_A)
+        pi_b, pi_b_h = await _register('pi', org=ORG_SITE_B)
+        crc_b, crc_b_h = await _register('crc', org=ORG_SITE_B)
+        sp_a, sp_a_h = await _register('sponsor', org=ORG_SPONSOR_A)
+        sp_b, sp_b_h = await _register('sponsor', org=ORG_SPONSOR_B)
+
+        trial_a = await _make_trial(sp_a_h, ORG_SPONSOR_A)
+        trial_b = await _make_trial(sp_b_h, ORG_SPONSOR_B)
+
+        patient_a = await _enroll(pi_a_h, trial_a['id'], pi_id=pi_a['id'], crc_id=crc_a['id'])
+        patient_b = await _enroll(pi_b_h, trial_b['id'], pi_id=pi_b['id'], crc_id=crc_b['id'])
+
+        inst_a = await server.db.visit_instances.find_one(
+            {'patient_id': patient_a['id']}, {'_id': 0})
+        assert inst_a, 'patient_a should have materialized visit instances'
+        return {
+            'pi_a': (pi_a, pi_a_h), 'crc_a': (crc_a, crc_a_h),
+            'pi_b': (pi_b, pi_b_h), 'crc_b': (crc_b, crc_b_h),
+            'sp_a': (sp_a, sp_a_h), 'sp_b': (sp_b, sp_b_h),
+            'trial_a': trial_a, 'trial_b': trial_b,
+            'patient_a': patient_a, 'patient_b': patient_b, 'inst_a': inst_a,
+        }
+    return run(build())
+
+
+# ── GET /patients/{id} ───────────────────────────────────────────────────────
+class TestPatientDetailScoping:
+    def test_own_site_pi_and_crc_get_200(self, world):
+        """A legitimately-shared patient (both pi_id and crc_id set) resolves for
+        both its PI and its CRC."""
+        pid = world['patient_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                for _, headers in (world['pi_a'], world['crc_a']):
+                    r = await cli.get(f'/api/patients/{pid}', headers=headers)
+                    assert r.status_code == 200, r.text
+                    assert r.json()['id'] == pid
+        run(flow())
+
+    def test_cross_site_pi_and_crc_get_403(self, world):
+        pid = world['patient_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                for _, headers in (world['pi_b'], world['crc_b']):
+                    r = await cli.get(f'/api/patients/{pid}', headers=headers)
+                    assert r.status_code == 403, r.text
+        run(flow())
+
+
+# ── GET /patients/{id}/visits ────────────────────────────────────────────────
+class TestPatientVisitsScoping:
+    def test_own_site_pi_200_cross_site_pi_403(self, world):
+        pid = world['patient_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                r_own = await cli.get(f'/api/patients/{pid}/visits', headers=world['pi_a'][1])
+                assert r_own.status_code == 200, r_own.text
+                assert isinstance(r_own.json(), list) and r_own.json()
+                r_foreign = await cli.get(f'/api/patients/{pid}/visits', headers=world['pi_b'][1])
+                assert r_foreign.status_code == 403, r_foreign.text
+        run(flow())
+
+
+# ── PATCH /visit-instances/{id} ──────────────────────────────────────────────
+class TestVisitInstancePatchScoping:
+    def test_own_site_pi_200_cross_site_pi_403(self, world):
+        iid = world['inst_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                r_foreign = await cli.patch(f'/api/visit-instances/{iid}',
+                                            headers=world['pi_b'][1],
+                                            json={'status': 'completed'})
+                assert r_foreign.status_code == 403, r_foreign.text
+                # unchanged in the DB after the blocked write
+                still = await server.db.visit_instances.find_one({'id': iid}, {'_id': 0})
+                assert still['status'] != 'completed'
+                r_own = await cli.patch(f'/api/visit-instances/{iid}',
+                                        headers=world['pi_a'][1],
+                                        json={'status': 'completed', 'note': f'ok {RUN_ID}'})
+                assert r_own.status_code == 200, r_own.text
+                assert r_own.json()['status'] == 'completed'
+        run(flow())
+
+    def test_cross_site_crc_403(self, world):
+        iid = world['inst_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.patch(f'/api/visit-instances/{iid}',
+                                    headers=world['crc_b'][1], json={'status': 'missed'})
+                assert r.status_code == 403, r.text
+        run(flow())
+
+
+# ── POST /schedules/{trial_id}/approve|flag ──────────────────────────────────
+class TestScheduleReviewScoping:
+    def test_own_trial_pi_can_approve(self, world):
+        tid = world['trial_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post(f'/api/schedules/{tid}/approve', headers=world['pi_a'][1])
+                assert r.status_code == 200, r.text
+                assert r.json()['schedule_status'] == 'approved'
+        run(flow())
+
+    def test_foreign_trial_pi_cannot_approve_or_flag(self, world):
+        tid = world['trial_a']['id']       # claimed by pi_a (patient_a enrolled)
+        async def flow():
+            async with make_client() as cli:
+                r_app = await cli.post(f'/api/schedules/{tid}/approve', headers=world['pi_b'][1])
+                assert r_app.status_code == 403, r_app.text
+                r_flag = await cli.post(f'/api/schedules/{tid}/flag', headers=world['pi_b'][1],
+                                        json={'reason': f'nope {RUN_ID}'})
+                assert r_flag.status_code == 403, r_flag.text
+        run(flow())
+
+
+# ── Sponsor org-trial scoping ────────────────────────────────────────────────
+class TestSponsorScoping:
+    def test_sponsor_sees_own_org_trial_patient(self, world):
+        pid = world['patient_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.get(f'/api/patients/{pid}', headers=world['sp_a'][1])
+                assert r.status_code == 200, r.text
+                assert r.json()['id'] == pid
+        run(flow())
+
+    def test_sponsor_blocked_from_foreign_org_trial_patient(self, world):
+        pid_b = world['patient_b']['id']
+        pid_a = world['patient_a']['id']
+        async def flow():
+            async with make_client() as cli:
+                # sponsor_A must not reach a patient in sponsor_B's trial
+                r1 = await cli.get(f'/api/patients/{pid_b}', headers=world['sp_a'][1])
+                assert r1.status_code == 403, r1.text
+                # and vice-versa
+                r2 = await cli.get(f'/api/patients/{pid_a}', headers=world['sp_b'][1])
+                assert r2.status_code == 403, r2.text
+        run(flow())

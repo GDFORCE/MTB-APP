@@ -949,6 +949,95 @@ def _derive_patient_status(instances, start_today):
     return status, next_visit
 
 
+# ── Ownership scoping (Task 3.75) ────────────────────────────────────────────
+# Single source of truth for "may this caller reach this patient / trial?",
+# shared by GET /patients/{id}, GET /patients/{id}/visits,
+# PATCH /visit-instances/{id} and POST /schedules/{trial_id}/approve|flag.
+# Mirrors the GET /patients list rule (site staff scoped to their own site;
+# sponsors to their own org's trials) so a crafted id cannot leak a foreign
+# patient. NOTE: the medications/calendar `_staff_scoped_patient` helper is a
+# deliberately STRICTER pi_id/crc_id-only check and is intentionally left
+# unchanged; here the brief calls for "patients whose site/org matches theirs",
+# so same-site colleagues are allowed while cross-site is blocked.
+
+async def _org_of(user_id: Optional[str]) -> str:
+    """The organization string of a user id (empty when unknown/unset)."""
+    if not user_id:
+        return ''
+    u = await db.users.find_one({'id': user_id}, {'_id': 0, 'organization': 1})
+    return (u.get('organization') or '').strip() if u else ''
+
+async def _patient_site_org(patient: dict) -> str:
+    """The site a patient belongs to: the org of its assigned PI, else its CRC,
+    else whoever enrolled it (created_by)."""
+    for key in ('pi_id', 'crc_id', 'created_by'):
+        org = await _org_of(patient.get(key))
+        if org:
+            return org
+    return ''
+
+async def _trial_in_caller_org(user: dict, trial_id: Optional[str]) -> bool:
+    """True when a trial belongs to the sponsor/cro caller's organization — they
+    created it, or its sponsor_name matches their org."""
+    if not trial_id:
+        return False
+    trial = await db.trials.find_one(
+        {'id': trial_id}, {'_id': 0, 'sponsor_name': 1, 'created_by': 1})
+    if not trial:
+        return False
+    if trial.get('created_by') == user['id']:
+        return True
+    org = (user.get('organization') or '').strip()
+    return bool(org) and (trial.get('sponsor_name') or '').strip() == org
+
+async def _can_access_patient(user: dict, patient: dict) -> bool:
+    """Ownership predicate shared by every single-patient staff endpoint.
+
+    pi/crc: the patient must be assigned to them (pi_id / crc_id), enrolled by
+    them (created_by), or sit at their own site (same organization).
+    sponsor/cro: the patient must be enrolled in a trial belonging to their org.
+    Any other role: no access.
+    """
+    role = user['role']
+    if role in ('pi', 'crc'):
+        key = 'pi_id' if role == 'pi' else 'crc_id'
+        if patient.get(key) == user['id'] or patient.get('created_by') == user['id']:
+            return True
+        caller_org = (user.get('organization') or '').strip()
+        return bool(caller_org) and (await _patient_site_org(patient)) == caller_org
+    if role in ('sponsor', 'cro'):
+        return await _trial_in_caller_org(user, patient.get('trial_id'))
+    return False
+
+async def _require_patient(user: dict, patient_id: Optional[str]) -> dict:
+    """Load a patient and enforce the caller's ownership scope. 404 when it does
+    not exist at all; 403 when it exists but lies outside the caller's scope."""
+    p = await db.patients.find_one({'id': patient_id}, {'_id': 0}) if patient_id else None
+    if not p:
+        raise HTTPException(404, 'Patient not found')
+    if not await _can_access_patient(user, p):
+        raise HTTPException(403, 'You do not have access to this patient')
+    return p
+
+async def _pi_owns_trial(user: dict, trial: dict) -> bool:
+    """Whether a PI may review a trial's visit schedule: they created it, share
+    its sponsor org, are a listed PI on it (own a patient enrolled in it), or the
+    trial has no site PI assigned yet (unclaimed). Once any PI is listed on the
+    trial, cross-site PIs are locked out."""
+    if trial.get('created_by') == user['id']:
+        return True
+    org = (user.get('organization') or '').strip()
+    if org and (trial.get('sponsor_name') or '').strip() == org:
+        return True
+    mine = await db.patients.find_one(
+        {'trial_id': trial['id'], 'pi_id': user['id']}, {'_id': 0, 'id': 1})
+    if mine:
+        return True
+    claimed = await db.patients.find_one(
+        {'trial_id': trial['id'], 'pi_id': {'$nin': [None, '']}}, {'_id': 0, 'id': 1})
+    return claimed is None
+
+
 @api.get('/patients')
 async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
     q = {}
@@ -1001,9 +1090,7 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
 @api.get('/patients/{patient_id}')
 async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
     """Patient detail: the patient record + its trial + its visit instances."""
-    p = await db.patients.find_one({'id': patient_id}, {'_id': 0})
-    if not p:
-        raise HTTPException(404, 'Patient not found')
+    p = await _require_patient(user, patient_id)
     trial = await db.trials.find_one({'id': p.get('trial_id')}, {'_id': 0})
     instances = await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
                                         .sort('seq', 1).to_list(500)
@@ -1011,9 +1098,7 @@ async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cr
 
 @api.get('/patients/{patient_id}/visits')
 async def get_patient_visits(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
-    p = await db.patients.find_one({'id': patient_id}, {'_id': 0, 'id': 1})
-    if not p:
-        raise HTTPException(404, 'Patient not found')
+    await _require_patient(user, patient_id)
     return await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
                                    .sort('seq', 1).to_list(500)
 
@@ -1607,6 +1692,9 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
     inst = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
     if not inst:
         raise HTTPException(404, 'Visit instance not found')
+    # Ownership: resolve the instance's patient and apply the patient-scoping
+    # rule — a foreign instance is a 403, never a silent write.
+    await _require_patient(user, inst.get('patient_id'))
     upd: Dict = {}
     if body.status is not None:
         upd['status'] = body.status
@@ -1664,6 +1752,10 @@ async def _review_schedule(trial_id: str, user: dict, new_status: str, reason: s
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
+    # Ownership: PI-only is enforced by the route; on top of that the PI must
+    # belong to this trial (creator, listed PI, same org, or an unclaimed trial).
+    if not await _pi_owns_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
     upd = {'schedule_status': new_status,
            'schedule_reviewed_by': user['id'], 'schedule_reviewed_at': now()}
     if new_status == 'flagged':
