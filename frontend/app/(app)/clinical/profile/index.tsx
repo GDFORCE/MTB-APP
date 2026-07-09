@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Camera, ShieldCheck, UserPen, Lock, Bell, ChevronRight, LogOut,
-  Building2, FlaskConical, FileText, HelpCircle, BarChart2, Users,
+  Building2, FlaskConical, FileText, HelpCircle, BarChart2, Users, ScrollText,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -57,6 +57,7 @@ export default function SiteUserProfile() {
     { icon: Users, label: "Team Members", onPress: () => router.push("/(app)/clinical/team"), bg: "rgba(92,154,110,0.15)", ic: C.success },
   ];
   const reports = [
+    { icon: ScrollText, label: "Audit Trail", onPress: () => router.push("/(app)/audit-trail" as any), bg: "rgba(166,33,63,0.10)", ic: C.primary },
     { icon: BarChart2, label: "Reports", onPress: () => router.push("/(app)/clinical/profile/reports"), bg: "rgba(142,91,180,0.10)", ic: C.violet },
     { icon: FileText, label: "T&C", onPress: () => router.push("/(app)/clinical/profile/tnc"), bg: "rgba(123,107,184,0.10)", ic: C.info },
     { icon: HelpCircle, label: "Help & Support", onPress: () => router.push("/(app)/clinical/profile/help"), bg: "rgba(230,155,92,0.12)", ic: C.accent },
