@@ -109,6 +109,7 @@ class ProfileUpdateIn(BaseModel):
     dob: Optional[str] = None
     gender: Optional[str] = None
     language: Optional[str] = None
+    avatar_file_id: Optional[str] = None   # uploaded avatar (file id from POST /api/files); '' clears it
 
 class ChangePasswordIn(BaseModel):
     current_password: str
@@ -343,6 +344,8 @@ async def update_me(body: ProfileUpdateIn, user=Depends(current_user)):
     for key, val in (('dob', body.dob), ('gender', body.gender), ('language', body.language)):
         if val is not None:
             updates[f'profile.{key}'] = val
+    if body.avatar_file_id is not None:
+        updates['avatar_file_id'] = body.avatar_file_id.strip() or None
     if updates:
         await db.users.update_one({'id': user['id']}, {'$set': updates})
     fresh = await db.users.find_one({'id': user['id']}, {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0})
