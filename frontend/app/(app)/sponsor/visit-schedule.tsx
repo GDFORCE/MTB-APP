@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { Plus, Trash2, Check } from "lucide-react-native";
+import { Plus, Trash2, Check, Sparkles } from "lucide-react-native";
+import * as DocumentPicker from "expo-document-picker";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 
 type Row = { name: string; day_offset: string; window_days: string; activities: string };
+type ExtractedVisit = { name: string; day_offset: number; window_days: number; activities: string[] };
 
 export default function VisitScheduleEditor() {
   const router = useRouter();
@@ -18,10 +20,55 @@ export default function VisitScheduleEditor() {
     { name: "Week 4", day_offset: "28", window_days: "3", activities: "Vitals, Blood draw" },
   ]);
   const [saving, setSaving] = useState(false), [err, setErr] = useState("");
+  const [extracting, setExtracting] = useState(false), [extractErr, setExtractErr] = useState("");
 
   const upd = (i: number, k: keyof Row, v: string) => setRows(prev => prev.map((r, j) => j === i ? { ...r, [k]: v } : r));
   const add = () => setRows(prev => [...prev, { name: `Visit ${prev.length + 1}`, day_offset: "0", window_days: "3", activities: "" }]);
   const rm = (i: number) => setRows(prev => prev.filter((_, j) => j !== i));
+
+  // AI-assisted: upload the protocol PDF, let Claude extract its Schedule of
+  // Assessments, and pre-fill the rows below for the sponsor to review + edit.
+  // Nothing is saved until they hit "Save & preview" via the normal flow.
+  const autofill = async () => {
+    setExtractErr("");
+    let asset: DocumentPicker.DocumentPickerAsset;
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true, multiple: false });
+      if (res.canceled || !res.assets?.length) return;
+      asset = res.assets[0];
+    } catch {
+      setExtractErr("Couldn't open the file picker."); return;
+    }
+    const form = new FormData();
+    if (Platform.OS === "web") {
+      const file = (asset as any).file as File | undefined;
+      if (!file) { setExtractErr("Couldn't read the selected file."); return; }
+      form.append("file", file, asset.name || "protocol.pdf");
+    } else {
+      form.append("file", { uri: asset.uri, name: asset.name || "protocol.pdf", type: asset.mimeType || "application/pdf" } as any);
+    }
+    setExtracting(true);
+    try {
+      const r = await api.post(`/trials/${id}/extract-schedule`, form, {
+        headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
+      });
+      const visits: ExtractedVisit[] = r.data?.visits ?? [];
+      if (!visits.length) { setExtractErr("No visit schedule was found in that PDF — you can still build it manually below."); return; }
+      setRows(visits.map(v => ({
+        name: v.name ?? "",
+        day_offset: String(v.day_offset ?? 0),
+        window_days: String(v.window_days ?? 3),
+        activities: (v.activities ?? []).join(", "),
+      })));
+    } catch (e: any) {
+      const status = e?.response?.status;
+      setExtractErr(e?.response?.data?.detail
+        || (status === 503 ? "AI extraction isn't configured on the server yet."
+          : "Couldn't extract the schedule. Try again, or build it manually below."));
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true); setErr("");
@@ -47,6 +94,14 @@ export default function VisitScheduleEditor() {
           <Card>
             <Eyebrow style={{ marginBottom: 6 }}>How it works</Eyebrow>
             <Small>Each visit has a day offset from enrollment and a window (± days). Activities are comma-separated.</Small>
+            <Pressable testID="extract-protocol" onPress={autofill} disabled={extracting} style={[s.aiBtn, extracting && { opacity: 0.7 }]}>
+              {extracting
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <Sparkles size={18} color={colors.primary} />}
+              <Small color={colors.primary} weight="700">{extracting ? "Reading protocol…" : "Auto-fill from protocol PDF"}</Small>
+            </Pressable>
+            <Small color={colors.mutedFg} style={{ marginTop: 6 }}>Upload the protocol and we'll draft the visit schedule from its Schedule of Assessments. Review and edit before saving.</Small>
+            {extractErr ? <Small color={colors.destructive} style={{ marginTop: 6 }}>{extractErr}</Small> : null}
           </Card>
           {rows.map((r, i) => (
             <Card key={i} style={{ marginTop: spacing.md }}>
@@ -82,4 +137,5 @@ export default function VisitScheduleEditor() {
 const s = StyleSheet.create({
   input: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.foreground },
   addBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.primary + "55", borderStyle: "dashed", marginTop: spacing.md, backgroundColor: colors.secondary + "44" },
+  aiBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.primary + "55", marginTop: spacing.md, backgroundColor: colors.primary + "12" },
 });

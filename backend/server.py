@@ -7,7 +7,7 @@ Production-grade FastAPI app with:
 - Real-time chat over WebSocket (1-to-1 + group, typing, read receipts)
 - MongoDB persistence
 """
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -23,6 +23,7 @@ from passlib.context import CryptContext
 import jwt
 
 import otp_service
+import protocol_extraction as pe
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -751,6 +752,50 @@ async def get_trial(trial_id: str, user=Depends(current_user)):
     if not t: raise HTTPException(404, 'Trial not found')
     visits = await db.visits.find({'trial_id': trial_id}, {'_id': 0}).sort('visit_number', 1).to_list(200)
     return {**t, 'visits': visits}
+
+@api.post('/trials/{trial_id}/extract-schedule',
+          dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def extract_schedule(trial_id: str, file: UploadFile = File(...),
+                           user=Depends(current_user)):
+    """AI-assisted: read an uploaded protocol PDF and return its Schedule of
+    Assessments as visit templates for the caller to REVIEW and edit before
+    saving. Never writes visits — the sponsor confirms via the normal save flow.
+    Trial-ownership scoped (same rule as the schedule endpoints). The PDF is
+    streamed to the extractor and discarded; nothing is persisted here."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if user['role'] in ('sponsor', 'cro'):
+        owns = await _trial_in_caller_org(user, trial_id)
+    else:  # pi
+        owns = await _pi_owns_trial(user, trial)
+    if not owns:
+        raise HTTPException(403, 'You do not have access to this trial')
+
+    ctype = (file.content_type or '').lower()
+    if ctype not in ('application/pdf', 'application/octet-stream', ''):
+        raise HTTPException(400, 'Upload a PDF protocol document')
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, 'The uploaded file is empty')
+    if len(data) > pe.MAX_PDF_BYTES:
+        raise HTTPException(413, 'Protocol PDF is too large (max 25 MB)')
+    if data[:5] != b'%PDF-':
+        raise HTTPException(400, 'The uploaded file does not look like a PDF')
+
+    try:
+        schedule = await pe.get_extractor().extract(data)
+    except pe.ExtractionNotConfigured:
+        raise HTTPException(503, 'Protocol extraction is not configured on the '
+                            'server. Set ANTHROPIC_API_KEY and restart.')
+    except pe.ExtractionError as e:
+        raise HTTPException(502, f'Could not extract the schedule: {e}')
+
+    await write_audit(
+        user, 'trial.extract_schedule',
+        f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
+        f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
+    return {'visits': [v.dict() for v in schedule.visits]}
 
 # ── Visit schedule ──────────────────────────────────────────────────────────
 @api.post('/visits')
