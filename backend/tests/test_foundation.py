@@ -64,6 +64,9 @@ def _cleanup():
     yield
     async def clean():
         db = server.db
+        _uids = [u['id'] async for u in db.users.find(
+            {'email': {'$regex': f'^test-{RUN_ID}-'}}, {'id': 1})]
+        await db.preferences.delete_many({'user_id': {'$in': _uids}})
         await db.users.delete_many({'email': {'$regex': f'^test-{RUN_ID}-'}})
         await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
         await db.invitations.delete_many({'email': {'$regex': RUN_ID}})
@@ -337,6 +340,29 @@ class TestInvitationLifecycle:
                 assert r.status_code == 403
                 r2 = await cli.post(f"/api/invitations/{inv['id']}/cancel", headers=patient_headers)
                 assert r2.status_code == 403
+        run(flow())
+
+
+# ── User preferences (calendar settings persistence) ─────────────────────────
+class TestPreferences:
+    def test_calendar_settings_keys_persist(self):
+        async def flow():
+            _, headers = await _register('patient')
+            payload = {
+                'calendar_default_view': 'week',
+                'week_start': 'monday',
+                'reminders_visits': False,
+                'reminders_meds': True,
+                'reminder_hours_before': 72,
+            }
+            async with make_client() as cli:
+                r = await cli.patch('/api/preferences', headers=headers, json=payload)
+                assert r.status_code == 200, r.text
+                r2 = await cli.get('/api/preferences', headers=headers)
+                assert r2.status_code == 200, r2.text
+                got = r2.json()
+            for k, v in payload.items():
+                assert got.get(k) == v, f'{k}: expected {v!r}, got {got.get(k)!r}'
         run(flow())
 
 

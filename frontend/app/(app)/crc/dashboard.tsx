@@ -272,7 +272,7 @@ export default function CrcDashboard() {
         <TabItem icon={Home} label="Dashboard" active />
         <TabItem icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
         <TabItem icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <TabItem icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/clinical/team-calendar" as any)} testID="tab-calendar" />
+        <TabItem icon={CalIcon} label="Calendar" onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "crc" } } as any)} testID="tab-calendar" />
         <TabItem icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
     </View>

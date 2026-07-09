@@ -263,7 +263,7 @@ export default function PiDashboard() {
         <Tab icon={Home} label="Dashboard" active />
         <Tab icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
         <Tab icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/clinical/team-calendar" as any)} testID="tab-calendar" />
+        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "pi" } } as any)} testID="tab-calendar" />
         <Tab icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
     </View>

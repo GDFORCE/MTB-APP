@@ -10,10 +10,8 @@ import { colors, spacing, radii, fonts, shadows } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 
 // ── Preference shape (server keys) ───────────────────────────────────────────
-// NOTE: these five keys are NOT yet in server.py's PATCH allow-list, so PATCH is
-// best-effort (backend returns 200 but silently drops them until allow-listed).
-// Optimistic UI + revert-on-error is wired so persistence works once the backend
-// task lands. See task-3.3-report.md for the blocker.
+// These five keys are in server.py's PATCH /preferences allow-list, so they
+// persist. Optimistic UI + revert-on-error keeps the UI responsive.
 type Prefs = {
   calendar_default_view: "day" | "week" | "month";
   week_start: "sunday" | "monday";
@@ -153,7 +151,9 @@ export default function CalendarSettings() {
     try {
       await api.patch("/preferences", { [key]: value });
     } catch {
-      setPrefs((p) => ({ ...p, [key]: prev }));
+      // Only revert if no newer write superseded this one: the key's current
+      // value must still equal what THIS request optimistically set.
+      setPrefs((p) => (p[key] === value ? { ...p, [key]: prev } : p));
       showToast("Couldn't save. Please try again.");
     }
   }, [prefs, showToast]);

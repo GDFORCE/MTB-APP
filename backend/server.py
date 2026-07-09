@@ -2201,6 +2201,9 @@ async def patch_prefs(body: dict, user=Depends(current_user)):
         # granular patient notification preferences (Profile → Notifications)
         'visit_push', 'visit_sms', 'visit_email', 'visit_remind_days',
         'med_push', 'med_sms', 'trial_updates', 'pi_messages', 'system_notifs',
+        # calendar settings (Clinical → Calendar → Settings)
+        'calendar_default_view', 'week_start', 'reminders_visits', 'reminders_meds',
+        'reminder_hours_before',
     }
     upd = {k: v for k, v in body.items() if k in allow}
     await db.preferences.update_one({'user_id': user['id']}, {'$set': upd, '$setOnInsert': {'user_id': user['id']}}, upsert=True)
