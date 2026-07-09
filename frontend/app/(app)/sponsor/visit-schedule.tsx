@@ -12,7 +12,7 @@ import { api } from "@/src/api/client";
 // editor can diff-save (create new rows, update changed rows, delete removed
 // rows) instead of blindly re-POSTing — which used to pile up duplicate
 // templates + visit instances on every save.
-type Row = { id?: string; name: string; day_offset: string; window_days: string; activities: string };
+type Row = { id?: string; visit_number?: number; name: string; day_offset: string; window_days: string; activities: string };
 type ExtractedVisit = { name: string; day_offset: number; window_days: number; activities: string[] };
 
 const DEFAULT_ROWS: Row[] = [
@@ -23,6 +23,7 @@ const DEFAULT_ROWS: Row[] = [
 
 const templateToRow = (t: any): Row => ({
   id: t.id,
+  visit_number: t.visit_number,
   name: t.name ?? "",
   day_offset: String(t.day_offset ?? 0),
   window_days: String(t.window_days ?? 3),
@@ -131,20 +132,27 @@ export default function VisitScheduleEditor() {
         if (o.id && !keptIds.has(o.id)) await api.delete(`/visits/${o.id}`);
       }
       // 2) Create new rows (POST), update changed existing rows (PUT), skip
-      //    unchanged rows so re-saving the same schedule is a no-op.
+      //    unchanged rows so re-saving the same schedule is a no-op. Every row
+      //    is (re)numbered from its FINAL position (index+1) so that after a
+      //    middle row is deleted/reordered, no two templates in the trial share
+      //    a visit_number (Finding 1) — a surviving row whose number shifted is
+      //    PUT even when its other fields are unchanged.
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
+        const visit_number = i + 1;
         const payload = {
           name: r.name,
+          visit_number,
           day_offset: parseInt(r.day_offset || "0", 10),
           window_days: parseInt(r.window_days || "3", 10),
           activities: r.activities.split(",").map(s => s.trim()).filter(Boolean),
         };
         if (r.id) {
           const prev = original.find(o => o.id === r.id);
-          if (!prev || !sameRow(prev, r)) await api.put(`/visits/${r.id}`, payload);
+          const numberChanged = !prev || prev.visit_number !== visit_number;
+          if (!prev || !sameRow(prev, r) || numberChanged) await api.put(`/visits/${r.id}`, payload);
         } else {
-          await api.post("/visits", { trial_id: id, visit_number: i + 1, ...payload });
+          await api.post("/visits", { trial_id: id, ...payload });
         }
       }
       router.replace({ pathname: "/(app)/clinical/trial-summary", params: { id } });

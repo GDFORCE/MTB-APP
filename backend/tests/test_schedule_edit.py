@@ -317,6 +317,122 @@ class TestUpdateRematerializes:
         run(flow())
 
 
+# ── Finding 1: unique visit_number across an edit (delete-middle-then-add) ───
+class TestUniqueVisitNumbers:
+    def test_delete_middle_then_add_keeps_visit_numbers_unique(self, sponsor, pi):
+        """Reproduces the collision: after deleting a middle template and adding
+        one at the end, the frontend re-numbers every row (index+1) → all
+        templates end with UNIQUE visit_numbers, and a patient enrolled AFTER the
+        edit gets unique, correctly-ordered instance seqs."""
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        async def flow():
+            trial, tpls = await _make_trial(sp_headers)  # visit_numbers 1,2,3
+            async with make_client() as cli:
+                # delete the MIDDLE template (v2)
+                rd = await cli.delete(f"/api/visits/{tpls[1]['id']}", headers=sp_headers)
+                assert rd.status_code == 200, rd.text
+                # survivor v3 slides to row index 1 → visit_number 2
+                rp = await cli.put(f"/api/visits/{tpls[2]['id']}", headers=sp_headers,
+                                   json={'visit_number': 2})
+                assert rp.status_code == 200, rp.text
+                # add a NEW visit at the end → row index 2 → visit_number 3
+                rn = await cli.post('/api/visits', headers=sp_headers, json={
+                    'trial_id': trial['id'], 'visit_number': 3, 'name': f'Added {RUN_ID}',
+                    'day_offset': 21, 'window_days': 3, 'activities': ['Labs']})
+                assert rn.status_code == 200, rn.text
+            # all templates carry UNIQUE visit_numbers reflecting row order
+            tpl_docs = await server.db.visits.find(
+                {'trial_id': trial['id']}, {'_id': 0}).to_list(50)
+            nums = sorted(t['visit_number'] for t in tpl_docs)
+            assert nums == [1, 2, 3], nums
+            assert len(nums) == len(set(nums))
+            # a patient enrolled AFTER the edit → unique, ordered instance seqs
+            patient = await _enroll(pi_headers, trial['id'], pi_id=pi_user['id'])
+            insts = await _insts(patient['id'])
+            seqs = [i['seq'] for i in insts]
+            assert seqs == [1, 2, 3], seqs
+            assert len(seqs) == len(set(seqs))
+        run(flow())
+
+    def test_put_visit_number_repoints_future_instance_seq(self, sponsor, pi):
+        """Changing a template's visit_number updates the seq of its FUTURE
+        pending instances; completed/past instances keep their original seq."""
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        async def flow():
+            trial, tpls = await _make_trial(sp_headers)
+            patient = await _enroll(pi_headers, trial['id'], pi_id=pi_user['id'], days_ago=5)
+            # seq3 (day 14, future) → mark completed/touched → must NOT be repointed
+            await server.db.visit_instances.update_one(
+                {'patient_id': patient['id'], 'seq': 3},
+                {'$set': {'status': 'completed', 'note': 'seen', 'updated_by': pi_user['id']}})
+            # seq2 (day 7, future/pending) → its seq should follow the template
+            async with make_client() as cli:
+                r = await cli.put(f"/api/visits/{tpls[1]['id']}", headers=sp_headers,
+                                  json={'visit_number': 7})
+                assert r.status_code == 200, r.text
+            inst2 = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id'], 'visit_template_id': tpls[1]['id']}, {'_id': 0})
+            assert inst2['seq'] == 7 and inst2['visit_number'] == 7
+            # completed instance's seq untouched
+            inst3 = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id'], 'visit_template_id': tpls[2]['id']}, {'_id': 0})
+            assert inst3['seq'] == 3 and inst3['status'] == 'completed'
+        run(flow())
+
+
+# ── Finding 2: a visit ADDED mid-trial materializes for enrolled patients ─────
+class TestAddedVisitMaterializes:
+    def test_new_template_materializes_for_enrolled_patient(self, sponsor, pi):
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        async def flow():
+            trial, tpls = await _make_trial(sp_headers)
+            patient = await _enroll(pi_headers, trial['id'], pi_id=pi_user['id'], days_ago=5)
+            before = await _insts(patient['id'])
+            assert len(before) == 3
+            # give one existing instance patient activity → must remain untouched
+            await server.db.visit_instances.update_one(
+                {'patient_id': patient['id'], 'seq': 1},
+                {'$set': {'status': 'completed', 'note': 'done', 'updated_by': pi_user['id']}})
+            before1 = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id'], 'seq': 1}, {'_id': 0})
+            # ADD a new visit to the in-flight schedule
+            async with make_client() as cli:
+                rn = await cli.post('/api/visits', headers=sp_headers, json={
+                    'trial_id': trial['id'], 'visit_number': 4, 'name': f'Added {RUN_ID}',
+                    'day_offset': 30, 'window_days': 3, 'activities': ['Labs']})
+                assert rn.status_code == 200, rn.text
+            new_tpl = rn.json()
+            after = await _insts(patient['id'])
+            # exactly ONE new instance, for the new template, future-dated
+            assert len(after) == 4
+            new_insts = [i for i in after if i['visit_template_id'] == new_tpl['id']]
+            assert len(new_insts) == 1
+            ni = new_insts[0]
+            assert ni['seq'] == 4 and ni['status'] == 'upcoming'
+            pdoc = await server.db.patients.find_one({'id': patient['id']}, {'_id': 0})
+            base = _as_dt(pdoc['enrolled_date'])
+            assert _as_dt(ni['scheduled_date']).date() == (base + timedelta(days=30)).date()
+            # existing completed/touched instance untouched
+            after1 = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id'], 'seq': 1}, {'_id': 0})
+            assert after1['status'] == 'completed' and after1['note'] == before1['note']
+        run(flow())
+
+    def test_new_template_no_instance_before_any_enrollment(self, sponsor):
+        """POSTing templates on a trial with NO enrolled patients creates no
+        instances (they're materialized at enrollment as before)."""
+        _, sp_headers = sponsor
+        async def flow():
+            trial, tpls = await _make_trial(sp_headers)
+            insts = await server.db.visit_instances.count_documents(
+                {'trial_id': trial['id']})
+            assert insts == 0
+        run(flow())
+
+
 # ── DELETE re-materialization ────────────────────────────────────────────────
 class TestDeleteRematerializes:
     def test_delete_removes_template_and_future_pending_instances(self, sponsor, pi):

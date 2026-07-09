@@ -144,8 +144,12 @@ class VisitIn(BaseModel):
 
 class VisitUpdate(BaseModel):
     """Partial edit of an existing visit TEMPLATE (Task 4.1 edit mode). Only the
-    fields present are applied; visit_number/trial_id are immutable here."""
+    fields present are applied; trial_id is immutable here. `visit_number` is
+    editable so the editor can keep template order unique after a row is
+    deleted/reordered (Finding 1); a change re-points the seq of eligible
+    future instances."""
     name: Optional[str] = None
+    visit_number: Optional[int] = None
     day_offset: Optional[int] = None
     window_days: Optional[int] = None
     activities: Optional[List[str]] = None
@@ -812,6 +816,10 @@ async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro
     vid = str(uuid.uuid4())
     doc = {'id': vid, **body.dict(), 'created_at': now()}
     await db.visits.insert_one(doc)
+    # Finding 2: a visit ADDED to an in-flight schedule must appear for patients
+    # already enrolled (materialize_visit_instances is a per-patient no-op once
+    # they have instances, so it would never reach them otherwise).
+    await _materialize_new_template_for_enrolled(doc)
     return serialize(doc)
 
 
@@ -1022,6 +1030,54 @@ async def materialize_visit_instances(patient) -> int:
     return len(docs)
 
 
+async def _materialize_new_template_for_enrolled(template) -> int:
+    """Create the single instance of a JUST-ADDED template for every patient
+    already enrolled in its trial (Finding 2).
+
+    `materialize_visit_instances` is a per-patient no-op once a patient has any
+    instances, so a template added mid-trial would otherwise never reach enrolled
+    patients. Here we create only THIS template's instance, future-dated off each
+    patient's own baseline/enrolment anchor, with the same status/shape as normal
+    materialization. Patients not yet materialized are skipped (they'll pick it up
+    at enrollment); an existing instance for this template is never duplicated.
+    Returns the number of instances created."""
+    if not template or not template.get('id') or not template.get('trial_id'):
+        return 0
+    n = now()
+    wd = template.get('window_days', 3)
+    created = 0
+    async for patient in db.patients.find({'trial_id': template['trial_id']}, {'_id': 0}):
+        # only patients who were already materialized need the retro-fit
+        if not await db.visit_instances.count_documents({'patient_id': patient['id']}, limit=1):
+            continue
+        if await db.visit_instances.count_documents(
+                {'patient_id': patient['id'], 'visit_template_id': template['id']}, limit=1):
+            continue
+        base = _patient_visit_anchor(patient)
+        sched = base + timedelta(days=template.get('day_offset', 0))
+        await db.visit_instances.insert_one({
+            'id': str(uuid.uuid4()),
+            'patient_id': patient['id'],
+            'trial_id': template['trial_id'],
+            'visit_template_id': template['id'],
+            'name': template.get('name', ''),
+            'seq': template.get('visit_number'),
+            'visit_number': template.get('visit_number'),
+            'activities': template.get('activities', []),
+            'window_days': wd,
+            'scheduled_date': sched,
+            'window_start': sched - timedelta(days=wd),
+            'window_end': sched + timedelta(days=wd),
+            'status': 'upcoming' if sched >= n else 'missed',
+            'note': '',
+            'updated_by': None,
+            'updated_at': n,
+            'created_at': n,
+        })
+        created += 1
+    return created
+
+
 def _instance_is_repointable(inst, n) -> bool:
     """Whether a visit_instance may be safely re-materialized when its template
     changes. FAIL-CLOSED: only FUTURE, still-pending instances that no one has
@@ -1070,6 +1126,11 @@ async def _rematerialize_template_change(template) -> int:
         wd = template.get('window_days', 3)
         await db.visit_instances.update_one({'id': inst['id']}, {'$set': {
             'name': template.get('name', ''),
+            # keep the instance's ordinal consistent with the template when the
+            # editor re-numbers a row (Finding 1) — only ever for eligible
+            # future/pending instances (completed/past keep their original seq).
+            'seq': template.get('visit_number'),
+            'visit_number': template.get('visit_number'),
             'activities': template.get('activities', []),
             'window_days': wd,
             'scheduled_date': sched,
