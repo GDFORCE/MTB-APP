@@ -585,3 +585,430 @@ async def admin_cancel_invitation(invitation_id: str, admin=Depends(current_user
                       f"Cancelled invitation for {inv.get('email') or inv.get('phone')}",
                       target_id=invitation_id)
     return {'ok': True, 'status': 'cancelled'}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SUPPORT TICKETS (admin triage — the user-side endpoints stay untouched)
+# ═════════════════════════════════════════════════════════════════════════════
+class TicketNoteIn(BaseModel):
+    text: str = Field(min_length=1)
+
+
+class TicketPatch(BaseModel):
+    status: Optional[Literal['Open', 'In Progress', 'Resolved', 'Closed']] = None
+    priority: Optional[Literal['low', 'medium', 'high', 'urgent']] = None
+
+
+async def _enrich_ticket(t: dict) -> dict:
+    t = dict(t)
+    u = await db.users.find_one({'id': t.get('user_id')}, USER_PROJECTION)
+    if u:
+        u = _pseudonymize_patient(u)
+        t['user'] = {'id': u['id'], 'name': u.get('full_name', ''),
+                     'email': u.get('email', ''), 'role': u.get('role', '')}
+        t['userType'] = u.get('role', '')
+    return t
+
+
+@router.get('/tickets')
+async def admin_list_tickets(status: Optional[str] = None, category: Optional[str] = None,
+                             search: Optional[str] = None):
+    q: Dict = {}
+    if status:
+        q['status'] = status
+    if category:
+        q['category'] = category
+    if search:
+        rx = {'$regex': search, '$options': 'i'}
+        q['$or'] = [{'subject': rx}, {'description': rx}, {'ticket_id': rx}]
+    rows = await db.support_tickets.find(q, {'_id': 0}).sort('created_at', -1).to_list(500)
+    return [await _enrich_ticket(t) for t in rows]
+
+
+@router.get('/tickets/{ticket_id}')
+async def admin_get_ticket(ticket_id: str):
+    t = await db.support_tickets.find_one(
+        {'$or': [{'id': ticket_id}, {'ticket_id': ticket_id}]}, {'_id': 0})
+    if not t:
+        raise HTTPException(404, 'Ticket not found')
+    return await _enrich_ticket(t)
+
+
+@router.post('/tickets/{ticket_id}/notes')
+async def admin_add_ticket_note(ticket_id: str, body: TicketNoteIn, admin=Depends(current_user)):
+    t = await _find_or_404(db.support_tickets, ticket_id, 'Ticket')
+    note = {'by': admin['full_name'], 'by_id': admin['id'], 'at': now(), 'text': body.text}
+    await db.support_tickets.update_one({'id': ticket_id}, {'$push': {'notes': note}})
+    # The ticket owner sees the response in their notifications.
+    if t.get('user_id'):
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': t['user_id'],
+            'title': f"Support update · {t.get('ticket_id', ticket_id)}",
+            'body': body.text, 'kind': 'support', 'read': False, 'created_at': now()})
+    await write_audit(admin, 'admin.ticket_note',
+                      f"Added note to {t.get('ticket_id', ticket_id)}", target_id=ticket_id)
+    return {'ok': True, 'id': ticket_id, 'note': {**note, 'at': iso(note['at'])}}
+
+
+@router.patch('/tickets/{ticket_id}')
+async def admin_patch_ticket(ticket_id: str, body: TicketPatch, admin=Depends(current_user)):
+    t = await _find_or_404(db.support_tickets, ticket_id, 'Ticket')
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        return await _enrich_ticket(t)
+    updates['updated_at'] = now()
+    await db.support_tickets.update_one({'id': ticket_id}, {'$set': updates})
+    if 'status' in updates and t.get('user_id'):
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': t['user_id'],
+            'title': f"Ticket {updates['status'].lower()} · {t.get('ticket_id', ticket_id)}",
+            'body': f"Your support ticket is now {updates['status']}.",
+            'kind': 'support', 'read': False, 'created_at': now()})
+    await write_audit(admin, 'admin.ticket_update',
+                      f"Updated {t.get('ticket_id', ticket_id)} "
+                      f"({', '.join(f'{k}={v}' for k, v in updates.items() if k != 'updated_at')})",
+                      target_id=ticket_id)
+    fresh = await db.support_tickets.find_one({'id': ticket_id}, {'_id': 0})
+    return await _enrich_ticket(fresh)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SYSTEM ALERTS
+# ═════════════════════════════════════════════════════════════════════════════
+class AlertResolveIn(BaseModel):
+    note: Optional[str] = ''
+
+
+@router.get('/alerts')
+async def admin_list_alerts(status: Optional[str] = None, severity: Optional[str] = None):
+    q: Dict = {}
+    if status:
+        q['status'] = status
+    if severity:
+        q['severity'] = severity
+    return await db.system_alerts.find(q, {'_id': 0}).sort('timestamp', -1).to_list(500)
+
+
+@router.post('/alerts/{alert_id}/retry')
+async def admin_retry_alert(alert_id: str, admin=Depends(current_user)):
+    alert = await _find_or_404(db.system_alerts, alert_id, 'Alert')
+    await db.system_alerts.update_one({'id': alert_id}, {
+        '$set': {'last_retry_at': now()}, '$inc': {'retries': 1}})
+    await write_audit(admin, 'admin.alert_retry',
+                      f"Retried failed operation for alert: {alert.get('type')}",
+                      target_id=alert_id)
+    return {'ok': True, 'id': alert_id}
+
+
+@router.post('/alerts/{alert_id}/notify-user')
+async def admin_alert_notify_user(alert_id: str, admin=Depends(current_user)):
+    alert = await _find_or_404(db.system_alerts, alert_id, 'Alert')
+    affected = (alert.get('affected') or '').strip().lower()
+    target = await db.users.find_one({'email': affected}, {'_id': 0, 'id': 1})
+    if not target:
+        raise HTTPException(404, 'Affected user not found')
+    await db.notifications.insert_one({
+        'id': str(uuid.uuid4()), 'user_id': target['id'],
+        'title': 'Action needed on your account',
+        'body': alert.get('description', 'Our team flagged an issue affecting your account.'),
+        'kind': 'system', 'read': False, 'created_at': now()})
+    await db.system_alerts.update_one({'id': alert_id}, {'$set': {'user_notified_at': now()}})
+    await write_audit(admin, 'admin.alert_notify_user',
+                      f"Notified {affected} about alert: {alert.get('type')}",
+                      target_id=alert_id)
+    return {'ok': True, 'id': alert_id, 'notified': affected}
+
+
+@router.post('/alerts/{alert_id}/escalate')
+async def admin_escalate_alert(alert_id: str, admin=Depends(current_user)):
+    alert = await _find_or_404(db.system_alerts, alert_id, 'Alert')
+    await db.system_alerts.update_one({'id': alert_id}, {'$set': {
+        'severity': 'critical', 'escalated': True, 'escalated_at': now(),
+        'escalated_by': admin['full_name']}})
+    await write_audit(admin, 'admin.alert_escalate',
+                      f"Escalated alert: {alert.get('type')}", target_id=alert_id)
+    return {'ok': True, 'id': alert_id, 'severity': 'critical'}
+
+
+@router.post('/alerts/{alert_id}/resolve')
+async def admin_resolve_alert(alert_id: str, body: AlertResolveIn, admin=Depends(current_user)):
+    alert = await _find_or_404(db.system_alerts, alert_id, 'Alert')
+    if alert.get('status') == 'resolved':
+        raise HTTPException(400, 'Alert is already resolved')
+    await db.system_alerts.update_one({'id': alert_id}, {'$set': {
+        'status': 'resolved', 'resolved_at': now(), 'resolved_by': admin['full_name'],
+        'resolution_note': body.note or ''}})
+    await write_audit(admin, 'admin.alert_resolve',
+                      f"Resolved alert: {alert.get('type')}"
+                      + (f" — {body.note}" if body.note else ''),
+                      target_id=alert_id)
+    return {'ok': True, 'id': alert_id, 'status': 'resolved'}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# NOTIFICATION MONITORING (delivery log + stats + reminder settings)
+# ═════════════════════════════════════════════════════════════════════════════
+NOTIF_SETTINGS_KEY = 'notification_settings'
+DEFAULT_NOTIF_SETTINGS = {
+    'visitReminderHours': 24,
+    'medicationReminderMins': 30,
+    'channels': {'push': True, 'sms': True, 'email': True},
+}
+
+
+class NotifSettingsPatch(BaseModel):
+    visitReminderHours: Optional[int] = Field(None, ge=1, le=168)
+    medicationReminderMins: Optional[int] = Field(None, ge=1, le=1440)
+    channels: Optional[Dict[str, bool]] = None
+
+
+def _mask_recipient(rec: str) -> str:
+    rec = (rec or '').strip()
+    return _mask_email(rec) if '@' in rec else _mask_phone(rec)
+
+
+@router.get('/notifications/stats')
+async def admin_notification_stats():
+    total = await db.notification_deliveries.count_documents({})
+    by_status: Dict[str, int] = {}
+    for st in ('Delivered', 'Failed', 'Pending'):
+        by_status[st.lower()] = await db.notification_deliveries.count_documents({'status': st})
+    by_channel: Dict[str, int] = {}
+    for ch in ('Push', 'SMS', 'Email'):
+        by_channel[ch.lower()] = await db.notification_deliveries.count_documents({'channel': ch})
+    failures_24h = await db.notification_deliveries.count_documents({
+        'status': 'Failed', 'sentAt': {'$gte': now() - timedelta(hours=24)}})
+    return {'total': total, 'by_status': by_status, 'by_channel': by_channel,
+            'failures_24h': failures_24h}
+
+
+@router.get('/notifications/log')
+async def admin_notification_log(status: Optional[str] = None, channel: Optional[str] = None,
+                                 limit: int = Query(200, le=1000)):
+    q: Dict = {}
+    if status:
+        q['status'] = status
+    if channel:
+        q['channel'] = channel
+    rows = await db.notification_deliveries.find(q, {'_id': 0}).sort('sentAt', -1).to_list(limit)
+    for r in rows:
+        r['recipient'] = _mask_recipient(r.get('recipient', ''))
+    return rows
+
+
+@router.get('/notifications/settings')
+async def admin_get_notification_settings():
+    doc = await db.app_content.find_one({'key': NOTIF_SETTINGS_KEY}, {'_id': 0, 'key': 0})
+    return doc or dict(DEFAULT_NOTIF_SETTINGS)
+
+
+@router.patch('/notifications/settings')
+async def admin_patch_notification_settings(body: NotifSettingsPatch, admin=Depends(current_user)):
+    current = await db.app_content.find_one({'key': NOTIF_SETTINGS_KEY}, {'_id': 0, 'key': 0}) \
+        or dict(DEFAULT_NOTIF_SETTINGS)
+    updates = body.model_dump(exclude_none=True)
+    if 'channels' in updates:
+        merged = {**current.get('channels', {}), **updates['channels']}
+        unknown = set(merged) - set(DEFAULT_NOTIF_SETTINGS['channels'])
+        if unknown:
+            raise HTTPException(400, f"Unknown channels: {', '.join(sorted(unknown))}")
+        updates['channels'] = merged
+    merged_doc = {**current, **updates}
+    await db.app_content.update_one({'key': NOTIF_SETTINGS_KEY},
+                                    {'$set': merged_doc}, upsert=True)
+    await write_audit(admin, 'admin.notification_settings',
+                      f"Updated notification settings ({', '.join(updates)})",
+                      changes=updates)
+    return merged_doc
+
+
+@router.post('/notifications/{delivery_id}/retry')
+async def admin_retry_notification(delivery_id: str, admin=Depends(current_user)):
+    d = await _find_or_404(db.notification_deliveries, delivery_id, 'Delivery record')
+    if d.get('status') != 'Failed':
+        raise HTTPException(400, 'Only failed deliveries can be retried')
+    await db.notification_deliveries.update_one({'id': delivery_id}, {
+        '$set': {'status': 'Pending', 'retried_at': now(), 'error': ''},
+        '$inc': {'retries': 1}})
+    await write_audit(admin, 'admin.notification_retry',
+                      f"Retried {d.get('channel', '')} delivery to "
+                      f"{_mask_recipient(d.get('recipient', ''))}",
+                      target_id=delivery_id)
+    return {'ok': True, 'id': delivery_id, 'status': 'Pending'}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AUDIT LOG (admin scope: unrestricted view + summary + security alerts + export)
+# ═════════════════════════════════════════════════════════════════════════════
+def _audit_query(category: Optional[str], from_: Optional[str], to: Optional[str],
+                 user_id: Optional[str], org: Optional[str], status: Optional[str]) -> Dict:
+    f = _parse_ymd(from_, 'from')
+    t = _parse_ymd(to, 'to')
+    if f is not None and t is not None and t < f:
+        raise HTTPException(400, 'to must be on or after from')
+    q: Dict = {}
+    if category:
+        q['category'] = category
+    if user_id:
+        q['user_id'] = user_id
+    if org:
+        q['org'] = org
+    if status:
+        q['status'] = status
+    if f is not None or t is not None:
+        rng: Dict = {}
+        if f is not None:
+            rng['$gte'] = datetime(f.year, f.month, f.day, tzinfo=timezone.utc)
+        if t is not None:
+            rng['$lt'] = datetime(t.year, t.month, t.day, tzinfo=timezone.utc) + timedelta(days=1)
+        q['created_at'] = rng
+    return q
+
+
+@router.get('/audit-logs')
+async def admin_audit_logs(category: Optional[str] = None,
+                           from_: Optional[str] = Query(None, alias='from'),
+                           to: Optional[str] = None, user_id: Optional[str] = None,
+                           org: Optional[str] = None, status: Optional[str] = None,
+                           limit: int = Query(300, le=2000)):
+    q = _audit_query(category, from_, to, user_id, org, status)
+    return await db.audit_logs.find(q, {'_id': 0}).sort('created_at', -1).to_list(limit)
+
+
+@router.get('/audit-logs/summary')
+async def admin_audit_summary():
+    total = await db.audit_logs.count_documents({})
+    last_24h = await db.audit_logs.count_documents(
+        {'created_at': {'$gte': now() - timedelta(hours=24)}})
+    failures_24h = await db.audit_logs.count_documents(
+        {'status': 'failure', 'created_at': {'$gte': now() - timedelta(hours=24)}})
+    by_category = {g['_id'] or 'other': g['n'] async for g in db.audit_logs.aggregate(
+        [{'$group': {'_id': '$category', 'n': {'$sum': 1}}}])}
+    return {'total': total, 'last_24h': last_24h, 'failures_24h': failures_24h,
+            'by_category': by_category}
+
+
+@router.get('/audit-logs/security-alerts')
+async def admin_audit_security_alerts(threshold: int = Query(3, ge=2, le=20)):
+    """Failed-login patterns from the audit trail: any (user, ip) with >=
+    `threshold` failures in the last 24h is a security signal."""
+    since = now() - timedelta(hours=24)
+    rows = await db.audit_logs.find(
+        {'category': 'login', 'status': 'failure', 'created_at': {'$gte': since}},
+        {'_id': 0}).to_list(5000)
+    buckets: Dict[tuple, dict] = {}
+    for r in rows:
+        key = (r.get('user_id') or r.get('user_name') or 'unknown', r.get('ip', ''))
+        b = buckets.setdefault(key, {'user_id': r.get('user_id'),
+                                     'user_name': r.get('user_name', ''),
+                                     'ip': r.get('ip', ''), 'count': 0,
+                                     'last_at': r.get('created_at')})
+        b['count'] += 1
+        if r.get('created_at') and (not b['last_at'] or r['created_at'] > b['last_at']):
+            b['last_at'] = r['created_at']
+    alerts = [b for b in buckets.values() if b['count'] >= threshold]
+    for a in alerts:
+        a['last_at'] = iso(a['last_at'])
+        a['pattern'] = 'repeated_failed_login'
+    return sorted(alerts, key=lambda a: -a['count'])
+
+
+@router.get('/audit-logs/export')
+async def admin_audit_export(category: Optional[str] = None,
+                             from_: Optional[str] = Query(None, alias='from'),
+                             to: Optional[str] = None, user_id: Optional[str] = None,
+                             org: Optional[str] = None, status: Optional[str] = None,
+                             admin=Depends(current_user)):
+    q = _audit_query(category, from_, to, user_id, org, status)
+    rows = await db.audit_logs.find(q, {'_id': 0}).sort('created_at', -1).to_list(5000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(['time', 'user', 'role', 'org', 'category', 'action', 'detail',
+                'status', 'ip', 'device'])
+    for r in rows:
+        w.writerow([iso(r.get('created_at')), r.get('user_name'), r.get('role'),
+                    r.get('org'), r.get('category'), r.get('action'), r.get('detail'),
+                    r.get('status'), r.get('ip'), r.get('device')])
+    await write_audit(admin, 'admin.audit_export', f'Exported {len(rows)} audit rows to CSV')
+    return Response(content=buf.getvalue(), media_type='text/csv',
+                    headers={'Content-Disposition': 'attachment; filename="audit-logs.csv"'})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ADMIN TRIALS (read-only aggregates; subjects masked unless an active BTG
+# session — every unmasked read is audited with the session id)
+# ═════════════════════════════════════════════════════════════════════════════
+async def _active_btg_session(user_id: str) -> Optional[dict]:
+    """The caller's newest ACTIVE break-the-glass session, enforcing the 2h TTL:
+    an expired session is tombstoned on sight and never grants access."""
+    s = await db.emergency_sessions.find_one(
+        {'user_id': user_id, 'status': 'active'}, {'_id': 0},
+        sort=[('started_at', -1)])
+    if not s:
+        return None
+    if s['expires_at'] <= now():
+        await db.emergency_sessions.update_one(
+            {'id': s['id']}, {'$set': {'status': 'expired', 'ended_at': s['expires_at']}})
+        return None
+    return s
+
+
+async def _trial_aggregates(trial: dict) -> dict:
+    tid = trial['id']
+    enrolled = await db.patients.count_documents({'trial_id': tid})
+    completed = await db.visit_instances.count_documents(
+        {'trial_id': tid, 'status': 'completed'})
+    upcoming = await db.visit_instances.count_documents(
+        {'trial_id': tid, 'status': 'upcoming'})
+    missed = await db.visit_instances.count_documents(
+        {'trial_id': tid, 'status': 'missed'})
+    creator = await db.users.find_one({'id': trial.get('created_by')},
+                                      {'_id': 0, 'full_name': 1})
+    return {
+        'id': tid, 'title': trial.get('title'), 'protocol_id': trial.get('protocol_id'),
+        'phase': trial.get('phase'), 'condition': trial.get('condition'),
+        'sponsor': trial.get('sponsor_name', ''), 'status': trial.get('status', 'active'),
+        'patients': enrolled, 'targetEnrollment': trial.get('target_enrollment'),
+        'scheduleVersion': trial.get('schedule_version', 1),
+        'schedule_status': trial.get('schedule_status', ''),
+        'visits': {'completed': completed, 'upcoming': upcoming, 'missed': missed},
+        'lastModified': iso(trial.get('updated_at') or trial.get('created_at')),
+        'modifiedBy': (creator or {}).get('full_name', ''),
+    }
+
+
+@router.get('/trials')
+async def admin_list_trials():
+    """Read-only trial monitoring: metadata + enrollment aggregates ONLY —
+    no subject rows, no patient PII."""
+    trials = await db.trials.find({}, {'_id': 0}).sort('created_at', -1).to_list(500)
+    return [await _trial_aggregates(t) for t in trials]
+
+
+@router.get('/trials/{trial_id}')
+async def admin_get_trial(trial_id: str, admin=Depends(current_user)):
+    """Trial detail: aggregates + subject list. Subjects are ALWAYS masked
+    (SUBJ-xxx + initials) unless the caller holds an active break-the-glass
+    session, in which case identified data is returned AND the read itself is
+    written to the audit trail with the session id."""
+    trial = await _find_or_404(db.trials, trial_id, 'Trial')
+    out = await _trial_aggregates(trial)
+    patients = await db.patients.find({'trial_id': trial_id}, {'_id': 0}).to_list(1000)
+    session = await _active_btg_session(admin['id'])
+    if session:
+        out['subjects'] = [{
+            'subject': f"SUBJ-{(p.get('id') or '')[-3:]}",
+            'full_name': p.get('full_name', ''), 'email': p.get('email', ''),
+            'status': p.get('status', ''), 'enrolled_date': p.get('enrolled_date', ''),
+        } for p in patients]
+        out['unmasked'] = True
+        out['btg_session_id'] = session['id']
+        await write_audit(admin, 'emergency.read',
+                          f"Break-the-glass read of identified subjects for trial "
+                          f"{trial.get('protocol_id', trial_id)}",
+                          category='emergency', target_id=trial_id,
+                          btg_session_id=session['id'], trial_id=trial_id)
+    else:
+        out['subjects'] = [_masked_subject(p) for p in patients]
+        out['unmasked'] = False
+    return out

@@ -155,6 +155,16 @@ GUARDED_GET_PATHS = [
     '/api/admin/master-data/submissions',
     '/api/admin/master-data/values',
     '/api/admin/invitations',
+    '/api/admin/tickets',
+    '/api/admin/alerts',
+    '/api/admin/notifications/stats',
+    '/api/admin/notifications/log',
+    '/api/admin/notifications/settings',
+    '/api/admin/audit-logs',
+    '/api/admin/audit-logs/summary',
+    '/api/admin/audit-logs/security-alerts',
+    '/api/admin/audit-logs/export',
+    '/api/admin/trials',
 ]
 
 
@@ -481,6 +491,221 @@ class TestAdminMasterData:
                 sub = await server.db.master_data_submissions.find_one({'id': sid}, {'_id': 0})
                 assert sub['status'] == 'rejected'
                 assert sub['rejectReason'] == 'Not a clinical designation'
+        run(flow())
+
+
+# ── Tickets (admin triage) ───────────────────────────────────────────────────
+class TestAdminTickets:
+    def test_triage_note_and_status(self, actors):
+        h = actors['admin1'][1]
+        pi, pi_h = actors['pi']
+        async def flow():
+            async with make_client() as cli:
+                # user files a ticket through the untouched user-side endpoint
+                r = await cli.post('/api/support/tickets', headers=pi_h, json={
+                    'category': 'Technical',
+                    'subject': f'Cannot open schedule {RUN_ID}',
+                    'description': 'The schedule tab crashes.'})
+                assert r.status_code == 200, r.text
+                ticket = r.json()
+                # admin sees it with the reporter enriched
+                lst = await cli.get('/api/admin/tickets', headers=h,
+                                    params={'search': RUN_ID})
+                assert lst.status_code == 200, lst.text
+                mine = [t for t in lst.json() if t['id'] == ticket['id']]
+                assert mine and mine[0]['user']['id'] == pi['id']
+                # add a note → stored + owner notified
+                rn = await cli.post(f"/api/admin/tickets/{ticket['id']}/notes", headers=h,
+                                    json={'text': f'Looking into this {RUN_ID}'})
+                assert rn.status_code == 200, rn.text
+                # change status + priority
+                rp = await cli.patch(f"/api/admin/tickets/{ticket['id']}", headers=h,
+                                     json={'status': 'In Progress', 'priority': 'high'})
+                assert rp.status_code == 200, rp.text
+                assert rp.json()['status'] == 'In Progress'
+                fresh = await server.db.support_tickets.find_one({'id': ticket['id']}, {'_id': 0})
+                assert fresh['notes'][0]['text'] == f'Looking into this {RUN_ID}'
+                assert fresh['priority'] == 'high'
+                notif = await server.db.notifications.find_one(
+                    {'user_id': pi['id'], 'kind': 'support'})
+                assert notif, 'ticket owner must be notified'
+                for action in ('admin.ticket_note', 'admin.ticket_update'):
+                    audit = await server.db.audit_logs.find_one(
+                        {'action': action, 'target_id': ticket['id']})
+                    assert audit, f'{action} must be audited'
+        run(flow())
+
+
+# ── System alerts ────────────────────────────────────────────────────────────
+class TestAdminAlerts:
+    def test_alert_lifecycle(self, actors):
+        h = actors['admin1'][1]
+        patient = actors['patient'][0]
+        async def flow():
+            aid = str(uuid.uuid4())
+            await server.db.system_alerts.insert_one({
+                'id': aid, 'type': 'OTP failure',
+                'description': f'OTP failed for run {RUN_ID}',
+                'affected': patient['email'], 'severity': 'high',
+                'status': 'open', 'timestamp': server.now()})
+            async with make_client() as cli:
+                r0 = await cli.get('/api/admin/alerts', headers=h, params={'status': 'open'})
+                assert any(a['id'] == aid for a in r0.json())
+                r1 = await cli.post(f'/api/admin/alerts/{aid}/retry', headers=h)
+                assert r1.status_code == 200, r1.text
+                r2 = await cli.post(f'/api/admin/alerts/{aid}/notify-user', headers=h)
+                assert r2.status_code == 200, r2.text
+                r3 = await cli.post(f'/api/admin/alerts/{aid}/escalate', headers=h)
+                assert r3.status_code == 200 and r3.json()['severity'] == 'critical'
+                r4 = await cli.post(f'/api/admin/alerts/{aid}/resolve', headers=h,
+                                    json={'note': 'SMS provider restored'})
+                assert r4.status_code == 200, r4.text
+                fresh = await server.db.system_alerts.find_one({'id': aid}, {'_id': 0})
+                assert fresh['status'] == 'resolved'
+                assert fresh['resolution_note'] == 'SMS provider restored'
+                # resolving twice is refused
+                again = await cli.post(f'/api/admin/alerts/{aid}/resolve', headers=h, json={})
+                assert again.status_code == 400, again.text
+                for action in ('admin.alert_retry', 'admin.alert_notify_user',
+                               'admin.alert_escalate', 'admin.alert_resolve'):
+                    audit = await server.db.audit_logs.find_one(
+                        {'action': action, 'target_id': aid})
+                    assert audit, f'{action} must be audited'
+        run(flow())
+
+
+# ── Notification monitoring ──────────────────────────────────────────────────
+class TestAdminNotifMonitoring:
+    def test_log_masks_recipient_and_retry(self, actors):
+        h = actors['admin1'][1]
+        async def flow():
+            did = str(uuid.uuid4())
+            await server.db.notification_deliveries.insert_one({
+                'id': did, 'run_id': RUN_ID, 'type': 'visit_reminder', 'channel': 'SMS',
+                'recipient': '+91 9876543210', 'message': f'Reminder {RUN_ID}',
+                'status': 'Failed', 'sentAt': server.now(), 'error': 'carrier timeout'})
+            async with make_client() as cli:
+                log = await cli.get('/api/admin/notifications/log', headers=h,
+                                    params={'status': 'Failed'})
+                mine = [d for d in log.json() if d['id'] == did]
+                assert mine, 'delivery row missing from log'
+                assert '+91 9876543210' not in str(mine[0]), 'recipient must be masked'
+                assert '*' in mine[0]['recipient']
+                stats = await cli.get('/api/admin/notifications/stats', headers=h)
+                assert stats.status_code == 200
+                assert stats.json()['by_status']['failed'] >= 1
+                r = await cli.post(f'/api/admin/notifications/{did}/retry', headers=h)
+                assert r.status_code == 200, r.text
+                fresh = await server.db.notification_deliveries.find_one({'id': did}, {'_id': 0})
+                assert fresh['status'] == 'Pending'
+                # retrying a non-failed delivery is refused
+                again = await cli.post(f'/api/admin/notifications/{did}/retry', headers=h)
+                assert again.status_code == 400, again.text
+        run(flow())
+
+    def test_settings_roundtrip(self, actors):
+        h = actors['admin1'][1]
+        async def flow():
+            async with make_client() as cli:
+                r0 = await cli.get('/api/admin/notifications/settings', headers=h)
+                assert r0.status_code == 200
+                assert 'visitReminderHours' in r0.json()
+                r1 = await cli.patch('/api/admin/notifications/settings', headers=h,
+                                     json={'visitReminderHours': 48,
+                                           'channels': {'sms': False}})
+                assert r1.status_code == 200, r1.text
+                j = r1.json()
+                assert j['visitReminderHours'] == 48
+                assert j['channels']['sms'] is False
+                assert j['channels']['push'] is True   # merged, not replaced
+                bad = await cli.patch('/api/admin/notifications/settings', headers=h,
+                                      json={'channels': {'pigeon': True}})
+                assert bad.status_code == 400, bad.text
+                audit = await server.db.audit_logs.find_one(
+                    {'action': 'admin.notification_settings'})
+                assert audit, 'settings change must be audited'
+        run(flow())
+
+
+# ── Audit views ──────────────────────────────────────────────────────────────
+class TestAdminAudit:
+    def test_admin_scope_summary_alerts_export(self, actors):
+        h = actors['admin1'][1]
+        admin1 = actors['admin1'][0]
+        async def flow():
+            # seed a burst of failed logins for the security-alert pattern
+            for _ in range(3):
+                await server.write_audit(
+                    {'id': f'victim-{RUN_ID}', 'full_name': f'Victim {RUN_ID}',
+                     'role': 'crc', 'organization': ''},
+                    'login.failed', 'Wrong password', status='failure', ip='9.9.9.9')
+            async with make_client() as cli:
+                r = await cli.get('/api/admin/audit-logs', headers=h,
+                                  params={'category': 'login', 'status': 'failure'})
+                assert r.status_code == 200 and len(r.json()) >= 3
+                s = await cli.get('/api/admin/audit-logs/summary', headers=h)
+                assert s.status_code == 200
+                assert s.json()['total'] >= 3 and 'by_category' in s.json()
+                a = await cli.get('/api/admin/audit-logs/security-alerts', headers=h)
+                assert a.status_code == 200
+                assert any(x['user_id'] == f'victim-{RUN_ID}' and x['count'] >= 3
+                           for x in a.json()), 'failed-login pattern not detected'
+                e = await cli.get('/api/admin/audit-logs/export', headers=h,
+                                  params={'category': 'login'})
+                assert e.status_code == 200 and 'text/csv' in e.headers['content-type']
+                assert e.text.splitlines()[0].startswith('time,user')
+        run(flow())
+
+
+# ── Admin trials (aggregates only; masked subjects) ──────────────────────────
+class TestAdminTrials:
+    @pytest.fixture(scope='class')
+    def trial_world(self, actors):
+        async def build():
+            sponsor, sponsor_h = await _register('sponsor', org=f'ADMORG-{RUN_ID} Pharma')
+            async with make_client() as cli:
+                r = await cli.post('/api/trials', headers=sponsor_h, json={
+                    'title': f'Admin Trial {RUN_ID}', 'protocol_id': f'ADM-{RUN_ID}',
+                    'phase': 'Phase II', 'condition': 'Testing',
+                    'sponsor_name': f'ADMORG-{RUN_ID} Pharma'})
+                assert r.status_code == 200, r.text
+                trial = r.json()
+                _extra_cleanup_ids['trials'].append(trial['id'])
+                rv = await cli.post('/api/visits', headers=sponsor_h, json={
+                    'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
+                    'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
+                assert rv.status_code == 200, rv.text
+            pi, pi_h = await _register('pi', org=f'ADMORG-{RUN_ID} TrialSite')
+            async with make_client() as cli:
+                rp = await cli.post('/api/patients', headers=pi_h, json={
+                    'full_name': f'Secret Patient {RUN_ID}',
+                    'email': f'adm-{RUN_ID}-subject@example.com',
+                    'trial_id': trial['id'], 'pi_id': pi['id'],
+                    'enrolled_date': (server.now() - timedelta(days=3)).date().isoformat()})
+                assert rp.status_code == 200, rp.text
+                patient = rp.json()
+            return {'trial': trial, 'patient': patient}
+        return run(build())
+
+    def test_list_and_detail_are_masked(self, actors, trial_world):
+        h = actors['admin1'][1]
+        trial = trial_world['trial']
+        patient = trial_world['patient']
+        async def flow():
+            async with make_client() as cli:
+                lst = await cli.get('/api/admin/trials', headers=h)
+                assert lst.status_code == 200, lst.text
+                mine = [t for t in lst.json() if t['id'] == trial['id']]
+                assert mine and mine[0]['patients'] == 1
+                assert f'Secret Patient {RUN_ID}' not in lst.text, 'list must carry no PII'
+                det = await cli.get(f"/api/admin/trials/{trial['id']}", headers=h)
+                assert det.status_code == 200, det.text
+                j = det.json()
+                assert j['unmasked'] is False
+                assert j['subjects'] and j['subjects'][0]['subject'].startswith('SUBJ-')
+                body = det.text
+                assert patient['full_name'] not in body
+                assert patient['email'] not in body
         run(flow())
 
 
