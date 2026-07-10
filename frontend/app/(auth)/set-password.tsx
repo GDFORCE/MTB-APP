@@ -9,6 +9,7 @@ import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
 import { api } from "@/src/api/client";
+import { takePendingVerificationDoc, uploadFile } from "@/src/lib/upload";
 
 const RULES: { label: string; test: (p: string) => boolean }[] = [
   { label: "8+ characters", test: (p) => p.length >= 8 },
@@ -47,6 +48,13 @@ export default function SetPassword() {
     setLoading(true); setErr("");
     try {
       const { data } = await api.post("/auth/register/complete", { registration_id, password });
+      // Deferred verification-doc upload: registration is fully pre-auth, so a doc
+      // picked during register is uploaded here now that a token exists. Best-effort
+      // — a failed upload must not block the just-created account.
+      const pendingDoc = takePendingVerificationDoc();
+      if (pendingDoc && data?.access_token) {
+        try { await uploadFile(pendingDoc, { scopeType: "user", token: data.access_token }); } catch {}
+      }
       router.replace({
         pathname: "/(auth)/register-success",
         params: { role: role || "patient", session: JSON.stringify({ access_token: data.access_token, refresh_token: data.refresh_token, user: data.user }) },

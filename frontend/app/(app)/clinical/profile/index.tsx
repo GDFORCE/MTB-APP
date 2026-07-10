@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, Image, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,6 +9,8 @@ import {
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import * as ImagePicker from "expo-image-picker";
+import { uploadFile, fetchFileUri } from "@/src/lib/upload";
 
 const ORG_TYPE_LABEL: Record<string, string> = { sponsor: "Sponsor", cro: "CRO", smo: "SMO", site: "Site / Hospital" };
 
@@ -22,7 +24,46 @@ const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 
 export default function SiteUserProfile() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refresh } = useAuth();
+
+  // Avatar (uploaded profile photo). `avatarUri` is a render-ready object URL /
+  // data URI fetched through the authed api client; null → fall back to initials.
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarErr, setAvatarErr] = useState("");
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = (await api.get("/auth/me")).data;
+        if (me.avatar_file_id) setAvatarUri(await fetchFileUri(me.avatar_file_id));
+      } catch {}
+    })();
+  }, []);
+
+  const pickAvatar = async () => {
+    if (avatarBusy) return;
+    setAvatarErr("");
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { setAvatarErr("Photo access is needed to change your picture."); return; }
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+      if (res.canceled || !res.assets?.length) return;
+      const a = res.assets[0];
+      const name = a.fileName || `avatar.${(a.uri.split(".").pop() || "jpg").split("?")[0]}`;
+      setAvatarBusy(true);
+      const uploaded = await uploadFile(
+        { uri: a.uri, name, mimeType: a.mimeType || "image/jpeg", file: (a as any).file },
+        { scopeType: "user" },
+      );
+      await api.patch("/auth/me", { avatar_file_id: uploaded.id });
+      await refresh();
+      setAvatarUri(await fetchFileUri(uploaded.id));
+    } catch (e: any) {
+      setAvatarErr(e?.response?.data?.detail || "Couldn't update your photo. Please try again.");
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
 
   // Real entity data: org name comes from the user record; address + entity type
   // are resolved from the organizations directory (falls back gracefully).
@@ -85,11 +126,15 @@ export default function SiteUserProfile() {
             <View pointerEvents="none" style={{ position: "absolute", top: -40, right: -40, width: 120, height: 120, borderRadius: 60, backgroundColor: "rgba(255,255,255,0.18)" }} />
             <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
               <View>
-                <View style={pp.avatar}>
-                  <Text style={pp.avatarText}>{user.avatar_initials || "MC"}</Text>
-                </View>
-                <Pressable testID="avatar-camera" style={pp.cameraBtn}>
-                  <Camera size={14} color={C.primary} />
+                {avatarUri ? (
+                  <Image source={{ uri: avatarUri }} style={pp.avatar} />
+                ) : (
+                  <View style={pp.avatar}>
+                    <Text style={pp.avatarText}>{user.avatar_initials || "MC"}</Text>
+                  </View>
+                )}
+                <Pressable testID="avatar-camera" onPress={pickAvatar} disabled={avatarBusy} style={pp.cameraBtn}>
+                  {avatarBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Camera size={14} color={C.primary} />}
                 </Pressable>
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
@@ -101,6 +146,7 @@ export default function SiteUserProfile() {
               </View>
             </View>
           </LinearGradient>
+          {avatarErr ? <Text style={{ color: C.destructive, fontSize: 12, marginTop: 8, paddingHorizontal: 4 }}>{avatarErr}</Text> : null}
         </View>
 
         {/* ── Account details card ── */}

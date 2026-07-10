@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { Check, ClipboardCheck, ShieldCheck, FileText, Building2, UserPlus, Mail, Phone, ChevronDown } from "lucide-react-native";
+import { Check, ClipboardCheck, ShieldCheck, FileText, Building2, UserPlus, Mail, Phone, ChevronDown, Paperclip, X } from "lucide-react-native";
+import * as DocumentPicker from "expo-document-picker";
 import { api } from "@/src/api/client";
+import { setPendingVerificationDoc, peekPendingVerificationDoc, PickedAsset } from "@/src/lib/upload";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { AuthHeader } from "@/src/components/AuthHeader";
@@ -201,6 +203,27 @@ export default function Register() {
   const [checkingOrg, setCheckingOrg] = useState(false);
   const [err, setErr] = useState("");
 
+  // Verification doc: selected here (pre-auth) and held in a module store so it
+  // survives the multi-screen flow, then uploaded from set-password once a token
+  // exists (POST /files needs auth — see task 5.2 report).
+  const [verificationDoc, setVerificationDoc] = useState<PickedAsset | null>(() => peekPendingVerificationDoc());
+  const [docErr, setDocErr] = useState("");
+  const pickVerificationDoc = async () => {
+    setDocErr("");
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        copyToCacheDirectory: true, multiple: false,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const a = res.assets[0];
+      const picked: PickedAsset = { uri: a.uri, name: a.name || "verification", mimeType: a.mimeType, file: (a as any).file };
+      setVerificationDoc(picked);
+      setPendingVerificationDoc(picked);
+    } catch { setDocErr("Couldn't open the file picker."); }
+  };
+  const clearVerificationDoc = () => { setVerificationDoc(null); setPendingVerificationDoc(null); };
+
   // ── Live org directory lookup (debounced) ─────────────────────────────────
   const [orgMatches, setOrgMatches] = useState<Org[]>([]);
   const [orgSearching, setOrgSearching] = useState(false);
@@ -397,6 +420,26 @@ export default function Register() {
                     {fld.role === "PI" && <Field label="Department"><Input value={fld.department} onChangeText={up("department")} placeholder="e.g. Oncology, Cardiology" /></Field>}
                   </>
                 )}
+
+                <Field label="Verification Document">
+                  {verificationDoc ? (
+                    <View style={f.docChip}>
+                      <View style={f.docIcon}><FileText size={16} color={colors.primary} /></View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Body weight="700" numberOfLines={1} style={{ fontSize: 14 }}>{verificationDoc.name}</Body>
+                        <Small color={colors.mutedFg}>Uploaded right after your account is created.</Small>
+                      </View>
+                      <Pressable onPress={clearVerificationDoc} hitSlop={8} style={f.docRemove}><X size={15} color={colors.mutedFg} /></Pressable>
+                    </View>
+                  ) : (
+                    <Pressable onPress={pickVerificationDoc} style={f.docPick}>
+                      <Paperclip size={16} color={colors.primary} />
+                      <Small color={colors.primary} weight="700">Attach self-attested document</Small>
+                    </Pressable>
+                  )}
+                  <Small color={colors.mutedFg} style={{ marginTop: 6, fontSize: 12 }}>Optional now — PDF, PNG, JPG or DOCX (max 10 MB).</Small>
+                  {docErr ? <Small color={colors.destructive} style={{ marginTop: 4 }}>{docErr}</Small> : null}
+                </Field>
               </>
             )}
 
@@ -577,4 +620,8 @@ const f = StyleSheet.create({
   banner: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radii.md },
   adminCard: { borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 14 },
   adminAvatar: { width: 40, height: 40, borderRadius: 999, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
+  docPick: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: radii.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.primary + "66", backgroundColor: colors.primary + "0A" },
+  docChip: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  docIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
+  docRemove: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
 });

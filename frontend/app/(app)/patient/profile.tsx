@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import {
@@ -13,6 +13,8 @@ import { Springy } from "@/src/components/Springy";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { LinearGradient } from "expo-linear-gradient";
+import * as ImagePicker from "expo-image-picker";
+import { uploadFile, fetchFileUri } from "@/src/lib/upload";
 
 type Section = "main" | "edit-profile" | "change-password" | "notification-prefs" | "terms" | "privacy" | "help" | "faq" | "contact-support" | "tickets";
 
@@ -84,6 +86,12 @@ export default function Profile() {
   const [showLang, setShowLang] = useState(false);
   const [genderOpen, setGenderOpen] = useState(false);
 
+  // Avatar (uploaded profile photo). `avatarUri` is a render-ready object URL /
+  // data URI fetched through the authed api client; null → fall back to initials.
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarErr, setAvatarErr] = useState("");
+
   // Profile fields (loaded from /auth/me — includes the profile sub-document)
   const [prof, setProf] = useState({ fullName: "", dob: "", gender: "", phone: "", email: "", language: "English" });
   const [savingProfile, setSavingProfile] = useState(false);
@@ -124,6 +132,9 @@ export default function Profile() {
         const pf = me.profile || {};
         setProf({ fullName: me.full_name || "", dob: pf.dob || "", gender: pf.gender || "", phone: (me.phone || "").replace(/^\+91\s?/, ""), email: me.email || "", language: pf.language || "English" });
         setLoaded({ phone: me.phone || "", email: me.email || "" });
+        if (me.avatar_file_id) {
+          try { setAvatarUri(await fetchFileUri(me.avatar_file_id)); } catch {}
+        }
       } catch {}
       try { const pr = (await api.get("/preferences")).data; setPrefs((p: any) => ({ ...p, ...pr })); } catch {}
       try { setTickets((await api.get("/support/tickets")).data); } catch {}
@@ -148,6 +159,32 @@ export default function Profile() {
   }, [section]);
 
   const initials = useMemo(() => (prof.fullName || user?.full_name || "P").trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "P", [prof.fullName, user]);
+
+  // Pick an image → POST /files (user scope) → PATCH /auth/me → refresh + render.
+  const pickAvatar = async () => {
+    if (avatarBusy) return;
+    setAvatarErr("");
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) { setAvatarErr("Photo access is needed to change your picture."); return; }
+      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+      if (res.canceled || !res.assets?.length) return;
+      const a = res.assets[0];
+      const name = a.fileName || `avatar.${(a.uri.split(".").pop() || "jpg").split("?")[0]}`;
+      setAvatarBusy(true);
+      const uploaded = await uploadFile(
+        { uri: a.uri, name, mimeType: a.mimeType || "image/jpeg", file: (a as any).file },
+        { scopeType: "user" },
+      );
+      await api.patch("/auth/me", { avatar_file_id: uploaded.id });
+      await refresh();
+      setAvatarUri(await fetchFileUri(uploaded.id));
+    } catch (e: any) {
+      setAvatarErr(e?.response?.data?.detail || "Couldn't update your photo. Please try again.");
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
 
   const saveProfile = async () => {
     setSavingProfile(true);
@@ -253,11 +290,18 @@ export default function Profile() {
           <ScrollView contentContainerStyle={p.body} keyboardShouldPersistTaps="handled">
             <Rise delay={40} style={{ alignItems: "center", marginBottom: spacing.sm }}>
               <View>
-                <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={p.avatarLg}>
-                  <Text style={{ color: colors.primaryFg, fontFamily: fonts.display, fontSize: 26 }}>{initials}</Text>
-                </LinearGradient>
-                <View style={p.camBtn}><Camera size={16} color={colors.primary} /></View>
+                {avatarUri ? (
+                  <Image source={{ uri: avatarUri }} style={p.avatarLg} />
+                ) : (
+                  <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={p.avatarLg}>
+                    <Text style={{ color: colors.primaryFg, fontFamily: fonts.display, fontSize: 26 }}>{initials}</Text>
+                  </LinearGradient>
+                )}
+                <Pressable onPress={pickAvatar} disabled={avatarBusy} style={p.camBtn}>
+                  {avatarBusy ? <ActivityIndicator size="small" color={colors.primary} /> : <Camera size={16} color={colors.primary} />}
+                </Pressable>
               </View>
+              {avatarErr ? <Small color={colors.destructive} style={{ marginTop: 8, textAlign: "center" }}>{avatarErr}</Small> : null}
             </Rise>
             <Rise delay={110}>
               <View style={p.card}>
@@ -652,7 +696,9 @@ export default function Profile() {
         <Rise delay={40}>
           <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={p.hero}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
-              <View style={p.heroAvatar}><Text style={{ fontFamily: fonts.display, fontSize: 24, color: colors.primaryFg }}>{initials}</Text></View>
+              {avatarUri
+                ? <Image source={{ uri: avatarUri }} style={p.heroAvatar} />
+                : <View style={p.heroAvatar}><Text style={{ fontFamily: fonts.display, fontSize: 24, color: colors.primaryFg }}>{initials}</Text></View>}
               <View style={{ flex: 1 }}>
                 <Text style={{ fontFamily: fonts.heading, fontSize: 20, color: colors.primaryFg }} numberOfLines={1}>{prof.fullName || user?.full_name}</Text>
                 <View style={p.roleBadge}><Sparkles size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700" style={{ textTransform: "capitalize" }}>{user?.role || "Patient"}</Small></View>
