@@ -36,9 +36,13 @@ class ExtractedVisit(BaseModel):
         description="Visit or timepoint name exactly as printed in the protocol's "
         "Schedule of Assessments (e.g. 'Screening', 'Baseline', 'Week 4', 'Day 14').")
     day_offset: int = Field(
-        description="Study day relative to baseline, where Day 1 = 0. Screening / "
-        "run-in visits before baseline are NEGATIVE. Convert Week N to N*7 and "
-        "Month N to N*30 unless the protocol states an explicit day.")
+        description="ABSOLUTE study day relative to baseline, where Day 1 = 0. "
+        "Screening / run-in visits before baseline are NEGATIVE. Convert Week N to "
+        "N*7 and Month N to N*30 unless the protocol states an explicit day. For "
+        "cyclic schedules, Cycle C Day D with cycle length L days is "
+        "(C-1)*L + (D-1); for crossover, offsets run continuously across periods "
+        "and washout. Every entry's day_offset is the absolute day, not a "
+        "within-cycle or within-period day.")
     window_days: int = Field(
         default=3,
         description="Visit window in +/- days parsed from the protocol "
@@ -64,22 +68,41 @@ class ExtractionNotConfigured(ExtractionError):
 
 _SYSTEM_PROMPT = """You are a clinical-trial protocol analyst. From the attached \
 protocol PDF, extract the Schedule of Assessments / Schedule of Activities — the \
-visit-by-visit assessment matrix. Return one entry per scheduled visit or \
-timepoint, in chronological order.
+visit-by-visit assessment matrix — as a FLAT, chronological list where every \
+scheduled visit/timepoint is one entry. The output is a flat schedule, so encode \
+any cycle / arm / period structure by (a) putting an ABSOLUTE day_offset from \
+baseline on every entry and (b) making the name self-describing.
 
-Rules:
-- day_offset: the study day relative to baseline where Day 1 = offset 0. \
-Screening/run-in visits before baseline are negative. Convert Week N to N*7 and \
-Month N to N*30 unless the protocol gives an explicit day number.
-- window_days: parse the stated visit window (e.g. '+/- 3 days' -> 3); default to \
-3 when none is stated.
-- activities: list the assessments marked (X or a footnote symbol) in that visit's \
+Core rules:
+- day_offset: absolute study day, Day 1 = 0. Screening/run-in before baseline is \
+negative. Week N -> N*7, Month N -> N*30 unless an explicit day is given.
+- window_days: parse the stated window (e.g. '+/- 3 days' -> 3); default 3.
+- activities: the assessments marked (X or footnote symbol) in that visit's \
 column, using the protocol's own procedure names, deduplicated.
 - Include unscheduled / early-termination visits only when they carry a defined \
 day offset; otherwise omit them.
-- If the document contains no assessment schedule, return an empty visits list.
+- Return an empty list if the document has no assessment schedule. Extract only \
+what is present — never invent visits or assessments.
 
-Extract only what is present. Do not invent visits or assessments."""
+Structural varieties (handle all of these):
+- CYCLIC / oncology (treatment in repeating cycles, e.g. '6 cycles of 21 days'): \
+enumerate EVERY visit in EVERY defined cycle as its own entry. Compute absolute \
+day_offset as (Cycle-1)*CycleLength + (WithinCycleDay-1). Name each 'Cycle C Day \
+D' (e.g. 'Cycle 2 Day 1'). Expand all cycles the protocol defines (use the stated \
+number of cycles / max cycles).
+- MULTI-ARM / multi-cohort: if the arms/cohorts share ONE Schedule of Assessments \
+(they differ only in treatment, not in visit timing), emit each visit ONCE — do \
+NOT duplicate per arm. If arms have DIFFERENT visit schedules, emit a separate \
+entry per arm for each visit and PREFIX the name with the arm (e.g. 'Arm B — \
+Week 4', 'Cohort 3 — Cycle 1 Day 1').
+- CROSSOVER: enumerate visits across all periods and the washout with continuous \
+absolute day_offsets; name them by the protocol's period labels (e.g. 'Period 2 \
+Day 1').
+- DOSE-ESCALATION: treat each cohort's cycle schedule like the cyclic case; \
+prefix with the cohort when cohorts have distinct schedules.
+
+When unsure whether arms share a schedule, prefer emitting each distinct visit \
+once with a clear name over duplicating or dropping visits."""
 
 
 @runtime_checkable
