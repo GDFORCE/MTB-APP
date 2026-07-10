@@ -184,7 +184,8 @@ class ConversationIn(BaseModel):
 def make_token(sub: str, role: str, kind: str = 'access'):
     secret = JWT_SECRET if kind == 'access' else JWT_REFRESH_SECRET
     delta = timedelta(minutes=ACCESS_MIN) if kind == 'access' else timedelta(days=REFRESH_DAYS)
-    return jwt.encode({'sub': sub, 'role': role, 'kind': kind, 'exp': now() + delta}, secret, ALGO)
+    return jwt.encode({'sub': sub, 'role': role, 'kind': kind,
+                       'iat': now(), 'exp': now() + delta}, secret, ALGO)
 
 async def current_user(token: Optional[str] = Depends(oauth2)):
     if not token:
@@ -198,6 +199,17 @@ async def current_user(token: Optional[str] = Depends(oauth2)):
     user = await db.users.find_one({'id': payload['sub']}, {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0})
     if not user:
         raise HTTPException(401, 'User not found')
+    # Admin-suspended accounts are dead sessions (Task 6.1).
+    if user.get('status') == 'Suspended':
+        raise HTTPException(403, 'Account suspended')
+    # Admin force-logout: any token issued BEFORE force_logout_at is invalid.
+    # Tokens without an iat claim (pre-6.1) are treated as old → fail-closed.
+    flo = user.get('force_logout_at')
+    if flo:
+        iat = payload.get('iat')
+        issued = datetime.fromtimestamp(iat, tz=timezone.utc) if iat else None
+        if issued is None or issued < flo:
+            raise HTTPException(401, 'Session terminated — please sign in again')
     return user
 
 def require_roles(*allowed):
@@ -322,6 +334,8 @@ async def login(body: LoginIn):
     user = await db.users.find_one({'email': body.email.lower()})
     if not user or not pwd_ctx.verify(body.password, user['hashed_password']):
         raise HTTPException(401, 'Invalid credentials')
+    if user.get('status') == 'Suspended':
+        raise HTTPException(403, 'Your account has been suspended. Contact support.')
     access = make_token(user['id'], user['role'], 'access')
     refresh = make_token(user['id'], user['role'], 'refresh')
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**user})}
@@ -3120,6 +3134,17 @@ async def delete_file(file_id: str, user=Depends(current_user)):
 async def root(): return {'app': 'My Trial Board', 'status': 'ok'}
 
 app.include_router(api)
+
+# ── Admin + org-admin routers (Task 6.1) ─────────────────────────────────────
+# Imported at the bottom on purpose: admin_routes/org_routes import helpers
+# (db, write_audit, require_roles, …) back from this module, so they can only
+# be imported once those names exist. Both routers carry their own /api/…
+# prefixes and their own role gates (admin-only / org-admin-only).
+import admin_routes                              # noqa: E402
+import org_routes                                # noqa: E402
+app.include_router(admin_routes.router)
+app.include_router(org_routes.router)
+app.include_router(org_routes.trial_access_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -3147,6 +3172,23 @@ async def _ensure_indexes():
     except Exception as e:
         logging.warning('Index setup deferred (DB unreachable or existing duplicates?): %s', e)
 
+async def _ensure_admin_seed():
+    """Guarantee the platform-admin account exists (admins cannot self-register,
+    so a fresh database would otherwise have no way into the admin portal)."""
+    try:
+        await db.users.update_one(
+            {'email': 'admin@mtb.app'},
+            {'$setOnInsert': {
+                'id': str(uuid.uuid4()), 'role': 'admin', 'full_name': 'Meera Nair',
+                'organization': 'MTB Health Technologies', 'phone': '+91 98765 43210',
+                'hashed_password': pwd_ctx.hash(SEED_PASSWORD),
+                'security_question': '', 'security_answer_hash': '',
+                'avatar_initials': 'MN', 'created_at': now(), 'is_online': False,
+            }},
+            upsert=True)
+    except Exception as e:
+        logging.warning('Admin seed deferred (DB unreachable?): %s', e)
+
 @app.on_event('startup')
 async def startup():
     if DEV_OTP_MODE:
@@ -3155,6 +3197,8 @@ async def startup():
     asyncio.create_task(_ensure_indexes())
     # Backfill visit_instances for pre-existing patients (idempotent; logs on failure).
     asyncio.create_task(_migrate_visit_instances())
+    # Make sure the platform-admin login exists (idempotent).
+    asyncio.create_task(_ensure_admin_seed())
 
 @app.on_event('shutdown')
 async def shutdown(): client.close()
