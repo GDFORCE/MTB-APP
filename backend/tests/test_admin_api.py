@@ -34,7 +34,9 @@ PASSWORD = 'Password1!'
 LOOP = asyncio.new_event_loop()
 
 _org_ids = []
-_extra_cleanup_ids = {'name_requests': [], 'submissions': [], 'trials': []}
+_extra_cleanup_ids = {'name_requests': [], 'submissions': [], 'trials': [],
+                      'reports': [], 'sessions': []}
+TERMS_TEST_MAJOR = int(RUN_ID[:6], 16) + 1000   # huge numeric major → always > current
 
 
 def run(coro):
@@ -98,9 +100,10 @@ def _cleanup():
         await db.support_tickets.delete_many({'subject': {'$regex': RUN_ID}})
         await db.system_alerts.delete_many({'description': {'$regex': RUN_ID}})
         await db.notification_deliveries.delete_many({'run_id': RUN_ID})
+        await db.notification_deliveries.delete_many({'message': {'$regex': RUN_ID}})
         await db.admin_delegations.delete_many({'reason': {'$regex': RUN_ID}})
         await db.emergency_requests.delete_many({'reason_text': {'$regex': RUN_ID}})
-        await db.emergency_sessions.delete_many({'run_id': RUN_ID})
+        await db.emergency_sessions.delete_many({'id': {'$in': _extra_cleanup_ids['sessions']}})
         await db.broadcast_messages.delete_many({'subject': {'$regex': RUN_ID}})
         await db.broadcast_replies.delete_many({'text': {'$regex': RUN_ID}})
         await db.notifications.delete_many({'title': {'$regex': RUN_ID}})
@@ -109,17 +112,20 @@ def _cleanup():
         await db.patients.delete_many({'email': {'$regex': RUN_ID}})
         await db.visit_instances.delete_many({'trial_id': {'$in': _extra_cleanup_ids['trials']}})
         # reports + their stored CSV blobs
-        reports = await db.admin_reports.find({'run_id': RUN_ID}, {'_id': 0}).to_list(50)
         try:
             import storage as storage_mod
             st = storage_mod.get_storage()
-            for rep in reports:
-                await st.delete(rep['key'])
+            for _rid, key in _extra_cleanup_ids['reports']:
+                await st.delete(key)
         except Exception:
             pass
-        await db.admin_reports.delete_many({'run_id': RUN_ID})
-        # restore the seeded active terms versions if the test superseded them
-        await db.terms_versions.delete_many({'version': {'$regex': f'-{RUN_ID}$'}})
+        await db.admin_reports.delete_many(
+            {'id': {'$in': [r for r, _k in _extra_cleanup_ids['reports']]}})
+        # remove the test terms versions and restore the seeded active ones;
+        # dropping the app_content docs lets /api/legal lazily re-seed defaults
+        await db.terms_versions.delete_many(
+            {'version': {'$regex': f'^{TERMS_TEST_MAJOR}\\.'}})
+        await db.app_content.delete_many({'key': {'$in': ['terms', 'privacy']}})
         for doc_type in ('ToS', 'Privacy'):
             newest_active = await db.terms_versions.find_one(
                 {'type': doc_type, 'status': 'active'})
@@ -165,6 +171,12 @@ GUARDED_GET_PATHS = [
     '/api/admin/audit-logs/security-alerts',
     '/api/admin/audit-logs/export',
     '/api/admin/trials',
+    '/api/admin/terms/versions',
+    '/api/admin/terms/acceptances',
+    '/api/admin/reports/recent',
+    '/api/admin/delegations',
+    '/api/admin/messages',
+    '/api/admin/messages/recipient-count',
 ]
 
 
@@ -658,35 +670,36 @@ class TestAdminAudit:
 
 
 # ── Admin trials (aggregates only; masked subjects) ──────────────────────────
-class TestAdminTrials:
-    @pytest.fixture(scope='class')
-    def trial_world(self, actors):
-        async def build():
-            sponsor, sponsor_h = await _register('sponsor', org=f'ADMORG-{RUN_ID} Pharma')
-            async with make_client() as cli:
-                r = await cli.post('/api/trials', headers=sponsor_h, json={
-                    'title': f'Admin Trial {RUN_ID}', 'protocol_id': f'ADM-{RUN_ID}',
-                    'phase': 'Phase II', 'condition': 'Testing',
-                    'sponsor_name': f'ADMORG-{RUN_ID} Pharma'})
-                assert r.status_code == 200, r.text
-                trial = r.json()
-                _extra_cleanup_ids['trials'].append(trial['id'])
-                rv = await cli.post('/api/visits', headers=sponsor_h, json={
-                    'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
-                    'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
-                assert rv.status_code == 200, rv.text
-            pi, pi_h = await _register('pi', org=f'ADMORG-{RUN_ID} TrialSite')
-            async with make_client() as cli:
-                rp = await cli.post('/api/patients', headers=pi_h, json={
-                    'full_name': f'Secret Patient {RUN_ID}',
-                    'email': f'adm-{RUN_ID}-subject@example.com',
-                    'trial_id': trial['id'], 'pi_id': pi['id'],
-                    'enrolled_date': (server.now() - timedelta(days=3)).date().isoformat()})
-                assert rp.status_code == 200, rp.text
-                patient = rp.json()
-            return {'trial': trial, 'patient': patient}
-        return run(build())
+@pytest.fixture(scope='module')
+def trial_world(actors):
+    async def build():
+        sponsor, sponsor_h = await _register('sponsor', org=f'ADMORG-{RUN_ID} Pharma')
+        async with make_client() as cli:
+            r = await cli.post('/api/trials', headers=sponsor_h, json={
+                'title': f'Admin Trial {RUN_ID}', 'protocol_id': f'ADM-{RUN_ID}',
+                'phase': 'Phase II', 'condition': 'Testing',
+                'sponsor_name': f'ADMORG-{RUN_ID} Pharma'})
+            assert r.status_code == 200, r.text
+            trial = r.json()
+            _extra_cleanup_ids['trials'].append(trial['id'])
+            rv = await cli.post('/api/visits', headers=sponsor_h, json={
+                'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
+                'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
+            assert rv.status_code == 200, rv.text
+        pi, pi_h = await _register('pi', org=f'ADMORG-{RUN_ID} TrialSite')
+        async with make_client() as cli:
+            rp = await cli.post('/api/patients', headers=pi_h, json={
+                'full_name': f'Secret Patient {RUN_ID}',
+                'email': f'adm-{RUN_ID}-subject@example.com',
+                'trial_id': trial['id'], 'pi_id': pi['id'],
+                'enrolled_date': (server.now() - timedelta(days=3)).date().isoformat()})
+            assert rp.status_code == 200, rp.text
+            patient = rp.json()
+        return {'trial': trial, 'patient': patient}
+    return run(build())
 
+
+class TestAdminTrials:
     def test_list_and_detail_are_masked(self, actors, trial_world):
         h = actors['admin1'][1]
         trial = trial_world['trial']
@@ -735,4 +748,355 @@ class TestAdminInvitations:
                     audit = await server.db.audit_logs.find_one(
                         {'action': action, 'target_id': inv['id']})
                     assert audit, f'{action} must be audited'
+        run(flow())
+
+
+# ── Terms & privacy versions ─────────────────────────────────────────────────
+class TestAdminTerms:
+    def test_publish_supersede_and_force_reacceptance(self, actors):
+        h = actors['admin1'][1]
+        patient, patient_h = actors['patient']
+        v1 = f'{TERMS_TEST_MAJOR}.0'
+        async def flow():
+            async with make_client() as cli:
+                # the patient accepts the current terms first
+                ra = await cli.post('/api/legal/accept', headers=patient_h)
+                assert ra.status_code == 200, ra.text
+                acc = await cli.get('/api/admin/terms/acceptances', headers=h)
+                assert any(a['user_id'] == patient['id'] for a in acc.json())
+                # non-numeric version refused
+                bad = await cli.post('/api/admin/terms/versions', headers=h, json={
+                    'type': 'ToS', 'version': 'abc', 'content': 'x'})
+                assert bad.status_code == 400, bad.text
+                # publish with forced re-acceptance
+                r = await cli.post('/api/admin/terms/versions', headers=h, json={
+                    'type': 'ToS', 'version': v1,
+                    'content': f'Updated terms for run {RUN_ID}.',
+                    'changeSummary': f'Test update {RUN_ID}',
+                    'forceReacceptance': True})
+                assert r.status_code == 200, r.text
+                j = r.json()
+                assert j['status'] == 'active'
+                assert j['reacceptance_required'] >= 1
+                # the previous active ToS is superseded; only one active remains
+                actives = await server.db.terms_versions.count_documents(
+                    {'type': 'ToS', 'status': 'active'})
+                assert actives == 1
+                # the patient's acceptance was cleared → must re-accept
+                fresh = await server.db.users.find_one({'id': patient['id']}, {'_id': 0})
+                assert 'terms_accepted_at' not in fresh
+                # same version again → 400 (must be strictly greater)
+                dup = await cli.post('/api/admin/terms/versions', headers=h, json={
+                    'type': 'ToS', 'version': v1, 'content': 'y'})
+                assert dup.status_code == 400, dup.text
+                # user-facing /api/legal now serves the published content
+                legal = await cli.get('/api/legal/terms')
+                assert legal.status_code == 200
+                assert legal.json()['version'] == v1
+                # edit content on the active version
+                pe = await cli.patch(f"/api/admin/terms/versions/{j['id']}", headers=h,
+                                     json={'content': f'Amended terms for run {RUN_ID}.'})
+                assert pe.status_code == 200, pe.text
+                audit = await server.db.audit_logs.find_one(
+                    {'action': 'admin.terms_publish', 'target_id': j['id']})
+                assert audit and audit.get('forceReacceptance') is True
+        run(flow())
+
+
+# ── Reports ──────────────────────────────────────────────────────────────────
+class TestAdminReports:
+    def test_generate_recent_download(self, actors):
+        h = actors['admin1'][1]
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/admin/reports/generate', headers=h,
+                                   json={'type': 'user-status'})
+                assert r.status_code == 200, r.text
+                rep = r.json()
+                _extra_cleanup_ids['reports'].append((rep['id'], rep['key']))
+                assert rep['name'].startswith('user-status-')
+                recent = await cli.get('/api/admin/reports/recent', headers=h)
+                assert any(x['id'] == rep['id'] for x in recent.json())
+                dl = await cli.get(f"/api/admin/reports/{rep['id']}/download", headers=h)
+                assert dl.status_code == 200, dl.text
+                assert 'text/csv' in dl.headers['content-type']
+                assert dl.text.splitlines()[0] == 'status,count'
+                # patient PII never appears in a users report
+                r2 = await cli.post('/api/admin/reports/generate', headers=h,
+                                    json={'type': 'users'})
+                rep2 = r2.json()
+                _extra_cleanup_ids['reports'].append((rep2['id'], rep2['key']))
+                dl2 = await cli.get(f"/api/admin/reports/{rep2['id']}/download", headers=h)
+                patient = actors['patient'][0]
+                assert patient['full_name'] not in dl2.text
+                assert patient['email'] not in dl2.text
+                # unknown report type is rejected by the schema
+                bad = await cli.post('/api/admin/reports/generate', headers=h,
+                                     json={'type': 'everything'})
+                assert bad.status_code == 422, bad.text
+                audit = await server.db.audit_logs.find_one(
+                    {'action': 'admin.report_generate', 'target_id': rep['id']})
+                assert audit, 'report generation must be audited'
+        run(flow())
+
+
+# ── Delegations ──────────────────────────────────────────────────────────────
+class TestAdminDelegations:
+    def test_crud_lifecycle(self, actors):
+        h = actors['admin1'][1]
+        pi = actors['pi'][0]
+        patient = actors['patient'][0]
+        reason = f'Backup coverage while primary admin is on leave {RUN_ID}'
+        async def flow():
+            async with make_client() as cli:
+                # reason < 20 chars refused
+                bad = await cli.post('/api/admin/delegations', headers=h, json={
+                    'user_id': pi['id'], 'tasks': ['support_tickets'], 'reason': 'short'})
+                assert bad.status_code == 422, bad.text
+                # a patient can never hold admin delegation
+                badp = await cli.post('/api/admin/delegations', headers=h, json={
+                    'user_id': patient['id'], 'tasks': ['support_tickets'],
+                    'reason': reason})
+                assert badp.status_code == 400, badp.text
+                r = await cli.post('/api/admin/delegations', headers=h, json={
+                    'user_id': pi['id'],
+                    'tasks': ['support_tickets', 'invitations'], 'reason': reason})
+                assert r.status_code == 200, r.text
+                d = r.json()
+                # duplicate active delegation refused
+                dup = await cli.post('/api/admin/delegations', headers=h, json={
+                    'user_id': pi['id'], 'tasks': ['reports'], 'reason': reason})
+                assert dup.status_code == 400, dup.text
+                # edit tasks
+                pe = await cli.patch(f"/api/admin/delegations/{d['id']}", headers=h,
+                                     json={'tasks': ['reports', 'audit_review']})
+                assert pe.status_code == 200, pe.text
+                assert sorted(pe.json()['tasks']) == ['audit_review', 'reports']
+                # suspend then revoke; revoked cannot be edited
+                s = await cli.post(f"/api/admin/delegations/{d['id']}/suspend", headers=h)
+                assert s.status_code == 200, s.text
+                rv = await cli.delete(f"/api/admin/delegations/{d['id']}", headers=h)
+                assert rv.status_code == 200 and rv.json()['status'] == 'revoked'
+                fresh = await server.db.admin_delegations.find_one({'id': d['id']}, {'_id': 0})
+                assert fresh['status'] == 'revoked', 'record must be kept, not deleted'
+                pe2 = await cli.patch(f"/api/admin/delegations/{d['id']}", headers=h,
+                                      json={'tasks': ['reports']})
+                assert pe2.status_code == 400, pe2.text
+                for action in ('admin.delegation_create', 'admin.delegation_update',
+                               'admin.delegation_suspend', 'admin.delegation_revoke'):
+                    audit = await server.db.audit_logs.find_one(
+                        {'action': action, 'target_id': d['id']})
+                    assert audit, f'{action} must be audited'
+        run(flow())
+
+
+# ── Emergency access (break-the-glass) ───────────────────────────────────────
+class TestEmergencyAccess:
+    def test_full_btg_lifecycle(self, actors, trial_world):
+        admin1, h1 = actors['admin1']
+        admin2, h2 = actors['admin2']
+        trial = trial_world['trial']
+        patient = trial_world['patient']
+        async def flow():
+            async with make_client() as cli:
+                # non-admin cannot even request
+                guard = await cli.post('/api/admin/emergency/requests',
+                                       headers=actors['pi'][1],
+                                       json={'reason_category': 'patient_safety',
+                                             'reason_text': f'guard check {RUN_ID}'})
+                assert guard.status_code == 403, guard.text
+                # request
+                r = await cli.post('/api/admin/emergency/requests', headers=h1, json={
+                    'reason_category': 'patient_safety',
+                    'reason_text': f'Urgent safety signal review {RUN_ID}',
+                    'trial_id': trial['id']})
+                assert r.status_code == 200, r.text
+                req = r.json()
+                # requester cannot self-approve (two-person rule)
+                self_ok = await cli.post(
+                    f"/api/admin/emergency/requests/{req['id']}/approve", headers=h1)
+                assert self_ok.status_code == 403, self_ok.text
+                # second admin approves → 2h session
+                ap = await cli.post(
+                    f"/api/admin/emergency/requests/{req['id']}/approve", headers=h2)
+                assert ap.status_code == 200, ap.text
+                session = ap.json()['session']
+                _extra_cleanup_ids['sessions'].append(session['id'])
+                started = server.datetime.fromisoformat(session['started_at'])
+                expires = server.datetime.fromisoformat(session['expires_at'])
+                assert abs((expires - started).total_seconds() - 7200) < 5, \
+                    'session TTL must be 2 hours'
+                # poll shows the active session
+                poll = await cli.get(f"/api/admin/emergency/requests/{req['id']}", headers=h1)
+                assert poll.json()['session']['status'] == 'active'
+                # during the session the requester sees IDENTIFIED subjects…
+                det = await cli.get(f"/api/admin/trials/{trial['id']}", headers=h1)
+                assert det.json()['unmasked'] is True
+                assert any(s.get('full_name') == patient['full_name']
+                           for s in det.json()['subjects'])
+                # …and that read is in the session audit log
+                log = await cli.get(
+                    f"/api/admin/emergency/sessions/{session['id']}/log", headers=h2)
+                assert any(e['action'] == 'emergency.read' for e in log.json()), \
+                    'unmasked reads must be audited with the session id'
+                # the approver has NO session → still masked
+                det2 = await cli.get(f"/api/admin/trials/{trial['id']}", headers=h2)
+                assert det2.json()['unmasked'] is False
+                # end the session → reads are masked again
+                end = await cli.post(
+                    f"/api/admin/emergency/sessions/{session['id']}/end", headers=h1)
+                assert end.status_code == 200, end.text
+                det3 = await cli.get(f"/api/admin/trials/{trial['id']}", headers=h1)
+                assert det3.json()['unmasked'] is False
+        run(flow())
+
+    def test_expiry_is_enforced(self, actors, trial_world):
+        admin1, h1 = actors['admin1']
+        h2 = actors['admin2'][1]
+        trial = trial_world['trial']
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/admin/emergency/requests', headers=h1, json={
+                    'reason_category': 'incident_investigation',
+                    'reason_text': f'Expiry enforcement check {RUN_ID}'})
+                req = r.json()
+                ap = await cli.post(
+                    f"/api/admin/emergency/requests/{req['id']}/approve", headers=h2)
+                session = ap.json()['session']
+                _extra_cleanup_ids['sessions'].append(session['id'])
+                # simulate the 2h TTL elapsing
+                await server.db.emergency_sessions.update_one(
+                    {'id': session['id']},
+                    {'$set': {'expires_at': server.now() - timedelta(minutes=1)}})
+                det = await cli.get(f"/api/admin/trials/{trial['id']}", headers=h1)
+                assert det.json()['unmasked'] is False, 'expired session must not unmask'
+                fresh = await server.db.emergency_sessions.find_one(
+                    {'id': session['id']}, {'_id': 0})
+                assert fresh['status'] == 'expired'
+                # ending an expired session is refused
+                end = await cli.post(
+                    f"/api/admin/emergency/sessions/{session['id']}/end", headers=h1)
+                assert end.status_code == 400, end.text
+        run(flow())
+
+    def test_deny_flow(self, actors):
+        h1 = actors['admin1'][1]
+        h2 = actors['admin2'][1]
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/admin/emergency/requests', headers=h1, json={
+                    'reason_category': 'other',
+                    'reason_text': f'Deny flow check {RUN_ID}'})
+                req = r.json()
+                d = await cli.post(f"/api/admin/emergency/requests/{req['id']}/deny",
+                                   headers=h2, json={'reason': 'No justification'})
+                assert d.status_code == 200, d.text
+                # approving a denied request is refused
+                ap = await cli.post(
+                    f"/api/admin/emergency/requests/{req['id']}/approve", headers=h2)
+                assert ap.status_code == 400, ap.text
+        run(flow())
+
+
+# ── Broadcast messages ───────────────────────────────────────────────────────
+class TestAdminMessages:
+    def test_recipient_count_does_not_send(self, actors):
+        h = actors['admin1'][1]
+        async def flow():
+            db = server.db
+            before = await db.notifications.count_documents({'kind': 'broadcast'})
+            async with make_client() as cli:
+                r = await cli.get('/api/admin/messages/recipient-count', headers=h,
+                                  params={'target': 'all'})
+                assert r.status_code == 200 and r.json()['count'] >= 4
+                r2 = await cli.get('/api/admin/messages/recipient-count', headers=h,
+                                   params={'target': 'role:pi'})
+                assert r2.status_code == 200 and r2.json()['count'] >= 1
+                bad = await cli.get('/api/admin/messages/recipient-count', headers=h,
+                                    params={'target': 'galaxy:andromeda'})
+                assert bad.status_code == 400, bad.text
+            after = await db.notifications.count_documents({'kind': 'broadcast'})
+            assert after == before, 'recipient-count must never fan out'
+        run(flow())
+
+    def test_broadcast_fans_out_and_tracks_reads(self, actors):
+        h = actors['admin1'][1]
+        patient = actors['patient'][0]
+        subject = f'Please update the app {RUN_ID}'
+        async def flow():
+            async with make_client() as cli:
+                # subject > 120 chars refused
+                bad = await cli.post('/api/admin/messages', headers=h, json={
+                    'subject': 'x' * 121, 'body': 'b', 'target': f"user:{patient['id']}"})
+                assert bad.status_code == 422, bad.text
+                r = await cli.post('/api/admin/messages', headers=h, json={
+                    'type': 'targeted', 'subject': subject,
+                    'body': 'A new version is available.',
+                    'target': f"user:{patient['id']}"})
+                assert r.status_code == 200, r.text
+                b = r.json()
+                assert b['status'] == 'sent' and b['recipients_count'] == 1
+                notif = await server.db.notifications.find_one(
+                    {'broadcast_id': b['id'], 'user_id': patient['id']}, {'_id': 0})
+                assert notif, 'broadcast must fan out to the notifications collection'
+                delivery = await server.db.notification_deliveries.find_one(
+                    {'broadcast_id': b['id']}, {'_id': 0})
+                assert delivery and delivery['status'] == 'Delivered'
+                # recipient reads it → read x/y reflects it
+                await server.db.notifications.update_one(
+                    {'id': notif['id']}, {'$set': {'read': True}})
+                lst = await cli.get('/api/admin/messages', headers=h,
+                                    params={'box': 'sent'})
+                mine = [m for m in lst.json() if m['id'] == b['id']]
+                assert mine and mine[0]['read_count'] == 1
+                audit = await server.db.audit_logs.find_one(
+                    {'action': 'admin.broadcast_send', 'target_id': b['id']})
+                assert audit, 'broadcast send must be audited'
+        run(flow())
+
+    def test_scheduled_broadcast_does_not_send_yet(self, actors):
+        h = actors['admin1'][1]
+        patient = actors['patient'][0]
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/admin/messages', headers=h, json={
+                    'subject': f'Maintenance window {RUN_ID}',
+                    'body': 'Scheduled maintenance tonight.',
+                    'target': f"user:{patient['id']}",
+                    'scheduleAt': (server.now() + timedelta(hours=6)).isoformat()})
+                assert r.status_code == 200, r.text
+                b = r.json()
+                assert b['status'] == 'scheduled'
+                fanned = await server.db.notifications.find_one({'broadcast_id': b['id']})
+                assert fanned is None, 'a scheduled broadcast must not fan out yet'
+        run(flow())
+
+    def test_replies_respond_and_resolve(self, actors):
+        h = actors['admin1'][1]
+        patient = actors['patient'][0]
+        async def flow():
+            db = server.db
+            # a sent broadcast + a user reply (replies are filed by the app)
+            bid = str(uuid.uuid4())
+            await db.broadcast_messages.insert_one({
+                'id': bid, 'type': 'general', 'subject': f'Reply thread {RUN_ID}',
+                'body': 'b', 'target': 'all', 'allowReplies': True, 'status': 'sent',
+                'recipients_count': 1, 'created_by': 'x', 'created_at': server.now(),
+                'sent_at': server.now()})
+            rid = str(uuid.uuid4())
+            await db.broadcast_replies.insert_one({
+                'id': rid, 'broadcast_id': bid, 'user_id': patient['id'],
+                'user_name': 'A Patient', 'text': f'Question about this {RUN_ID}',
+                'status': 'open', 'responses': [], 'created_at': server.now()})
+            async with make_client() as cli:
+                lst = await cli.get(f'/api/admin/messages/{bid}/replies', headers=h)
+                assert lst.status_code == 200 and len(lst.json()) == 1
+                resp = await cli.post(f'/api/admin/messages/replies/{rid}/respond',
+                                      headers=h, json={'text': f'Answered {RUN_ID}'})
+                assert resp.status_code == 200, resp.text
+                res = await cli.post(f'/api/admin/messages/replies/{rid}/resolve', headers=h)
+                assert res.status_code == 200, res.text
+                fresh = await db.broadcast_replies.find_one({'id': rid}, {'_id': 0})
+                assert fresh['status'] == 'resolved'
+                assert fresh['responses'][0]['text'] == f'Answered {RUN_ID}'
         run(flow())

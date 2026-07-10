@@ -1012,3 +1012,609 @@ async def admin_get_trial(trial_id: str, admin=Depends(current_user)):
         out['subjects'] = [_masked_subject(p) for p in patients]
         out['unmasked'] = False
     return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TERMS & PRIVACY VERSIONS
+# ═════════════════════════════════════════════════════════════════════════════
+TERMS_TYPE_TO_LEGAL_KEY = {'ToS': 'terms', 'Privacy': 'privacy'}
+
+
+def _version_tuple(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in str(v).strip().split('.'))
+    except (ValueError, AttributeError):
+        raise HTTPException(400, 'Version must be numeric, e.g. "2.0" or "2.1.3"')
+
+
+class TermsVersionIn(BaseModel):
+    type: Literal['ToS', 'Privacy']
+    version: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    effectiveDate: Optional[str] = None
+    changeSummary: Optional[str] = ''
+    forceReacceptance: bool = False
+
+
+class TermsVersionPatch(BaseModel):
+    content: Optional[str] = None
+    changeSummary: Optional[str] = None
+
+
+@router.get('/terms/versions')
+async def admin_terms_versions(type: Optional[Literal['ToS', 'Privacy']] = None):
+    q: Dict = {}
+    if type:
+        q['type'] = type
+    rows = await db.terms_versions.find(q, {'_id': 0}).to_list(500)
+
+    def _safe_tuple(r):
+        try:
+            return _version_tuple(r.get('version', '0'))
+        except HTTPException:
+            return (0,)
+    rows.sort(key=lambda r: (r.get('type', ''), _safe_tuple(r)), reverse=True)
+    return rows
+
+
+@router.post('/terms/versions')
+async def admin_publish_terms(body: TermsVersionIn, admin=Depends(current_user)):
+    """Publish a new ToS/Privacy version. The version must be strictly greater
+    than every existing version of that type; the previous active version is
+    superseded; forceReacceptance clears every user's acceptance so the app
+    re-prompts on next login. The user-facing /api/legal document is synced."""
+    new_v = _version_tuple(body.version)
+    existing = await db.terms_versions.find({'type': body.type}, {'_id': 0}).to_list(500)
+    for e in existing:
+        try:
+            old_v = _version_tuple(e.get('version', '0'))
+        except HTTPException:
+            continue
+        if old_v >= new_v:
+            raise HTTPException(
+                400, f"Version must be greater than the existing {e.get('version')}")
+    n = now()
+    await db.terms_versions.update_many(
+        {'type': body.type, 'status': 'active'},
+        {'$set': {'status': 'superseded', 'supersededAt': n}})
+    doc = {
+        'id': str(uuid.uuid4()), 'type': body.type, 'version': body.version.strip(),
+        'status': 'active', 'content': body.content,
+        'effectiveDate': body.effectiveDate or n.date().isoformat(),
+        'changeSummary': body.changeSummary or '', 'forceReacceptance': body.forceReacceptance,
+        'createdAt': n, 'activatedAt': n, 'acceptedBy': 0, 'created_by': admin['id'],
+    }
+    await db.terms_versions.insert_one(doc)
+    # Sync the user-facing legal document (GET /api/legal/{terms|privacy}).
+    legal_key = TERMS_TYPE_TO_LEGAL_KEY[body.type]
+    await db.app_content.update_one({'key': legal_key}, {'$set': {
+        'version': doc['version'], 'effective_date': doc['effectiveDate'],
+        'blocks': [{'heading': f"{body.type} v{doc['version']}", 'body': body.content}],
+    }}, upsert=True)
+    reacceptance_required = 0
+    if body.forceReacceptance:
+        res = await db.users.update_many(
+            {'terms_accepted_at': {'$exists': True}},
+            {'$unset': {'terms_accepted_at': ''}})
+        reacceptance_required = res.modified_count
+    await write_audit(admin, 'admin.terms_publish',
+                      f"Published {body.type} v{doc['version']}"
+                      + (' (forced re-acceptance)' if body.forceReacceptance else ''),
+                      target_id=doc['id'], forceReacceptance=body.forceReacceptance,
+                      reacceptance_required=reacceptance_required)
+    return {**serialize(doc), 'reacceptance_required': reacceptance_required}
+
+
+@router.patch('/terms/versions/{version_id}')
+async def admin_patch_terms(version_id: str, body: TermsVersionPatch,
+                            admin=Depends(current_user)):
+    v = await _find_or_404(db.terms_versions, version_id, 'Terms version')
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        return v
+    updates['updated_at'] = now()
+    await db.terms_versions.update_one({'id': version_id}, {'$set': updates})
+    if 'content' in updates and v.get('status') == 'active':
+        legal_key = TERMS_TYPE_TO_LEGAL_KEY.get(v.get('type'))
+        if legal_key:
+            await db.app_content.update_one({'key': legal_key}, {'$set': {
+                'blocks': [{'heading': f"{v.get('type')} v{v.get('version')}",
+                            'body': updates['content']}]}}, upsert=True)
+    await write_audit(admin, 'admin.terms_update',
+                      f"Edited {v.get('type')} v{v.get('version')} "
+                      f"({', '.join(k for k in updates if k != 'updated_at')})",
+                      target_id=version_id)
+    return await db.terms_versions.find_one({'id': version_id}, {'_id': 0})
+
+
+@router.get('/terms/acceptances')
+async def admin_terms_acceptances():
+    rows = await db.users.find({'terms_accepted_at': {'$exists': True}},
+                               USER_PROJECTION).sort('terms_accepted_at', -1).to_list(2000)
+    out = []
+    for u in rows:
+        u = _pseudonymize_patient(u)
+        out.append({'user_id': u['id'], 'name': u.get('full_name', ''),
+                    'email': u.get('email', ''), 'role': u.get('role', ''),
+                    'accepted_at': iso(u.get('terms_accepted_at'))})
+    return out
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# REPORTS (CSV generated in-process, stored via storage.py, admin-scoped download)
+# ═════════════════════════════════════════════════════════════════════════════
+class ReportGenerateIn(BaseModel):
+    type: Literal['users', 'org-users', 'user-status', 'login-activity', 'trial-summary']
+    from_: Optional[str] = Field(None, alias='from')
+    to: Optional[str] = None
+
+    model_config = {'populate_by_name': True}
+
+
+async def _report_rows(rtype: str, from_: Optional[str], to: Optional[str]):
+    """Build (headers, rows) for a report type. Patient PII is pseudonymized."""
+    if rtype == 'users':
+        users = await db.users.find({}, USER_PROJECTION).sort('created_at', -1).to_list(5000)
+        rows = []
+        for u in users:
+            u = _pseudonymize_patient(u)
+            rows.append([u.get('id'), u.get('full_name'), u.get('email'), u.get('role'),
+                         u.get('organization'), _user_status(u), iso(u.get('created_at'))])
+        return ['id', 'name', 'email', 'role', 'organization', 'status', 'created_at'], rows
+    if rtype == 'org-users':
+        users = await db.users.find({}, {'_id': 0, 'organization': 1, 'role': 1}).to_list(10000)
+        roles = ['sponsor', 'cro', 'smo', 'site', 'pi', 'crc', 'patient', 'admin']
+        per_org: Dict[str, Dict[str, int]] = {}
+        for u in users:
+            org = u.get('organization') or '(none)'
+            b = per_org.setdefault(org, {r: 0 for r in roles})
+            if u.get('role') in b:
+                b[u['role']] += 1
+        rows = [[org, sum(counts.values())] + [counts[r] for r in roles]
+                for org, counts in sorted(per_org.items())]
+        return ['organization', 'total'] + roles, rows
+    if rtype == 'user-status':
+        users = await db.users.find({}, {'_id': 0, 'status': 1, 'lock_info': 1}).to_list(10000)
+        counts: Dict[str, int] = {}
+        for u in users:
+            counts[_user_status(u)] = counts.get(_user_status(u), 0) + 1
+        return ['status', 'count'], [[k, v] for k, v in sorted(counts.items())]
+    if rtype == 'login-activity':
+        q = _audit_query('login', from_, to, None, None, None)
+        logs = await db.audit_logs.find(q, {'_id': 0}).sort('created_at', -1).to_list(5000)
+        rows = [[iso(r.get('created_at')), r.get('user_name'), r.get('role'),
+                 r.get('action'), r.get('status'), r.get('ip')] for r in logs]
+        return ['time', 'user', 'role', 'action', 'status', 'ip'], rows
+    # trial-summary
+    trials = await db.trials.find({}, {'_id': 0}).to_list(500)
+    rows = []
+    for t in trials:
+        agg = await _trial_aggregates(t)
+        rows.append([agg['protocol_id'], agg['title'], agg['phase'], agg['status'],
+                     agg['patients'], agg['visits']['completed'], agg['visits']['missed']])
+    return ['protocol', 'title', 'phase', 'status', 'enrolled',
+            'visits_completed', 'visits_missed'], rows
+
+
+@router.post('/reports/generate')
+async def admin_generate_report(body: ReportGenerateIn, admin=Depends(current_user)):
+    headers, rows = await _report_rows(body.type, body.from_, body.to)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(headers)
+    w.writerows(rows)
+    data = buf.getvalue().encode('utf-8')
+    key = f'reports/{uuid.uuid4()}.csv'
+    await file_storage.get_storage().save(key, data, 'text/csv')
+    n = now()
+    doc = {
+        'id': str(uuid.uuid4()), 'type': body.type,
+        'name': f"{body.type}-{n.strftime('%Y%m%d-%H%M%S')}.csv",
+        'format': 'csv', 'key': key, 'size': len(data), 'rows': len(rows),
+        'params': {'from': body.from_, 'to': body.to},
+        'created_by': admin['id'], 'created_by_name': admin['full_name'],
+        'created_at': n,
+    }
+    await db.admin_reports.insert_one(doc)
+    await write_audit(admin, 'admin.report_generate',
+                      f"Generated {body.type} report ({len(rows)} rows)",
+                      target_id=doc['id'])
+    return {**serialize(doc), 'download_url': f"/api/admin/reports/{doc['id']}/download"}
+
+
+@router.get('/reports/recent')
+async def admin_recent_reports():
+    rows = await db.admin_reports.find({}, {'_id': 0}).sort('created_at', -1).to_list(20)
+    for r in rows:
+        r['download_url'] = f"/api/admin/reports/{r['id']}/download"
+    return rows
+
+
+@router.get('/reports/{report_id}/download')
+async def admin_download_report(report_id: str, admin=Depends(current_user)):
+    rep = await _find_or_404(db.admin_reports, report_id, 'Report')
+    try:
+        data, _ct = await file_storage.get_storage().open(rep['key'])
+    except FileNotFoundError:
+        raise HTTPException(404, 'Report file is missing')
+    await write_audit(admin, 'admin.report_download',
+                      f"Downloaded report {rep.get('name')}", target_id=report_id)
+    return Response(content=data, media_type='text/csv',
+                    headers={'Content-Disposition':
+                             f"attachment; filename=\"{rep.get('name', 'report.csv')}\""})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ADMIN-STAFF DELEGATIONS
+# ═════════════════════════════════════════════════════════════════════════════
+DELEGATION_TASKS = ('user_management', 'support_tickets', 'invitations', 'master_data',
+                    'notifications', 'reports', 'audit_review')
+DelegationTask = Literal['user_management', 'support_tickets', 'invitations', 'master_data',
+                         'notifications', 'reports', 'audit_review']
+
+
+class DelegationIn(BaseModel):
+    user_id: str
+    tasks: List[DelegationTask] = Field(min_length=1)
+    reason: str = Field(min_length=20)
+
+
+class DelegationPatch(BaseModel):
+    tasks: Optional[List[DelegationTask]] = Field(None, min_length=1)
+    reason: Optional[str] = Field(None, min_length=20)
+
+
+@router.get('/delegations')
+async def admin_list_delegations(status: Optional[str] = None):
+    q: Dict = {}
+    if status:
+        q['status'] = status
+    return await db.admin_delegations.find(q, {'_id': 0}).sort('delegatedDate', -1).to_list(200)
+
+
+@router.post('/delegations')
+async def admin_create_delegation(body: DelegationIn, admin=Depends(current_user)):
+    target = await db.users.find_one({'id': body.user_id}, USER_PROJECTION)
+    if not target:
+        raise HTTPException(404, 'User not found')
+    if target['role'] == 'patient':
+        raise HTTPException(400, 'Admin tasks cannot be delegated to a patient account')
+    existing = await db.admin_delegations.find_one(
+        {'user_id': body.user_id, 'status': {'$in': ['active', 'suspended']}})
+    if existing:
+        raise HTTPException(400, 'This user already has a delegation — edit it instead')
+    doc = {
+        'id': str(uuid.uuid4()), 'user_id': target['id'],
+        'name': target.get('full_name', ''), 'email': target.get('email', ''),
+        'tasks': sorted(set(body.tasks)), 'status': 'active', 'reason': body.reason,
+        'delegated_by': admin['id'], 'delegatedDate': now(), 'lastActive': None,
+    }
+    await db.admin_delegations.insert_one(doc)
+    await write_audit(admin, 'admin.delegation_create',
+                      f"Delegated {', '.join(doc['tasks'])} to {doc['email']} — {body.reason}",
+                      target_id=doc['id'])
+    return serialize({**doc})
+
+
+@router.patch('/delegations/{delegation_id}')
+async def admin_patch_delegation(delegation_id: str, body: DelegationPatch,
+                                 admin=Depends(current_user)):
+    d = await _find_or_404(db.admin_delegations, delegation_id, 'Delegation')
+    if d.get('status') == 'revoked':
+        raise HTTPException(400, 'A revoked delegation cannot be edited')
+    updates = body.model_dump(exclude_none=True)
+    if not updates:
+        return d
+    if 'tasks' in updates:
+        updates['tasks'] = sorted(set(updates['tasks']))
+    updates['updated_at'] = now()
+    await db.admin_delegations.update_one({'id': delegation_id}, {'$set': updates})
+    await write_audit(admin, 'admin.delegation_update',
+                      f"Updated delegation for {d.get('email')}",
+                      target_id=delegation_id,
+                      changes={k: v for k, v in updates.items() if k != 'updated_at'})
+    return await db.admin_delegations.find_one({'id': delegation_id}, {'_id': 0})
+
+
+@router.post('/delegations/{delegation_id}/suspend')
+async def admin_suspend_delegation(delegation_id: str, admin=Depends(current_user)):
+    d = await _find_or_404(db.admin_delegations, delegation_id, 'Delegation')
+    if d.get('status') != 'active':
+        raise HTTPException(400, 'Only an active delegation can be suspended')
+    await db.admin_delegations.update_one(
+        {'id': delegation_id}, {'$set': {'status': 'suspended', 'suspended_at': now()}})
+    await write_audit(admin, 'admin.delegation_suspend',
+                      f"Suspended delegation for {d.get('email')}", target_id=delegation_id)
+    return {'ok': True, 'id': delegation_id, 'status': 'suspended'}
+
+
+@router.delete('/delegations/{delegation_id}')
+async def admin_revoke_delegation(delegation_id: str, admin=Depends(current_user)):
+    d = await _find_or_404(db.admin_delegations, delegation_id, 'Delegation')
+    if d.get('status') == 'revoked':
+        raise HTTPException(400, 'This delegation is already revoked')
+    # Revocation keeps the record (regulated audit trail) — never a hard delete.
+    await db.admin_delegations.update_one(
+        {'id': delegation_id}, {'$set': {'status': 'revoked', 'revoked_at': now()}})
+    await write_audit(admin, 'admin.delegation_revoke',
+                      f"Revoked delegation for {d.get('email')}", target_id=delegation_id)
+    return {'ok': True, 'id': delegation_id, 'status': 'revoked'}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EMERGENCY ACCESS (Break-The-Glass): request → senior approval → 2h session
+# ═════════════════════════════════════════════════════════════════════════════
+BTG_SESSION_HOURS = 2
+
+
+class EmergencyRequestIn(BaseModel):
+    reason_category: Literal['patient_safety', 'regulatory_audit', 'data_correction',
+                             'incident_investigation', 'other']
+    reason_text: str = Field(min_length=10)
+    trial_id: Optional[str] = None
+
+
+class EmergencyDenyIn(BaseModel):
+    reason: Optional[str] = ''
+
+
+@router.post('/emergency/requests')
+async def btg_create_request(body: EmergencyRequestIn, admin=Depends(current_user)):
+    doc = {
+        'id': str(uuid.uuid4()), 'requested_by': admin['id'],
+        'requester_name': admin['full_name'], 'reason_category': body.reason_category,
+        'reason_text': body.reason_text, 'trial_id': body.trial_id,
+        'status': 'pending', 'created_at': now(), 'session_id': None,
+    }
+    await db.emergency_requests.insert_one(doc)
+    await write_audit(admin, 'emergency.request',
+                      f"Requested break-the-glass access ({body.reason_category}) — "
+                      f"{body.reason_text}", category='emergency', target_id=doc['id'])
+    return serialize({**doc})
+
+
+@router.get('/emergency/requests/{request_id}')
+async def btg_get_request(request_id: str):
+    req = await _find_or_404(db.emergency_requests, request_id, 'Emergency request')
+    session = None
+    if req.get('session_id'):
+        session = await db.emergency_sessions.find_one({'id': req['session_id']}, {'_id': 0})
+        if session and session.get('status') == 'active' and session['expires_at'] <= now():
+            await db.emergency_sessions.update_one(
+                {'id': session['id']},
+                {'$set': {'status': 'expired', 'ended_at': session['expires_at']}})
+            session['status'] = 'expired'
+    return {**req, 'session': session}
+
+
+@router.post('/emergency/requests/{request_id}/approve')
+async def btg_approve_request(request_id: str, admin=Depends(current_user)):
+    """Senior approval: a second admin must approve — never the requester
+    (two-person rule). Opens a time-boxed 2h session."""
+    req = await _find_or_404(db.emergency_requests, request_id, 'Emergency request')
+    if req.get('status') != 'pending':
+        raise HTTPException(400, f"This request is already {req.get('status')}")
+    if req.get('requested_by') == admin['id']:
+        raise HTTPException(403, 'You cannot approve your own emergency-access request')
+    n = now()
+    session = {
+        'id': str(uuid.uuid4()), 'request_id': request_id,
+        'user_id': req['requested_by'], 'approved_by': admin['id'],
+        'approver_name': admin['full_name'], 'status': 'active',
+        'started_at': n, 'expires_at': n + timedelta(hours=BTG_SESSION_HOURS),
+    }
+    await db.emergency_sessions.insert_one(session)
+    await db.emergency_requests.update_one({'id': request_id}, {'$set': {
+        'status': 'approved', 'approved_by': admin['id'], 'approved_at': n,
+        'session_id': session['id']}})
+    await write_audit(admin, 'emergency.approve',
+                      f"Approved break-the-glass request by {req.get('requester_name')} "
+                      f"— session expires {iso(session['expires_at'])}",
+                      category='emergency', target_id=request_id,
+                      btg_session_id=session['id'])
+    return {'ok': True, 'request_id': request_id, 'session': serialize({**session})}
+
+
+@router.post('/emergency/requests/{request_id}/deny')
+async def btg_deny_request(request_id: str, body: EmergencyDenyIn, admin=Depends(current_user)):
+    req = await _find_or_404(db.emergency_requests, request_id, 'Emergency request')
+    if req.get('status') != 'pending':
+        raise HTTPException(400, f"This request is already {req.get('status')}")
+    if req.get('requested_by') == admin['id']:
+        raise HTTPException(403, 'You cannot action your own emergency-access request')
+    await db.emergency_requests.update_one({'id': request_id}, {'$set': {
+        'status': 'denied', 'denied_by': admin['id'], 'denied_at': now(),
+        'deny_reason': body.reason or ''}})
+    await write_audit(admin, 'emergency.deny',
+                      f"Denied break-the-glass request by {req.get('requester_name')}"
+                      + (f" — {body.reason}" if body.reason else ''),
+                      category='emergency', target_id=request_id)
+    return {'ok': True, 'request_id': request_id, 'status': 'denied'}
+
+
+@router.post('/emergency/sessions/{session_id}/end')
+async def btg_end_session(session_id: str, admin=Depends(current_user)):
+    s = await _find_or_404(db.emergency_sessions, session_id, 'Emergency session')
+    if s.get('status') != 'active':
+        raise HTTPException(400, f"This session is already {s.get('status')}")
+    await db.emergency_sessions.update_one({'id': session_id}, {'$set': {
+        'status': 'ended', 'ended_at': now(), 'ended_by': admin['id']}})
+    await write_audit(admin, 'emergency.end',
+                      'Ended break-the-glass session', category='emergency',
+                      target_id=session_id, btg_session_id=session_id)
+    return {'ok': True, 'id': session_id, 'status': 'ended'}
+
+
+@router.get('/emergency/sessions/{session_id}/log')
+async def btg_session_log(session_id: str):
+    """Every audited action tied to this session (unmasked reads, approve, end)."""
+    await _find_or_404(db.emergency_sessions, session_id, 'Emergency session')
+    return await db.audit_logs.find({'btg_session_id': session_id}, {'_id': 0}) \
+        .sort('created_at', 1).to_list(1000)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MESSAGES (admin broadcasts → fan out to the notifications collection)
+# ═════════════════════════════════════════════════════════════════════════════
+class BroadcastIn(BaseModel):
+    type: Literal['general', 'compliance', 'system', 'targeted', 'urgent'] = 'general'
+    subject: str = Field(min_length=1, max_length=120)
+    body: str = Field(min_length=1, max_length=2000)
+    target: str = 'all'
+    allowReplies: bool = True
+    scheduleAt: Optional[str] = None
+
+
+class ReplyRespondIn(BaseModel):
+    text: str = Field(min_length=1)
+
+
+async def _resolve_recipient_ids(target: str) -> List[str]:
+    """Resolve a broadcast target expression to user ids WITHOUT sending.
+    Forms: all | role:<role> | org:<name> | site:<name> | entity:<orgType> |
+    trial:<trial_id> | user:<user_id>."""
+    target = (target or 'all').strip()
+    if target == 'all':
+        rows = await db.users.find({}, {'_id': 0, 'id': 1}).to_list(20000)
+        return [r['id'] for r in rows]
+    if ':' not in target:
+        raise HTTPException(400, 'Invalid target — expected "all" or "<kind>:<value>"')
+    kind, value = target.split(':', 1)
+    kind, value = kind.strip().lower(), value.strip()
+    if not value:
+        raise HTTPException(400, 'Target value is required')
+    if kind == 'role':
+        rows = await db.users.find({'role': value}, {'_id': 0, 'id': 1}).to_list(20000)
+        return [r['id'] for r in rows]
+    if kind in ('org', 'site'):
+        rows = await db.users.find({'organization': value}, {'_id': 0, 'id': 1}).to_list(20000)
+        return [r['id'] for r in rows]
+    if kind == 'entity':
+        if value not in ORG_TYPES:
+            raise HTTPException(400, f'Unknown entity type "{value}"')
+        orgs = await db.organizations.find({'type': value}, {'_id': 0, 'name': 1}).to_list(2000)
+        names = [o['name'] for o in orgs]
+        rows = await db.users.find({'organization': {'$in': names}},
+                                   {'_id': 0, 'id': 1}).to_list(20000)
+        return [r['id'] for r in rows]
+    if kind == 'trial':
+        trial = await db.trials.find_one({'id': value}, {'_id': 0})
+        if not trial:
+            raise HTTPException(404, 'Trial not found')
+        ids = set()
+        if trial.get('created_by'):
+            ids.add(trial['created_by'])
+        async for p in db.patients.find({'trial_id': value}, {'_id': 0}):
+            for k in ('user_id', 'pi_id', 'crc_id'):
+                if p.get(k):
+                    ids.add(p[k])
+        return sorted(ids)
+    if kind == 'user':
+        u = await db.users.find_one({'id': value}, {'_id': 0, 'id': 1})
+        if not u:
+            raise HTTPException(404, 'Target user not found')
+        return [value]
+    raise HTTPException(400, f'Unknown target kind "{kind}"')
+
+
+@router.get('/messages/recipient-count')
+async def broadcast_recipient_count(target: str = 'all'):
+    """Recipient preview: resolves the audience WITHOUT sending anything."""
+    ids = await _resolve_recipient_ids(target)
+    return {'target': target, 'count': len(ids)}
+
+
+@router.post('/messages')
+async def create_broadcast(body: BroadcastIn, admin=Depends(current_user)):
+    recipient_ids = await _resolve_recipient_ids(body.target)
+    n = now()
+    schedule_at = None
+    if body.scheduleAt:
+        try:
+            schedule_at = datetime.fromisoformat(body.scheduleAt.replace('Z', '+00:00'))
+            if schedule_at.tzinfo is None:
+                schedule_at = schedule_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(400, 'scheduleAt must be an ISO-8601 timestamp')
+    doc = {
+        'id': str(uuid.uuid4()), 'type': body.type, 'subject': body.subject,
+        'body': body.body, 'target': body.target, 'allowReplies': body.allowReplies,
+        'scheduleAt': schedule_at, 'created_by': admin['id'],
+        'created_by_name': admin['full_name'], 'created_at': n,
+        'recipients_count': len(recipient_ids),
+    }
+    if schedule_at and schedule_at > n:
+        doc.update({'status': 'scheduled', 'sent_at': None})
+        await db.broadcast_messages.insert_one(doc)
+        await write_audit(admin, 'admin.broadcast_schedule',
+                          f"Scheduled broadcast \"{body.subject}\" to {len(recipient_ids)} "
+                          f"recipients at {iso(schedule_at)}", target_id=doc['id'])
+        return serialize({**doc})
+    doc.update({'status': 'sent', 'sent_at': n})
+    await db.broadcast_messages.insert_one(doc)
+    if recipient_ids:
+        await db.notifications.insert_many([{
+            'id': str(uuid.uuid4()), 'user_id': uid, 'title': body.subject,
+            'body': body.body, 'kind': 'broadcast', 'broadcast_id': doc['id'],
+            'read': False, 'created_at': n,
+        } for uid in recipient_ids])
+        await db.notification_deliveries.insert_many([{
+            'id': str(uuid.uuid4()), 'type': 'broadcast', 'channel': 'Push',
+            'recipient': uid, 'message': body.subject, 'status': 'Delivered',
+            'sentAt': n, 'deliveredAt': n, 'error': '', 'broadcast_id': doc['id'],
+        } for uid in recipient_ids])
+    await write_audit(admin, 'admin.broadcast_send',
+                      f"Sent broadcast \"{body.subject}\" to {len(recipient_ids)} recipients "
+                      f"(target {body.target})", target_id=doc['id'])
+    return serialize({**doc})
+
+
+@router.get('/messages')
+async def list_broadcasts(box: str = 'sent'):
+    q: Dict = {}
+    if box == 'sent':
+        q['status'] = {'$in': ['sent', 'scheduled']}
+    rows = await db.broadcast_messages.find(q, {'_id': 0}).sort('created_at', -1).to_list(200)
+    for b in rows:
+        total = b.get('recipients_count', 0)
+        read = await db.notifications.count_documents(
+            {'broadcast_id': b['id'], 'read': True}) if total else 0
+        replies = await db.broadcast_replies.count_documents({'broadcast_id': b['id']})
+        b['read_count'] = read
+        b['replies_count'] = replies
+    return rows
+
+
+@router.get('/messages/{message_id}/replies')
+async def broadcast_replies(message_id: str):
+    await _find_or_404(db.broadcast_messages, message_id, 'Broadcast')
+    return await db.broadcast_replies.find({'broadcast_id': message_id}, {'_id': 0}) \
+        .sort('created_at', 1).to_list(500)
+
+
+@router.post('/messages/replies/{reply_id}/respond')
+async def broadcast_reply_respond(reply_id: str, body: ReplyRespondIn,
+                                  admin=Depends(current_user)):
+    reply = await _find_or_404(db.broadcast_replies, reply_id, 'Reply')
+    response = {'by': admin['full_name'], 'by_id': admin['id'], 'at': now(),
+                'text': body.text}
+    await db.broadcast_replies.update_one({'id': reply_id}, {
+        '$push': {'responses': response}, '$set': {'status': 'responded'}})
+    if reply.get('user_id'):
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': reply['user_id'],
+            'title': 'Reply from the MTB admin team', 'body': body.text,
+            'kind': 'broadcast', 'read': False, 'created_at': now()})
+    await write_audit(admin, 'admin.broadcast_respond',
+                      'Responded to a broadcast reply', target_id=reply_id)
+    return {'ok': True, 'id': reply_id, 'status': 'responded'}
+
+
+@router.post('/messages/replies/{reply_id}/resolve')
+async def broadcast_reply_resolve(reply_id: str, admin=Depends(current_user)):
+    await _find_or_404(db.broadcast_replies, reply_id, 'Reply')
+    await db.broadcast_replies.update_one({'id': reply_id}, {'$set': {
+        'status': 'resolved', 'resolved_at': now(), 'resolved_by': admin['id']}})
+    await write_audit(admin, 'admin.broadcast_resolve',
+                      'Resolved a broadcast reply thread', target_id=reply_id)
+    return {'ok': True, 'id': reply_id, 'status': 'resolved'}
