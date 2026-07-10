@@ -214,6 +214,22 @@ def serialize(d):
     d.pop('security_answer_hash', None)
     return d
 
+async def _read_upload_capped(file, max_bytes: int, too_large: str = 'File is too large') -> bytes:
+    """Read an UploadFile in 1 MB chunks, aborting with 413 the moment the total
+    exceeds max_bytes — so an oversized (or maliciously unbounded) request body
+    never fully materializes in memory. Returns the bytes when within the cap."""
+    chunks: List[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(413, too_large)
+        chunks.append(chunk)
+    return b''.join(chunks)
+
 # ── Audit trail ──────────────────────────────────────────────────────────────
 async def write_audit(user, action, detail, status='success', **ctx):
     """Write a standard audit row for any mutation.
@@ -813,11 +829,9 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     ctype = (file.content_type or '').lower()
     if ctype not in ('application/pdf', 'application/octet-stream', ''):
         raise HTTPException(400, 'Upload a PDF protocol document')
-    data = await file.read()
+    data = await _read_upload_capped(file, pe.MAX_PDF_BYTES, 'Protocol PDF is too large (max 25 MB)')
     if not data:
         raise HTTPException(400, 'The uploaded file is empty')
-    if len(data) > pe.MAX_PDF_BYTES:
-        raise HTTPException(413, 'Protocol PDF is too large (max 25 MB)')
     if data[:5] != b'%PDF-':
         raise HTTPException(400, 'The uploaded file does not look like a PDF')
 
@@ -3027,11 +3041,9 @@ async def upload_file(file: UploadFile = File(...),
     if ctype and ctype not in allowed_cts:
         raise HTTPException(400, 'Content-type does not match the file extension')
 
-    data = await file.read()
+    data = await _read_upload_capped(file, FILE_MAX_BYTES, 'File is too large (max 10 MB)')
     if not data:
         raise HTTPException(400, 'The uploaded file is empty')
-    if len(data) > FILE_MAX_BYTES:
-        raise HTTPException(413, 'File is too large (max 10 MB)')
     if not any(data.startswith(m) for m in magics):
         raise HTTPException(400, 'File contents do not match the declared type')
 
