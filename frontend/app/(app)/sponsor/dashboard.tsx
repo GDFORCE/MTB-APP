@@ -7,12 +7,13 @@ import Svg, { Path, Circle } from "react-native-svg";
 import {
   Bell, Sun, FlaskConical, Users, CheckCircle2, AlertTriangle, ArrowUpRight,
   ChevronRight, FilePlus2, Share2, ClipboardCheck,
-  Home, MessageCircle, User, RefreshCcw,
+  Home, MessageCircle, User, RefreshCcw, ShieldCheck,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { colors as C, dawnGradient } from "@/src/theme/tokens";
+import { useOrgContext, consoleRouteForType } from "@/src/components/org-admin-kit";
 
 const DAWN = dawnGradient;
 // White overlays for the plum/gradient hero — same ladder the sibling dashboards use.
@@ -179,6 +180,9 @@ export default function SponsorDashboard() {
             <QuickAction icon={ClipboardCheck} bgGradient={false} bgColor={C.accent} iconColor={C.accentFg} label="Review" onPress={() => router.push("/(app)/clinical/schedule-review")} testID="open-schedule-review" />
           </View>
 
+          {/* Org-admin console entry — only for organization admins */}
+          {user?.org_admin && <OrgAdminEntry />}
+
           {/* Trials */}
           <SectionLabel label="MY TRIALS" action={
             <Pressable testID="see-all-trials" onPress={() => router.push("/(app)/clinical/my-trials")} style={{ flexDirection: "row", alignItems: "center" }}>
@@ -221,6 +225,30 @@ export default function SponsorDashboard() {
 // ── Sub-components ──────────────────────────────────────────────────────────
 function Text(props: any) {
   return <RNText {...props} style={[{ color: C.foreground }, props.style]} />;
+}
+
+// Org-admin console shortcut — resolves the org type and routes to the matching
+// console (sponsor / site / smo). Rendered only when user.org_admin is true.
+function OrgAdminEntry() {
+  const router = useRouter();
+  const { orgType, orgName, loading, error } = useOrgContext();
+  if (error) return null;
+  const route = consoleRouteForType(orgType || undefined);
+  return (
+    <>
+      <SectionLabel label="ORGANIZATION" />
+      <Pressable testID="org-admin-console" disabled={loading} onPress={() => router.push(route as any)} style={st.orgEntry}>
+        <View style={st.orgEntryIcon}><ShieldCheck size={22} color={C.primaryFg} /></View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontSize: 15, fontWeight: "700", color: C.foreground }}>Org admin console</Text>
+          <Text style={{ fontSize: 12, color: C.mutedFg, marginTop: 2 }} numberOfLines={1}>
+            {orgName ? `Manage ${orgName} — trials, team & audit` : "Manage trials, team & audit"}
+          </Text>
+        </View>
+        {loading ? <ActivityIndicator color={C.primary} /> : <ChevronRight size={20} color={C.mutedFg} />}
+      </Pressable>
+    </>
+  );
 }
 
 function LoadingCard() {
@@ -435,5 +463,7 @@ const st = StyleSheet.create({
   trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", position: "relative", shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   cardBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 9, borderRadius: 999, backgroundColor: C.surface },
+  orgEntry: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  orgEntryIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
 });

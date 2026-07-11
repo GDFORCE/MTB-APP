@@ -6,11 +6,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle } from "react-native-svg";
 import {
   Bell, Sun, Users, FileText, Stethoscope, ArrowUpRight, ChevronRight, FilePlus2, UserPlus, Send,
-  ListTodo, AlertTriangle, ClipboardCheck, Home, MessageCircle, Calendar as CalIcon, User,
+  ListTodo, AlertTriangle, ClipboardCheck, Home, MessageCircle, Calendar as CalIcon, User, ShieldCheck,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
+import { useOrgContext, consoleRouteForType } from "@/src/components/org-admin-kit";
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -132,6 +133,9 @@ export default function PiDashboard() {
             <QA icon={UserPlus} gradient label="Add Patient" onPress={() => router.push("/(app)/clinical/add-patient")} testID="qa-add-patient" />
             <QA icon={Send} bg={C.accent} iconColor={C.accentFg} label="Invite" onPress={() => router.push("/(app)/clinical/invite-patient")} testID="qa-invite" />
           </View>
+
+          {/* Org-admin console entry — only for organization admins */}
+          {user?.org_admin && <OrgAdminEntry />}
 
           {/* My Patients */}
           <Section label="MY PATIENTS" action={
@@ -278,6 +282,30 @@ function LoadingCard() {
   );
 }
 
+// Org-admin console shortcut — resolves org type and routes to the matching
+// console (site / smo / sponsor). Rendered only when user.org_admin is true.
+function OrgAdminEntry() {
+  const router = useRouter();
+  const { orgType, orgName, loading, error } = useOrgContext();
+  if (error) return null;
+  const route = consoleRouteForType(orgType || undefined);
+  return (
+    <>
+      <Section label="ORGANIZATION" />
+      <Pressable testID="org-admin-console" disabled={loading} onPress={() => router.push(route as any)} style={pi.orgEntry}>
+        <View style={pi.orgEntryIcon}><ShieldCheck size={22} color={C.primaryFg} /></View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ fontSize: 15, fontWeight: "700", color: C.fg }}>Org admin console</Text>
+          <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }} numberOfLines={1}>
+            {orgName ? `Manage ${orgName} — trials, team & audit` : "Manage trials, team & audit"}
+          </Text>
+        </View>
+        {loading ? <ActivityIndicator color={C.primary} /> : <ChevronRight size={20} color={C.muted} />}
+      </Pressable>
+    </>
+  );
+}
+
 function EmptyCard({ text }: { text: string }) {
   return (
     <View style={[pi.reviewCard, { marginBottom: 0 }]}>
@@ -373,6 +401,8 @@ const pi = StyleSheet.create({
   heroChipText: { color: C.primaryFg, fontSize: 12, fontWeight: "700" },
   statTile: { flex: 1, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 14, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  orgEntry: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  orgEntryIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   patientCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   reviewCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   actionBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
