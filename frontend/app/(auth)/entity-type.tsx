@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Check } from "lucide-react-native";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
-import { Eyebrow, Body } from "@/src/components/ui";
+import { Body } from "@/src/components/ui";
 import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
@@ -27,7 +27,6 @@ export default function EntityType() {
       <AuthHeader
         eyebrow="Step 1 of 5"
         title="I am joining as…"
-        subtitle="Choose the role that best describes you. Your registration form adapts to it."
         onBack={() => router.back()}
         step={1}
       />
@@ -57,9 +56,14 @@ export default function EntityType() {
           })}
         </View>
 
-        <Eyebrow color={colors.mutedFg} style={{ textAlign: "center", marginTop: spacing.lg, opacity: 0.7 }}>
-          Platform access is role-based
-        </Eyebrow>
+        {selected && (
+          <View style={s.selectionNote}>
+            <Text style={s.selectionNoteText}>
+              You’ll join as an administrator for{" "}
+              <Text style={s.selectionNoteEntity}>{entities.find((entity) => entity.id === selected)?.label}</Text>.
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
       <View style={{ padding: spacing.lg }}>
@@ -82,5 +86,8 @@ const s = StyleSheet.create({
   spine: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, backgroundColor: colors.accent },
   index: { width: 28, fontFamily: fonts.heading, fontSize: 18, fontVariant: ["tabular-nums"] },
   check: { width: 24, height: 24, borderRadius: 999, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  selectionNote: { minHeight: 40, marginTop: spacing.lg, paddingHorizontal: spacing.md, justifyContent: "center" },
+  selectionNoteText: { textAlign: "center", fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: colors.mutedFg },
+  selectionNoteEntity: { fontFamily: fonts.bold, color: colors.foreground },
   cta: { paddingVertical: 15, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
 });

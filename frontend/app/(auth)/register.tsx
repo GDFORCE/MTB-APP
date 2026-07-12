@@ -181,6 +181,7 @@ export default function Register() {
   const variant = variantFor(role);
   const isPatient = variant === "patient";
   const orgNoun = variant === "site" ? "site" : variant === "smo" ? "SMO" : "organization";
+  const entityLabel = labelMap[role as string] || "Sponsor";
 
   const [fld, setFld] = useState<Record<string, string>>(() => {
     const base = initFields(variant);
@@ -349,9 +350,19 @@ export default function Register() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <AuthHeader eyebrow={`Step 2 of 5 · ${labelMap[role as string] || "Sponsor"}`} title="Tell us about you" onBack={() => router.back()} step={2} />
+        <AuthHeader eyebrow="Step 2 of 5" title="Tell us about you" onBack={() => router.back()} step={2} />
 
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <Rise delay={150}>
+            <View style={f.entityBadge}>
+              <View style={f.entityIcon}><Building2 size={18} color={colors.accent} /></View>
+              <View>
+                <Text style={f.entityKicker}>Registering as</Text>
+                <Text style={f.entityLabel}>{entityLabel}</Text>
+              </View>
+            </View>
+          </Rise>
+
           <Rise delay={200}>
             {/* Common identity fields */}
             <Field label="Full Name" required><Input value={fld.fullName} onChangeText={up("fullName")} /></Field>
@@ -415,7 +426,7 @@ export default function Register() {
 
                 {variant === "site" && (
                   <>
-                    <Field label="Hospital Type" required><SegmentToggle options={["Private", "Government"]} value={fld.hospitalType} onChange={up("hospitalType")} /></Field>
+                    <Field label="Hospital Type" required><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
                     <Field label="Role" required><SegmentToggle options={["PI", "Research Team"]} value={fld.role} onChange={up("role")} /></Field>
                     {fld.role === "PI" && <Field label="Department"><Input value={fld.department} onChangeText={up("department")} placeholder="e.g. Oncology, Cardiology" /></Field>}
                   </>
@@ -594,6 +605,10 @@ export default function Register() {
 }
 
 const f = StyleSheet.create({
+  entityBadge: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: colors.accent + "40", backgroundColor: colors.secondary + "88", borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: 12, marginBottom: spacing.md },
+  entityIcon: { width: 36, height: 36, borderRadius: 999, backgroundColor: colors.accent + "1F", alignItems: "center", justifyContent: "center" },
+  entityKicker: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", color: colors.mutedFg },
+  entityLabel: { marginTop: 1, fontFamily: fonts.heading, fontSize: 17, color: colors.foreground },
   label: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, marginBottom: 6 },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },
   prefix: { paddingHorizontal: 14, justifyContent: "center", borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
