@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { AxiosError } from "axios";
-import { Ticket, Building2, BadgeCheck, ArrowRight, Mail, AlertCircle, Clock, XCircle, CheckCircle2 } from "lucide-react-native";
+import { Ticket, Building2, BadgeCheck, ArrowRight, BriefcaseBusiness, LockKeyhole, Mail, Pencil, Phone, ShieldCheck, UserRound, AlertCircle, Clock, XCircle, CheckCircle2 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
@@ -19,6 +19,11 @@ interface ResolvedInvite {
   site: string;
   role: string;
   inviter: string;
+  admin_name?: string;
+  org_name?: string;
+  full_name?: string;
+  designation?: string;
+  phone?: string;
   email: string;
   status: string; // pending | expired | cancelled | accepted
   expires_at: string;
@@ -29,6 +34,13 @@ const ROLE_LABELS: Record<string, string> = {
   pi: "Principal Investigator", crc: "Research Coordinator (CRC)", patient: "Patient",
 };
 const roleLabel = (r?: string) => (r ? ROLE_LABELS[r] || r : "Team member");
+const roleCode = (value: string, fallback = "patient") => {
+  const normalized = value.trim().toLowerCase();
+  const match = Object.entries(ROLE_LABELS).find(([code, label]) =>
+    code.toLowerCase() === normalized || label.toLowerCase() === normalized
+  );
+  return match?.[0] || fallback;
+};
 
 // UI copy for a resolved-but-not-acceptable invite, keyed by effective status.
 const STATE_INFO: Record<string, { icon: React.ReactNode; title: string; note: string; tone: string }> = {
@@ -42,6 +54,8 @@ export default function JoinInvite() {
   const [code, setCode] = useState("");
   const [phase, setPhase] = useState<"idle" | "loading" | "resolved" | "error">("idle");
   const [invite, setInvite] = useState<ResolvedInvite | null>(null);
+  const [draft, setDraft] = useState({ fullName: "", designation: "", role: "", phone: "" });
+  const [editingField, setEditingField] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [accepting, setAccepting] = useState(false);
 
@@ -64,6 +78,12 @@ export default function JoinInvite() {
     try {
       const res = await api.get<ResolvedInvite>(`/invitations/${encodeURIComponent(token)}`);
       setInvite(res.data);
+      setDraft({
+        fullName: res.data.full_name || "",
+        designation: res.data.designation || "",
+        role: roleLabel(res.data.role),
+        phone: res.data.phone || "",
+      });
       setPhase("resolved");
     } catch (e) {
       const status = (e as AxiosError)?.response?.status;
@@ -81,8 +101,14 @@ export default function JoinInvite() {
     const token = code.trim();
     setAccepting(true);
     try {
-      const res = await api.post<{ ok: boolean; status: string; email: string; role: string; org: string }>(
-        `/invitations/${encodeURIComponent(token)}/accept`
+      const res = await api.post<{ ok: boolean; status: string; email: string; role: string; org: string; full_name?: string; designation?: string; phone?: string }>(
+        `/invitations/${encodeURIComponent(token)}/accept`,
+        {
+          full_name: draft.fullName.trim(),
+          designation: roleCode(draft.role, invite.role) === "patient" ? "" : draft.designation.trim(),
+          role: roleCode(draft.role, invite.role),
+          phone: draft.phone.trim(),
+        },
       );
       router.push({
         pathname: "/(auth)/register",
@@ -90,6 +116,9 @@ export default function JoinInvite() {
           role: res.data?.role || invite.role || "patient",
           org: res.data?.org || invite.org || "",
           email: res.data?.email || invite.email || "",
+          fullName: res.data?.full_name || draft.fullName,
+          designation: res.data?.designation || draft.designation,
+          phone: res.data?.phone || draft.phone,
         },
       });
     } catch (e) {
@@ -106,6 +135,8 @@ export default function JoinInvite() {
   };
 
   const stateInfo = phase === "resolved" && invite && invite.status !== "pending" ? STATE_INFO[invite.status] : null;
+  const isPatientInvite = draft.role.trim().toLowerCase() === "patient";
+  const updateDraft = (key: keyof typeof draft) => (value: string) => setDraft((current) => ({ ...current, [key]: value }));
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
@@ -178,22 +209,35 @@ export default function JoinInvite() {
               <LinearGradient colors={[colors.secondary + "66", colors.card]} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={s.inviteCard}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
                   <BadgeCheck size={16} color={colors.accent} />
-                  <Eyebrow color={colors.accent}>You've been invited</Eyebrow>
+                  <Eyebrow color={colors.accent}>{"You've been invited"}</Eyebrow>
                 </View>
-                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
-                  <View style={s.orgIcon}><Building2 size={20} color={colors.primary} /></View>
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 9 }}>
+                  <Building2 size={20} color={colors.primary} style={{ marginTop: 2 }} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontFamily: fonts.heading, fontSize: 19, color: colors.primary }}>{invite.org || "Your organization"}</Text>
                     {invite.site ? <Small>{invite.site}</Small> : null}
                   </View>
                 </View>
-                <View style={s.dl}>
-                  <Row label="Your role" value={roleLabel(invite.role)} />
-                  {invite.inviter ? <Row label="Invited by" value={invite.inviter} /> : null}
-                  {invite.email ? <Row label="Account email" value={invite.email} icon={<Mail size={14} color={colors.mutedFg} />} /> : null}
+
+                <View style={s.detailsSection}>
+                  <Eyebrow color={colors.mutedFg}>Your details</Eyebrow>
+                  <View style={s.fieldGrid}>
+                    <EditableField label="User name" icon={UserRound} value={draft.fullName} onChangeText={updateDraft("fullName")} editing={editingField === "fullName"} onEdit={() => setEditingField("fullName")} onDone={() => setEditingField(null)} />
+                    {!isPatientInvite ? <EditableField label="Designation" icon={BriefcaseBusiness} value={draft.designation} onChangeText={updateDraft("designation")} editing={editingField === "designation"} onEdit={() => setEditingField("designation")} onDone={() => setEditingField(null)} /> : null}
+                    <EditableField label="Role" icon={ShieldCheck} value={draft.role} onChangeText={updateDraft("role")} editing={editingField === "role"} onEdit={() => setEditingField("role")} onDone={() => setEditingField(null)} />
+                    <EditableField label="Phone number" icon={Phone} value={draft.phone} onChangeText={updateDraft("phone")} keyboardType="phone-pad" editing={editingField === "phone"} onEdit={() => setEditingField("phone")} onDone={() => setEditingField(null)} />
+                    <EditableField label="Email ID" icon={Mail} value={invite.email} editable={false} />
+                  </View>
+                  <Small style={s.editHint}>Tap a value to edit it. Email ID is fixed by the invitation.</Small>
+                </View>
+
+                <View style={s.inviterCard}>
+                  <Eyebrow color={colors.accent}>Invited by</Eyebrow>
+                  <Row label="Organization" value={invite.org_name || invite.org || "Your organization"} />
+                  <Row label="Admin name" value={invite.admin_name || invite.inviter || "Organization admin"} />
                 </View>
                 <View style={s.footNote}>
-                  <Small style={{ fontSize: 12 }}>Your role is set by your admin and can't be changed here.</Small>
+                  <Small style={{ fontSize: 12 }}>Review your details before accepting the invitation.</Small>
                 </View>
               </LinearGradient>
             </Rise>
@@ -224,6 +268,55 @@ export default function JoinInvite() {
   );
 }
 
+function EditableField({
+  label,
+  icon: Icon,
+  value,
+  onChangeText,
+  editable = true,
+  keyboardType = "default",
+  editing = false,
+  onEdit,
+  onDone,
+}: {
+  label: string;
+  icon: typeof UserRound;
+  value: string;
+  onChangeText?: (value: string) => void;
+  editable?: boolean;
+  keyboardType?: "default" | "phone-pad";
+  editing?: boolean;
+  onEdit?: () => void;
+  onDone?: () => void;
+}) {
+  return (
+    <View style={s.editField}>
+      <View style={s.fieldLabel}>
+        <Icon size={13} color={colors.mutedFg} />
+        <Small style={{ fontSize: 11 }}>{label}</Small>
+      </View>
+      {editing && editable ? (
+        <TextInput
+          autoFocus
+          value={value}
+          onChangeText={onChangeText}
+          onBlur={onDone}
+          onSubmitEditing={onDone}
+          keyboardType={keyboardType}
+          placeholder={`Enter ${label.toLowerCase()}`}
+          placeholderTextColor={colors.mutedFg + "77"}
+          style={s.detailInput}
+        />
+      ) : (
+        <Pressable onPress={editable ? onEdit : undefined} accessibilityRole={editable ? "button" : "text"} accessibilityLabel={editable ? `Edit ${label}` : `${label}, not editable`} style={s.detailValue}>
+          <Text numberOfLines={1} style={[s.detailValueText, !editable && { color: colors.mutedFg }]}>{value || "Add details"}</Text>
+          {editable ? <Pencil size={13} color={colors.accent} /> : <LockKeyhole size={13} color={colors.mutedFg} />}
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 function Row({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -244,8 +337,15 @@ const s = StyleSheet.create({
   errorCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginTop: spacing.lg, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "12", padding: spacing.md },
   stateCard: { marginTop: spacing.lg, borderRadius: radii.xl, borderWidth: 1, padding: spacing.md + 4 },
   inviteCard: { marginTop: spacing.lg, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.primary + "40", padding: spacing.md + 4, overflow: "hidden" },
-  orgIcon: { width: 44, height: 44, borderRadius: radii.md, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
-  dl: { marginTop: 16, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 16, gap: 10 },
+  detailsSection: { marginTop: 16, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 14, gap: 10 },
+  fieldGrid: { borderTopWidth: 1, borderTopColor: colors.border },
+  editField: { minHeight: 48, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  fieldLabel: { width: 108, flexDirection: "row", alignItems: "center", gap: 5 },
+  detailValue: { flex: 1, minHeight: 30, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 7 },
+  detailValueText: { flexShrink: 1, textAlign: "right", color: colors.foreground, fontFamily: fonts.semibold, fontSize: 12 },
+  detailInput: { flex: 1, minHeight: 34, borderBottomWidth: 2, borderBottomColor: colors.accent, paddingHorizontal: 0, paddingVertical: 5, textAlign: "right", color: colors.foreground, fontFamily: fonts.semibold, fontSize: 12 },
+  editHint: { fontSize: 11, lineHeight: 16 },
+  inviterCard: { marginTop: 14, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background + "99", padding: 12, gap: 8 },
   footNote: { marginTop: 16, marginHorizontal: -(spacing.md + 4), marginBottom: -(spacing.md + 4), paddingHorizontal: spacing.md + 4, paddingVertical: 10, backgroundColor: colors.surface + "99", borderTopWidth: 1, borderTopColor: colors.border },
   footer: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
   cta: { flexDirection: "row", gap: 8, paddingVertical: 15, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },

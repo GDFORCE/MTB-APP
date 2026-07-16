@@ -18,7 +18,7 @@ import requests
 
 log = logging.getLogger("otp")
 
-OTP_TTL_MIN = int(os.environ.get("OTP_TTL_MIN", "10"))
+OTP_TTL_MIN = int(os.environ.get("OTP_TTL_MIN", "2"))
 
 
 class OTPConfigError(RuntimeError):

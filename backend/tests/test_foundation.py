@@ -161,6 +161,24 @@ class TestOrganizations:
             assert len(matches) == 1
         run(flow())
 
+    def test_platform_contact_is_opt_in(self, pi):
+        async def flow():
+            async with make_client() as cli:
+                plain = await cli.get('/api/organizations', params={'search': ORG_HOSPITAL})
+                detailed = await cli.get('/api/organizations', params={
+                    'search': ORG_HOSPITAL,
+                    'include_platform_contact': 'true',
+                })
+            assert plain.status_code == 200, plain.text
+            assert detailed.status_code == 200, detailed.text
+            assert 'platform_contact' not in plain.json()[0]
+            contact = detailed.json()[0]['platform_contact']
+            assert contact['name']
+            assert contact['email']
+            assert contact['phone']
+            assert contact['designation']
+        run(flow())
+
 
 # ── Admin self-registration is blocked ───────────────────────────────────────
 class TestAdminSelfRegistrationBlocked:
@@ -271,7 +289,10 @@ class TestInvitationLifecycle:
                 r = await cli.get(f"/api/invitations/{inv['token']}")
             assert r.status_code == 200, r.text
             j = r.json()
-            assert set(j) >= {'org', 'site', 'role', 'inviter', 'email', 'status', 'expires_at'}
+            assert set(j) >= {
+                'org', 'site', 'role', 'inviter', 'email', 'status', 'expires_at',
+                'full_name', 'designation', 'phone', 'org_name', 'admin_name',
+            }
             assert j['org'] == ORG_HOSPITAL
             assert j['role'] == 'crc'
             assert j['inviter'] == pi_user['full_name']

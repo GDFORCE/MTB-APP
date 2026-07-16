@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, TextInput, StyleSheet, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ArrowLeft } from "lucide-react-native";
+import { ArrowLeft, HelpCircle } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Small, Button } from "@/src/components/ui";
 import { api } from "@/src/api/client";
@@ -48,6 +48,15 @@ export default function ForgotPassword() {
               <TextInput testID="forgot-email" placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" style={s.input} />
               {err ? <Small color={colors.destructive}>{err}</Small> : null}
               <Button testID="forgot-send-otp" onPress={sendOtp} loading={loading}>Send OTP</Button>
+              <Pressable
+                testID="forgot-contact-support"
+                onPress={() => router.push("/(auth)/help-support")}
+                accessibilityRole="link"
+                style={s.supportLink}
+              >
+                <HelpCircle size={15} color={colors.mutedFg} />
+                <Small>Need help? Contact Support</Small>
+              </Pressable>
             </>
           ) : (
             <>
@@ -62,4 +71,7 @@ export default function ForgotPassword() {
     </SafeAreaView>
   );
 }
-const s = StyleSheet.create({ input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground } });
+const s = StyleSheet.create({
+  input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground },
+  supportLink: { marginTop: spacing.sm, paddingVertical: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+});

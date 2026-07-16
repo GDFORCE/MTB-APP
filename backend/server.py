@@ -432,7 +432,7 @@ async def reset(body: ResetIn):
 
 # ── Registration with OTP verification ───────────────────────────────────────
 OTP_MAX_VERIFY_ATTEMPTS = 6      # wrong-code attempts before the pending is locked
-OTP_MAX_SENDS = 5                # total sends (initial + resends) per registration
+OTP_MAX_RESENDS = 3              # resend attempts allowed per channel
 OTP_RESEND_COOLDOWN_SEC = 30     # min gap between sends for one registration
 OTP_RATE_LIMIT = 5               # sends allowed per identifier (phone/email) …
 OTP_RATE_WINDOW_SEC = 3600       # … within this rolling window
@@ -589,6 +589,7 @@ async def register_start(body: RegisterStartIn):
         'phone_verified': False,
         'attempts': 0,
         'send_count': len(channels),
+        'resend_counts': {ch: 0 for ch in channels},
         'last_sent_at': now(),
         'created_at': now(),
         'expires_at': now() + timedelta(minutes=otp_service.OTP_TTL_MIN),
@@ -682,7 +683,8 @@ async def register_resend(body: RegisterResendIn):
     if last_sent and (now() - last_sent).total_seconds() < OTP_RESEND_COOLDOWN_SEC:
         wait = OTP_RESEND_COOLDOWN_SEC - int((now() - last_sent).total_seconds())
         raise HTTPException(429, f'Please wait {wait}s before requesting another code.')
-    if pending.get('send_count', 0) >= OTP_MAX_SENDS:
+    resend_counts = pending.get('resend_counts') or {}
+    if int(resend_counts.get(body.channel, 0)) >= OTP_MAX_RESENDS:
         raise HTTPException(429, 'Resend limit reached. Please restart registration.')
 
     target = pending['email'] if body.channel == 'email' else pending['phone']
@@ -695,9 +697,11 @@ async def register_resend(body: RegisterResendIn):
         {'$set': {f'{body.channel}_otp_hash': pwd_ctx.hash(code),
                   'last_sent_at': now(),
                   'expires_at': now() + timedelta(minutes=otp_service.OTP_TTL_MIN)},
-         '$inc': {'send_count': 1}},
+         '$inc': {'send_count': 1, f'resend_counts.{body.channel}': 1}},
     )
-    return {'ok': True, 'resend_cooldown': OTP_RESEND_COOLDOWN_SEC}
+    return {'ok': True, 'resend_cooldown': OTP_RESEND_COOLDOWN_SEC,
+            'resend_count': int(resend_counts.get(body.channel, 0)) + 1,
+            'resend_limit': OTP_MAX_RESENDS}
 
 # ── Contact change (email / phone) with OTP verification ─────────────────────
 # Reuses the registration OTP machinery (_deliver_otp / _otp_matches /
@@ -1437,14 +1441,57 @@ async def get_patient_visits(patient_id: str, user=Depends(require_roles('sponso
 
 # ── Organizations directory ─────────────────────────────────────────────────
 @api.get('/organizations')
-async def list_organizations(type: Optional[str] = None, search: Optional[str] = None):
-    """Public directory of known organizations (used by the register screen)."""
+async def list_organizations(type: Optional[str] = None, search: Optional[str] = None,
+                             include_platform_contact: bool = False):
+    """Public directory of known organizations (used by the register screen).
+
+    Platform-contact details are opt-in so live typeahead searches do not return
+    user contact data. The registration Continue action requests them only after
+    an exact organization match has been entered.
+    """
     q: Dict = {}
     if type:
         q['type'] = type
     if search and search.strip():
         q['name'] = {'$regex': re.escape(search.strip()), '$options': 'i'}
-    return await db.organizations.find(q, {'_id': 0}).sort('name', 1).to_list(200)
+    organizations = await db.organizations.find(q, {'_id': 0}).sort('name', 1).to_list(200)
+    if not include_platform_contact or not organizations:
+        return organizations
+
+    names = [org['name'] for org in organizations]
+    representatives = await db.users.find(
+        {'organization': {'$in': names}, 'role': {'$ne': 'patient'}},
+        {'_id': 0, 'organization': 1, 'full_name': 1, 'email': 1, 'phone': 1,
+         'role': 1, 'org_admin': 1, 'profile.designation': 1},
+    ).sort([('org_admin', -1), ('created_at', 1)]).to_list(1000)
+
+    contacts: Dict[str, dict] = {}
+    for user in representatives:
+        organization = user.get('organization')
+        if not organization or organization in contacts:
+            continue
+        profile = user.get('profile') or {}
+        contacts[organization] = {
+            'name': user.get('full_name') or 'Organization Admin',
+            'designation': profile.get('designation') or (
+                'Platform Contact Admin' if user.get('org_admin') else 'Organization Representative'
+            ),
+            'email': user.get('email') or '',
+            'phone': user.get('phone') or '',
+        }
+
+    for org in organizations:
+        contact = contacts.get(org['name'])
+        if contact:
+            org['platform_contact'] = contact
+        elif org.get('email') or org.get('contact'):
+            org['platform_contact'] = {
+                'name': 'Organization Admin',
+                'designation': 'Platform Contact Admin',
+                'email': org.get('email') or '',
+                'phone': org.get('contact') or '',
+            }
+    return organizations
 
 # ── Notifications ───────────────────────────────────────────────────────────
 @api.get('/notifications')
@@ -2553,6 +2600,7 @@ class InvitationIn(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
     full_name: Optional[str] = ''
+    designation: Optional[str] = ''
     role: Optional[Role] = 'patient'
     trial_id: Optional[str] = None
     organization: Optional[str] = None   # defaults to the inviter's org
@@ -2575,7 +2623,8 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
     doc = {
         'id': str(uuid.uuid4()), 'token': token,
         'email': (body.email or '').lower(), 'phone': body.phone or '',
-        'full_name': body.full_name or '', 'role': body.role or 'patient',
+        'full_name': body.full_name or '', 'designation': body.designation or '',
+        'role': body.role or 'patient',
         'trial_id': body.trial_id, 'invited_by': user['id'],
         'org': (body.organization or user.get('organization') or '').strip(),
         'site': (body.site or '').strip(),
@@ -2624,16 +2673,30 @@ async def resolve_invitation(token: str):
     inv = await db.invitations.find_one({'token': token}, {'_id': 0})
     if not inv:
         raise HTTPException(404, 'Invitation not found')
-    inviter = await db.users.find_one({'id': inv.get('invited_by')}, {'_id': 0, 'full_name': 1})
+    inviter = await db.users.find_one(
+        {'id': inv.get('invited_by')},
+        {'_id': 0, 'full_name': 1, 'organization': 1},
+    )
     return {
         'org': inv.get('org', ''), 'site': inv.get('site', ''),
         'role': inv.get('role'), 'inviter': (inviter or {}).get('full_name', ''),
+        'admin_name': (inviter or {}).get('full_name', ''),
+        'org_name': inv.get('org') or (inviter or {}).get('organization', ''),
+        'full_name': inv.get('full_name', ''),
+        'designation': inv.get('designation', ''),
+        'phone': inv.get('phone', ''),
         'email': inv.get('email', ''), 'status': _invitation_status(inv),
         'expires_at': iso(inv.get('expires_at')),
     }
 
+class InvitationAcceptIn(BaseModel):
+    full_name: Optional[str] = ''
+    designation: Optional[str] = ''
+    phone: Optional[str] = ''
+    role: Optional[Role] = None
+
 @api.post('/invitations/{token}/accept')
-async def accept_invitation(token: str):
+async def accept_invitation(token: str, body: Optional[InvitationAcceptIn] = None):
     """Public: mark an invitation accepted (the invitee then registers/signs in)."""
     inv = await db.invitations.find_one({'token': token})
     if not inv:
@@ -2641,12 +2704,23 @@ async def accept_invitation(token: str):
     st = _invitation_status(inv)
     if st != 'pending':
         raise HTTPException(400, f'This invitation is {st} and can no longer be accepted')
-    await db.invitations.update_one({'id': inv['id']}, {'$set': {'status': 'accepted', 'accepted_at': now()}})
+    accepted_details = {
+        'full_name': (body.full_name if body else inv.get('full_name')) or '',
+        'designation': (body.designation if body else inv.get('designation')) or '',
+        'phone': (body.phone if body else inv.get('phone')) or '',
+        'role': (body.role if body and body.role else inv.get('role')) or 'patient',
+    }
+    await db.invitations.update_one(
+        {'id': inv['id']},
+        {'$set': {'status': 'accepted', 'accepted_at': now(), **accepted_details}},
+    )
     await write_audit(None, 'invitation.accept',
                       f"Invitation for {inv.get('email') or inv.get('phone')} accepted",
                       target_id=inv['id'])
-    return {'ok': True, 'status': 'accepted', 'email': inv.get('email', ''),
-            'role': inv.get('role'), 'org': inv.get('org', '')}
+    return {
+        'ok': True, 'status': 'accepted', 'email': inv.get('email', ''),
+        'org': inv.get('org', ''), **accepted_details,
+    }
 
 @api.post('/invitations/{invitation_id}/resend')
 async def resend_invitation(invitation_id: str, user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))):

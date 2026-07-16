@@ -35,6 +35,7 @@ export default function SetPassword() {
   const strength = strengthPct >= 80 ? "Strong" : strengthPct >= 60 ? "Medium" : "Weak";
   const strengthColor = strength === "Strong" ? colors.success : strength === "Medium" ? colors.warning : colors.destructive;
   const passwordsMatch = password.length > 0 && password === confirm;
+  const showMismatch = confirm.length > 0 && password !== confirm;
   const canContinue = metRules === RULES.length && passwordsMatch && !loading;
 
   // Strength bar fills itself as rules are met (design's animate-fill-bar).
@@ -82,16 +83,30 @@ export default function SetPassword() {
 
           <Rise delay={260}>
             <Text style={[s.label, { marginTop: spacing.md }]}>Confirm Password <Text style={{ color: colors.accent }}>*</Text></Text>
-            <View style={s.inputRow}>
-              <TextInput value={confirm} onChangeText={setConfirm} secureTextEntry={!showConfirm} placeholder="Re-enter your password" placeholderTextColor={colors.mutedFg + "99"} autoCapitalize="none" style={s.input} />
+            <View style={[s.inputRow, showMismatch && s.inputRowError]}>
+              <TextInput
+                value={confirm}
+                onChangeText={setConfirm}
+                secureTextEntry={!showConfirm}
+                placeholder="Re-enter your password"
+                placeholderTextColor={colors.mutedFg + "99"}
+                autoCapitalize="none"
+                style={s.input}
+                accessibilityHint={showMismatch ? "Passwords do not match" : undefined}
+              />
               <Pressable onPress={() => setShowConfirm((v) => !v)} hitSlop={8} style={s.eye}>{showConfirm ? <EyeOff size={18} color={colors.mutedFg} /> : <Eye size={18} color={colors.mutedFg} />}</Pressable>
             </View>
-            {passwordsMatch && (
+            {showMismatch ? (
+              <View style={s.validationRow} accessibilityLiveRegion="polite">
+                <X size={16} color={colors.destructive} strokeWidth={2.5} />
+                <Small color={colors.destructive}>Passwords do not match</Small>
+              </View>
+            ) : passwordsMatch ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
                 <Check size={16} color={colors.success} strokeWidth={3} />
                 <Small color={colors.success}>Passwords match</Small>
               </View>
-            )}
+            ) : null}
           </Rise>
 
           {/* Strength + rules */}
@@ -136,8 +151,10 @@ export default function SetPassword() {
 const s = StyleSheet.create({
   label: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, marginBottom: 6 },
   inputRow: { flexDirection: "row", alignItems: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14 },
+  inputRowError: { borderColor: colors.destructive, backgroundColor: colors.destructive + "08" },
   input: { flex: 1, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },
   eye: { paddingLeft: 8, paddingVertical: 8 },
+  validationRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
   strengthCard: { marginTop: spacing.lg, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: spacing.md },
   strengthTrack: { height: 6, borderRadius: 3, backgroundColor: colors.surface, overflow: "hidden", marginBottom: 16 },
   rulesGrid: { flexDirection: "row", flexWrap: "wrap" },
