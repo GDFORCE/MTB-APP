@@ -1,160 +1,1121 @@
-import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, ActivityIndicator } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
-import { Calendar as CalIcon, Users, FlaskConical, Share2, FileText, Pencil, Upload, Download } from "lucide-react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Animated,
+  Easing,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import * as DocumentPicker from "expo-document-picker";
-import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
-import { Eyebrow, H1, Body, Small, Card, Button } from "@/src/components/ui";
-import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { LinearGradient } from "expo-linear-gradient";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  Download,
+  FileClock,
+  FileText,
+  Mail,
+  MapPin,
+  Pencil,
+  Phone,
+  RefreshCw,
+  Share2,
+  Target,
+  Upload,
+  UserPlus,
+  UserRoundCheck,
+  Users,
+  X,
+} from "lucide-react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
-import { uploadFile, downloadFile, UploadedFile } from "@/src/lib/upload";
+import { useAuth } from "@/src/auth/AuthContext";
+import type {
+  RecruitmentFunnel,
+  SponsorTrialSubject,
+  SponsorTrialTeamMember,
+} from "@/src/features/sponsor/types";
+import { downloadFile, uploadFile, type UploadedFile } from "@/src/lib/upload";
+import { colors, dawnGradient, fonts, shadows } from "@/src/theme/tokens";
+
+type Trial = {
+  id: string;
+  protocol_id: string;
+  title: string;
+  phase?: string;
+  condition?: string;
+  drug?: string;
+  status?: string;
+  description?: string;
+  sponsor_name?: string;
+  duration?: string;
+  target_enrollment?: number;
+  recruitment_status?: string;
+  ctri_number?: string;
+  created_by?: string;
+  created_by_name?: string;
+  created_by_role?: string;
+  created_at?: string;
+  updated_at?: string;
+  updated_by_name?: string;
+  visits?: VisitTemplate[];
+};
+
+type VisitTemplate = {
+  id: string;
+  visit_number?: number;
+  name: string;
+  day_offset?: number;
+  window_days?: number;
+};
+
+type SubjectVisit = {
+  id: string;
+  visit_number?: number;
+  name: string;
+  status: string;
+  scheduled_date?: string;
+  completed_at?: string;
+};
+
+type RecruitmentPayload = {
+  recruitment: RecruitmentFunnel;
+  sites: {
+    id: string;
+    name: string;
+    target_enrollment?: number;
+    enrolled: number;
+    enrollment_pct: number;
+    department?: string;
+    pi_name?: string;
+    pi_email?: string;
+    pi_phone?: string;
+    recruitment?: RecruitmentFunnel;
+  }[];
+};
+
+type Version = {
+  id: string;
+  version?: number;
+  version_note?: string;
+  created_at?: string;
+  created_by_name?: string;
+  document_name?: string;
+};
+
+type Feedback = { tone: "success" | "error"; message: string } | null;
+
+const EMPTY_FUNNEL: RecruitmentFunnel = {
+  screened: 0,
+  screen_fail: 0,
+  randomized: 0,
+  active: 0,
+  withdrawn: 0,
+  dropout: 0,
+  follow_up: 0,
+  completed: 0,
+};
+
+const FUNNEL: { key: keyof RecruitmentFunnel; label: string; tone?: string }[] = [
+  { key: "screened", label: "Screened" },
+  { key: "screen_fail", label: "Screen fails", tone: colors.destructive },
+  { key: "randomized", label: "Randomized" },
+  { key: "active", label: "Active", tone: colors.success },
+  { key: "follow_up", label: "Follow-up", tone: colors.info },
+  { key: "completed", label: "Completed", tone: colors.success },
+  { key: "withdrawn", label: "Withdrawn", tone: colors.warning },
+  { key: "dropout", label: "Dropout", tone: colors.warning },
+];
+
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => mounted && setReduced(value))
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduced);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+  return reduced;
+}
+
+function dateLabel(value?: string) {
+  if (!value) return "Not recorded";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function initials(value?: string) {
+  return (value || "").split(/\s+/).filter(Boolean).slice(0, 2)
+    .map((part) => part[0]?.toUpperCase()).join("") || "—";
+}
 
 export default function TrialSummary() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const [trial, setTrial] = useState<any | null>(null);
-  const [visits, setVisits] = useState<any[]>([]);
-  const [patientCount, setPatientCount] = useState(0);
-
-  // Trial documents. 5.1 exposes no trial-file LIST endpoint, so this is an
-  // in-screen session list of docs uploaded during this visit to the screen.
-  const [docs, setDocs] = useState<UploadedFile[]>([]);
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { user } = useAuth();
+  const reducedMotion = useReducedMotion();
+  const [trial, setTrial] = useState<Trial | null>(null);
+  const [recruitment, setRecruitment] = useState<RecruitmentPayload>({
+    recruitment: EMPTY_FUNNEL,
+    sites: [],
+  });
+  const [subjects, setSubjects] = useState<SponsorTrialSubject[]>([]);
+  const [team, setTeam] = useState<SponsorTrialTeamMember[]>([]);
+  const [documents, setDocuments] = useState<UploadedFile[]>([]);
+  const [versions, setVersions] = useState<Version[]>([]);
+  const [subjectVisits, setSubjectVisits] = useState<Record<string, SubjectVisit[]>>({});
+  const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
+  const [loadingSubject, setLoadingSubject] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [docErr, setDocErr] = useState("");
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const [showEdit, setShowEdit] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    title: "",
+    phase: "",
+    condition: "",
+    drug: "",
+    duration: "",
+    ctri_number: "",
+    recruitment_status: "",
+    description: "",
+  });
+  const feedbackAnim = useRef(new Animated.Value(0)).current;
 
-  const uploadDoc = async () => {
-    if (uploading || !trial?.id) return;
-    setDocErr("");
-    let asset: DocumentPicker.DocumentPickerAsset;
+  const showFeedback = useCallback((next: Exclude<Feedback, null>) => {
+    setFeedback(next);
+    feedbackAnim.setValue(reducedMotion ? 1 : 0);
+    if (!reducedMotion) {
+      Animated.spring(feedbackAnim, {
+        toValue: 1,
+        damping: 16,
+        stiffness: 170,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [feedbackAnim, reducedMotion]);
+
+  const load = useCallback(async () => {
+    if (!id) {
+      setError("This trial link is missing its record ID.");
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    setError("");
     try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ["application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
-        copyToCacheDirectory: true, multiple: false,
+      const [trialRes, recruitmentRes, subjectsRes, teamRes, docsRes, versionsRes] =
+        await Promise.all([
+          api.get(`/trials/${id}`),
+          api.get(`/trials/${id}/recruitment`),
+          api.get(`/trials/${id}/subjects`),
+          api.get(`/trials/${id}/team`),
+          api.get(`/trials/${id}/documents`),
+          api.get(`/trials/${id}/versions`),
+        ]);
+      setTrial(trialRes.data);
+      setRecruitment(recruitmentRes.data);
+      setSubjects(Array.isArray(subjectsRes.data) ? subjectsRes.data : []);
+      setTeam(Array.isArray(teamRes.data) ? teamRes.data : []);
+      setDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
+      setVersions(Array.isArray(versionsRes.data) ? versionsRes.data : []);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Couldn't load this trial summary.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const enrolled = subjects.length;
+  const target = Number(trial?.target_enrollment || 0);
+  const enrollmentPct = target > 0 ? Math.min(100, Math.round((enrolled / target) * 100)) : 0;
+  const protocolDocument = useMemo(
+    () => documents.find((document) => /protocol/i.test(document.name)) || documents[0],
+    [documents],
+  );
+  const siteNames = recruitment.sites.map((site) => site.name).filter(Boolean);
+  const primarySite = recruitment.sites[0];
+  const assignedPi = team.find((member) => member.role === "pi");
+  const assignedCrc = team.find((member) => member.role === "crc");
+  const canAddPatient = user?.role === "pi" || user?.role === "crc";
+  const canEdit = user?.role === "pi" && trial?.created_by === user.id;
+  const canShare = user?.role === "pi";
+  const canUpload = user?.role === "pi" || user?.role === "crc";
+
+  const openSubject = async (subject: SponsorTrialSubject) => {
+    if (expandedSubject === subject.id) {
+      setExpandedSubject(null);
+      return;
+    }
+    setExpandedSubject(subject.id);
+    if (subjectVisits[subject.id] || !trial) return;
+    setLoadingSubject(subject.id);
+    try {
+      const response = await api.get(
+        `/trials/${trial.id}/subjects/${encodeURIComponent(subject.id)}/visits`,
+      );
+      setSubjectVisits((current) => ({
+        ...current,
+        [subject.id]: Array.isArray(response.data) ? response.data : [],
+      }));
+    } catch (e: any) {
+      showFeedback({
+        tone: "error",
+        message: e?.response?.data?.detail || "Couldn't load this subject's visits.",
       });
-      if (res.canceled || !res.assets?.length) return;
-      asset = res.assets[0];
-    } catch { setDocErr("Couldn't open the file picker."); return; }
-    setUploading(true);
+      setExpandedSubject(null);
+    } finally {
+      setLoadingSubject(null);
+    }
+  };
+
+  const uploadDocument = async () => {
+    if (!trial || uploading || !canUpload) return;
     try {
-      const uploaded = await uploadFile(
-        { uri: asset.uri, name: asset.name || "document", mimeType: asset.mimeType, file: (asset as any).file },
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          "application/pdf",
+          "image/png",
+          "image/jpeg",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      setUploading(true);
+      const asset = result.assets[0];
+      await uploadFile(
+        {
+          uri: asset.uri,
+          name: asset.name || "Trial document",
+          mimeType: asset.mimeType || undefined,
+          file: asset.file,
+        },
         { scopeType: "trial", scopeId: trial.id },
       );
-      setDocs((d) => [uploaded, ...d]);
+      await load();
+      showFeedback({ tone: "success", message: "Document uploaded to this trial." });
     } catch (e: any) {
-      setDocErr(e?.response?.data?.detail || "Upload failed. Allowed: pdf, png, jpg, docx (max 10 MB).");
-    } finally { setUploading(false); }
+      showFeedback({
+        tone: "error",
+        message: e?.response?.data?.detail || "Document upload failed.",
+      });
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const openDoc = async (f: UploadedFile) => {
-    setDocErr(""); setDownloadingId(f.id);
-    try { await downloadFile(f); }
-    catch (e: any) { setDocErr(e?.message || "Couldn't open that file."); }
-    finally { setDownloadingId(null); }
+  const download = async (document = protocolDocument) => {
+    if (!document) {
+      showFeedback({ tone: "error", message: "No protocol document is available yet." });
+      return;
+    }
+    setDownloading(document.id);
+    try {
+      await downloadFile(document);
+      showFeedback({ tone: "success", message: `${document.name} is ready.` });
+    } catch (e: any) {
+      showFeedback({ tone: "error", message: e?.message || "Couldn't open this document." });
+    } finally {
+      setDownloading(null);
+    }
   };
 
-  useEffect(() => { (async () => {
-    const r = await api.get(`/trials/${id}`); setTrial(r.data); setVisits(r.data.visits || []);
-    const p = await api.get("/patients").catch(() => ({ data: [] }));
-    setPatientCount(p.data.filter((x: any) => x.trial_id === id).length);
-  })(); }, [id]);
+  const openEdit = () => {
+    if (!trial || !canEdit) return;
+    setEditForm({
+      title: trial.title || "",
+      phase: trial.phase || "",
+      condition: trial.condition || "",
+      drug: trial.drug || "",
+      duration: trial.duration || "",
+      ctri_number: trial.ctri_number || "",
+      recruitment_status: trial.recruitment_status || trial.status || "",
+      description: trial.description || "",
+    });
+    setShowEdit(true);
+  };
 
-  if (!trial) return <ScreenContainer><ScreenHeader eyebrow="Trial" title="Loading…" /></ScreenContainer>;
+  const saveEdit = async () => {
+    if (!trial || savingEdit || !canEdit) return;
+    if (!editForm.title.trim() || !editForm.phase.trim() || !editForm.condition.trim()) {
+      showFeedback({ tone: "error", message: "Title, phase, and condition are required." });
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await api.patch(`/trials/${trial.id}`, {
+        title: editForm.title.trim(),
+        phase: editForm.phase.trim(),
+        condition: editForm.condition.trim(),
+        drug: editForm.drug.trim(),
+        duration: editForm.duration.trim(),
+        ctri_number: editForm.ctri_number.trim(),
+        recruitment_status: editForm.recruitment_status.trim(),
+        description: editForm.description.trim(),
+      });
+      setShowEdit(false);
+      await load();
+      showFeedback({ tone: "success", message: "Trial details updated." });
+    } catch (e: any) {
+      showFeedback({
+        tone: "error",
+        message: e?.response?.data?.detail || "Couldn't update this trial.",
+      });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const openContact = async (url: string) => {
+    try {
+      if (!await Linking.canOpenURL(url)) throw new Error();
+      await Linking.openURL(url);
+    } catch {
+      showFeedback({ tone: "error", message: "This contact action isn't available." });
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={s.center}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={s.muted}>Loading trial summary…</Text>
+      </View>
+    );
+  }
+
+  if (!trial || error) {
+    return (
+      <View style={s.center}>
+        <AlertTriangle size={30} color={colors.destructive} />
+        <Text style={s.error}>{error || "Trial not found."}</Text>
+        <Pressable
+          onPress={() => { setLoading(true); load(); }}
+          style={s.primaryButton}
+        >
+          <RefreshCw size={16} color={colors.white} />
+          <Text style={s.primaryButtonText}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
-    <ScreenContainer>
-      <ScreenHeader eyebrow={trial.protocol_id} title="Trial Summary" />
-      <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.md }}>
-        <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.hero}>
-          <Eyebrow color={colors.overlay25}>Study title</Eyebrow>
-          <H1 color={colors.primaryFg} style={{ marginTop: 4, fontSize: 18 }}>{trial.title}</H1>
-          <View style={{ flexDirection: "row", gap: 8, marginTop: spacing.md, flexWrap: "wrap" }}>
-            <View style={s.chip}><Small color={colors.primaryFg} weight="700">{trial.phase}</Small></View>
-            <View style={s.chip}><Small color={colors.primaryFg} weight="700">{trial.condition}</Small></View>
-            <View style={s.chip}><Small color={colors.primaryFg} weight="700" style={{ textTransform: "capitalize" }}>{trial.status}</Small></View>
-          </View>
-        </LinearGradient>
-
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
-          <Stat icon={<Users size={18} color={colors.primary} />} label="Patients" value={patientCount} />
-          <Stat icon={<CalIcon size={18} color={colors.primary} />} label="Visits" value={visits.length} />
-          <Stat icon={<FlaskConical size={18} color={colors.primary} />} label="Phase" value={trial.phase} />
+    <View style={s.page}>
+      <SafeAreaView edges={["top"]} style={s.header}>
+        <Pressable onPress={() => router.back()} hitSlop={10}>
+          <ArrowLeft size={20} color={colors.white} />
+        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Text style={s.headerEyebrow}>{user?.role === "crc" ? "RESEARCH COORDINATOR" : "PRINCIPAL INVESTIGATOR"}</Text>
+          <Text numberOfLines={1} style={s.headerTitle}>{trial.protocol_id}</Text>
         </View>
+        {canShare ? (
+          <Pressable
+            testID="share-trial"
+            onPress={() => router.push({
+              pathname: "/(app)/sponsor/share-schedule",
+              params: { id: trial.id },
+            })}
+            hitSlop={10}
+          >
+            <Share2 size={19} color={colors.white} />
+          </Pressable>
+        ) : <View style={{ width: 19 }} />}
+      </SafeAreaView>
 
-        <Card>
-          <Eyebrow style={{ marginBottom: spacing.sm }}>Overview</Eyebrow>
-          <Body>{trial.description}</Body>
-        </Card>
+      <ScrollView
+        contentContainerStyle={s.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); load(); }}
+            tintColor={colors.primary}
+          />
+        }
+      >
+        {!!feedback && (
+          <Animated.View
+            accessibilityRole="alert"
+            style={[
+              s.feedback,
+              feedback.tone === "error" ? s.feedbackError : s.feedbackSuccess,
+              {
+                opacity: feedbackAnim,
+                transform: [{
+                  translateY: feedbackAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: reducedMotion ? [0, 0] : [-10, 0],
+                  }),
+                }],
+              },
+            ]}
+          >
+            {feedback.tone === "success"
+              ? <CheckCircle2 size={17} color={colors.success} />
+              : <AlertTriangle size={17} color={colors.destructive} />}
+            <Text style={[
+              s.feedbackText,
+              { color: feedback.tone === "success" ? colors.success : colors.destructive },
+            ]}>
+              {feedback.message}
+            </Text>
+            <Pressable onPress={() => setFeedback(null)} hitSlop={8}>
+              <X size={15} color={feedback.tone === "success" ? colors.success : colors.destructive} />
+            </Pressable>
+          </Animated.View>
+        )}
 
-        <Card>
-          <Eyebrow style={{ marginBottom: spacing.sm }}>Visit schedule template</Eyebrow>
-          {visits.slice(0, 6).map((v, i) => (
-            <View key={v.id} style={[{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 10 }, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Body weight="700">Visit {v.visit_number} · {v.name}</Body>
-                <Small style={{ marginTop: 2 }}>Day {v.day_offset} · window ±{v.window_days}d</Small>
+        <Entrance index={0} reduced={reducedMotion}>
+          <LinearGradient colors={dawnGradient as any} style={s.hero}>
+            <View style={s.between}>
+              <View style={s.protocolPill}><Text style={s.protocol}>{trial.protocol_id}</Text></View>
+              <View style={s.statusPill}>
+                <Text style={s.statusText}>{trial.recruitment_status || trial.status || "Active"}</Text>
               </View>
             </View>
-          ))}
-          {visits.length > 6 && <Small color={colors.mutedFg} style={{ marginTop: 8 }}>+ {visits.length - 6} more visits</Small>}
-        </Card>
+            <Text style={s.heroTitle}>{trial.title}</Text>
+            <View style={s.detailGrid}>
+              <Detail label="CTRI number" value={trial.ctri_number || "Not recorded"} />
+              <Detail label="Sponsor / CRO" value={trial.sponsor_name || "Not recorded"} />
+              <Detail label="Phase" value={trial.phase || "Not recorded"} />
+              <Detail label="Disease" value={trial.condition || "Not recorded"} />
+              <Detail label="Drug" value={trial.drug || "Not recorded"} />
+              <Detail label="Duration" value={trial.duration || "Not recorded"} />
+              <Detail label="Site" value={siteNames.join(", ") || user?.organization || "Not assigned"} />
+              <Detail label="Department" value={primarySite?.department || "Not recorded"} />
+            </View>
+            <View style={s.heroFooter}>
+              <UserRoundCheck size={14} color="rgba(255,255,255,0.8)" />
+              <Text style={s.heroFooterText}>
+                PI: {primarySite?.pi_name || assignedPi?.name || "Not assigned"}
+                {assignedCrc?.name ? ` · CRC: ${assignedCrc.name}` : ""}
+              </Text>
+            </View>
+            <Text style={s.heroAudit}>
+              Created {dateLabel(trial.created_at)}
+              {trial.created_by_name ? ` by ${trial.created_by_name}` : ""}
+              {trial.updated_at ? ` · Updated ${dateLabel(trial.updated_at)}${trial.updated_by_name ? ` by ${trial.updated_by_name}` : ""}` : ""}
+            </Text>
+          </LinearGradient>
+        </Entrance>
 
-        <Card>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
-            <Eyebrow>Trial documents</Eyebrow>
-            <Pressable testID="upload-doc" onPress={uploadDoc} disabled={uploading} style={s.uploadBtn}>
-              {uploading ? <ActivityIndicator size="small" color={colors.primary} /> : <Upload size={14} color={colors.primary} />}
-              <Small color={colors.primary} weight="700">{uploading ? "Uploading…" : "Upload"}</Small>
+        <Entrance index={1} reduced={reducedMotion}>
+          <Section title="Recruitment overview" icon={Target}>
+            <View style={s.metrics}>
+              <Metric label="Sites" value={String(recruitment.sites.length)} />
+              <Metric label="Enrolled" value={String(enrolled)} />
+              <Metric label="Target" value={target ? String(target) : "—"} />
+            </View>
+            <Funnel data={recruitment.recruitment} />
+            <Text style={s.smallCaps}>OVERALL ENROLLMENT</Text>
+            <Progress value={enrollmentPct} reduced={reducedMotion} />
+            <Text style={s.progressCopy}>{enrolled} / {target || "—"} enrolled{target ? ` · ${enrollmentPct}%` : ""}</Text>
+          </Section>
+        </Entrance>
+
+        <Entrance index={2} reduced={reducedMotion}>
+          <Section title="Sites and investigators" icon={MapPin}>
+            {recruitment.sites.length ? recruitment.sites.map((site) => (
+              <View key={site.id} style={s.siteCard}>
+                <View style={s.between}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.siteName}>{site.name}</Text>
+                    <Text style={s.siteMeta}>
+                      {[site.pi_name ? `PI ${site.pi_name}` : "", site.department].filter(Boolean).join(" · ") || "PI not assigned"}
+                    </Text>
+                    <Text style={s.siteMeta}>{site.enrolled} / {site.target_enrollment || "—"} enrolled</Text>
+                  </View>
+                  <Text style={s.percent}>{site.enrollment_pct}%</Text>
+                </View>
+                <Progress value={site.enrollment_pct} reduced={reducedMotion} compact />
+              </View>
+            )) : <Empty text="No trial sites are assigned yet." />}
+          </Section>
+        </Entrance>
+
+        <Entrance index={3} reduced={reducedMotion}>
+          <Section title="Trial team" icon={Users}>
+            {team.length ? team.map((member) => (
+              <View key={member.id} style={s.teamCard}>
+                <View style={s.avatar}><Text style={s.avatarText}>{initials(member.name)}</Text></View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text numberOfLines={1} style={s.memberName}>{member.name || "Unnamed member"}</Text>
+                  <Text numberOfLines={1} style={s.memberMeta}>
+                    {[member.role, member.designation, member.organization].filter(Boolean).join(" · ")}
+                  </Text>
+                  <View style={s.contactRow}>
+                    <Contact
+                      icon={Phone}
+                      label="Call"
+                      disabled={!member.phone}
+                      onPress={() => member.phone && openContact(`tel:${member.phone}`)}
+                    />
+                    <Contact
+                      icon={Mail}
+                      label="Email"
+                      disabled={!member.email}
+                      onPress={() => member.email && openContact(`mailto:${member.email}`)}
+                    />
+                  </View>
+                </View>
+              </View>
+            )) : <Empty text="Assigned trial team members will appear here." />}
+          </Section>
+        </Entrance>
+
+        <Entrance index={4} reduced={reducedMotion}>
+          <Section
+            title="Patient visit journeys"
+            icon={UserRoundCheck}
+            action={canAddPatient ? (
+              <Pressable
+                testID="add-patient"
+                onPress={() => router.push({
+                  pathname: "/(app)/clinical/add-patient",
+                  params: { trialId: trial.id },
+                })}
+                style={s.inlineAction}
+              >
+                <UserPlus size={13} color={colors.info} />
+                <Text style={s.inlineActionText}>Add Patient</Text>
+              </Pressable>
+            ) : undefined}
+          >
+            {subjects.length ? subjects.map((subject) => {
+              const expanded = expandedSubject === subject.id;
+              const visits = subjectVisits[subject.id] || [];
+              return (
+                <Pressable
+                  key={subject.id}
+                  testID={`subject-${subject.id}`}
+                  onPress={() => openSubject(subject)}
+                  style={s.subjectCard}
+                >
+                  <View style={s.between}>
+                    <View style={s.subjectIdentity}>
+                      <View style={s.subjectAvatar}>
+                        <Text style={s.subjectAvatarText}>{subject.initials || "—"}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.subjectId}>{subject.subject_id}</Text>
+                        <Text style={s.subjectMeta}>{subject.site} · {subject.visits_completed} visits completed</Text>
+                      </View>
+                    </View>
+                    <Text style={s.subjectStatus}>{subject.status}</Text>
+                  </View>
+                  {expanded && (
+                    <View style={s.subjectVisits}>
+                      {loadingSubject === subject.id ? (
+                        <ActivityIndicator color={colors.primary} />
+                      ) : visits.length ? visits.map((visit) => (
+                        <View key={visit.id} style={s.subjectVisitRow}>
+                          <View style={s.visitNumber}>
+                            <Text style={s.visitNumberText}>{visit.visit_number || "—"}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={s.visitName}>{visit.name}</Text>
+                            <Text style={s.visitMeta}>
+                              {dateLabel(visit.completed_at || visit.scheduled_date)}
+                            </Text>
+                          </View>
+                          <Text style={[
+                            s.visitStatus,
+                            visit.status === "completed" && { color: colors.success },
+                          ]}>
+                            {visit.status}
+                          </Text>
+                        </View>
+                      )) : <Empty text="No visit instances are available for this subject." />}
+                    </View>
+                  )}
+                </Pressable>
+              );
+            }) : <Empty text="No patients are enrolled in this trial." />}
+            {!!subjects.length && (
+              <Text style={s.privacy}>
+                This summary uses study IDs and initials only. Direct patient identifiers remain within the clinical site.
+              </Text>
+            )}
+          </Section>
+        </Entrance>
+
+        <Entrance index={5} reduced={reducedMotion}>
+          <Section title="Visit schedule" icon={CalendarDays}>
+            {(trial.visits || []).length ? (trial.visits || []).map((visit, index) => (
+              <View key={visit.id || `${visit.name}-${index}`} style={s.scheduleRow}>
+                <View style={s.visitNumber}>
+                  <Text style={s.visitNumberText}>{visit.visit_number || index + 1}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.visitName}>{visit.name}</Text>
+                  <Text style={s.visitMeta}>Day {visit.day_offset || 0} · ±{visit.window_days || 0} days</Text>
+                </View>
+              </View>
+            )) : <Empty text="No visit schedule has been created." />}
+          </Section>
+        </Entrance>
+
+        <Entrance index={6} reduced={reducedMotion}>
+          <Section
+            title="Documents and versions"
+            icon={FileClock}
+            action={canUpload ? (
+              <Pressable
+                testID="upload-document"
+                onPress={uploadDocument}
+                disabled={uploading}
+                style={[s.inlineAction, uploading && s.disabled]}
+              >
+                {uploading
+                  ? <ActivityIndicator size="small" color={colors.info} />
+                  : <Upload size={13} color={colors.info} />}
+                <Text style={s.inlineActionText}>{uploading ? "Uploading…" : "Upload"}</Text>
+              </Pressable>
+            ) : undefined}
+          >
+            {documents.length ? documents.map((document) => (
+              <Pressable
+                key={document.id}
+                testID={`download-document-${document.id}`}
+                onPress={() => download(document)}
+                disabled={downloading === document.id}
+                style={s.documentRow}
+              >
+                <View style={s.documentIcon}><FileText size={17} color={colors.info} /></View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text numberOfLines={1} style={s.documentName}>{document.name}</Text>
+                  <Text style={s.documentMeta}>
+                    {dateLabel((document as any).created_at)}
+                    {document.size ? ` · ${Math.max(1, Math.round(document.size / 1024))} KB` : ""}
+                  </Text>
+                </View>
+                {downloading === document.id
+                  ? <ActivityIndicator size="small" color={colors.info} />
+                  : <Download size={16} color={colors.info} />}
+              </Pressable>
+            )) : <Empty text="No persistent trial documents have been uploaded." />}
+
+            <View style={s.versionDivider} />
+            <Text style={s.smallCaps}>SCHEDULE VERSION HISTORY</Text>
+            {versions.length ? versions.map((version) => (
+              <View key={version.id} style={s.versionRow}>
+                <View style={s.versionBadge}><Text style={s.versionBadgeText}>v{version.version || "—"}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.versionTitle}>{version.version_note || version.document_name || "Schedule version"}</Text>
+                  <Text style={s.versionMeta}>
+                    {dateLabel(version.created_at)}
+                    {version.created_by_name ? ` · ${version.created_by_name}` : ""}
+                  </Text>
+                </View>
+              </View>
+            )) : <Empty text="No schedule versions have been shared yet." />}
+          </Section>
+        </Entrance>
+
+        <Entrance index={7} reduced={reducedMotion}>
+          <View style={s.actions}>
+            {canEdit && (
+              <Pressable testID="edit-trial" onPress={openEdit} style={s.secondaryButton}>
+                <Pencil size={16} color={colors.primary} />
+                <Text style={s.secondaryButtonText}>Edit Trial</Text>
+              </Pressable>
+            )}
+            <Pressable
+              testID="download-protocol"
+              onPress={() => download()}
+              disabled={!!downloading}
+              style={[s.secondaryButton, !!downloading && s.disabled]}
+            >
+              <Download size={16} color={colors.primary} />
+              <Text style={s.secondaryButtonText}>Download Protocol</Text>
             </Pressable>
           </View>
-          {docs.length === 0 ? (
-            <View style={{ alignItems: "center", paddingVertical: spacing.md, gap: 6 }}>
-              <FileText size={26} color={colors.mutedFg + "66"} />
-              <Small color={colors.mutedFg}>No documents uploaded in this session yet.</Small>
-            </View>
-          ) : (
-            docs.map((f, i) => (
-              <View key={f.id} style={[{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10 }, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
-                <View style={s.docIcon}><FileText size={16} color={colors.primary} /></View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Body weight="700" numberOfLines={1} style={{ fontSize: 14 }}>{f.name}</Body>
-                  <Small color={colors.mutedFg}>{(f.size / 1024).toFixed(0)} KB</Small>
-                </View>
-                <Pressable testID={`download-doc-${i}`} onPress={() => openDoc(f)} disabled={downloadingId === f.id} hitSlop={8} style={s.downloadBtn}>
-                  {downloadingId === f.id ? <ActivityIndicator size="small" color={colors.primary} /> : <Download size={16} color={colors.primary} />}
-                </Pressable>
-              </View>
-            ))
+          {canShare && (
+            <Pressable
+              testID="share-schedule"
+              onPress={() => router.push({
+                pathname: "/(app)/sponsor/share-schedule",
+                params: { id: trial.id },
+              })}
+              style={s.primaryWide}
+            >
+              <Share2 size={17} color={colors.white} />
+              <Text style={s.primaryButtonText}>Share Schedule</Text>
+            </Pressable>
           )}
-          {docErr ? <Small color={colors.destructive} style={{ marginTop: 8 }}>{docErr}</Small> : null}
-        </Card>
-
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
-          <Button testID="edit-schedule" variant="secondary" style={{ flex: 1 }} onPress={() => router.push({ pathname: "/(app)/sponsor/visit-schedule", params: { id: trial.id } })}><View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Pencil size={14} color={colors.primary} /><Small color={colors.primary} weight="700">Edit schedule</Small></View></Button>
-          <Button testID="share-schedule" variant="primary" style={{ flex: 1 }} onPress={() => router.push("/(app)/sponsor/share-schedule")}><View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Share2 size={14} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700">Share</Small></View></Button>
-        </View>
+        </Entrance>
       </ScrollView>
-    </ScreenContainer>
+
+      <Modal
+        visible={showEdit}
+        transparent
+        animationType={reducedMotion ? "none" : "slide"}
+        onRequestClose={() => !savingEdit && setShowEdit(false)}
+      >
+        <KeyboardAvoidingView
+          style={s.modalRoot}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <Pressable style={s.backdrop} onPress={() => !savingEdit && setShowEdit(false)} />
+          <View style={s.editSheet}>
+            <View style={s.sheetHandle} />
+            <View style={s.sheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.sheetEyebrow}>TRIAL MANAGEMENT</Text>
+                <Text style={s.sheetTitle}>Edit trial details</Text>
+              </View>
+              <Pressable onPress={() => setShowEdit(false)} disabled={savingEdit}>
+                <X size={20} color={colors.foreground} />
+              </Pressable>
+            </View>
+            <ScrollView
+              contentContainerStyle={s.form}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <EditField label="Title *" value={editForm.title} onChangeText={(value) => setEditForm((current) => ({ ...current, title: value }))} />
+              <View style={s.formRow}>
+                <View style={{ flex: 1 }}><EditField label="Phase *" value={editForm.phase} onChangeText={(value) => setEditForm((current) => ({ ...current, phase: value }))} /></View>
+                <View style={{ flex: 1 }}><EditField label="Condition *" value={editForm.condition} onChangeText={(value) => setEditForm((current) => ({ ...current, condition: value }))} /></View>
+              </View>
+              <View style={s.formRow}>
+                <View style={{ flex: 1 }}><EditField label="Drug" value={editForm.drug} onChangeText={(value) => setEditForm((current) => ({ ...current, drug: value }))} /></View>
+                <View style={{ flex: 1 }}><EditField label="Duration" value={editForm.duration} onChangeText={(value) => setEditForm((current) => ({ ...current, duration: value }))} /></View>
+              </View>
+              <EditField label="CTRI number" value={editForm.ctri_number} onChangeText={(value) => setEditForm((current) => ({ ...current, ctri_number: value }))} />
+              <EditField label="Recruitment status" value={editForm.recruitment_status} onChangeText={(value) => setEditForm((current) => ({ ...current, recruitment_status: value }))} />
+              <EditField label="Description" value={editForm.description} onChangeText={(value) => setEditForm((current) => ({ ...current, description: value }))} multiline />
+            </ScrollView>
+            <View style={s.sheetActions}>
+              <Pressable onPress={() => setShowEdit(false)} disabled={savingEdit} style={s.cancelButton}>
+                <Text style={s.cancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable onPress={saveEdit} disabled={savingEdit} style={[s.saveButton, savingEdit && s.disabled]}>
+                {savingEdit ? <ActivityIndicator color={colors.white} /> : <Check size={17} color={colors.white} />}
+                <Text style={s.saveText}>{savingEdit ? "Saving…" : "Save changes"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </View>
   );
 }
 
-function Stat({ icon, label, value }: any) {
+function Entrance({
+  index,
+  reduced,
+  children,
+}: {
+  index: number;
+  reduced: boolean;
+  children: React.ReactNode;
+}) {
+  const value = useRef(new Animated.Value(reduced ? 1 : 0)).current;
+  useEffect(() => {
+    if (reduced) {
+      value.setValue(1);
+      return;
+    }
+    Animated.timing(value, {
+      toValue: 1,
+      delay: index * 65,
+      duration: 430,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [index, reduced, value]);
   return (
-    <Card style={{ flex: 1, alignItems: "center", marginBottom: 0 }}>
-      <View style={s.statIcon}>{icon}</View>
-      <Body weight="700" style={{ marginTop: 6, fontSize: 18 }}>{value}</Body>
-      <Small>{label}</Small>
-    </Card>
+    <Animated.View
+      style={{
+        opacity: value,
+        transform: [{
+          translateY: value.interpolate({
+            inputRange: [0, 1],
+            outputRange: reduced ? [0, 0] : [14, 0],
+          }),
+        }],
+      }}
+    >
+      {children}
+    </Animated.View>
   );
+}
+
+function Section({
+  title,
+  icon: Icon,
+  action,
+  children,
+}: {
+  title: string;
+  icon: any;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={s.card}>
+      <View style={s.sectionHead}>
+        <View style={s.sectionIdentity}>
+          <Icon size={16} color={colors.primary} />
+          <Text style={s.sectionTitle}>{title}</Text>
+        </View>
+        {action}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={s.detail}>
+      <Text style={s.detailLabel}>{label}</Text>
+      <Text numberOfLines={2} style={s.detailValue}>{value}</Text>
+    </View>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={s.metric}>
+      <Text style={s.metricValue}>{value}</Text>
+      <Text style={s.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function Funnel({ data }: { data: RecruitmentFunnel }) {
+  return (
+    <View style={s.funnel}>
+      {FUNNEL.map((field) => (
+        <View key={field.key} style={s.funnelCell}>
+          <Text style={[s.funnelValue, field.tone ? { color: field.tone } : undefined]}>
+            {Number(data?.[field.key] || 0)}
+          </Text>
+          <Text style={s.funnelLabel}>{field.label}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Progress({
+  value,
+  reduced,
+  compact = false,
+}: {
+  value: number;
+  reduced: boolean;
+  compact?: boolean;
+}) {
+  const animated = useRef(new Animated.Value(reduced ? value : 0)).current;
+  useEffect(() => {
+    Animated.timing(animated, {
+      toValue: value,
+      duration: reduced ? 0 : 650,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [animated, reduced, value]);
+  const width = animated.interpolate({
+    inputRange: [0, 100],
+    outputRange: ["0%", "100%"],
+    extrapolate: "clamp",
+  });
+  return (
+    <View style={[s.track, compact && { height: 5 }]}>
+      <Animated.View style={[s.progressFillWrap, { width }]}>
+        <LinearGradient colors={dawnGradient as any} style={StyleSheet.absoluteFill} />
+      </Animated.View>
+    </View>
+  );
+}
+
+function Contact({
+  icon: Icon,
+  label,
+  disabled,
+  onPress,
+}: {
+  icon: any;
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={[s.contact, disabled && s.disabled]}
+    >
+      <Icon size={12} color={disabled ? colors.mutedFg : colors.info} />
+      <Text style={[s.contactText, disabled && { color: colors.mutedFg }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function EditField({
+  label,
+  multiline,
+  ...props
+}: React.ComponentProps<typeof TextInput> & { label: string; multiline?: boolean }) {
+  return (
+    <View>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <TextInput
+        {...props}
+        multiline={multiline}
+        placeholderTextColor={colors.mutedFg}
+        style={[s.input, multiline && s.textarea]}
+      />
+    </View>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <View style={s.empty}><Text style={s.emptyText}>{text}</Text></View>;
 }
 
 const s = StyleSheet.create({
-  hero: { borderRadius: radii.xl, padding: spacing.md },
-  chip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.overlay20 },
-  statIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  uploadBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.primary + "40", backgroundColor: colors.primary + "0F" },
-  docIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  downloadBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: colors.secondary },
+  page: { flex: 1, backgroundColor: colors.background },
+  center: { flex: 1, padding: 28, alignItems: "center", justifyContent: "center", gap: 13, backgroundColor: colors.background },
+  muted: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedFg },
+  error: { textAlign: "center", fontFamily: fonts.regular, fontSize: 13, color: colors.destructive },
+  header: { minHeight: 73, paddingHorizontal: 17, paddingTop: 8, paddingBottom: 12, flexDirection: "row", alignItems: "center", gap: 13, backgroundColor: colors.primaryDeep },
+  headerEyebrow: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 1.05, color: "rgba(255,255,255,0.62)" },
+  headerTitle: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 15, color: colors.white },
+  content: { padding: 15, paddingBottom: 40, gap: 13 },
+  feedback: { minHeight: 44, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 15, borderWidth: 1 },
+  feedbackSuccess: { borderColor: colors.success + "45", backgroundColor: colors.success + "12" },
+  feedbackError: { borderColor: colors.destructive + "45", backgroundColor: colors.destructive + "0D" },
+  feedbackText: { flex: 1, fontFamily: fonts.semibold, fontSize: 10.5 },
+  hero: { padding: 18, borderRadius: 24, ...shadows.md },
+  between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  protocolPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.16)" },
+  protocol: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.white },
+  statusPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.20)", backgroundColor: "rgba(255,255,255,0.16)" },
+  statusText: { fontFamily: fonts.semibold, fontSize: 9.5, color: colors.white, textTransform: "capitalize" },
+  heroTitle: { marginTop: 14, fontFamily: fonts.heading, fontSize: 19, lineHeight: 24, color: colors.white },
+  detailGrid: { marginTop: 15, flexDirection: "row", flexWrap: "wrap", rowGap: 11 },
+  detail: { width: "50%", paddingRight: 9 },
+  detailLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.7, textTransform: "uppercase", color: "rgba(255,255,255,0.60)" },
+  detailValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 10.5, lineHeight: 14, color: colors.white },
+  heroFooter: { marginTop: 14, paddingTop: 12, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
+  heroFooterText: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, color: "rgba(255,255,255,0.82)" },
+  heroAudit: { marginTop: 6, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: "rgba(255,255,255,0.62)" },
+  card: { padding: 15, gap: 12, borderRadius: 21, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
+  sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  sectionIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 7 },
+  sectionTitle: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
+  inlineAction: { flexDirection: "row", alignItems: "center", gap: 4 },
+  inlineActionText: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.info },
+  metrics: { flexDirection: "row", gap: 7 },
+  metric: { flex: 1, padding: 10, alignItems: "center", borderRadius: 13, backgroundColor: colors.surface },
+  metricValue: { fontFamily: fonts.heading, fontSize: 18, color: colors.primaryDeep },
+  metricLabel: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  funnel: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  funnelCell: { width: "23%", minHeight: 51, padding: 5, alignItems: "center", justifyContent: "center", borderRadius: 11, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  funnelValue: { fontFamily: fonts.heading, fontSize: 14, color: colors.foreground },
+  funnelLabel: { marginTop: 2, textAlign: "center", fontFamily: fonts.regular, fontSize: 7.5, color: colors.mutedFg },
+  smallCaps: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.9, color: colors.mutedFg },
+  track: { height: 7, overflow: "hidden", borderRadius: 999, backgroundColor: colors.surface },
+  progressFillWrap: { height: "100%", overflow: "hidden", borderRadius: 999 },
+  progressCopy: { marginTop: -5, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
+  siteCard: { padding: 11, gap: 8, borderRadius: 15, backgroundColor: colors.surface },
+  siteName: { fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
+  siteMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9, color: colors.mutedFg },
+  percent: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.primary },
+  teamCard: { padding: 11, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: colors.surface },
+  avatar: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: colors.primaryDeep },
+  avatarText: { fontFamily: fonts.bold, fontSize: 10.5, color: colors.white },
+  memberName: { fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
+  memberMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9, color: colors.mutedFg },
+  contactRow: { marginTop: 7, flexDirection: "row", gap: 7 },
+  contact: { paddingHorizontal: 8, paddingVertical: 5, flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 9, backgroundColor: colors.card },
+  contactText: { fontFamily: fonts.semibold, fontSize: 8.5, color: colors.info },
+  subjectCard: { padding: 11, gap: 10, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  subjectIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 9 },
+  subjectAvatar: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: colors.primaryDeep },
+  subjectAvatarText: { fontFamily: fonts.bold, fontSize: 10, color: colors.white },
+  subjectId: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
+  subjectMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  subjectStatus: { fontFamily: fonts.semibold, fontSize: 8, color: colors.success, textTransform: "capitalize" },
+  subjectVisits: { paddingTop: 9, gap: 8, borderTopWidth: 1, borderTopColor: colors.border },
+  subjectVisitRow: { flexDirection: "row", alignItems: "center", gap: 9 },
+  scheduleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  visitNumber: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: colors.secondary },
+  visitNumberText: { fontFamily: fonts.mono, fontSize: 10, color: colors.primary },
+  visitName: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
+  visitMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  visitStatus: { fontFamily: fonts.semibold, fontSize: 8, color: colors.mutedFg, textTransform: "capitalize" },
+  privacy: { padding: 10, borderRadius: 12, fontFamily: fonts.regular, fontSize: 9.5, lineHeight: 14, color: colors.mutedFg, backgroundColor: colors.surface },
+  documentRow: { padding: 10, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 14, backgroundColor: colors.surface },
+  documentIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: colors.card },
+  documentName: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
+  documentMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  versionDivider: { height: 1, backgroundColor: colors.border },
+  versionRow: { padding: 10, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  versionBadge: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: colors.secondary },
+  versionBadgeText: { fontFamily: fonts.mono, fontSize: 9.5, color: colors.primary },
+  versionTitle: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
+  versionMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  empty: { paddingVertical: 14, alignItems: "center" },
+  emptyText: { textAlign: "center", fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
+  actions: { flexDirection: "row", gap: 9 },
+  secondaryButton: { flex: 1, minHeight: 46, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.card },
+  secondaryButtonText: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.primary },
+  primaryButton: { minHeight: 46, paddingHorizontal: 17, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 999, backgroundColor: colors.primary },
+  primaryWide: { minHeight: 47, marginTop: 9, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 999, backgroundColor: colors.primary },
+  primaryButtonText: { fontFamily: fonts.bold, fontSize: 11, color: colors.white },
+  disabled: { opacity: 0.45 },
+  modalRoot: { flex: 1, justifyContent: "flex-end" },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(46,27,51,0.48)" },
+  editSheet: { maxHeight: "92%", paddingTop: 10, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.background, ...shadows.md },
+  sheetHandle: { alignSelf: "center", width: 42, height: 4, marginBottom: 13, borderRadius: 2, backgroundColor: colors.border },
+  sheetHeader: { paddingHorizontal: 18, paddingBottom: 14, flexDirection: "row", alignItems: "flex-start", gap: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
+  sheetEyebrow: { fontFamily: fonts.semibold, fontSize: 8.5, letterSpacing: 1.05, color: colors.primary },
+  sheetTitle: { marginTop: 3, fontFamily: fonts.heading, fontSize: 20, color: colors.foreground },
+  form: { padding: 18, gap: 13 },
+  formRow: { flexDirection: "row", gap: 10 },
+  fieldLabel: { marginBottom: 6, fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 0.4, color: colors.mutedFg, textTransform: "uppercase" },
+  input: { minHeight: 44, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, fontFamily: fonts.regular, fontSize: 12, color: colors.foreground, outlineStyle: "none" } as any,
+  textarea: { minHeight: 88, textAlignVertical: "top" },
+  sheetActions: { paddingHorizontal: 18, paddingTop: 12, paddingBottom: Platform.OS === "ios" ? 28 : 18, flexDirection: "row", gap: 10, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.card },
+  cancelButton: { flex: 1, minHeight: 47, alignItems: "center", justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background },
+  cancelText: { fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
+  saveButton: { flex: 1.5, minHeight: 47, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 999, backgroundColor: colors.primary },
+  saveText: { fontFamily: fonts.bold, fontSize: 11.5, color: colors.white },
 });

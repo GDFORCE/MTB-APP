@@ -100,3 +100,36 @@ def send_email(email: str, code: str) -> None:
     except Exception as e:  # smtplib raises a family of exceptions
         log.error("SMTP send to %s failed: %s", email, e)
         raise OTPDeliveryError("Could not send the verification email") from e
+
+
+def send_password_reset_email(email: str, reset_link: str, expires_minutes: int) -> None:
+    """Deliver a single-use password setup/reset link without exposing it to admins."""
+    host = _require("SMTP_HOST")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER", "")
+    password = os.environ.get("SMTP_PASS", "")
+    sender = os.environ.get("SMTP_FROM") or user
+    if not sender:
+        raise OTPConfigError("SMTP_FROM (or SMTP_USER) is not configured")
+
+    msg = EmailMessage()
+    msg["Subject"] = "Set your My Trial Board password"
+    msg["From"] = sender
+    msg["To"] = email
+    msg.set_content(
+        "A My Trial Board administrator requested a password setup or reset for "
+        "your account.\n\n"
+        f"Open this single-use link within {expires_minutes} minutes:\n"
+        f"{reset_link}\n\n"
+        "If you did not expect this message, contact support. Do not share this link."
+    )
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(host, port, timeout=20) as smtp:
+            smtp.starttls(context=ctx)
+            if user:
+                smtp.login(user, password)
+            smtp.send_message(msg)
+    except Exception as exc:
+        log.error("SMTP password-reset delivery to %s failed: %s", email, exc)
+        raise OTPDeliveryError("Could not send the password reset email") from exc

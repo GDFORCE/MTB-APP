@@ -17,7 +17,7 @@ const QUESTION_POOLS: string[][] = [
   ["What is your mother's maiden name?", "What is the name of your closest childhood friend?", "In what town did your parents meet?"],
 ];
 
-const CORE = new Set(["fullName", "email", "phone", "orgName"]);
+const CORE = new Set(["fullName", "email", "phone", "orgName", "inviteToken"]);
 
 function QuestionSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -50,7 +50,7 @@ function QuestionSelect({ value, options, onChange }: { value: string; options: 
 
 export default function SecurityQuestions() {
   const router = useRouter();
-  const { role, variant, payload } = useLocalSearchParams<{ role: string; variant: string; payload: string }>();
+  const { role, payload } = useLocalSearchParams<{ role: string; variant: string; payload: string }>();
   const fld = (() => { try { return JSON.parse(payload || "{}"); } catch { return {}; } })();
 
   const [questions, setQuestions] = useState<string[]>(["", "", ""]);
@@ -73,7 +73,10 @@ export default function SecurityQuestions() {
     try {
       const profile: Record<string, string> = {};
       Object.keys(fld).forEach((k) => { if (!CORE.has(k) && fld[k]) profile[k] = fld[k]; });
-      const phone = fld.phone ? "+91" + String(fld.phone).replace(/\D/g, "") : undefined;
+      const phoneDigits = fld.phone ? String(fld.phone).replace(/\D/g, "") : "";
+      const phone = phoneDigits
+        ? `+${phoneDigits.startsWith("91") ? phoneDigits : `91${phoneDigits}`}`
+        : undefined;
       const security_questions = questions.map((q, i) => ({ question: q, answer: answers[i] }));
       const body: any = {
         full_name: fld.fullName,
@@ -84,6 +87,7 @@ export default function SecurityQuestions() {
         security_questions,
       };
       if (fld.email) body.email = String(fld.email).trim().toLowerCase();
+      if (fld.inviteToken) body.invite_token = String(fld.inviteToken);
 
       const { data } = await api.post("/auth/register/start", body);
       router.push({
@@ -136,7 +140,7 @@ export default function SecurityQuestions() {
           ))}
 
           <Small style={{ textAlign: "center", marginTop: spacing.md, opacity: 0.8, lineHeight: 19 }}>
-            Choose answers that don't change over time and that only you would know.
+            Choose answers that don’t change over time and that only you would know.
           </Small>
           {err ? <Small color={colors.destructive} style={{ marginTop: 12, textAlign: "center" }}>{err}</Small> : null}
         </ScrollView>

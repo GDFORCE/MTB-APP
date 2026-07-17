@@ -18,8 +18,13 @@ Patient PII rules:
 """
 from __future__ import annotations
 
+import asyncio
 import csv
+import hashlib
 import io
+import logging
+import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Literal, Optional
@@ -27,7 +32,10 @@ from typing import Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
+from pymongo import ReturnDocument
+from starlette.concurrency import run_in_threadpool
 
+import otp_service
 import storage as file_storage
 from server import (
     INVITE_TTL_DAYS,
@@ -50,6 +58,7 @@ from server import (
 router = APIRouter(prefix='/api/admin', dependencies=[Depends(require_roles('admin'))])
 
 USER_PROJECTION = {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0}
+PASSWORD_RESET_TTL_MIN = 30
 
 
 # ── PII masking helpers ──────────────────────────────────────────────────────
@@ -109,6 +118,53 @@ async def _find_or_404(coll, doc_id: str, what: str) -> dict:
     if not doc:
         raise HTTPException(404, f'{what} not found')
     return doc
+
+
+async def _deliver_password_reset_link(user: dict, admin: dict, purpose: str) -> dict:
+    """Create and email an expiring single-use token. The raw token is never
+    stored, logged, audited, or returned to the platform-admin client."""
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    issued_at = now()
+    expires_at = issued_at + timedelta(minutes=PASSWORD_RESET_TTL_MIN)
+    base = os.environ.get('PASSWORD_RESET_URL', 'mytrialboard://reset-password')
+    separator = '&' if '?' in base else '?'
+    reset_link = f'{base}{separator}token={token}'
+    doc = {
+        'id': str(uuid.uuid4()),
+        'token_hash': token_hash,
+        'user_id': user['id'],
+        'email': user.get('email', ''),
+        'purpose': purpose,
+        'requested_by': admin['id'],
+        'created_at': issued_at,
+        'expires_at': expires_at,
+        'used_at': None,
+        'revoked_at': None,
+    }
+    await db.password_reset_tokens.update_many(
+        {'user_id': user['id'], 'used_at': None, 'revoked_at': None},
+        {'$set': {'revoked_at': issued_at}})
+    await db.password_reset_tokens.insert_one(doc)
+    try:
+        await run_in_threadpool(
+            otp_service.send_password_reset_email,
+            user['email'],
+            reset_link,
+            PASSWORD_RESET_TTL_MIN,
+        )
+    except otp_service.OTPConfigError:
+        await db.password_reset_tokens.delete_one({'id': doc['id']})
+        raise HTTPException(503, 'Password-reset email delivery is not configured.')
+    except otp_service.OTPDeliveryError:
+        await db.password_reset_tokens.delete_one({'id': doc['id']})
+        raise HTTPException(502, 'The password-reset email could not be delivered.')
+    return {
+        'reset_sent': True,
+        'delivery_channel': 'email',
+        'email': _mask_email(user.get('email', '')),
+        'expires_at': iso(expires_at),
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -174,11 +230,11 @@ async def admin_create_user(body: AdminUserCreate, admin=Depends(current_user)):
     email = body.email.lower()
     if await db.users.find_one({'email': email}):
         raise HTTPException(400, 'Email already registered')
-    temp_password = f'Temp-{uuid.uuid4().hex[:8]}!A1'
+    inaccessible_password = secrets.token_urlsafe(48)
     doc = {
         'id': str(uuid.uuid4()), 'email': email, 'full_name': body.full_name.strip(),
         'role': body.role, 'phone': body.phone or '', 'organization': body.organization or '',
-        'hashed_password': pwd_ctx.hash(temp_password),
+        'hashed_password': pwd_ctx.hash(inaccessible_password),
         'security_question': '', 'security_answer_hash': '',
         'avatar_initials': ''.join(w[0].upper() for w in body.full_name.split()[:2]) or 'U',
         'status': 'Pending Verification', 'must_reset_password': True,
@@ -197,9 +253,18 @@ async def admin_create_user(body: AdminUserCreate, admin=Depends(current_user)):
         }
         await db.invitations.insert_one(inv)
         invitation = {**serialize(inv), 'invite_link': _invite_link(inv['token'])}
+    try:
+        password_setup = await _deliver_password_reset_link(doc, admin, 'account_setup')
+    except HTTPException:
+        await db.users.delete_one({'id': doc['id']})
+        if invitation:
+            await db.invitations.delete_one({'id': invitation['id']})
+        raise
     await write_audit(admin, 'admin.user_create',
-                      f"Created user {email} ({body.role})", target_id=doc['id'])
-    return {'user': serialize({**doc}), 'invitation': invitation, 'temp_password': temp_password}
+                      f"Created user {email} ({body.role}) and sent a password setup link",
+                      target_id=doc['id'], password_setup_sent=True)
+    return {'user': serialize({**doc}), 'invitation': invitation,
+            'password_setup': password_setup}
 
 
 @router.get('/users/{user_id}')
@@ -248,13 +313,13 @@ async def admin_unlock_user(user_id: str, body: UnlockIn, admin=Depends(current_
 @router.post('/users/{user_id}/reset-password')
 async def admin_reset_password(user_id: str, admin=Depends(current_user)):
     u = await _find_or_404(db.users, user_id, 'User')
-    temp_password = f'Temp-{uuid.uuid4().hex[:8]}!A1'
+    delivery = await _deliver_password_reset_link(u, admin, 'password_reset')
     await db.users.update_one({'id': user_id}, {'$set': {
-        'hashed_password': pwd_ctx.hash(temp_password),
-        'must_reset_password': True, 'force_logout_at': now()}})
+        'must_reset_password': True, 'force_logout_at': now(), 'is_online': False}})
     await write_audit(admin, 'admin.user_reset_password',
-                      f"Reset password for {u.get('email')}", target_id=user_id)
-    return {'ok': True, 'id': user_id, 'temp_password': temp_password}
+                      f"Sent password reset link for {u.get('email')}",
+                      target_id=user_id, delivery_channel='email')
+    return {'ok': True, 'id': user_id, **delivery}
 
 
 @router.post('/users/{user_id}/force-logout')
@@ -962,18 +1027,51 @@ async def _trial_aggregates(trial: dict) -> dict:
         {'trial_id': tid, 'status': 'upcoming'})
     missed = await db.visit_instances.count_documents(
         {'trial_id': tid, 'status': 'missed'})
-    creator = await db.users.find_one({'id': trial.get('created_by')},
-                                      {'_id': 0, 'full_name': 1})
+    creator = await db.users.find_one(
+        {'id': trial.get('created_by')},
+        {'_id': 0, 'full_name': 1, 'role': 1, 'organization': 1})
+    modifier_id = trial.get('updated_by') or trial.get('created_by')
+    modifier = creator if modifier_id == trial.get('created_by') else await db.users.find_one(
+        {'id': modifier_id},
+        {'_id': 0, 'full_name': 1, 'role': 1, 'organization': 1})
+    latest_change = await db.audit_logs.find_one(
+        {'trial_id': tid, 'action': {'$in': ['trial.create', 'trial.update']}},
+        {'_id': 0, 'action': 1, 'detail': 1, 'changes': 1, 'created_at': 1},
+        sort=[('created_at', -1)])
+    changed_fields = sorted((latest_change or {}).get('changes', {}).keys())
+    if changed_fields:
+        change_summary = 'Updated ' + ', '.join(
+            field.replace('_', ' ') for field in changed_fields)
+    elif (latest_change or {}).get('action') == 'trial.create':
+        change_summary = 'Trial created'
+    else:
+        change_summary = (latest_change or {}).get('detail', '')
+    creator_role = (creator or {}).get('role', '')
+    owner_type = 'CRO' if creator_role == 'cro' else 'Sponsor'
+    owner_name = (
+        trial.get('cro_name')
+        or trial.get('sponsor_name')
+        or (creator or {}).get('organization', '')
+    )
     return {
         'id': tid, 'title': trial.get('title'), 'protocol_id': trial.get('protocol_id'),
         'phase': trial.get('phase'), 'condition': trial.get('condition'),
-        'sponsor': trial.get('sponsor_name', ''), 'status': trial.get('status', 'active'),
+        'sponsor': owner_name, 'sponsorOrCroName': owner_name,
+        'ownerType': owner_type, 'cro': owner_name if owner_type == 'CRO' else '',
+        'status': trial.get('status', 'active'),
         'patients': enrolled, 'targetEnrollment': trial.get('target_enrollment'),
         'scheduleVersion': trial.get('schedule_version', 1),
         'schedule_status': trial.get('schedule_status', ''),
         'visits': {'completed': completed, 'upcoming': upcoming, 'missed': missed},
         'lastModified': iso(trial.get('updated_at') or trial.get('created_at')),
-        'modifiedBy': (creator or {}).get('full_name', ''),
+        'modifiedBy': (
+            trial.get('updated_by_name')
+            or (modifier or {}).get('full_name', '')
+            or (creator or {}).get('full_name', '')
+        ),
+        'modifiedByRole': (modifier or {}).get('role', ''),
+        'changeSummary': change_summary,
+        'changedFields': changed_fields,
     }
 
 
@@ -1141,10 +1239,11 @@ async def admin_terms_acceptances():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# REPORTS (CSV generated in-process, stored via storage.py, admin-scoped download)
+# REPORTS (approved PDF/Excel formats, stored via storage.py, admin download)
 # ═════════════════════════════════════════════════════════════════════════════
 class ReportGenerateIn(BaseModel):
     type: Literal['users', 'org-users', 'user-status', 'login-activity', 'trial-summary']
+    format: Literal['pdf', 'xlsx'] = 'pdf'
     from_: Optional[str] = Field(None, alias='from')
     to: Optional[str] = None
 
@@ -1196,28 +1295,98 @@ async def _report_rows(rtype: str, from_: Optional[str], to: Optional[str]):
             'visits_completed', 'visits_missed'], rows
 
 
+def _report_bytes(
+        title: str, headers: List[str], rows: List[List], fmt: str) -> tuple[bytes, str, str]:
+    if fmt == 'xlsx':
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        output = io.BytesIO()
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = 'Report'
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='A6213F')
+            cell.alignment = Alignment(horizontal='center')
+        for row in rows:
+            sheet.append(['' if value is None else value for value in row])
+        sheet.freeze_panes = 'A2'
+        for column in sheet.columns:
+            values = [str(cell.value or '') for cell in column]
+            width = min(max(max((len(value) for value in values), default=8) + 2, 10), 42)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        workbook.save(output)
+        return (
+            output.getvalue(),
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'xlsx',
+        )
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    output = io.BytesIO()
+    document = SimpleDocTemplate(
+        output, pagesize=landscape(A4),
+        rightMargin=10 * mm, leftMargin=10 * mm,
+        topMargin=10 * mm, bottomMargin=10 * mm,
+        title=title,
+    )
+    styles = getSampleStyleSheet()
+    table_data = [headers] + [[str(value if value is not None else '') for value in row]
+                              for row in rows]
+    column_width = (landscape(A4)[0] - 20 * mm) / max(len(headers), 1)
+    table = Table(
+        table_data,
+        repeatRows=1,
+        colWidths=[column_width] * len(headers),
+    )
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#A6213F')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#E6D6C5')),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [
+            colors.white, colors.HexColor('#FEFAF1')]),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    document.build([
+        Paragraph(title, styles['Title']),
+        Spacer(1, 5 * mm),
+        table,
+    ])
+    return output.getvalue(), 'application/pdf', 'pdf'
+
+
 @router.post('/reports/generate')
 async def admin_generate_report(body: ReportGenerateIn, admin=Depends(current_user)):
     headers, rows = await _report_rows(body.type, body.from_, body.to)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(headers)
-    w.writerows(rows)
-    data = buf.getvalue().encode('utf-8')
-    key = f'reports/{uuid.uuid4()}.csv'
-    await file_storage.get_storage().save(key, data, 'text/csv')
     n = now()
+    title = f"{body.type.replace('-', ' ').title()} report"
+    data, content_type, extension = _report_bytes(
+        title, headers, rows, body.format)
+    key = f'reports/{uuid.uuid4()}.{extension}'
+    await file_storage.get_storage().save(key, data, content_type)
     doc = {
         'id': str(uuid.uuid4()), 'type': body.type,
-        'name': f"{body.type}-{n.strftime('%Y%m%d-%H%M%S')}.csv",
-        'format': 'csv', 'key': key, 'size': len(data), 'rows': len(rows),
+        'name': f"{body.type}-{n.strftime('%Y%m%d-%H%M%S')}.{extension}",
+        'format': extension, 'content_type': content_type,
+        'key': key, 'size': len(data), 'rows': len(rows),
         'params': {'from': body.from_, 'to': body.to},
         'created_by': admin['id'], 'created_by_name': admin['full_name'],
         'created_at': n,
     }
     await db.admin_reports.insert_one(doc)
     await write_audit(admin, 'admin.report_generate',
-                      f"Generated {body.type} report ({len(rows)} rows)",
+                      f"Generated {body.type} {extension.upper()} report ({len(rows)} rows)",
                       target_id=doc['id'])
     return {**serialize(doc), 'download_url': f"/api/admin/reports/{doc['id']}/download"}
 
@@ -1239,9 +1408,106 @@ async def admin_download_report(report_id: str, admin=Depends(current_user)):
         raise HTTPException(404, 'Report file is missing')
     await write_audit(admin, 'admin.report_download',
                       f"Downloaded report {rep.get('name')}", target_id=report_id)
-    return Response(content=data, media_type='text/csv',
+    return Response(content=data, media_type=rep.get('content_type') or (
+                        'application/pdf' if rep.get('format') == 'pdf'
+                        else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
                     headers={'Content-Disposition':
-                             f"attachment; filename=\"{rep.get('name', 'report.csv')}\""})
+                             f"attachment; filename=\"{rep.get('name', 'report')}\""})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ORGANIZATION TRIAL-CREATION DELEGATION REQUESTS
+# ═════════════════════════════════════════════════════════════════════════════
+class OrgDelegationDecisionIn(BaseModel):
+    reason: Optional[str] = Field('', max_length=1000)
+
+
+@router.get('/org-delegation-requests')
+async def admin_list_org_delegation_requests(status: Optional[str] = None):
+    q: Dict = {}
+    if status:
+        if status not in ('pending', 'approved', 'rejected'):
+            raise HTTPException(400, 'Invalid delegation-request status')
+        q['status'] = status
+    return await db.org_delegation_requests.find(
+        q, {'_id': 0}).sort('created_at', -1).to_list(500)
+
+
+async def _decide_org_delegation_request(request_id: str, decision: str,
+                                         body: OrgDelegationDecisionIn,
+                                         admin: dict) -> dict:
+    req = await _find_or_404(
+        db.org_delegation_requests, request_id, 'Delegation request')
+    if req.get('status') != 'pending':
+        raise HTTPException(400, f"This request is already {req.get('status')}")
+    org = await db.organizations.find_one({'id': req.get('org_id')}, {'_id': 0})
+    if not org:
+        raise HTTPException(404, 'Organization not found')
+    if org.get('type') not in ('site', 'smo'):
+        raise HTTPException(
+            400, 'Trial-creation delegation is only available to Site and SMO organizations')
+
+    n = now()
+    updates = {
+        'status': decision,
+        'decided_by': admin['id'],
+        'decider_name': admin.get('full_name', ''),
+        'decision_reason': (body.reason or '').strip(),
+        'decided_at': n,
+    }
+    result = await db.org_delegation_requests.update_one(
+        {'id': request_id, 'status': 'pending'}, {'$set': updates})
+    if not result.modified_count:
+        raise HTTPException(409, 'This request was already actioned')
+
+    delegated = decision == 'approved'
+    await db.organizations.update_one(
+        {'id': org['id']},
+        {'$set': {
+            'trial_creation_delegated': delegated,
+            'trial_creation_delegation_request_id': request_id,
+            'trial_creation_delegation_updated_at': n,
+            'trial_creation_delegation_updated_by': admin['id'],
+        }})
+    if req.get('requested_by'):
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': req['requested_by'],
+            'title': f"Trial creation request {decision}",
+            'body': (
+                f"Trial-creation delegation for {org.get('name', 'your organization')} "
+                f"was {decision}."
+                + (f" {(body.reason or '').strip()}" if (body.reason or '').strip() else '')
+            ),
+            'kind': 'system', 'read': False, 'created_at': n,
+        })
+    await write_audit(
+        admin,
+        f'admin.org_delegation_{decision}',
+        f"{decision.title()} trial-creation delegation for {org.get('name')}"
+        + (f" — {(body.reason or '').strip()}" if (body.reason or '').strip() else ''),
+        target_id=request_id,
+        org_id=org['id'],
+        changes={'trial_creation_delegated': delegated},
+    )
+    fresh = await db.org_delegation_requests.find_one(
+        {'id': request_id}, {'_id': 0})
+    return serialize(fresh)
+
+
+@router.post('/org-delegation-requests/{request_id}/approve')
+async def admin_approve_org_delegation_request(
+        request_id: str, body: OrgDelegationDecisionIn,
+        admin=Depends(current_user)):
+    return await _decide_org_delegation_request(
+        request_id, 'approved', body, admin)
+
+
+@router.post('/org-delegation-requests/{request_id}/reject')
+async def admin_reject_org_delegation_request(
+        request_id: str, body: OrgDelegationDecisionIn,
+        admin=Depends(current_user)):
+    return await _decide_org_delegation_request(
+        request_id, 'rejected', body, admin)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1371,6 +1637,26 @@ async def btg_create_request(body: EmergencyRequestIn, admin=Depends(current_use
                       f"Requested break-the-glass access ({body.reason_category}) — "
                       f"{body.reason_text}", category='emergency', target_id=doc['id'])
     return serialize({**doc})
+
+
+@router.get('/emergency/requests')
+async def btg_list_requests(
+        status: Optional[str] = 'pending', admin=Depends(current_user)):
+    if status and status not in ('pending', 'approved', 'denied'):
+        raise HTTPException(400, 'Invalid emergency-request status')
+    q: Dict = {}
+    if status:
+        q['status'] = status
+    rows = await db.emergency_requests.find(
+        q, {'_id': 0}).sort('created_at', -1).to_list(500)
+    return [serialize({
+        **row,
+        'can_action': (
+            row.get('status') == 'pending'
+            and row.get('requested_by') != admin['id']
+        ),
+        'is_own_request': row.get('requested_by') == admin['id'],
+    }) for row in rows]
 
 
 @router.get('/emergency/requests/{request_id}')
@@ -1618,3 +1904,97 @@ async def broadcast_reply_resolve(reply_id: str, admin=Depends(current_user)):
     await write_audit(admin, 'admin.broadcast_resolve',
                       'Resolved a broadcast reply thread', target_id=reply_id)
     return {'ok': True, 'id': reply_id, 'status': 'resolved'}
+
+
+# ── Scheduled-broadcast delivery worker ──────────────────────────────────────
+# Scheduled broadcasts are stored with status='scheduled' and delivered by this
+# worker when scheduleAt comes due. Delivery is exactly-once under concurrency
+# and restarts:
+#   * a broadcast is CLAIMED atomically (scheduled → sending) so two workers
+#     can never both deliver it;
+#   * fan-out is idempotent — any partial notification/delivery rows from a
+#     crashed attempt are removed for that broadcast before re-inserting;
+#   * a 'sending' row whose claim is older than the stale window is re-claimed,
+#     so a crash mid-fan-out self-heals instead of stranding the broadcast.
+BROADCAST_WORKER_INTERVAL_SEC = int(os.environ.get('BROADCAST_WORKER_INTERVAL_SEC', '30'))
+BROADCAST_CLAIM_STALE_SEC = int(os.environ.get('BROADCAST_CLAIM_STALE_SEC', '300'))
+
+_worker_log = logging.getLogger('broadcast_worker')
+
+
+async def _fan_out_broadcast(doc: dict) -> int:
+    """Deliver one claimed broadcast. Safe to re-run for the same broadcast."""
+    recipient_ids = await _resolve_recipient_ids(doc.get('target') or 'all')
+    sent_at = now()
+    # Idempotency: clear any partial rows from an earlier crashed attempt.
+    await db.notifications.delete_many({'broadcast_id': doc['id']})
+    await db.notification_deliveries.delete_many({'broadcast_id': doc['id']})
+    if recipient_ids:
+        await db.notifications.insert_many([{
+            'id': str(uuid.uuid4()), 'user_id': uid, 'title': doc['subject'],
+            'body': doc['body'], 'kind': 'broadcast', 'broadcast_id': doc['id'],
+            'read': False, 'created_at': sent_at,
+        } for uid in recipient_ids])
+        await db.notification_deliveries.insert_many([{
+            'id': str(uuid.uuid4()), 'type': 'broadcast', 'channel': 'Push',
+            'recipient': uid, 'message': doc['subject'], 'status': 'Delivered',
+            'sentAt': sent_at, 'deliveredAt': sent_at, 'error': '',
+            'broadcast_id': doc['id'],
+        } for uid in recipient_ids])
+    await db.broadcast_messages.update_one({'id': doc['id']}, {'$set': {
+        'status': 'sent', 'sent_at': sent_at,
+        'recipients_count': len(recipient_ids)}})
+    actor = {'id': doc.get('created_by'),
+             'full_name': doc.get('created_by_name', 'Platform admin'),
+             'role': 'admin'}
+    await write_audit(actor, 'admin.broadcast_send',
+                      f"Delivered scheduled broadcast \"{doc['subject']}\" to "
+                      f"{len(recipient_ids)} recipients (target {doc.get('target')})",
+                      target_id=doc['id'], scheduled=True)
+    return len(recipient_ids)
+
+
+async def deliver_due_broadcasts(only_id: Optional[str] = None) -> int:
+    """Claim and deliver every due scheduled broadcast. Returns count delivered.
+    `only_id` narrows the pass to one broadcast (used by tests)."""
+    delivered = 0
+    while True:
+        n = now()
+        stale_before = n - timedelta(seconds=BROADCAST_CLAIM_STALE_SEC)
+        due: Dict = {'$or': [
+            {'status': 'scheduled', 'scheduleAt': {'$lte': n}},
+            # self-heal: re-claim a delivery that crashed mid-fan-out
+            {'status': 'sending', 'claimed_at': {'$lte': stale_before}},
+        ]}
+        if only_id:
+            due['id'] = only_id
+        doc = await db.broadcast_messages.find_one_and_update(
+            due,
+            {'$set': {'status': 'sending', 'claimed_at': n}},
+            projection={'_id': 0},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not doc:
+            return delivered
+        try:
+            count = await _fan_out_broadcast(doc)
+            delivered += 1
+            _worker_log.info('Delivered scheduled broadcast %s to %d recipients',
+                             doc['id'], count)
+        except Exception:
+            # Keep status='sending' with the current claim time — it will be
+            # retried after the stale window instead of hot-looping.
+            _worker_log.exception('Scheduled broadcast %s delivery failed; '
+                                  'will retry after %ss', doc['id'],
+                                  BROADCAST_CLAIM_STALE_SEC)
+            return delivered
+
+
+async def broadcast_worker_loop():
+    """Long-running startup task: poll for due scheduled broadcasts."""
+    while True:
+        try:
+            await deliver_due_broadcasts()
+        except Exception:
+            _worker_log.exception('Broadcast worker pass failed')
+        await asyncio.sleep(BROADCAST_WORKER_INTERVAL_SEC)

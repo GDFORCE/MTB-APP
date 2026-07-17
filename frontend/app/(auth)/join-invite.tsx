@@ -42,6 +42,18 @@ const roleCode = (value: string, fallback = "patient") => {
   return match?.[0] || fallback;
 };
 
+const normalizeInviteCode = (value: string) => {
+  let raw = value.trim();
+  if (raw.includes("/")) raw = raw.replace(/\/+$/, "").split("/").pop()?.split("?")[0] || raw;
+  const compact = raw.replace(/[^a-z0-9]/gi, "");
+  if (compact.slice(0, 3).toUpperCase() === "MTB") {
+    const suffix = compact.slice(3, 11).toUpperCase();
+    const groups = suffix.match(/.{1,4}/g) || [];
+    return ["MTB", ...groups].join("-");
+  }
+  return /^[a-f0-9]{32}$/i.test(compact) ? compact.toLowerCase() : raw;
+};
+
 // UI copy for a resolved-but-not-acceptable invite, keyed by effective status.
 const STATE_INFO: Record<string, { icon: React.ReactNode; title: string; note: string; tone: string }> = {
   expired: { icon: <Clock size={18} color={colors.accent} />, title: "This invitation has expired", note: "Ask your admin to resend the invitation, then enter the new code here.", tone: colors.accent },
@@ -64,13 +76,12 @@ export default function JoinInvite() {
   const isAccepted = phase === "resolved" && invite?.status === "accepted";
 
   const onCodeChange = (t: string) => {
-    // Invite tokens are case-sensitive hex — do not force-uppercase.
-    setCode(t.trim());
+    setCode(normalizeInviteCode(t));
     if (phase !== "idle") { setPhase("idle"); setInvite(null); setErrorMsg(""); }
   };
 
   const verify = async () => {
-    const token = code.trim();
+    const token = normalizeInviteCode(code);
     if (token.length < 4) return;
     setPhase("loading");
     setInvite(null);
@@ -98,37 +109,21 @@ export default function JoinInvite() {
 
   const accept = async () => {
     if (!invite || invite.status !== "pending") return;
-    const token = code.trim();
+    const token = normalizeInviteCode(code);
     setAccepting(true);
     try {
-      const res = await api.post<{ ok: boolean; status: string; email: string; role: string; org: string; full_name?: string; designation?: string; phone?: string }>(
-        `/invitations/${encodeURIComponent(token)}/accept`,
-        {
-          full_name: draft.fullName.trim(),
-          designation: roleCode(draft.role, invite.role) === "patient" ? "" : draft.designation.trim(),
-          role: roleCode(draft.role, invite.role),
-          phone: draft.phone.trim(),
-        },
-      );
       router.push({
         pathname: "/(auth)/register",
         params: {
-          role: res.data?.role || invite.role || "patient",
-          org: res.data?.org || invite.org || "",
-          email: res.data?.email || invite.email || "",
-          fullName: res.data?.full_name || draft.fullName,
-          designation: res.data?.designation || draft.designation,
-          phone: res.data?.phone || draft.phone,
+          inviteToken: token,
+          role: invite.role || "patient",
+          org: invite.org || "",
+          email: invite.email || "",
+          fullName: draft.fullName.trim(),
+          designation: roleCode(invite.role) === "patient" ? "" : draft.designation.trim(),
+          phone: draft.phone.trim(),
         },
       });
-    } catch (e) {
-      const status = (e as AxiosError)?.response?.status;
-      setErrorMsg(
-        status === 400
-          ? "This invitation can no longer be accepted. Please ask your admin for a new one."
-          : "We couldn't accept the invitation just now. Please try again."
-      );
-      setPhase("error");
     } finally {
       setAccepting(false);
     }
@@ -159,9 +154,9 @@ export default function JoinInvite() {
               <TextInput
                 value={code}
                 onChangeText={onCodeChange}
-                autoCapitalize="none"
+                autoCapitalize="characters"
                 autoCorrect={false}
-                placeholder="Paste your invite code"
+                placeholder="MTB-XXXX-XXXX"
                 placeholderTextColor={colors.mutedFg + "66"}
                 style={s.codeInput}
               />

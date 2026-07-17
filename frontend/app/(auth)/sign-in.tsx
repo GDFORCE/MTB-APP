@@ -4,14 +4,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Eye, EyeOff, ArrowLeft } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
-import { Eyebrow, H1, Body, Small, Button } from "@/src/components/ui";
+import { Eyebrow, H1, Small, Button } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 
 export default function SignIn() {
   const router = useRouter();
   const { signIn } = useAuth();
-  const [email, setEmail] = useState("patient@mtb.app");
-  const [password, setPassword] = useState("Password1!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -56,15 +56,16 @@ export default function SignIn() {
           <View style={{ marginTop: spacing.xl, gap: spacing.md }}>
             <Button testID="signin-submit-button" onPress={submit} loading={loading}>Sign In</Button>
             <Pressable onPress={() => router.push("/(auth)/entity-type")}>
-              <Small color={colors.mutedFg} style={{ textAlign: "center" }}>Don't have an account? <Small color={colors.primary} style={{ fontWeight: "700" as any }}>Sign Up</Small></Small>
+              <Small color={colors.mutedFg} style={{ textAlign: "center" }}>Don’t have an account? <Small color={colors.primary} style={{ fontWeight: "700" as any }}>Sign Up</Small></Small>
             </Pressable>
           </View>
 
-          <View style={s.demoBox}>
-            <Eyebrow color={colors.mutedFg}>Demo logins</Eyebrow>
-            <Small color={colors.mutedFg} style={{ marginTop: 4 }}>patient@mtb.app · pi@mtb.app · crc@mtb.app · sponsor@mtb.app</Small>
-            <Small color={colors.mutedFg}>Password: Password1!</Small>
-          </View>
+          {__DEV__ && (
+            <View style={s.demoBox}>
+              <Eyebrow color={colors.mutedFg}>Development accounts</Eyebrow>
+              <Small color={colors.mutedFg} style={{ marginTop: 4 }}>Use the local seed documentation for test credentials.</Small>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

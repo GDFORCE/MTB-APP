@@ -26,7 +26,9 @@ import {
   X, ChevronLeft, ShieldCheck, Clock, ChevronDown, Check, UserPlus, Trash2,
   UserMinus, Send, ArrowRightLeft, FlaskConical, Building2, KeyRound, Landmark,
   GraduationCap, FileSignature, Stamp, RefreshCcw, AlertTriangle, MapPin,
+  PenLine, Archive, ArchiveRestore, FolderOpen,
 } from "lucide-react-native";
+import { useRouter } from "expo-router";
 import { colors as C, dawnGradient, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
@@ -91,9 +93,31 @@ export interface OrgTrial {
   phase?: string;
   condition?: string;
   status?: string;
+  archived?: boolean;
+  duration?: string | null;
+  drug?: string | null;
+  recruitment_status?: string | null;
   accessLevel: "full" | "restricted";
   createdBy?: string;
   enrolled?: number;
+  target?: number | null;
+  target_enrollment?: number | null;
+  sponsor?: string;
+  cro?: string;
+  pis?: { id: string; name?: string; organization?: string }[];
+  crcs?: { id: string; name?: string; organization?: string }[];
+  accessStatus?: "full" | "restricted";
+  permissions?: {
+    canViewDetails?: boolean;
+    canEdit?: boolean;
+    canArchive?: boolean;
+    canManageDocuments?: boolean;
+    canRequestAccess?: boolean;
+  };
+  documentCount?: number;
+  updatedAt?: string;
+  updatedBy?: { id?: string; name?: string };
+  sites?: string[];
   schedule?: OrgVisit[];
   subjects?: OrgSubject[];
 }
@@ -838,6 +862,148 @@ function AssignSiteSheet({ member, sites, onClose, onAssign }: { member: OrgMemb
 }
 
 // ── styles ───────────────────────────────────────────────────────────────────
+// ── TrialAdminActions ────────────────────────────────────────────────────────
+// Permission-gated owner actions on an org-console trial card: Edit (PATCH
+// /org/{orgId}/trials/{id}), Archive/Unarchive (POST …/archive) and protocol
+// Documents & version history (deep-links into the trial-summary record).
+// Renders nothing when the backend grants none of the three permissions.
+const TRIAL_STATUSES = ["active", "completed", "terminated"] as const;
+
+export function TrialAdminActions({ trial, orgId, showToast, onChanged }: {
+  trial: OrgTrial; orgId: string; showToast: (msg: string) => void; onChanged: () => void;
+}) {
+  const router = useRouter();
+  const perms = trial.permissions || {};
+  const [editOpen, setEditOpen] = useState(false);
+  const [form, setForm] = useState({ title: "", duration: "", target: "", recruitment: "", status: "active" });
+  const [saving, setSaving] = useState(false);
+  const [editErr, setEditErr] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (!perms.canEdit && !perms.canArchive && !perms.canManageDocuments) return null;
+
+  const openEdit = () => {
+    setForm({
+      title: trial.title || "",
+      duration: trial.duration || "",
+      target: typeof (trial.target ?? trial.target_enrollment) === "number" ? String(trial.target ?? trial.target_enrollment) : "",
+      recruitment: trial.recruitment_status || "",
+      status: trial.status || "active",
+    });
+    setEditErr(null);
+    setEditOpen(true);
+  };
+
+  const saveEdit = async () => {
+    const target = form.target.trim();
+    if (target && (!/^\d+$/.test(target))) { setEditErr("Target enrollment must be a whole number"); return; }
+    if (!form.title.trim()) { setEditErr("Title is required"); return; }
+    setSaving(true); setEditErr(null);
+    try {
+      const body: Record<string, unknown> = { title: form.title.trim(), status: form.status };
+      if (form.duration.trim()) body.duration = form.duration.trim();
+      if (form.recruitment.trim()) body.recruitment_status = form.recruitment.trim();
+      if (target) body.target_enrollment = Number(target);
+      await api.patch(`/org/${orgId}/trials/${trial.id}`, body);
+      setEditOpen(false);
+      showToast("Trial updated");
+      onChanged();
+    } catch (e) {
+      setEditErr(errMsg(e, "Couldn't save the trial changes"));
+    } finally { setSaving(false); }
+  };
+
+  const toggleArchive = () => {
+    const archiving = !trial.archived;
+    setConfirm({
+      title: archiving ? "Archive this trial?" : "Restore this trial?",
+      body: archiving
+        ? `${trial.protocol_id || trial.title || "This trial"} stays readable but is locked against edits until it is restored. The action is audited.`
+        : `${trial.protocol_id || trial.title || "This trial"} becomes editable again. The action is audited.`,
+      confirmLabel: archiving ? "Archive trial" : "Restore trial",
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          await api.post(`/org/${orgId}/trials/${trial.id}/archive`, { archived: archiving });
+          setConfirm(null);
+          showToast(archiving ? "Trial archived" : "Trial restored");
+          onChanged();
+        } catch (e) {
+          setConfirm(null);
+          showToast(errMsg(e, "Couldn't change the archive state"));
+        } finally { setBusy(false); }
+      },
+    });
+  };
+
+  const actionPill = (label: string, Icon: any, onPress: () => void, tone = C.primary, disabled = false) => (
+    <Pressable
+      key={label}
+      testID={`trial-action-${label.toLowerCase().replace(/\s/g, "-")}-${trial.id}`}
+      onPress={disabled ? undefined : onPress}
+      style={{
+        flexDirection: "row", alignItems: "center", gap: 5,
+        paddingHorizontal: 10, height: 30, borderRadius: 999,
+        borderWidth: 1, borderColor: disabled ? C.border : tone + "55",
+        backgroundColor: disabled ? C.surface : tone + "10",
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <Icon size={13} color={disabled ? C.mutedFg : tone} />
+      <RNText style={{ fontFamily: fonts.bold, fontSize: 11, color: disabled ? C.mutedFg : tone }}>{label}</RNText>
+    </Pressable>
+  );
+
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+      {perms.canEdit && actionPill("Edit", PenLine, openEdit, C.primary, !!trial.archived)}
+      {perms.canArchive && (trial.archived
+        ? actionPill("Unarchive", ArchiveRestore, toggleArchive, C.success)
+        : actionPill("Archive", Archive, toggleArchive, C.warning))}
+      {perms.canManageDocuments && actionPill(
+        "Documents & versions", FolderOpen,
+        () => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } }),
+        C.info,
+      )}
+
+      <Sheet open={editOpen} onClose={() => setEditOpen(false)} title={`Edit ${trial.protocol_id || "trial"}`}>
+        <View style={{ gap: 14 }}>
+          <Field label="Title" required>
+            <KitInput value={form.title} onChangeText={(v) => setForm({ ...form, title: v })} placeholder="Trial title" />
+          </Field>
+          <Field label="Duration">
+            <KitInput value={form.duration} onChangeText={(v) => setForm({ ...form, duration: v })} placeholder="e.g. 24 months" />
+          </Field>
+          <Field label="Target enrollment">
+            <KitInput value={form.target} onChangeText={(v) => setForm({ ...form, target: v })} placeholder="e.g. 120" keyboardType="number-pad" />
+          </Field>
+          <Field label="Recruitment status">
+            <KitInput value={form.recruitment} onChangeText={(v) => setForm({ ...form, recruitment: v })} placeholder="e.g. recruiting" />
+          </Field>
+          <Field label="Trial status">
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {TRIAL_STATUSES.map((s) => {
+                const on = form.status === s;
+                return (
+                  <Pressable key={s} onPress={() => setForm({ ...form, status: s })}
+                    style={{ paddingHorizontal: 12, height: 32, borderRadius: 999, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: on ? C.primary : C.border, backgroundColor: on ? "rgba(166,33,63,0.08)" : C.card }}>
+                    <RNText style={{ fontFamily: fonts.semibold, fontSize: 12, color: on ? C.primary : C.mutedFg, textTransform: "capitalize" }}>{s}</RNText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Field>
+          {editErr && <RNText style={{ color: C.destructive, fontFamily: fonts.semibold, fontSize: 12 }}>{editErr}</RNText>}
+          <PrimaryButton label="Save changes" loading={saving} onPress={saveEdit} />
+        </View>
+      </Sheet>
+
+      <ConfirmDialog confirm={confirm} onCancel={() => setConfirm(null)} busy={busy} />
+    </View>
+  );
+}
+
 export const k = StyleSheet.create({
   toast: { position: "absolute", left: 16, right: 16, bottom: 28, backgroundColor: C.foreground, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16 },
   toastTxt: { color: C.primaryFg, fontFamily: fonts.medium, fontSize: 13, textAlign: "center" },

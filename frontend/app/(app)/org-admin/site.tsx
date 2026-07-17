@@ -9,11 +9,11 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, RefreshControl } from "react-native";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   KeyRound, Lock, Plus, UserPlus, ShieldCheck, Landmark, CalendarDays, FileText,
-  Users, ArrowRightLeft, Clock, ArrowUpRight, Search, Stethoscope,
+  Users, ArrowRightLeft, ArrowUpRight, Search,
 } from "lucide-react-native";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
@@ -21,7 +21,8 @@ import { useAuth } from "@/src/auth/AuthContext";
 import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
   TransferOwnershipSheet, DelegationGate, Loading, ErrorCard, EmptyCard, KitInput,
-  errMsg, stripTitle, type OrgMember, type AuditEntry, type OrgTrial,
+  TrialAdminActions,
+  errMsg, type OrgMember, type AuditEntry, type OrgTrial,
 } from "@/src/components/org-admin-kit";
 
 function statusTone(status?: string): { bg: string; fg: string } {
@@ -36,6 +37,7 @@ const ADD_PATIENT_ROUTE = "/(app)/clinical/add-patient";
 
 export default function SiteConsole() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user } = useAuth();
   const { orgId, orgName, loading: orgLoading, error: orgErr, retry } = useOrgContext();
   const { showToast, ToastView } = useToast();
@@ -83,10 +85,10 @@ export default function SiteConsole() {
     const patients = trials.reduce((n, t) => n + (t.enrolled || 0), 0);
     const pis = members.filter((m) => (m.role || "").toLowerCase() === "pi" && m.status !== "rejected").length;
     return [
-      { value: trials.length, label: "Trials" },
-      { value: pis, label: "PIs" },
-      { value: patients, label: "Patients" },
-      { value: members.filter((m) => m.status === "active").length, label: "Members" },
+      { value: trials.length, label: "Total Trials" },
+      { value: pis, label: "Total PIs" },
+      { value: patients, label: "Total Patients" },
+      { value: members.filter((m) => m.status === "active").length, label: "Team Members" },
     ];
   }, [trials, members]);
 
@@ -97,7 +99,10 @@ export default function SiteConsole() {
   }, [trials, query]);
 
   // ── org action handlers (live endpoints) ──
-  const inviteMember = async (p: any) => { await api.post(`/org/${orgId}/members/invite`, p); };
+  const inviteMember = async (p: any) => {
+    const role = p.role === "PI" ? "pi" : p.role === "Research Team" ? "crc" : p.role;
+    await api.post(`/org/${orgId}/members/invite`, { ...p, role });
+  };
   const deleteMember = async (m: OrgMember) => { await api.delete(`/org/${orgId}/members/${m.id}`); };
   const makeAdmin = async (m: OrgMember) => { await api.post(`/org/${orgId}/members/${m.id}/make-admin`); };
   const assignSite = async (m: OrgMember, site: string) => { await api.post(`/org/${orgId}/members/${m.id}/assign-site`, { site }); };
@@ -145,11 +150,14 @@ export default function SiteConsole() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
       >
         <ConsoleHeader
-          eyebrow="SITE · HOSPITAL ADMINISTRATION"
+          eyebrow="SITE · ORGANIZATION MANAGEMENT"
           org={orgName} roleLabel="Site Admin"
-          note="Access-keyed oversight — full for trials you run, schedule-only otherwise"
+          note="You're also the site administrator — manage trials, access, team and audit"
           glow="rgba(123,107,184,0.34)"
-          pulse={pulse} onBack={() => router.back()}
+          pulse={pulse}
+          onBack={() => pathname.includes("/site/dashboard")
+            ? router.replace("/(app)/clinical/profile")
+            : router.back()}
         />
 
         <View style={{ paddingHorizontal: 16, marginTop: 14 }}>
@@ -204,6 +212,7 @@ export default function SiteConsole() {
                         requested={requested.has(t.id)}
                         onOpen={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: t.id } })}
                         onRequest={() => requestAccess(t)}
+                        actions={orgId ? <TrialAdminActions trial={t} orgId={orgId} showToast={showToast} onChanged={loadAll} /> : null}
                       />
                     ))}
                   </View>
@@ -226,7 +235,7 @@ export default function SiteConsole() {
                 <TeamRoster
                   members={members}
                   roleFilters={["pi", "crc"]}
-                  inviteConfig={{ roles: ["pi", "crc"] }}
+                  inviteConfig={{ roles: ["PI", "Research Team"] }}
                   accentColor={C.info}
                   showToast={showToast}
                   onReload={loadAll}
@@ -258,8 +267,9 @@ export default function SiteConsole() {
   );
 }
 
-function TrialCard({ t, mine, requested, onOpen, onRequest }: {
+function TrialCard({ t, mine, requested, onOpen, onRequest, actions }: {
   t: OrgTrial; mine: boolean; requested: boolean; onOpen: () => void; onRequest: () => void;
+  actions?: React.ReactNode;
 }) {
   const full = t.accessLevel === "full";
   const tone = statusTone(t.status);
@@ -292,7 +302,9 @@ function TrialCard({ t, mine, requested, onOpen, onRequest }: {
         <>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
             <RNText style={st.metaLabel}>ENROLLED</RNText>
-            <RNText style={st.metaVal}>{t.enrolled || 0} subject{(t.enrolled || 0) === 1 ? "" : "s"}</RNText>
+            <RNText style={st.metaVal}>
+              {t.enrolled || 0}{typeof t.target === "number" ? ` / ${t.target}` : ""} subject{(t.enrolled || 0) === 1 ? "" : "s"}
+            </RNText>
           </View>
           {subjects.length > 0 ? (
             <View style={st.subjectBox}>
@@ -309,8 +321,9 @@ function TrialCard({ t, mine, requested, onOpen, onRequest }: {
           )}
           <Pressable onPress={onOpen} style={st.openBtn}>
             <FileText size={14} color={C.info} />
-            <RNText style={[st.openBtnTxt, { color: C.info }]}>Open trial</RNText>
+            <RNText style={[st.openBtnTxt, { color: C.info }]}>Open trial · {t.documentCount || 0} docs</RNText>
           </Pressable>
+          {actions}
         </>
       ) : (
         <>

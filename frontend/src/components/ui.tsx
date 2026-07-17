@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, StyleProp, ViewStyle, TextStyle, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, StyleProp, ViewStyle, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, radii, spacing, shadows, typography, dawnGradient, fonts, figtreeFamily } from '../theme/tokens';
 

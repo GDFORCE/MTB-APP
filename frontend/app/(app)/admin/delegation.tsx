@@ -18,8 +18,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  Menu, RefreshCcw, X, AlertTriangle, Share2, Plus, Search, Pencil, PauseCircle,
-  Ban, ChevronRight,
+  Menu, RefreshCcw, X, AlertTriangle, Plus, Search, Pencil, PauseCircle,
+  Ban, ChevronRight, Building2, CheckCircle2, XCircle,
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
@@ -44,8 +44,15 @@ type Delegation = {
   status?: string; reason?: string; delegatedDate?: string; lastActive?: string | null;
 };
 type LookupUser = { id: string; full_name?: string; email?: string; role?: string; organization?: string };
+type OrgDelegationRequest = {
+  id: string; org_id: string; org_name?: string; requester_name?: string;
+  reason?: string; status?: "pending" | "approved" | "rejected";
+  created_at?: string; decided_at?: string; decider_name?: string;
+  decision_reason?: string;
+};
 
 const STATUS_FILTERS = [{ key: "all", label: "All" }, { key: "active", label: "Active" }, { key: "suspended", label: "Suspended" }, { key: "revoked", label: "Revoked" }];
+const REQUEST_STATUS_FILTERS = [{ key: "all", label: "All" }, { key: "pending", label: "Pending" }, { key: "approved", label: "Approved" }, { key: "rejected", label: "Rejected" }];
 
 function fmtDate(iso?: string | null): string {
   if (!iso) return "—";
@@ -55,8 +62,11 @@ function fmtDate(iso?: string | null): string {
 function statusColors(s?: string): { fg: string; bg: string } {
   switch (s) {
     case "active": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
+    case "approved": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
     case "suspended": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
+    case "pending": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
     case "revoked": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
+    case "rejected": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
     default: return { fg: C.mutedFg, bg: C.surface };
   }
 }
@@ -66,13 +76,16 @@ function initialsOf(name?: string, email?: string): string {
 
 export default function AdminDelegation() {
   const { open } = useAdminDrawer();
+  const [view, setView] = useState<"staff" | "requests">("staff");
   const [rows, setRows] = useState<Delegation[]>([]);
+  const [requests, setRequests] = useState<OrgDelegationRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
 
   const [selected, setSelected] = useState<Delegation | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<OrgDelegationRequest | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Delegation | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,8 +95,12 @@ export default function AdminDelegation() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await api.get("/admin/delegations");
-      setRows(Array.isArray(res.data) ? res.data : []);
+      const [delegationsRes, requestsRes] = await Promise.all([
+        api.get("/admin/delegations"),
+        api.get("/admin/org-delegation-requests"),
+      ]);
+      setRows(Array.isArray(delegationsRes.data) ? delegationsRes.data : []);
+      setRequests(Array.isArray(requestsRes.data) ? requestsRes.data : []);
     } catch (e) {
       setError(errMsg(e, "Couldn't load delegations. Pull to retry."));
     } finally {
@@ -97,11 +114,19 @@ export default function AdminDelegation() {
     () => rows.filter((d) => statusFilter === "all" || (d.status || "active") === statusFilter),
     [rows, statusFilter],
   );
-  const tiles = useMemo(() => [
+  const filteredRequests = useMemo(
+    () => requests.filter((request) => statusFilter === "all" || (request.status || "pending") === statusFilter),
+    [requests, statusFilter],
+  );
+  const tiles = useMemo(() => view === "staff" ? [
     { label: "Total", value: rows.length },
     { label: "Active", value: rows.filter((d) => d.status === "active").length },
     { label: "Suspended", value: rows.filter((d) => d.status === "suspended").length },
-  ], [rows]);
+  ] : [
+    { label: "Total", value: requests.length },
+    { label: "Pending", value: requests.filter((request) => (request.status || "pending") === "pending").length },
+    { label: "Approved", value: requests.filter((request) => request.status === "approved").length },
+  ], [requests, rows, view]);
 
   const suspend = async (d: Delegation) => {
     setBusy(true);
@@ -119,6 +144,25 @@ export default function AdminDelegation() {
       setSelected(null); await load();
     } catch (e) { showToast(errMsg(e, "Couldn't revoke")); } finally { setBusy(false); }
   };
+  const decideRequest = async (request: OrgDelegationRequest, decision: "approve" | "reject", reason: string) => {
+    setBusy(true);
+    try {
+      await api.post(`/admin/org-delegation-requests/${request.id}/${decision}`, { reason });
+      showToast(`${decision === "approve" ? "Approved" : "Rejected"} trial-creation delegation for ${request.org_name || "organization"}`);
+      setSelectedRequest(null);
+      await load();
+    } catch (e) {
+      showToast(errMsg(e, `Couldn't ${decision} the request`));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const changeView = (next: "staff" | "requests") => {
+    setView(next);
+    setStatusFilter("all");
+    setSelected(null);
+    setSelectedRequest(null);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: C.background }}>
@@ -129,7 +173,7 @@ export default function AdminDelegation() {
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
       >
-        <Hero onMenu={open} onRefresh={onRefresh} onAdd={() => setAddOpen(true)} />
+        <Hero onMenu={open} onRefresh={onRefresh} onAdd={view === "staff" ? () => setAddOpen(true) : undefined} />
 
         {loading ? (
           <Loading label="Loading delegations…" />
@@ -137,6 +181,14 @@ export default function AdminDelegation() {
           <ErrorCard message={error} onRetry={load} />
         ) : (
           <View style={{ marginTop: -20, paddingHorizontal: 16 }}>
+            <View style={st.viewSwitch}>
+              <Pressable testID="delegation-view-staff" onPress={() => changeView("staff")} style={[st.viewSwitchBtn, view === "staff" && st.viewSwitchBtnActive]}>
+                <RNText style={[st.viewSwitchTxt, view === "staff" && st.viewSwitchTxtActive]}>Admin tasks</RNText>
+              </Pressable>
+              <Pressable testID="delegation-view-requests" onPress={() => changeView("requests")} style={[st.viewSwitchBtn, view === "requests" && st.viewSwitchBtnActive]}>
+                <RNText style={[st.viewSwitchTxt, view === "requests" && st.viewSwitchTxtActive]}>Trial creation requests</RNText>
+              </Pressable>
+            </View>
             <View style={st.tileGrid}>
               {tiles.map((t) => (
                 <View key={t.label} style={st.tile}>
@@ -146,11 +198,15 @@ export default function AdminDelegation() {
               ))}
             </View>
 
-            <ChipRow chips={STATUS_FILTERS} value={statusFilter} onChange={setStatusFilter} />
-            <RNText style={st.countLine}>{filtered.length} of {rows.length} delegations</RNText>
+            <ChipRow chips={view === "staff" ? STATUS_FILTERS : REQUEST_STATUS_FILTERS} value={statusFilter} onChange={setStatusFilter} />
+            <RNText style={st.countLine}>
+              {view === "staff"
+                ? `${filtered.length} of ${rows.length} delegations`
+                : `${filteredRequests.length} of ${requests.length} requests`}
+            </RNText>
 
-            {filtered.length === 0 ? (
-              <EmptyCard message="No delegations match the current filter." />
+            {view === "staff" ? (filtered.length === 0 ? (
+              <EmptyCard message="No admin-task delegations match the current filter." />
             ) : (
               <View style={{ gap: 10 }}>
                 {filtered.map((d) => {
@@ -173,7 +229,33 @@ export default function AdminDelegation() {
                   );
                 })}
               </View>
-            )}
+            )) : (filteredRequests.length === 0 ? (
+              <EmptyCard message="No trial-creation delegation requests match the current filter." />
+            ) : (
+              <View style={{ gap: 10 }}>
+                {filteredRequests.map((request) => {
+                  const sc = statusColors(request.status);
+                  return (
+                    <Pressable key={request.id} testID={`org-delegation-request-${request.id}`} onPress={() => setSelectedRequest(request)} style={st.row}>
+                      <View style={[st.avatar, { backgroundColor: "rgba(166,33,63,0.10)" }]}>
+                        <Building2 size={19} color={C.primary} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <RNText style={st.rowName} numberOfLines={1}>{request.org_name || "Organization"}</RNText>
+                        <RNText style={st.rowSub} numberOfLines={1}>Requested by {request.requester_name || "organization administrator"}</RNText>
+                        <RNText style={st.rowSub} numberOfLines={1}>{fmtDate(request.created_at)}</RNText>
+                      </View>
+                      <View style={{ alignItems: "flex-end", gap: 6 }}>
+                        <View style={[st.badge, { backgroundColor: sc.bg }]}>
+                          <RNText style={[st.badgeTxt, { color: sc.fg }]}>{request.status || "pending"}</RNText>
+                        </View>
+                        <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
           </View>
         )}
       </ScrollView>
@@ -186,13 +268,19 @@ export default function AdminDelegation() {
       />
       <AddSheet open={addOpen} onClose={() => setAddOpen(false)} onDone={(msg) => { setAddOpen(false); showToast(msg); load(); }} />
       <EditSheet delegation={editing} onClose={() => setEditing(null)} onDone={(msg) => { setEditing(null); showToast(msg); load(); }} />
+      <OrgRequestSheet
+        request={selectedRequest}
+        busy={busy}
+        onClose={() => setSelectedRequest(null)}
+        onDecision={decideRequest}
+      />
 
       <Toast text={toast} anim={toastAnim} />
     </View>
   );
 }
 
-function Hero({ onMenu, onRefresh, onAdd }: { onMenu: () => void; onRefresh: () => void; onAdd: () => void }) {
+function Hero({ onMenu, onRefresh, onAdd }: { onMenu: () => void; onRefresh: () => void; onAdd?: () => void }) {
   return (
     <LinearGradient colors={[C.primary, C.primaryDeep] as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.hero}>
       <SafeAreaView edges={["top"]}>
@@ -205,11 +293,13 @@ function Hero({ onMenu, onRefresh, onAdd }: { onMenu: () => void; onRefresh: () 
           <Pressable testID="delegation-refresh" onPress={onRefresh} style={st.iconBtn} hitSlop={8}><RefreshCcw size={18} color={C.primaryFg} /></Pressable>
         </View>
         <RNText style={st.heroSub}>Grant scoped admin tasks to trusted staff — every change is audited.</RNText>
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
-          <Pressable testID="delegation-add" onPress={onAdd} style={st.heroBtnSolid}>
-            <Plus size={15} color={C.primary} /><RNText style={st.heroBtnSolidTxt}>Add delegation</RNText>
-          </Pressable>
-        </View>
+        {onAdd ? (
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 14 }}>
+            <Pressable testID="delegation-add" onPress={onAdd} style={st.heroBtnSolid}>
+              <Plus size={15} color={C.primary} /><RNText style={st.heroBtnSolidTxt}>Add delegation</RNText>
+            </Pressable>
+          </View>
+        ) : <View style={{ height: 14 }} />}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -429,6 +519,95 @@ function EditSheet({ delegation, onClose, onDone }: { delegation: Delegation | n
   );
 }
 
+function OrgRequestSheet({ request, busy, onClose, onDecision }: {
+  request: OrgDelegationRequest | null;
+  busy: boolean;
+  onClose: () => void;
+  onDecision: (request: OrgDelegationRequest, decision: "approve" | "reject", reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    setReason("");
+  }, [request?.id]);
+
+  return (
+    <Sheet open={!!request} onClose={onClose} title="Trial creation request">
+      {request ? (
+        <View style={{ gap: 14 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <View style={[st.avatar, { width: 52, height: 52, borderRadius: 17, backgroundColor: "rgba(166,33,63,0.10)" }]}>
+              <Building2 size={22} color={C.primary} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <RNText style={st.sheetName} numberOfLines={2}>{request.org_name || "Organization"}</RNText>
+              <RNText style={st.rowSub}>Requested {fmtDate(request.created_at)}</RNText>
+            </View>
+            {(() => {
+              const sc = statusColors(request.status);
+              return (
+                <View style={[st.badge, { backgroundColor: sc.bg }]}>
+                  <RNText style={[st.badgeTxt, { color: sc.fg }]}>{request.status || "pending"}</RNText>
+                </View>
+              );
+            })()}
+          </View>
+
+          <InfoRow label="Requested by" value={request.requester_name || "Organization administrator"} />
+          <View style={st.block}>
+            <RNText style={st.blockLabel}>Business justification</RNText>
+            <RNText style={st.blockBody}>{request.reason || "No justification supplied."}</RNText>
+          </View>
+
+          {request.status === "pending" ? (
+            <>
+              <FormField label="Decision note (required when rejecting)">
+                <Input
+                  testID="org-delegation-decision-reason"
+                  value={reason}
+                  onChangeText={setReason}
+                  placeholder="Record the approval conditions or rejection reason…"
+                  multiline
+                />
+              </FormField>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable
+                  testID="org-delegation-reject"
+                  disabled={busy || reason.trim().length < 5}
+                  onPress={() => onDecision(request, "reject", reason.trim())}
+                  style={[st.decisionBtn, { borderColor: "rgba(192,57,43,0.35)" }, (busy || reason.trim().length < 5) && st.disabled]}
+                >
+                  <XCircle size={16} color={C.destructive} />
+                  <RNText style={[st.decisionBtnTxt, { color: C.destructive }]}>Reject</RNText>
+                </Pressable>
+                <Pressable
+                  testID="org-delegation-approve"
+                  disabled={busy}
+                  onPress={() => onDecision(request, "approve", reason.trim())}
+                  style={[st.decisionBtn, { backgroundColor: C.success, borderColor: C.success }, busy && st.disabled]}
+                >
+                  {busy ? <ActivityIndicator color={C.primaryFg} size="small" /> : <CheckCircle2 size={16} color={C.primaryFg} />}
+                  <RNText style={[st.decisionBtnTxt, { color: C.primaryFg }]}>Approve</RNText>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <>
+              <InfoRow label="Decided by" value={request.decider_name || "Platform administrator"} />
+              <InfoRow label="Decision date" value={fmtDate(request.decided_at)} />
+              {request.decision_reason ? (
+                <View style={st.block}>
+                  <RNText style={st.blockLabel}>Decision note</RNText>
+                  <RNText style={st.blockBody}>{request.decision_reason}</RNText>
+                </View>
+              ) : null}
+            </>
+          )}
+        </View>
+      ) : null}
+    </Sheet>
+  );
+}
+
 // ── Shared primitives (kept in-file: this screen owns only its own module) ────
 function useToast() {
   const [toast, setToast] = useState("");
@@ -553,6 +732,11 @@ const st = StyleSheet.create({
   tile: { width: "31%", flexGrow: 1, backgroundColor: C.card, borderRadius: 14, borderWidth: 1, borderColor: C.border, paddingVertical: 12, paddingHorizontal: 12 },
   tileValue: { fontFamily: fonts.display, fontSize: 22, color: C.primary, fontVariant: ["tabular-nums"] },
   tileLabel: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, marginTop: 2 },
+  viewSwitch: { flexDirection: "row", gap: 4, padding: 4, marginBottom: 12, borderRadius: 14, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  viewSwitchBtn: { flex: 1, minHeight: 38, borderRadius: 11, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
+  viewSwitchBtnActive: { backgroundColor: C.card },
+  viewSwitchTxt: { color: C.mutedFg, fontFamily: fonts.semibold, fontSize: 12, textAlign: "center" },
+  viewSwitchTxtActive: { color: C.primary },
 
   countLine: { fontFamily: fonts.regular, fontSize: 12, color: C.mutedFg, marginTop: 14, marginBottom: 10 },
 
@@ -610,6 +794,9 @@ const st = StyleSheet.create({
 
   actionBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 13, borderRadius: 12, borderWidth: 1, backgroundColor: C.card },
   actionBtnTxt: { fontFamily: fonts.bold, fontSize: 14 },
+  decisionBtn: { flex: 1, minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 999, borderWidth: 1, backgroundColor: C.card },
+  decisionBtnTxt: { fontFamily: fonts.bold, fontSize: 13 },
+  disabled: { opacity: 0.45 },
 
   cancelBtn: { paddingVertical: 14, borderRadius: 999, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },
   cancelBtnTxt: { fontFamily: fonts.bold, fontSize: 15, color: C.mutedFg },

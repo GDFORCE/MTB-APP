@@ -7,18 +7,19 @@
 // endpoints; subjects are already masked to SUBJ-xxx + initials server-side.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, RefreshControl, ActivityIndicator } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, RefreshControl } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  ArrowUpRight, ChevronDown, PenLine, Users, ArrowRightLeft, Clock, FlaskConical, Search,
+  ArrowUpRight, ChevronDown, PenLine, ArrowRightLeft, Search,
 } from "lucide-react-native";
-import { colors as C, dawnGradient, fonts } from "@/src/theme/tokens";
+import { colors as C, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
   TransferOwnershipSheet, Loading, ErrorCard, EmptyCard, KitInput,
+  TrialAdminActions,
   errMsg, type OrgMember, type AuditEntry, type OrgTrial, type OrgSubject,
 } from "@/src/components/org-admin-kit";
 
@@ -102,7 +103,12 @@ export default function SponsorConsole() {
     return trials.filter((t) => (t.title || "").toLowerCase().includes(q) || (t.protocol_id || "").toLowerCase().includes(q));
   }, [trials, query]);
 
-  const toggle = (id: string) => setExpanded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
 
   // ── org action handlers (wired to live endpoints) ──
   const inviteMember = async (p: any) => { await api.post(`/org/${orgId}/members/invite`, p); };
@@ -187,7 +193,11 @@ export default function SponsorConsole() {
                               </RNText>
                             </View>
                             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
-                              <RNText style={st.enrolled}>{t.enrolled || 0} enrolled{t.accessLevel === "restricted" ? " · schedule-only" : ""}</RNText>
+                              <RNText style={st.enrolled}>
+                                {t.enrolled || 0}{typeof t.target === "number" ? ` / ${t.target}` : ""} enrolled
+                                {t.accessLevel === "restricted" ? " · schedule-only" : ""}
+                              </RNText>
+                              <RNText style={st.lastAct}>{t.documentCount || 0} document{(t.documentCount || 0) === 1 ? "" : "s"}</RNText>
                             </View>
                           </Pressable>
                           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.border }}>
@@ -217,6 +227,9 @@ export default function SponsorConsole() {
                                 <RNText style={st.funnelNote}>Recruitment funnel needs full access — subjects are masked or unavailable for this trial.</RNText>
                               )}
                             </View>
+                          )}
+                          {orgId && (
+                            <TrialAdminActions trial={t} orgId={orgId} showToast={showToast} onChanged={loadAll} />
                           )}
                         </View>
                       );

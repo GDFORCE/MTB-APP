@@ -32,12 +32,14 @@ function RouterGuard() {
       if (inAuth) {
         const role = user.role;
         if (role === "patient") router.replace("/(app)/patient/dashboard");
-        else if (role === "pi" || role === "site") router.replace("/(app)/pi/dashboard");
+        else if (role === "site") router.replace("/(app)/site/dashboard");
+        else if (role === "smo") router.replace("/(app)/pi/dashboard");
+        else if (role === "pi") router.replace("/(app)/pi/dashboard");
         else if (role === "crc") router.replace("/(app)/crc/dashboard");
         else router.replace("/(app)/sponsor/dashboard");
       }
     }
-  }, [user, loading, segments]);
+  }, [user, loading, segments, router]);
   return null;
 }
 

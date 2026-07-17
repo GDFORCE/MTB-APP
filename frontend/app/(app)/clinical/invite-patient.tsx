@@ -44,7 +44,7 @@ export default function InvitePatient() {
         <ScrollView contentContainerStyle={{ alignItems: "center", padding: spacing.lg, paddingBottom: spacing.xxl }}>
           <View style={s.successBox}><CheckCircle2 size={36} color={colors.success} /></View>
           <Body weight="700" style={{ marginTop: spacing.md, fontSize: 18 }}>Invitation sent!</Body>
-          <Small style={{ marginTop: 4, textAlign: "center" }}>They'll receive a registration link by email/SMS.</Small>
+          <Small style={{ marginTop: 4, textAlign: "center" }}>They’ll receive a registration link by email/SMS.</Small>
           {link ? (
             <Card style={{ marginTop: spacing.lg, alignSelf: "stretch" }}>
               <Small color={colors.mutedFg}>Registration link</Small>

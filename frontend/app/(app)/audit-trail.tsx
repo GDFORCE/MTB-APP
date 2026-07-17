@@ -5,7 +5,7 @@ import {
   Mail, Bell, UserCog, Building2, Server, AlertTriangle, EyeOff,
 } from "lucide-react-native";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
-import { Body, Small, Eyebrow, Card } from "@/src/components/ui";
+import { Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 
@@ -66,7 +66,8 @@ export default function AuditTrail() {
   const [error, setError] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
-    isRefresh ? setRefreshing(true) : setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(false);
     try {
       const params: Record<string, string> = {};
@@ -87,7 +88,8 @@ export default function AuditTrail() {
     } catch {
       setError(true);
     } finally {
-      isRefresh ? setRefreshing(false) : setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
   }, [category, range]);
 
@@ -149,7 +151,7 @@ export default function AuditTrail() {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <AlertTriangle size={18} color={colors.warning} />
               <View style={{ flex: 1 }}>
-                <Body weight="600">Couldn't load the audit trail</Body>
+                <Body weight="600">Couldn’t load the audit trail</Body>
                 <Small style={{ marginTop: 2 }}>Check your connection and try again.</Small>
               </View>
               <Pressable testID="audit-retry" onPress={() => load()} style={s.retry}>
@@ -216,7 +218,7 @@ export default function AuditTrail() {
         {!loading && !error && items.length > 0 ? (
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.md }}>
             <ShieldCheck size={13} color={colors.mutedFg} />
-            <Small color={colors.mutedFg} style={{ fontSize: 11 }}>Showing only records you're authorized to view</Small>
+            <Small color={colors.mutedFg} style={{ fontSize: 11 }}>Showing only records you’re authorized to view</Small>
           </View>
         ) : null}
       </ScrollView>

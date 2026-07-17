@@ -124,6 +124,9 @@ def world():
         member_a, member_a_h = await _register('crc', org=ORG_A)          # plain member
         # Stable org-A admin used by the ops/trials tests (order-independent).
         successor_a, successor_a_h = await _register('pi', org=ORG_A, org_admin=True)
+        assigned_site = f'ORGADM-{RUN_ID} Research Hospital'
+        await server.db.users.update_one(
+            {'id': successor_a['id']}, {'$set': {'site': assigned_site}})
         # A fresh non-admin member is the successor for the ownership-transfer test,
         # so that flow doesn't depend on (or mutate) the shared admin above.
         xfer_target, xfer_target_h = await _register('crc', org=ORG_A)
@@ -148,6 +151,17 @@ def world():
                 'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
                 'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
             assert rv.status_code == 200, rv.text
+        await server.db.invitations.insert_one({
+            'id': str(uuid.uuid4()),
+            'email': successor_a['email'],
+            'phone': successor_a.get('phone', ''),
+            'org': ORG_A,
+            'trial_id': trial['id'],
+            'role': 'pi',
+            'status': 'accepted',
+            'created_at': server.now(),
+            'accepted_at': server.now(),
+        })
         # org A's PI enrolls a patient → org A gets a RESTRICTED view of it
         async with make_client() as cli:
             rp = await cli.post('/api/patients', headers=successor_a_h, json={
@@ -166,7 +180,7 @@ def world():
             'padmin': (padmin, padmin_h),
             'org_a_id': org_a_id, 'org_b_id': org_b_id,
             'org_sponsor_id': org_sponsor_id,
-            'trial': trial, 'patient': patient,
+            'trial': trial, 'patient': patient, 'assigned_site': assigned_site,
         }
     return run(world_coro := build())
 
@@ -321,6 +335,15 @@ class TestOwnershipTransfer:
                 assert r.status_code == 200, r.text
                 transfer = r.json()
                 assert transfer['status'] == 'pending'
+                pending = await cli.get(
+                    f"/api/org/{oid}/ownership-transfer/pending",
+                    headers=successor_h)
+                assert pending.status_code == 200, pending.text
+                assert pending.json()['id'] == transfer['id']
+                not_mine = await cli.get(
+                    f"/api/org/{oid}/ownership-transfer/pending",
+                    headers=member_h)
+                assert not_mine.status_code == 200 and not_mine.json() is None
                 # only the designated successor may accept — another member 403
                 r_wrong = await cli.post(
                     f"/api/org/{oid}/ownership-transfer/{transfer['id']}/accept",
@@ -347,6 +370,46 @@ class TestOwnershipTransfer:
                         {'action': action, 'target_id': transfer['id']})
                     assert audit, f'{action} must be audited'
             # the successor now administers org A (used by later tests)
+        run(flow())
+
+    def test_successor_can_decline_without_privilege_changes(self, world):
+        oid = world['org_b_id']
+        admin_b, admin_b_h = world['admin_b']
+
+        async def flow():
+            successor, successor_h = await _register('crc', org=ORG_B)
+            async with make_client() as cli:
+                proposed = await cli.post(
+                    f'/api/org/{oid}/ownership-transfer', headers=admin_b_h,
+                    json={'successor_id': successor['id'],
+                          'reason': 'Testing a declined ownership handover',
+                          'handover': 'deactivate'})
+                assert proposed.status_code == 200, proposed.text
+                transfer = proposed.json()
+                pending = await cli.get(
+                    f"/api/org/{oid}/ownership-transfer/pending",
+                    headers=successor_h)
+                assert pending.status_code == 200
+                assert pending.json()['id'] == transfer['id']
+                declined = await cli.post(
+                    f"/api/org/{oid}/ownership-transfer/{transfer['id']}/decline",
+                    headers=successor_h,
+                    json={'reason': 'I cannot take responsibility at this time'})
+                assert declined.status_code == 200, declined.text
+                assert declined.json()['status'] == 'declined'
+                assert (await cli.get(
+                    f"/api/org/{oid}/ownership-transfer/pending",
+                    headers=successor_h)).json() is None
+                successor_fresh = await server.db.users.find_one(
+                    {'id': successor['id']}, {'_id': 0})
+                admin_fresh = await server.db.users.find_one(
+                    {'id': admin_b['id']}, {'_id': 0})
+                assert not successor_fresh.get('org_admin')
+                assert admin_fresh.get('org_admin') is True
+                audit = await server.db.audit_logs.find_one({
+                    'action': 'org.ownership_transfer_decline',
+                    'target_id': transfer['id']})
+                assert audit, 'decline must be audited'
         run(flow())
 
 
@@ -420,6 +483,16 @@ class TestOrgTrials:
                 assert r.status_code == 200, r.text
                 mine = [t for t in r.json() if t['id'] == trial['id']]
                 assert mine and mine[0]['accessLevel'] == 'full'
+                owner_row = mine[0]
+                assert owner_row['accessStatus'] == 'full'
+                assert owner_row['sponsor'] == ORG_SPONSOR
+                assert 'target' in owner_row
+                assert isinstance(owner_row['documentCount'], int)
+                assert owner_row['permissions']['canEdit'] is True
+                assert owner_row['permissions']['canManageDocuments'] is True
+                assert owner_row['updatedBy']['id'] == trial['created_by']
+                assert owner_row['pis'] and owner_row['pis'][0]['id'] == world['successor_a'][0]['id']
+                assert 'crcs' in owner_row
                 assert mine[0]['subjects'][0]['subject'].startswith('SUBJ-')
                 assert patient['full_name'] not in r.text
                 assert patient['email'] not in r.text
@@ -429,8 +502,14 @@ class TestOrgTrials:
                 assert r2.status_code == 200, r2.text
                 mine2 = [t for t in r2.json() if t['id'] == trial['id']]
                 assert mine2 and mine2[0]['accessLevel'] == 'restricted'
+                assert mine2[0]['accessStatus'] == 'restricted'
+                assert mine2[0]['permissions']['canEdit'] is False
+                assert mine2[0]['permissions']['canRequestAccess'] is True
+                assert 'documentCount' in mine2[0]
+                assert 'updatedAt' in mine2[0]
                 assert 'subjects' not in mine2[0], 'restricted view is schedule-only'
                 assert mine2[0]['schedule'], 'restricted view still shows the schedule'
+                assert world['assigned_site'] in mine2[0]['sites']
                 assert patient['full_name'] not in r2.text
         run(flow())
 
@@ -455,6 +534,16 @@ class TestOrgTrials:
                                                       'reason': 'Need full oversight'})
                 assert r.status_code == 200, r.text
                 req = r.json()
+                owner_list = await cli.get(
+                    f"/api/org/{world['org_sponsor_id']}/trial-access-requests",
+                    headers=world['sponsor_admin'][1])
+                assert owner_list.status_code == 200, owner_list.text
+                listed = [row for row in owner_list.json() if row['id'] == req['id']]
+                assert listed and listed[0]['protocol_id'] == trial['protocol_id']
+                owner_note = await server.db.notifications.find_one({
+                    'user_id': world['sponsor_admin'][0]['id'],
+                    'kind': 'trial_access_request', 'request_id': req['id']})
+                assert owner_note, 'trial owner must be notified of the request'
                 # the REQUESTER cannot grant their own request (not the owner)
                 selfg = await cli.post(
                     f"/api/trials/{trial['id']}/access-requests/{req['id']}/grant",
@@ -474,4 +563,123 @@ class TestOrgTrials:
                 for action in ('org.trial_access_request', 'org.trial_access_grant'):
                     audit = await server.db.audit_logs.find_one({'action': action})
                     assert audit, f'{action} must be audited'
+                requester_note = await server.db.notifications.find_one({
+                    'user_id': world['successor_a'][0]['id'],
+                    'kind': 'trial_access_decision', 'request_id': req['id']})
+                assert requester_note, 'requester must be notified when access is granted'
+        run(flow())
+
+    def test_access_request_reject_is_listed_audited_and_notified(self, world):
+        trial = world['trial']
+        org_b_id = world['org_b_id']
+        requester, requester_h = world['admin_b']
+        owner_h = world['sponsor_admin'][1]
+
+        async def flow():
+            async with make_client() as cli:
+                requested = await cli.post(
+                    f"/api/trials/{trial['id']}/access-requests",
+                    headers=requester_h,
+                    json={'org_id': org_b_id, 'reason': 'Need monitoring access'})
+                assert requested.status_code == 200, requested.text
+                req = requested.json()
+                rejected = await cli.post(
+                    f"/api/trials/{trial['id']}/access-requests/{req['id']}/reject",
+                    headers=owner_h,
+                    json={'reason': 'No active operating relationship'})
+                assert rejected.status_code == 200, rejected.text
+                assert rejected.json()['status'] == 'rejected'
+                history = await cli.get(
+                    f"/api/org/{world['org_sponsor_id']}/trial-access-requests"
+                    '?status=rejected',
+                    headers=owner_h)
+                assert history.status_code == 200, history.text
+                assert any(row['id'] == req['id'] for row in history.json())
+                grant_after_reject = await cli.post(
+                    f"/api/trials/{trial['id']}/access-requests/{req['id']}/grant",
+                    headers=owner_h)
+                assert grant_after_reject.status_code == 400
+                audit = await server.db.audit_logs.find_one({
+                    'action': 'org.trial_access_reject',
+                    'target_id': req['id']})
+                assert audit, 'rejection must be audited'
+                note = await server.db.notifications.find_one({
+                    'user_id': requester['id'], 'kind': 'trial_access_decision',
+                    'request_id': req['id']})
+                assert note, 'requester must be notified when access is rejected'
+        run(flow())
+
+
+# ── Org-admin trial edit & archive (owner + full access only) ────────────────
+class TestOrgTrialEditArchive:
+    def test_owner_edits_restricted_org_cannot(self, world):
+        trial = world['trial']
+        owner_h = world['sponsor_admin'][1]
+        restricted_h = world['admin_a'][1]
+        async def flow():
+            async with make_client() as cli:
+                # restricted (non-owner) org-admin: 403 on edit and archive
+                denied = await cli.patch(
+                    f"/api/org/{world['org_a_id']}/trials/{trial['id']}",
+                    headers=restricted_h, json={'duration': '12 months'})
+                assert denied.status_code == 403, denied.text
+                denied2 = await cli.post(
+                    f"/api/org/{world['org_a_id']}/trials/{trial['id']}/archive",
+                    headers=restricted_h, json={'archived': True})
+                assert denied2.status_code == 403, denied2.text
+                # owning org-admin edits successfully with provenance + audit
+                edited = await cli.patch(
+                    f"/api/org/{world['org_sponsor_id']}/trials/{trial['id']}",
+                    headers=owner_h,
+                    json={'duration': '24 months', 'target_enrollment': 55,
+                          'recruitment_status': 'recruiting'})
+                assert edited.status_code == 200, edited.text
+                j = edited.json()
+                assert j['duration'] == '24 months'
+                assert j['target_enrollment'] == 55
+                assert j['updated_by'] == world['sponsor_admin'][0]['id']
+                audit = await server.db.audit_logs.find_one(
+                    {'action': 'org.trial_edit', 'target_id': trial['id']})
+                assert audit and 'duration' in (audit.get('changes') or {})
+                # empty patch is refused
+                empty = await cli.patch(
+                    f"/api/org/{world['org_sponsor_id']}/trials/{trial['id']}",
+                    headers=owner_h, json={})
+                assert empty.status_code == 400, empty.text
+        run(flow())
+
+    def test_archive_lifecycle_blocks_edit_and_is_audited(self, world):
+        trial = world['trial']
+        owner_h = world['sponsor_admin'][1]
+        async def flow():
+            async with make_client() as cli:
+                archived = await cli.post(
+                    f"/api/org/{world['org_sponsor_id']}/trials/{trial['id']}/archive",
+                    headers=owner_h, json={'archived': True})
+                assert archived.status_code == 200, archived.text
+                # the org trial list reflects the archived state
+                rows = await cli.get(f"/api/org/{world['org_sponsor_id']}/trials",
+                                     headers=owner_h)
+                row = next(r for r in rows.json() if r['id'] == trial['id'])
+                assert row['archived'] is True
+                # double-archive refused; edit while archived refused
+                dup = await cli.post(
+                    f"/api/org/{world['org_sponsor_id']}/trials/{trial['id']}/archive",
+                    headers=owner_h, json={'archived': True})
+                assert dup.status_code == 409, dup.text
+                locked = await cli.patch(
+                    f"/api/org/{world['org_sponsor_id']}/trials/{trial['id']}",
+                    headers=owner_h, json={'duration': '30 months'})
+                assert locked.status_code == 409, locked.text
+                audit = await server.db.audit_logs.find_one(
+                    {'action': 'org.trial_archive', 'target_id': trial['id']})
+                assert audit, 'archiving must be audited'
+                # unarchive restores editability
+                restored = await cli.post(
+                    f"/api/org/{world['org_sponsor_id']}/trials/{trial['id']}/archive",
+                    headers=owner_h, json={'archived': False})
+                assert restored.status_code == 200, restored.text
+                fresh = await server.db.trials.find_one({'id': trial['id']}, {'_id': 0})
+                assert fresh.get('archived') is False
+                assert 'archived_at' not in fresh
         run(flow())

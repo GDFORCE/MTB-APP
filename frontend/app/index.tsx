@@ -12,7 +12,8 @@ export default function Index() {
   // Compared as string because the frontend User.role type doesn't enumerate 'admin'.
   if ((r as string) === "admin") return <Redirect href={"/(app)/admin" as Href} />;
   if (r === "patient") return <Redirect href="/(app)/patient/dashboard" />;
-  if (r === "pi" || r === "site") return <Redirect href="/(app)/pi/dashboard" />;
+  if (r === "site") return <Redirect href="/(app)/site/dashboard" />;
+  if (r === "pi" || r === "smo") return <Redirect href="/(app)/pi/dashboard" />;
   if (r === "crc") return <Redirect href="/(app)/crc/dashboard" />;
   return <Redirect href="/(app)/sponsor/dashboard" />;
 }

@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Camera, ShieldCheck, UserPen, Lock, Bell, ChevronRight, LogOut,
-  Building2, FlaskConical, FileText, HelpCircle, BarChart2, Users, ScrollText,
+  Building2, FlaskConical, FileText, HelpCircle, BarChart2, Users, ScrollText, MapPin, KeyRound,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -81,11 +81,19 @@ export default function SiteUserProfile() {
 
   if (!user) return null;
   const isPi = user.role === "pi";
-  const designation = isPi ? "Principal Investigator" : "Clinical Research Coordinator";
+  const isSmo = user.role === "smo";
+  const isSite = user.role === "site";
+  const designation = isSmo
+    ? "SMO Operations"
+    : isSite
+      ? "Site Administrator"
+      : isPi
+        ? "Principal Investigator"
+        : "Clinical Research Coordinator";
   const entityType = org.type;
   const orgName = user.organization || "—";
   const orgAddress = org.address || "—";
-  const role = isPi ? "PI" : "Research Team";
+  const role = isSmo ? "SMO" : isSite ? "Site Admin" : isPi ? "PI" : "Research Team";
 
   const account = [
     { icon: UserPen, label: "Edit Profile", onPress: () => router.push("/(app)/clinical/profile/edit"), bg: "rgba(123,107,184,0.10)", ic: C.info },
@@ -95,7 +103,10 @@ export default function SiteUserProfile() {
   ];
   const trialMgmt = [
     { icon: FlaskConical, label: "My Trials", onPress: () => router.push("/(app)/clinical/my-trials"), bg: "rgba(123,107,184,0.10)", ic: C.info },
+    ...(isSmo && user.org_admin ? [{ icon: MapPin, label: "Managed Hospitals", onPress: () => router.push("/(app)/org-admin/smo"), bg: "rgba(230,155,92,0.12)", ic: C.accent }] : []),
     { icon: Users, label: "Team Members", onPress: () => router.push("/(app)/clinical/team"), bg: "rgba(92,154,110,0.15)", ic: C.success },
+    ...(user.org_admin ? [{ icon: KeyRound, label: "Trial Access Requests", onPress: () => router.push("/(app)/org-admin/trial-access-requests"), bg: "rgba(216,154,60,0.15)", ic: C.warning }] : []),
+    ...(user.org_admin ? [{ icon: ShieldCheck, label: "Organization Oversight", onPress: () => router.push(isSmo ? "/(app)/org-admin/smo" : "/(app)/org-admin/site"), bg: "rgba(166,33,63,0.10)", ic: C.primary }] : []),
   ];
   const reports = [
     { icon: ScrollText, label: "Audit Trail", onPress: () => router.push("/(app)/audit-trail" as any), bg: "rgba(166,33,63,0.10)", ic: C.primary },

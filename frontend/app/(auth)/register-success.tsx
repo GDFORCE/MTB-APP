@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { View, Text, StyleSheet, Pressable, Animated, Easing } from "react-native";
+import { View, Text, StyleSheet, Animated, Easing } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -30,7 +30,7 @@ export default function RegisterSuccess() {
         Animated.timing(drift, { toValue: 0, duration: 3600, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
     ).start();
-  }, []);
+  }, [arc, drift, sun]);
 
   const dashOffset = arc.interpolate({ inputRange: [0, 1], outputRange: [ARC_LEN, 0] });
   const sunStyle = {

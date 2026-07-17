@@ -94,7 +94,7 @@ function CountdownTrack({ timeLeft, expired }: { timeLeft: number; expired: bool
       easing: Easing.linear,
       useNativeDriver: false,
     }).start();
-  }, [timeLeft]);
+  }, [fill, timeLeft]);
   return (
     <View style={s.track}>
       <Animated.View style={{ height: "100%", width: fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }}>
@@ -115,11 +115,17 @@ export default function VerifyOtp() {
   const channels: string[] = (() => { try { return JSON.parse(params.channels || "[]"); } catch { return []; } })();
   const needEmail = channels.includes("email");
   const needPhone = channels.includes("phone");
+  const invalidChannels = !params.registration_id
+    || (!needEmail && !needPhone)
+    || channels.some((channel) => channel !== "email" && channel !== "phone");
 
   const [emailOtp, setEmailOtp] = useState("");
   const [phoneOtp, setPhoneOtp] = useState("");
   const [timeLeft, setTimeLeft] = useState(OTP_DURATION);
-  const [resendCount, setResendCount] = useState(0);
+  const [resendCounts, setResendCounts] = useState({ email: 0, phone: 0 });
+  const [resending, setResending] = useState<"email" | "phone" | null>(null);
+  const [resendResults, setResendResults] = useState<{ email?: string; phone?: string }>({});
+  const [serverExpired, setServerExpired] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -133,8 +139,10 @@ export default function VerifyOtp() {
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
   const expired = timeLeft <= 0;
   const urgent = !expired && timeLeft <= 15;
-  const canResend = expired && resendCount < MAX_RESEND && !isLocked;
-  const allComplete = (!needEmail || emailOtp.length === OTP_LEN) && (!needPhone || phoneOtp.length === OTP_LEN) && !loading;
+  const allComplete = !invalidChannels
+    && (!needEmail || emailOtp.length === OTP_LEN)
+    && (!needPhone || phoneOtp.length === OTP_LEN)
+    && !loading;
 
   const verify = async () => {
     if (!allComplete || isLocked) return;
@@ -150,48 +158,97 @@ export default function VerifyOtp() {
         params: { registration_id: params.registration_id, role: params.role },
       });
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || "Verification failed. Please try again.");
+      const detail = String(e?.response?.data?.detail || "");
+      const normalized = detail.toLowerCase();
+      if (normalized.includes("expired") || normalized.includes("restart registration")) {
+        setServerExpired(true);
+        setTimeLeft(0);
+        setErr("These verification codes have expired. Restart registration to request new codes.");
+      } else if (e?.response?.status === 429 || normalized.includes("too many incorrect")) {
+        setIsLocked(true);
+        setErr("Too many incorrect attempts. Restart registration to continue.");
+      } else {
+        setErr(detail || "Verification failed. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleResend = async () => {
-    if (timeLeft > 0 || isLocked || resendCount >= MAX_RESEND) return;
-    const next = resendCount + 1;
+  const handleResend = async (channel: "email" | "phone") => {
+    if (
+      timeLeft > 0
+      || isLocked
+      || serverExpired
+      || resending
+      || resendCounts[channel] >= MAX_RESEND
+    ) return;
     setErr("");
+    setResending(channel);
+    setResendResults((current) => ({ ...current, [channel]: undefined }));
     try {
-      await api.post("/auth/register/resend", { registration_id: params.registration_id, channel: needPhone ? "phone" : "email" });
-      if (needEmail && needPhone) await api.post("/auth/register/resend", { registration_id: params.registration_id, channel: "email" }).catch(() => {});
-      setResendCount(next);
+      const { data } = await api.post("/auth/register/resend", {
+        registration_id: params.registration_id,
+        channel,
+      });
+      const nextCount = Number(data?.resend_count || resendCounts[channel] + 1);
+      setResendCounts((current) => ({ ...current, [channel]: nextCount }));
+      setResendResults((current) => ({
+        ...current,
+        [channel]: `New ${channel} code sent successfully.`,
+      }));
       setTimeLeft(OTP_DURATION);
-      setPhoneOtp(""); setEmailOtp("");
+      if (channel === "phone") setPhoneOtp("");
+      if (channel === "email") setEmailOtp("");
     } catch (e: any) {
-      if (e?.response?.status === 429) setIsLocked(true);
-      setErr(e?.response?.data?.detail || "Could not resend the code.");
+      const detail = String(e?.response?.data?.detail || "Could not resend the code.");
+      const normalized = detail.toLowerCase();
+      if (normalized.includes("resend limit") || normalized.includes("restart registration")) {
+        setResendCounts((current) => ({ ...current, [channel]: MAX_RESEND }));
+      }
+      setResendResults((current) => ({ ...current, [channel]: detail }));
+    } finally {
+      setResending(null);
     }
   };
 
   const channelSummary = needPhone && needEmail ? "your phone and email" : needPhone ? "your phone" : "your email";
+  const blocked = invalidChannels || isLocked || serverExpired;
+  const blockedTitle = invalidChannels
+    ? "Verification unavailable"
+    : serverExpired
+      ? "Verification expired"
+      : "Account temporarily locked";
+  const blockedCopy = invalidChannels
+    ? "No valid verification channel was provided. Restart registration so we can securely verify your contact details."
+    : serverExpired
+      ? "These codes are no longer valid. Restart registration to request a fresh set."
+      : "Too many incorrect attempts were made. Restart registration to continue securely.";
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <AuthHeader
           eyebrow="Step 4 of 5"
-          title={isLocked ? "Verification paused" : "Verify your contact details"}
-          subtitle={isLocked ? undefined : `Enter the codes we sent to ${channelSummary} — this keeps your account secure.`}
+          title={blocked ? blockedTitle : "Verify your contact details"}
+          subtitle={blocked ? undefined : `Enter the codes we sent to ${channelSummary} — this keeps your account secure.`}
           onBack={() => router.back()}
           step={4}
         />
 
         <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          {isLocked ? (
+          {blocked ? (
             <Rise delay={120}>
               <View style={s.lockCard}>
                 <View style={s.lockIcon}><ShieldOff size={28} color={colors.destructive} /></View>
-                <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.destructive, marginBottom: 6 }}>Account temporarily locked</Text>
-                <Small style={{ textAlign: "center", lineHeight: 20 }}>Too many resend attempts. Please contact support or try again after 30 minutes.</Small>
+                <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.destructive, marginBottom: 6 }}>{blockedTitle}</Text>
+                <Small style={{ textAlign: "center", lineHeight: 20 }}>{blockedCopy}</Small>
+                <Pressable
+                  onPress={() => router.replace("/(auth)/register")}
+                  style={({ pressed }) => [s.restartBtn, pressed && { opacity: 0.8 }]}
+                >
+                  <Small color={colors.primaryFg} weight="700">Restart registration</Small>
+                </Pressable>
               </View>
             </Rise>
           ) : (
@@ -216,13 +273,48 @@ export default function VerifyOtp() {
                     )}
                   </View>
                   <CountdownTrack timeLeft={timeLeft} expired={expired} />
-                  <View style={s.resendRow}>
-                    <Small color={colors.mutedFg} style={{ fontSize: 12 }}>{resendCount}/{MAX_RESEND} resends used</Small>
-                    <Pressable onPress={handleResend} disabled={!canResend} hitSlop={8} style={[s.resendBtn, canResend && s.resendBtnActive]}>
-                      <Small style={{ fontFamily: fonts.bold, fontSize: 13, color: canResend ? colors.primary : colors.mutedFg + "80" }}>
-                        {resendCount >= MAX_RESEND ? "Resend limit reached" : "Resend code"}
-                      </Small>
-                    </Pressable>
+                  <View style={s.resendList}>
+                    {(["phone", "email"] as const)
+                      .filter((channel) => channel === "phone" ? needPhone : needEmail)
+                      .map((channel) => {
+                        const count = resendCounts[channel];
+                        const enabled = expired && count < MAX_RESEND && !resending;
+                        const result = resendResults[channel];
+                        return (
+                          <View key={channel} style={s.resendItem}>
+                            <View style={{ flex: 1 }}>
+                              <Small weight="700">{channel === "phone" ? "Phone code" : "Email code"}</Small>
+                              <Small color={colors.mutedFg}>{count}/{MAX_RESEND} resends used</Small>
+                              {!!result && (
+                                <Small
+                                  color={result.toLowerCase().includes("success") ? colors.success : colors.destructive}
+                                  style={{ marginTop: 3 }}
+                                >
+                                  {result}
+                                </Small>
+                              )}
+                            </View>
+                            <Pressable
+                              onPress={() => handleResend(channel)}
+                              disabled={!enabled}
+                              hitSlop={8}
+                              style={[s.resendBtn, enabled && s.resendBtnActive]}
+                            >
+                              <Small style={{
+                                fontFamily: fonts.bold,
+                                fontSize: 13,
+                                color: enabled ? colors.primary : colors.mutedFg + "80",
+                              }}>
+                                {resending === channel
+                                  ? "Sending…"
+                                  : count >= MAX_RESEND
+                                    ? "Limit reached"
+                                    : "Resend"}
+                              </Small>
+                            </Pressable>
+                          </View>
+                        );
+                      })}
                   </View>
                 </View>
               </Rise>
@@ -233,8 +325,8 @@ export default function VerifyOtp() {
         </ScrollView>
 
         <View style={s.footer}>
-          <Springy onPress={verify} disabled={!allComplete || isLocked} style={[s.cta, !allComplete || isLocked ? { backgroundColor: colors.surface } : { backgroundColor: colors.primary }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: !allComplete || isLocked ? colors.mutedFg : colors.primaryFg }}>{loading ? "Verifying…" : "Verify OTP"}</Text>
+          <Springy onPress={verify} disabled={!allComplete || blocked} style={[s.cta, !allComplete || blocked ? { backgroundColor: colors.surface } : { backgroundColor: colors.primary }]}>
+            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: !allComplete || blocked ? colors.mutedFg : colors.primaryFg }}>{loading ? "Verifying…" : "Verify OTP"}</Text>
           </Springy>
         </View>
       </KeyboardAvoidingView>
@@ -263,11 +355,13 @@ const s = StyleSheet.create({
   metaHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   countdown: { fontFamily: fonts.mono, fontSize: 15, color: colors.foreground, fontVariant: ["tabular-nums"] },
   track: { height: 6, borderRadius: 3, backgroundColor: colors.surface, overflow: "hidden" },
-  resendRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 },
+  resendList: { marginTop: 14, gap: 10 },
+  resendItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   resendBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: radii.pill, alignItems: "center" },
   resendBtnActive: { backgroundColor: colors.secondary },
   lockCard: { borderRadius: radii.xl, borderWidth: 1, borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "0D", padding: spacing.lg, alignItems: "center" },
   lockIcon: { width: 56, height: 56, borderRadius: 999, backgroundColor: colors.destructive + "1A", alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  restartBtn: { marginTop: 18, minHeight: 42, paddingHorizontal: 20, borderRadius: radii.pill, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
   footer: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
   cta: { paddingVertical: 15, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
 });

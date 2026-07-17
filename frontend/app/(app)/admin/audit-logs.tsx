@@ -16,16 +16,15 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Clipboard from "expo-clipboard";
 import {
-  Menu, RefreshCcw, X, Download, Search, AlertTriangle, ChevronDown, ChevronUp,
+  Menu, RefreshCcw, X, Download, AlertTriangle, ChevronDown, ChevronUp,
   CheckCircle2, XCircle, Server, Copy,
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, EmptyCard, Toast, SearchBar, st } from "./users";
-
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 
 type AuditRow = {
   id: string; user_id?: string; user_name?: string; role?: string; org?: string;
@@ -189,6 +188,15 @@ export default function AdminAuditLogs() {
     }
   };
 
+  const copyAuditId = async (id: string) => {
+    try {
+      await Clipboard.setStringAsync(id);
+      showToast("Audit ID copied");
+    } catch {
+      showToast("Couldn't copy the audit ID");
+    }
+  };
+
   const tiles = [
     { label: "Total actions", value: summary?.total ?? 0, fg: C.foreground },
     { label: "Last 24h", value: summary?.last_24h ?? 0, fg: C.foreground },
@@ -292,7 +300,7 @@ export default function AdminAuditLogs() {
         )}
       </ScrollView>
 
-      <EntrySheet row={selected} onClose={() => setSelected(null)} onCopy={(id) => showToast(`Copied ${id}`)} />
+      <EntrySheet row={selected} onClose={() => setSelected(null)} onCopy={copyAuditId} />
       <Toast text={toast} anim={toastAnim} />
     </View>
   );
@@ -336,7 +344,7 @@ function FilterChips({ label, chips, value, onChange }: { label: string; chips: 
   );
 }
 
-function EntrySheet({ row, onClose, onCopy }: { row: AuditRow | null; onClose: () => void; onCopy: (id: string) => void }) {
+function EntrySheet({ row, onClose, onCopy }: { row: AuditRow | null; onClose: () => void; onCopy: (id: string) => Promise<void> }) {
   const cc = catColors(row?.category);
   const failed = row?.status === "failure";
   return (
@@ -372,7 +380,7 @@ function EntrySheet({ row, onClose, onCopy }: { row: AuditRow | null; onClose: (
                   {!!row.target_id && <KV k="Target" v={row.target_id} mono />}
                 </View>
               )}
-              <Pressable onPress={() => onCopy(row.id)} style={au.copyBtn}>
+              <Pressable testID="audit-copy-id" onPress={() => void onCopy(row.id)} style={au.copyBtn}>
                 <Copy size={15} color={C.primary} /><RNText style={au.copyTxt}>Copy audit ID</RNText>
               </Pressable>
             </ScrollView>

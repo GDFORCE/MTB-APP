@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Image, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import {
@@ -15,10 +15,11 @@ import { api } from "@/src/api/client";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { uploadFile, fetchFileUri } from "@/src/lib/upload";
+import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
+import { APP_LOCALES, localeLabel, normalizeLocale, setLanguage, type AppLocale } from "@/src/i18n";
 
 type Section = "main" | "edit-profile" | "change-password" | "notification-prefs" | "terms" | "privacy" | "help" | "faq" | "contact-support" | "tickets";
 
-const LANGUAGES = ["English", "Hindi — हिंदी", "Tamil — தமிழ்", "Telugu — తెలుగు", "Kannada — ಕನ್ನಡ", "Marathi — मराठी"];
 const GENDERS = ["Female", "Male", "Other", "Prefer not to say"];
 
 const passwordRules = [
@@ -64,9 +65,9 @@ function Header({ title, eyebrow = "Profile & settings", onBack, rightLabel, onR
     </View>
   );
 }
-function Toggle({ on, onToggle, testID }: { on: boolean; onToggle: () => void; testID?: string }) {
+function Toggle({ on, onToggle, testID, disabled = false }: { on: boolean; onToggle: () => void; testID?: string; disabled?: boolean }) {
   return (
-    <Switch testID={testID} value={on} onValueChange={onToggle} trackColor={{ true: colors.primary, false: colors.border }} thumbColor={colors.primaryFg} />
+    <Switch testID={testID} value={on} onValueChange={onToggle} disabled={disabled} trackColor={{ true: colors.primary, false: colors.border }} thumbColor={colors.primaryFg} />
   );
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -93,8 +94,11 @@ export default function Profile() {
   const [avatarErr, setAvatarErr] = useState("");
 
   // Profile fields (loaded from /auth/me — includes the profile sub-document)
-  const [prof, setProf] = useState({ fullName: "", dob: "", gender: "", phone: "", email: "", language: "English" });
+  const [prof, setProf] = useState({ fullName: "", dob: "", gender: "", phone: "", email: "", language: "en" as AppLocale });
   const [savingProfile, setSavingProfile] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileLoadError, setProfileLoadError] = useState("");
+  const [profileFeedback, setProfileFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Password change
   const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
@@ -103,6 +107,10 @@ export default function Profile() {
 
   // Notification prefs
   const [prefs, setPrefs] = useState<any>({ visit_push: true, visit_sms: true, visit_email: false, visit_remind_days: 2, med_push: true, med_sms: true, trial_updates: true, pi_messages: true, system_notifs: false });
+  const [prefsLoading, setPrefsLoading] = useState(true);
+  const [prefsError, setPrefsError] = useState("");
+  const [prefSaving, setPrefSaving] = useState<string | null>(null);
+  const [prefsFeedback, setPrefsFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Help / tickets
   const [faqOpen, setFaqOpen] = useState<number | null>(null);
@@ -110,6 +118,13 @@ export default function Profile() {
   const [ticketSubmitted, setTicketSubmitted] = useState(false);
   const [lastTicketId, setLastTicketId] = useState("");
   const [tickets, setTickets] = useState<any[]>([]);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
+  const [ticketsError, setTicketsError] = useState("");
+  const [ticketSubmitting, setTicketSubmitting] = useState(false);
+  const [ticketError, setTicketError] = useState("");
+  const [supportContact, setSupportContact] = useState<{ name?: string; email?: string; phone?: string; hours?: string } | null>(null);
+  const [supportContactError, setSupportContactError] = useState("");
+  const [termsAcceptedAt, setTermsAcceptedAt] = useState("");
 
   // Legal (T&C / Privacy) + FAQ fetched from the API
   type LegalDoc = { version: string; effective_date: string; blocks: { heading: string; body: string }[] };
@@ -117,6 +132,8 @@ export default function Profile() {
   const [legalLoading, setLegalLoading] = useState(false);
   const [legalError, setLegalError] = useState(false);
   const [faqs, setFaqs] = useState(FAQS);
+  const [faqLoading, setFaqLoading] = useState(true);
+  const [faqError, setFaqError] = useState("");
 
   // Contact-change OTP flow (email / phone edits require verification)
   const [loaded, setLoaded] = useState({ phone: "", email: "" });
@@ -124,23 +141,95 @@ export default function Profile() {
   const [otp, setOtp] = useState<{ open: boolean; field: "email" | "phone"; value: string; code: string; step: "sending" | "code"; error: string; busy: boolean }>(
     { open: false, field: "email", value: "", code: "", step: "sending", error: "", busy: false });
   const [otpQueue, setOtpQueue] = useState<OtpItem[]>([]);
+  const [pendingLanguage, setPendingLanguage] = useState<AppLocale>("en");
+  const [languageBusy, setLanguageBusy] = useState(false);
+  const [languageError, setLanguageError] = useState("");
+
+  const loadProfile = useCallback(async () => {
+    setProfileLoading(true);
+    setProfileLoadError("");
+    try {
+      const me = (await api.get("/auth/me")).data;
+      const pf = me.profile || {};
+      const language = normalizeLocale(pf.language);
+      setProf({
+        fullName: me.full_name || "",
+        dob: pf.dob || "",
+        gender: pf.gender || "",
+        phone: (me.phone || "").replace(/^\+91\s?/, ""),
+        email: me.email || "",
+        language,
+      });
+      setPendingLanguage(language);
+      await setLanguage(language);
+      setLoaded({ phone: me.phone || "", email: me.email || "" });
+      setTermsAcceptedAt(me.terms_accepted_at || "");
+      if (me.avatar_file_id) {
+        try { setAvatarUri(await fetchFileUri(me.avatar_file_id)); } catch {}
+      }
+    } catch {
+      setProfileLoadError("Couldn't load your profile. Check your connection and retry.");
+    } finally {
+      setProfileLoading(false);
+    }
+  }, []);
+
+  const loadPreferences = useCallback(async () => {
+    setPrefsLoading(true);
+    setPrefsError("");
+    try {
+      const pr = (await api.get("/preferences")).data || {};
+      setPrefs((current: any) => ({ ...current, ...pr }));
+    } catch {
+      setPrefsError("Couldn't load your saved notification preferences.");
+    } finally {
+      setPrefsLoading(false);
+    }
+  }, []);
+
+  const loadTickets = useCallback(async () => {
+    setTicketsLoading(true);
+    setTicketsError("");
+    try {
+      setTickets((await api.get("/support/tickets")).data || []);
+    } catch {
+      setTicketsError("Couldn't load your support tickets.");
+    } finally {
+      setTicketsLoading(false);
+    }
+  }, []);
+
+  const loadFaq = useCallback(async () => {
+    setFaqLoading(true);
+    setFaqError("");
+    try {
+      const fq = (await api.get("/faq")).data;
+      if (Array.isArray(fq) && fq.length) setFaqs(fq);
+      else setFaqs([]);
+    } catch {
+      setFaqError("Couldn't load the latest frequently asked questions.");
+    } finally {
+      setFaqLoading(false);
+    }
+  }, []);
+
+  const loadSupportContact = useCallback(async () => {
+    setSupportContactError("");
+    try {
+      setSupportContact((await api.get("/support/contact")).data || null);
+    } catch {
+      setSupportContact(null);
+      setSupportContactError("Support contact details are unavailable.");
+    }
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const me = (await api.get("/auth/me")).data;
-        const pf = me.profile || {};
-        setProf({ fullName: me.full_name || "", dob: pf.dob || "", gender: pf.gender || "", phone: (me.phone || "").replace(/^\+91\s?/, ""), email: me.email || "", language: pf.language || "English" });
-        setLoaded({ phone: me.phone || "", email: me.email || "" });
-        if (me.avatar_file_id) {
-          try { setAvatarUri(await fetchFileUri(me.avatar_file_id)); } catch {}
-        }
-      } catch {}
-      try { const pr = (await api.get("/preferences")).data; setPrefs((p: any) => ({ ...p, ...pr })); } catch {}
-      try { setTickets((await api.get("/support/tickets")).data); } catch {}
-      try { const fq = (await api.get("/faq")).data; if (Array.isArray(fq) && fq.length) setFaqs(fq); } catch {}
-    })();
-  }, []);
+    loadProfile();
+    loadPreferences();
+    loadTickets();
+    loadFaq();
+    loadSupportContact();
+  }, [loadFaq, loadPreferences, loadProfile, loadSupportContact, loadTickets]);
 
   // Fetch legal copy the first time each doc's section is opened.
   useEffect(() => {
@@ -156,9 +245,24 @@ export default function Profile() {
       finally { if (!cancelled) setLegalLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [section]);
+  }, [section, legal]);
 
   const initials = useMemo(() => (prof.fullName || user?.full_name || "P").trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "P", [prof.fullName, user]);
+  const acceptedTermsLabel = termsAcceptedAt
+    ? new Date(termsAcceptedAt).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "";
+  const openSupportLink = (url: string) => {
+    setSupportContactError("");
+    Linking.openURL(url).catch(() => {
+      setSupportContactError("No compatible email or phone app is available.");
+    });
+  };
 
   // Pick an image → POST /files (user scope) → PATCH /auth/me → refresh + render.
   const pickAvatar = async () => {
@@ -186,22 +290,55 @@ export default function Profile() {
     }
   };
 
+  const validateProfile = (): string => {
+    const name = prof.fullName.trim();
+    if (name.length < 2) return "Enter your full name.";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(prof.dob)) return "Enter date of birth as YYYY-MM-DD.";
+    const dob = new Date(`${prof.dob}T00:00:00Z`);
+    if (Number.isNaN(dob.getTime()) || dob.toISOString().slice(0, 10) !== prof.dob) return "Enter a valid date of birth.";
+    const age = computeAge(prof.dob);
+    if (dob > new Date()) return "Date of birth cannot be in the future.";
+    if (age == null || age > 120) return "Enter a valid date of birth.";
+    if (!GENDERS.includes(prof.gender)) return "Select your gender.";
+    const phoneDigits = prof.phone.replace(/\D/g, "");
+    if (phoneDigits && phoneDigits.length !== 10) return "Enter a valid 10-digit phone number.";
+    const email = prof.email.trim().toLowerCase();
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return "Enter a valid email address.";
+    return "";
+  };
+
   const saveProfile = async () => {
+    if (savingProfile) return;
+    const validation = validateProfile();
+    if (validation) {
+      setProfileFeedback({ type: "error", message: validation });
+      return;
+    }
+    setProfileFeedback(null);
     setSavingProfile(true);
     try {
       const newEmail = prof.email.trim().toLowerCase();
       const newPhone = prof.phone ? "+91" + prof.phone.replace(/\D/g, "") : "";
       // Non-contact fields save immediately; email/phone changes require OTP.
       await api.patch("/auth/me", {
-        full_name: prof.fullName, dob: prof.dob, gender: prof.gender, language: prof.language,
+        full_name: prof.fullName.trim(), dob: prof.dob, gender: prof.gender, language: normalizeLocale(prof.language),
       });
       await refresh();
       const queue: OtpItem[] = [];
       if (newEmail && newEmail !== loaded.email) queue.push({ field: "email", value: newEmail });
       if (newPhone && newPhone !== loaded.phone) queue.push({ field: "phone", value: newPhone });
-      if (queue.length) beginOtpQueue(queue);
-      else setSection("main");
-    } catch {} finally { setSavingProfile(false); }
+      if (queue.length) {
+        setProfileFeedback({ type: "success", message: "Profile details saved. Verify your changed contact details to finish." });
+        beginOtpQueue(queue);
+      } else {
+        setProfileFeedback({ type: "success", message: "Profile changes saved." });
+      }
+    } catch (error: any) {
+      setProfileFeedback({
+        type: "error",
+        message: error?.response?.data?.detail || "Couldn't save your profile. Please try again.",
+      });
+    } finally { setSavingProfile(false); }
   };
 
   // ── Contact-change OTP flow ──────────────────────────────────────────────
@@ -231,7 +368,10 @@ export default function Profile() {
       const rest = otpQueue.slice(1);
       setOtpQueue(rest);
       if (rest.length) startContact(rest[0]);
-      else { setOtp(o => ({ ...o, open: false, busy: false })); setSection("main"); }
+      else {
+        setOtp(o => ({ ...o, open: false, busy: false }));
+        setProfileFeedback({ type: "success", message: "Profile and verified contact details saved." });
+      }
     } catch (e: any) {
       setOtp(o => ({ ...o, busy: false, error: e?.response?.data?.detail || "Incorrect code. Please try again." }));
     }
@@ -255,30 +395,97 @@ export default function Profile() {
   };
 
   const togglePref = async (k: string) => {
-    const next = { ...prefs, [k]: !prefs[k] }; setPrefs(next);
-    try { await api.patch("/preferences", { [k]: next[k] }); } catch {}
+    if (prefSaving) return;
+    const previous = prefs[k];
+    const value = !previous;
+    setPrefSaving(k);
+    setPrefsFeedback(null);
+    setPrefs((current: any) => ({ ...current, [k]: value }));
+    try {
+      await api.patch("/preferences", { [k]: value });
+      setPrefsFeedback({ type: "success", message: "Preference saved." });
+    } catch (error: any) {
+      setPrefs((current: any) => ({ ...current, [k]: previous }));
+      setPrefsFeedback({
+        type: "error",
+        message: error?.response?.data?.detail || "Couldn't save that preference. Your previous setting was restored.",
+      });
+    } finally {
+      setPrefSaving(null);
+    }
   };
   const setRemindDays = async (d: number) => {
-    setPrefs((p: any) => ({ ...p, visit_remind_days: d }));
-    try { await api.patch("/preferences", { visit_remind_days: d }); } catch {}
+    if (prefSaving) return;
+    const previous = prefs.visit_remind_days;
+    setPrefSaving("visit_remind_days");
+    setPrefsFeedback(null);
+    setPrefs((current: any) => ({ ...current, visit_remind_days: d }));
+    try {
+      await api.patch("/preferences", { visit_remind_days: d });
+      setPrefsFeedback({ type: "success", message: "Reminder timing saved." });
+    } catch (error: any) {
+      setPrefs((current: any) => ({ ...current, visit_remind_days: previous }));
+      setPrefsFeedback({
+        type: "error",
+        message: error?.response?.data?.detail || "Couldn't save reminder timing. Your previous setting was restored.",
+      });
+    } finally {
+      setPrefSaving(null);
+    }
   };
 
   const submitTicket = async () => {
+    if (ticketSubmitting) return;
+    const subject = contact.subject.trim();
+    const description = contact.description.trim();
+    if (subject.length < 3) {
+      setTicketError("Enter a subject of at least 3 characters.");
+      return;
+    }
+    if (description.length < 10) {
+      setTicketError("Describe the issue in at least 10 characters.");
+      return;
+    }
+    setTicketSubmitting(true);
+    setTicketError("");
     try {
-      const r = await api.post("/support/tickets", contact);
+      const r = await api.post("/support/tickets", { ...contact, subject, description });
       setLastTicketId(r.data.ticket_id || r.data.id);
       setTicketSubmitted(true);
       setContact({ category: "Login Issue", subject: "", description: "" });
-      setTickets((await api.get("/support/tickets")).data);
-    } catch {}
+      await loadTickets();
+    } catch (error: any) {
+      setTicketError(error?.response?.data?.detail || "Couldn't submit your ticket. Please try again.");
+    } finally {
+      setTicketSubmitting(false);
+    }
   };
 
-  const pickLang = async (label: string) => {
-    const key = label.split(" ")[0];
-    setProf(p => ({ ...p, language: label }));
-    setShowLang(false);
-    try { await api.patch("/auth/me", { language: label }); } catch {}
-    void key;
+  const applyLanguage = async () => {
+    if (languageBusy) return;
+    const previous = prof.language;
+    setLanguageBusy(true);
+    setLanguageError("");
+    try {
+      await api.patch("/auth/me", { language: pendingLanguage });
+      await api.patch("/preferences", { language: pendingLanguage });
+      await setLanguage(pendingLanguage);
+      setProf(current => ({ ...current, language: pendingLanguage }));
+      await refresh();
+      setShowLang(false);
+    } catch (error: any) {
+      // A profile write may have succeeded before the preference write failed.
+      // Best-effort compensation keeps both server records on the prior locale.
+      await Promise.allSettled([
+        api.patch("/auth/me", { language: previous }),
+        api.patch("/preferences", { language: previous }),
+      ]);
+      setPendingLanguage(previous);
+      await setLanguage(previous);
+      setLanguageError(error?.response?.data?.detail || "Couldn't save your language. Your previous language remains active.");
+    } finally {
+      setLanguageBusy(false);
+    }
   };
 
   // ══════════════════════ SUB-SCREENS ══════════════════════
@@ -288,6 +495,23 @@ export default function Profile() {
         <Header title="Edit Profile" onBack={() => setSection("main")} rightLabel={savingProfile ? "Saving…" : "Save"} onRight={saveProfile} />
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={p.body} keyboardShouldPersistTaps="handled">
+            {profileLoadError ? (
+              <View style={[p.feedbackBanner, p.feedbackError]}>
+                <AlertTriangle size={16} color={colors.destructive} />
+                <Small color={colors.destructive} style={{ flex: 1 }}>{profileLoadError}</Small>
+                <Pressable onPress={loadProfile}><Small color={colors.primary} weight="700">Retry</Small></Pressable>
+              </View>
+            ) : null}
+            {profileFeedback ? (
+              <View style={[p.feedbackBanner, profileFeedback.type === "success" ? p.feedbackSuccess : p.feedbackError]}>
+                {profileFeedback.type === "success"
+                  ? <Check size={16} color={colors.success} />
+                  : <AlertTriangle size={16} color={colors.destructive} />}
+                <Small color={profileFeedback.type === "success" ? colors.success : colors.destructive} style={{ flex: 1 }}>
+                  {profileFeedback.message}
+                </Small>
+              </View>
+            ) : null}
             <Rise delay={40} style={{ alignItems: "center", marginBottom: spacing.sm }}>
               <View>
                 {avatarUri ? (
@@ -305,8 +529,8 @@ export default function Profile() {
             </Rise>
             <Rise delay={110}>
               <View style={p.card}>
-                <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => setProf({ ...prof, fullName: v })} style={p.input} /></Field>
-                <Field label="Date of Birth *"><TextInput value={prof.dob} onChangeText={v => setProf({ ...prof, dob: v })} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedFg + "99"} style={p.input} /></Field>
+                <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => { setProf({ ...prof, fullName: v }); setProfileFeedback(null); }} style={p.input} /></Field>
+                <Field label="Date of Birth *"><TextInput value={prof.dob} onChangeText={v => { setProf({ ...prof, dob: v }); setProfileFeedback(null); }} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedFg + "99"} style={p.input} /></Field>
                 <Field label="Gender *">
                   <Pressable onPress={() => setGenderOpen(true)} style={[p.input, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
                     <Text style={{ color: prof.gender ? colors.foreground : colors.mutedFg + "99", fontFamily: fonts.regular, fontSize: 15 }}>{prof.gender || "Select gender"}</Text>
@@ -321,12 +545,12 @@ export default function Profile() {
                 <Field label="Phone Number">
                   <View style={{ flexDirection: "row", gap: 8 }}>
                     <View style={p.prefix}><Text style={{ color: colors.mutedFg, fontFamily: fonts.semibold }}>+91</Text></View>
-                    <TextInput value={prof.phone} onChangeText={v => setProf({ ...prof, phone: v })} keyboardType="phone-pad" style={[p.input, { flex: 1 }]} />
+                    <TextInput value={prof.phone} onChangeText={v => { setProf({ ...prof, phone: v }); setProfileFeedback(null); }} keyboardType="phone-pad" style={[p.input, { flex: 1 }]} />
                   </View>
                   <View style={p.warn}><AlertTriangle size={14} color={colors.warning} /><Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Changing this notifies your research team and requires OTP verification.</Small></View>
                 </Field>
                 <Field label="Email ID">
-                  <TextInput value={prof.email} onChangeText={v => setProf({ ...prof, email: v })} keyboardType="email-address" autoCapitalize="none" style={p.input} />
+                  <TextInput value={prof.email} onChangeText={v => { setProf({ ...prof, email: v }); setProfileFeedback(null); }} keyboardType="email-address" autoCapitalize="none" style={p.input} />
                   <View style={p.warn}><AlertTriangle size={14} color={colors.warning} /><Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Changing this notifies your research team and requires OTP verification.</Small></View>
                 </Field>
               </View>
@@ -341,7 +565,7 @@ export default function Profile() {
           <Pressable style={p.sheetOverlay} onPress={() => setGenderOpen(false)}>
             <View style={p.sheetCenter}>
               {GENDERS.map(g => (
-                <Pressable key={g} onPress={() => { setProf({ ...prof, gender: g }); setGenderOpen(false); }} style={[p.sheetItem, prof.gender === g && { backgroundColor: colors.secondary + "55" }]}>
+                <Pressable key={g} onPress={() => { setProf({ ...prof, gender: g }); setProfileFeedback(null); setGenderOpen(false); }} style={[p.sheetItem, prof.gender === g && { backgroundColor: colors.secondary + "55" }]}>
                   <Text style={{ color: prof.gender === g ? colors.primary : colors.foreground, fontFamily: prof.gender === g ? fonts.semibold : fonts.regular, fontSize: 15 }}>{g}</Text>
                   {prof.gender === g && <Check size={16} color={colors.primary} strokeWidth={3} />}
                 </Pressable>
@@ -458,6 +682,29 @@ export default function Profile() {
       <SafeAreaView style={p.container} edges={["top"]}>
         <Header title="Notifications" onBack={() => setSection("main")} />
         <ScrollView contentContainerStyle={p.body}>
+          {prefsLoading ? (
+            <View style={p.sectionState}>
+              <ActivityIndicator color={colors.primary} />
+              <Small>Loading your saved preferences…</Small>
+            </View>
+          ) : null}
+          {prefsError ? (
+            <View style={[p.feedbackBanner, p.feedbackError]}>
+              <AlertTriangle size={16} color={colors.destructive} />
+              <Small color={colors.destructive} style={{ flex: 1 }}>{prefsError}</Small>
+              <Pressable onPress={loadPreferences}><Small color={colors.primary} weight="700">Retry</Small></Pressable>
+            </View>
+          ) : null}
+          {prefsFeedback ? (
+            <View style={[p.feedbackBanner, prefsFeedback.type === "success" ? p.feedbackSuccess : p.feedbackError]}>
+              {prefsFeedback.type === "success"
+                ? <Check size={16} color={colors.success} />
+                : <AlertTriangle size={16} color={colors.destructive} />}
+              <Small color={prefsFeedback.type === "success" ? colors.success : colors.destructive} style={{ flex: 1 }}>
+                {prefsFeedback.message}
+              </Small>
+            </View>
+          ) : null}
           {groups.map((g, gi) => (
             <Rise key={g.title} delay={40 + gi * 80}>
               <View style={[p.card, { marginBottom: spacing.md }]}>
@@ -465,7 +712,7 @@ export default function Profile() {
                 {g.items.map((it, i) => (
                   <View key={it.key} style={[{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12 }, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border + "99" }]}>
                     <Body>{it.label}</Body>
-                    <Toggle testID={`pref-${it.key}`} on={!!prefs[it.key]} onToggle={() => togglePref(it.key)} />
+                    <Toggle testID={`pref-${it.key}`} on={!!prefs[it.key]} onToggle={() => togglePref(it.key)} disabled={prefsLoading || !!prefSaving} />
                   </View>
                 ))}
                 {g.remind && (
@@ -475,7 +722,7 @@ export default function Profile() {
                       {[1, 2, 3].map(d => {
                         const active = prefs.visit_remind_days === d;
                         return (
-                          <Springy key={d} onPress={() => setRemindDays(d)} style={[p.dayBtn, active ? { borderColor: colors.primary, backgroundColor: colors.primary + "14" } : { borderColor: colors.border }]}>
+                          <Springy key={d} disabled={prefsLoading || !!prefSaving} onPress={() => setRemindDays(d)} style={[p.dayBtn, active ? { borderColor: colors.primary, backgroundColor: colors.primary + "14" } : { borderColor: colors.border }, (prefsLoading || !!prefSaving) && { opacity: 0.6 }]}>
                             <Small weight="700" color={active ? colors.primary : colors.mutedFg}>{d} day{d > 1 ? "s" : ""}</Small>
                           </Springy>
                         );
@@ -486,7 +733,9 @@ export default function Profile() {
               </View>
             </Rise>
           ))}
-          <Springy onPress={() => setSection("main")} style={[p.cta, { backgroundColor: colors.primaryDeep }]}><Text style={p.ctaText}>Save Preferences</Text></Springy>
+          <Springy onPress={() => setSection("main")} disabled={!!prefSaving} style={[p.cta, { backgroundColor: prefSaving ? colors.surface : colors.primaryDeep }]}>
+            <Text style={[p.ctaText, prefSaving && { color: colors.mutedFg }]}>{prefSaving ? "Saving…" : "Done"}</Text>
+          </Springy>
         </ScrollView>
       </SafeAreaView>
     );
@@ -523,7 +772,7 @@ export default function Profile() {
           {legalError && !doc ? (
             <View style={[p.warn, { marginBottom: spacing.md }]}>
               <AlertTriangle size={14} color={colors.warning} />
-              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load the latest version. Showing a saved copy.</Small>
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>{"Couldn't load the latest version. Showing a saved copy."}</Small>
             </View>
           ) : null}
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.md }}>
@@ -538,7 +787,12 @@ export default function Profile() {
               </View>
             </Rise>
           ))}
-          <View style={[p.doneBanner, { marginTop: spacing.sm }]}><Check size={18} color={colors.success} /><Small color={colors.success} weight="700">You accepted this on 15 March 2025</Small></View>
+          {!!acceptedTermsLabel && (
+            <View style={[p.doneBanner, { marginTop: spacing.sm }]}>
+              <Check size={18} color={colors.success} />
+              <Small color={colors.success} weight="700">Accepted on {acceptedTermsLabel}</Small>
+            </View>
+          )}
         </ScrollView>
       </SafeAreaView>
     );
@@ -549,6 +803,16 @@ export default function Profile() {
       <SafeAreaView style={p.container} edges={["top"]}>
         <Header title="FAQ" eyebrow="Help & support" onBack={() => setSection("help")} />
         <ScrollView contentContainerStyle={p.body}>
+          {faqLoading ? (
+            <View style={p.sectionState}><ActivityIndicator color={colors.primary} /><Small>Loading frequently asked questions…</Small></View>
+          ) : null}
+          {faqError ? (
+            <View style={[p.feedbackBanner, p.feedbackError]}>
+              <AlertTriangle size={16} color={colors.destructive} />
+              <Small color={colors.destructive} style={{ flex: 1 }}>{faqError} Showing the saved copy.</Small>
+              <Pressable onPress={loadFaq}><Small color={colors.primary} weight="700">Retry</Small></Pressable>
+            </View>
+          ) : null}
           {faqs.map((f, i) => {
             const open = faqOpen === i;
             return (
@@ -576,7 +840,7 @@ export default function Profile() {
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
             <View style={p.successCircle}><Check size={32} color={colors.success} /></View>
             <Text style={{ fontFamily: fonts.heading, fontSize: 20, color: colors.foreground }}>Ticket Submitted!</Text>
-            <Small style={{ textAlign: "center" }}>We'll respond within 24 hours.</Small>
+            <Small style={{ textAlign: "center" }}>{"We'll respond within 24 hours."}</Small>
             <View style={p.ticketIdBox}><Eyebrow color={colors.mutedFg}>Ticket ID</Eyebrow><Text style={{ fontFamily: fonts.mono, color: colors.primaryDeep, marginTop: 2 }}>{lastTicketId}</Text></View>
             <Pressable onPress={() => setSection("tickets")}><Small color={colors.info} weight="700">View my tickets →</Small></Pressable>
           </View>
@@ -597,12 +861,20 @@ export default function Profile() {
                   })}
                 </View>
               </Field>
-              <Field label="Subject"><TextInput value={contact.subject} onChangeText={v => setContact({ ...contact, subject: v })} placeholder="Brief subject" placeholderTextColor={colors.mutedFg + "99"} style={p.input} /></Field>
-              <Field label="Description"><TextInput value={contact.description} onChangeText={v => setContact({ ...contact, description: v })} placeholder="Describe your issue…" placeholderTextColor={colors.mutedFg + "99"} multiline style={[p.input, { height: 110, textAlignVertical: "top" }]} /></Field>
+              <Field label="Subject"><TextInput value={contact.subject} onChangeText={v => { setContact({ ...contact, subject: v }); setTicketError(""); }} placeholder="Brief subject" placeholderTextColor={colors.mutedFg + "99"} style={p.input} maxLength={120} /></Field>
+              <Field label="Description"><TextInput value={contact.description} onChangeText={v => { setContact({ ...contact, description: v }); setTicketError(""); }} placeholder="Describe your issue…" placeholderTextColor={colors.mutedFg + "99"} multiline style={[p.input, { height: 110, textAlignVertical: "top" }]} maxLength={2000} /></Field>
+              {ticketError ? (
+                <View style={[p.feedbackBanner, p.feedbackError]}>
+                  <AlertTriangle size={16} color={colors.destructive} />
+                  <Small color={colors.destructive} style={{ flex: 1 }}>{ticketError}</Small>
+                </View>
+              ) : null}
             </View>
           </ScrollView>
           <View style={p.footer}>
-            <Springy onPress={submitTicket} style={[p.cta, { backgroundColor: colors.primaryDeep }]}><Text style={p.ctaText}>Submit Ticket</Text></Springy>
+            <Springy onPress={submitTicket} disabled={ticketSubmitting} style={[p.cta, { backgroundColor: ticketSubmitting ? colors.surface : colors.primaryDeep }]}>
+              <Text style={[p.ctaText, ticketSubmitting && { color: colors.mutedFg }]}>{ticketSubmitting ? "Submitting…" : "Submit Ticket"}</Text>
+            </Springy>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -615,8 +887,16 @@ export default function Profile() {
       <SafeAreaView style={p.container} edges={["top"]}>
         <Header title="My Tickets" eyebrow="Help & support" onBack={() => setSection("help")} />
         <ScrollView contentContainerStyle={p.body}>
-          {tickets.length === 0 ? (
-            <View style={[p.card, { alignItems: "center", paddingVertical: 32, gap: 8 }]}><Ticket size={32} color={colors.mutedFg + "66"} /><Small>You haven't raised any tickets yet.</Small></View>
+          {ticketsLoading ? (
+            <View style={p.sectionState}><ActivityIndicator color={colors.primary} /><Small>Loading your tickets…</Small></View>
+          ) : ticketsError ? (
+            <View style={[p.feedbackBanner, p.feedbackError]}>
+              <AlertTriangle size={16} color={colors.destructive} />
+              <Small color={colors.destructive} style={{ flex: 1 }}>{ticketsError}</Small>
+              <Pressable onPress={loadTickets}><Small color={colors.primary} weight="700">Retry</Small></Pressable>
+            </View>
+          ) : tickets.length === 0 ? (
+            <View style={[p.card, { alignItems: "center", paddingVertical: 32, gap: 8 }]}><Ticket size={32} color={colors.mutedFg + "66"} /><Small>{"You haven't raised any tickets yet."}</Small></View>
           ) : tickets.map((t, i) => (
             <Rise key={t.id} delay={40 + i * 60}>
               <View style={[p.card, { marginBottom: spacing.sm }]}>
@@ -661,9 +941,37 @@ export default function Profile() {
           <View style={[p.card, { marginTop: spacing.sm }]}>
             <Eyebrow color={colors.primary} style={{ marginBottom: 12 }}>Contact Us</Eyebrow>
             <View style={{ gap: 10 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><View style={[p.iconSm, { backgroundColor: colors.info + "1A" }]}><Mail size={15} color={colors.info} /></View><Small>support@mytrialboard.com</Small></View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><View style={[p.iconSm, { backgroundColor: colors.success + "1A" }]}><Phone size={15} color={colors.success} /></View><Small>1800-XXX-XXXX (Toll Free)</Small></View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><View style={[p.iconSm, { backgroundColor: colors.warning + "1A" }]}><Clock size={15} color={colors.warning} /></View><Small>Mon – Fri, 9:00 AM – 6:00 PM</Small></View>
+              {!!supportContact?.email && (
+                <Pressable
+                  onPress={() => openSupportLink(`mailto:${supportContact.email}`)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                >
+                  <View style={[p.iconSm, { backgroundColor: colors.info + "1A" }]}><Mail size={15} color={colors.info} /></View>
+                  <Small>{supportContact.email}</Small>
+                </Pressable>
+              )}
+              {!!supportContact?.phone && (
+                <Pressable
+                  onPress={() => openSupportLink(`tel:${supportContact.phone?.replace(/[^\d+]/g, "")}`)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                >
+                  <View style={[p.iconSm, { backgroundColor: colors.success + "1A" }]}><Phone size={15} color={colors.success} /></View>
+                  <Small>{supportContact.phone}</Small>
+                </Pressable>
+              )}
+              {!!supportContact?.hours && (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <View style={[p.iconSm, { backgroundColor: colors.warning + "1A" }]}><Clock size={15} color={colors.warning} /></View>
+                  <Small>{supportContact.hours}</Small>
+                </View>
+              )}
+              {!!supportContactError && (
+                <View style={{ gap: 6 }}>
+                  <Small color={colors.destructive}>{supportContactError}</Small>
+                  <Pressable onPress={loadSupportContact}><Small color={colors.primary} weight="700">Retry</Small></Pressable>
+                </View>
+              )}
+              {!supportContact && !supportContactError && <Small>Loading support contact…</Small>}
             </View>
           </View>
         </ScrollView>
@@ -677,11 +985,11 @@ export default function Profile() {
     { label: "Gender", val: prof.gender || "—" },
     { label: "Phone number", val: prof.phone ? `+91 ${prof.phone}` : "—", verify: true },
     { label: "Email ID", val: prof.email || "—", verify: true },
-    { label: "Preferred language", val: prof.language },
+    { label: "Preferred language", val: localeLabel(prof.language) },
   ];
   const menuGroups: { eyebrow: string; items: { icon: any; label: string; meta?: string; go: () => void }[] }[] = [
     { eyebrow: "Account", items: [{ icon: User, label: "Edit Profile", go: () => setSection("edit-profile") }, { icon: Lock, label: "Change Password", go: () => setSection("change-password") }] },
-    { eyebrow: "Preferences", items: [{ icon: Globe, label: "Preferred Language", meta: prof.language.split(" ")[0], go: () => setShowLang(true) }, { icon: Bell, label: "Notification Preferences", go: () => setSection("notification-prefs") }] },
+    { eyebrow: "Preferences", items: [{ icon: Globe, label: "Preferred Language", meta: localeLabel(prof.language).split(" —")[0], go: () => { setPendingLanguage(prof.language); setLanguageError(""); setShowLang(true); } }, { icon: Bell, label: "Notification Preferences", go: () => setSection("notification-prefs") }] },
     { eyebrow: "Legal & support", items: [{ icon: FileText, label: "Terms & Conditions", go: () => setSection("terms") }, { icon: Shield, label: "Privacy Policy", go: () => setSection("privacy") }, { icon: HelpCircle, label: "Help & Support", go: () => setSection("help") }] },
   ];
 
@@ -691,7 +999,17 @@ export default function Profile() {
         <Springy onPress={() => router.back()} style={h.back}><ChevronLeft size={22} color={colors.primaryFg} /></Springy>
         <View style={{ flex: 1 }}><Eyebrow color={colors.overlay25}>Account</Eyebrow><Text style={h.title}>Profile & Settings</Text></View>
       </View>
-      <ScrollView contentContainerStyle={p.body}>
+      <ScrollView contentContainerStyle={[p.body, { paddingBottom: PATIENT_NAV_CONTENT_BOTTOM }]}>
+        {profileLoading ? (
+          <View style={p.sectionState}><ActivityIndicator color={colors.primary} /><Small>Loading your profile…</Small></View>
+        ) : null}
+        {profileLoadError ? (
+          <View style={[p.feedbackBanner, p.feedbackError]}>
+            <AlertTriangle size={16} color={colors.destructive} />
+            <Small color={colors.destructive} style={{ flex: 1 }}>{profileLoadError}</Small>
+            <Pressable onPress={loadProfile}><Small color={colors.primary} weight="700">Retry</Small></Pressable>
+          </View>
+        ) : null}
         {/* Identity hero */}
         <Rise delay={40}>
           <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={p.hero}>
@@ -751,6 +1069,7 @@ export default function Profile() {
           <Small color={colors.mutedFg}>© 2026 MTB Health Technologies</Small>
         </View>
       </ScrollView>
+      <PatientBottomNav active="me" />
 
       {/* Logout dialog */}
       <Modal visible={showLogout} transparent animationType="fade" onRequestClose={() => setShowLogout(false)}>
@@ -775,16 +1094,26 @@ export default function Profile() {
           <View style={p.bottomSheet}>
             <View style={p.grabber} />
             <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.primaryDeep, marginBottom: spacing.md }}>Preferred Language</Text>
-            {LANGUAGES.map(l => {
-              const active = prof.language === l;
+            {APP_LOCALES.map(locale => {
+              const active = pendingLanguage === locale.code;
               return (
-                <Pressable key={l} onPress={() => pickLang(l)} style={[p.langRow, active && { backgroundColor: colors.primary + "14" }]}>
+                <Pressable key={locale.code} disabled={languageBusy} onPress={() => { setPendingLanguage(locale.code); setLanguageError(""); }} style={[p.langRow, active && { backgroundColor: colors.primary + "14" }]}>
                   <View style={[p.radio, { borderColor: active ? colors.primary : colors.border }]}>{active && <View style={p.radioDot} />}</View>
-                  <Body weight={active ? "600" : "400"}>{l}</Body>
+                  <Body weight={active ? "600" : "400"}>{locale.label}</Body>
                 </Pressable>
               );
             })}
-            <Springy onPress={() => setShowLang(false)} style={[p.cta, { backgroundColor: colors.primaryDeep, marginTop: spacing.md }]}><Text style={p.ctaText}>Apply</Text></Springy>
+            {languageError ? (
+              <View style={[p.feedbackBanner, p.feedbackError, { marginTop: spacing.sm }]}>
+                <AlertTriangle size={16} color={colors.destructive} />
+                <Small color={colors.destructive} style={{ flex: 1 }}>{languageError}</Small>
+              </View>
+            ) : null}
+            <Springy onPress={applyLanguage} disabled={languageBusy || pendingLanguage === prof.language} style={[p.cta, { backgroundColor: languageBusy || pendingLanguage === prof.language ? colors.surface : colors.primaryDeep, marginTop: spacing.md }]}>
+              <Text style={[p.ctaText, (languageBusy || pendingLanguage === prof.language) && { color: colors.mutedFg }]}>
+                {languageBusy ? "Applying…" : pendingLanguage === prof.language ? "Selected" : "Apply"}
+              </Text>
+            </Springy>
           </View>
         </View>
       </Modal>
@@ -812,6 +1141,10 @@ const p = StyleSheet.create({
   input: { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },
   prefix: { paddingHorizontal: 14, justifyContent: "center", borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   warn: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 8, backgroundColor: colors.warning + "14", borderWidth: 1, borderColor: colors.warning + "33", borderRadius: radii.md, padding: 10 },
+  sectionState: { alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: spacing.lg },
+  feedbackBanner: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: radii.md, padding: 10, marginBottom: spacing.md },
+  feedbackSuccess: { backgroundColor: colors.success + "14", borderColor: colors.success + "40" },
+  feedbackError: { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "40" },
   avatarLg: { width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center" },
   camBtn: { position: "absolute", bottom: -2, right: -2, width: 28, height: 28, borderRadius: 14, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   eye: { position: "absolute", right: 12, top: 0, bottom: 0, justifyContent: "center" },

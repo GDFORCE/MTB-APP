@@ -12,19 +12,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, ScrollView, Pressable, StatusBar, Text as RNText, TextInput, Modal,
-  Animated, Platform, KeyboardAvoidingView, StyleSheet,
+  Animated, Platform, KeyboardAvoidingView, StyleSheet, RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  Menu, RefreshCcw, X, Inbox, User, MessageSquare, ChevronRight, Send, Clock,
+  Menu, RefreshCcw, X, User, MessageSquare, ChevronRight, Send, Clock,
 } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, EmptyCard, Toast, SearchBar, ChipRow, st } from "./users";
-
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 
 type Note = { by?: string; at?: string; text?: string };
 type Ticket = {
@@ -94,6 +93,15 @@ export default function AdminTickets() {
   useEffect(() => { load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Global-search deep link: /admin/tickets?focus=<id> opens that exact record.
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const consumedFocus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focus || typeof focus !== "string" || focus === consumedFocus.current) return;
+    const hit = tickets.find((t) => t.id === focus);
+    if (hit) { consumedFocus.current = focus; setSelected(hit); }
+  }, [focus, tickets]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
@@ -147,6 +155,7 @@ export default function AdminTickets() {
         contentContainerStyle={{ paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
       >
         <Hero onMenu={open} onRefresh={onRefresh} count={tickets.length} />
         {loading ? (

@@ -25,8 +25,6 @@ import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, EmptyCard, Toast, st } from "./users";
 
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
-
 type Alert = {
   id: string; type?: string; description?: string; affected?: string;
   severity?: string; status?: string; timestamp?: string; retries?: number;

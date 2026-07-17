@@ -218,6 +218,10 @@ class OwnershipTransferIn(BaseModel):
     handover: Literal['deactivate', 'remove'] = 'deactivate'
 
 
+class OwnershipTransferDeclineIn(BaseModel):
+    reason: Optional[str] = Field('', max_length=1000)
+
+
 @router.post('/{org_id}/ownership-transfer')
 async def org_start_ownership_transfer(body: OwnershipTransferIn, ctx=Depends(org_admin_ctx)):
     org, user = ctx['org'], ctx['user']
@@ -244,13 +248,24 @@ async def org_start_ownership_transfer(body: OwnershipTransferIn, ctx=Depends(or
         'id': str(uuid.uuid4()), 'user_id': successor['id'],
         'title': f"Ownership transfer · {org['name']}",
         'body': f"{user.get('full_name', 'The current admin')} has asked you to take over "
-                f"as the organization admin. Open the console to accept.",
-        'kind': 'system', 'read': False, 'created_at': now()})
+                f"as the organization admin. Review the transfer to accept or decline.",
+        'kind': 'ownership_transfer', 'org_id': org['id'],
+        'transfer_id': doc['id'], 'read': False, 'created_at': now()})
     await write_audit(user, 'org.ownership_transfer_start',
                       f"Proposed ownership transfer of {org['name']} to "
                       f"{successor.get('email')} — {body.reason}",
                       target_id=doc['id'], org_id=org['id'])
     return serialize({**doc})
+
+
+@router.get('/{org_id}/ownership-transfer/pending')
+async def org_pending_ownership_transfer(ctx=Depends(org_member_ctx)):
+    """Return only the signed-in successor's pending transfer for this org."""
+    org, user = ctx['org'], ctx['user']
+    transfer = await db.ownership_transfers.find_one({
+        'org_id': org['id'], 'to_user': user['id'], 'status': 'pending',
+    }, {'_id': 0}, sort=[('created_at', -1)])
+    return serialize(transfer) if transfer else None
 
 
 @router.post('/{org_id}/ownership-transfer/{transfer_id}/accept')
@@ -265,19 +280,67 @@ async def org_accept_ownership_transfer(transfer_id: str, ctx=Depends(org_member
     if transfer.get('to_user') != user['id']:
         raise HTTPException(403, 'Only the designated successor can accept this transfer')
     n = now()
+    changed = await db.ownership_transfers.update_one(
+        {'id': transfer_id, 'status': 'pending'}, {'$set': {
+            'status': 'accepted', 'accepted_at': n, 'accepted_by': user['id']}})
+    if not changed.modified_count:
+        raise HTTPException(409, 'This transfer was already actioned')
     await db.users.update_one({'id': user['id']}, {'$set': {'org_admin': True}})
     handover = transfer.get('handover', 'deactivate')
     old_updates = {'org_admin': False}
     if handover == 'deactivate':
         old_updates.update({'status': 'Deactivated', 'deactivated_at': n})
     await db.users.update_one({'id': transfer['from_user']}, {'$set': old_updates})
-    await db.ownership_transfers.update_one({'id': transfer_id}, {'$set': {
-        'status': 'accepted', 'accepted_at': n}})
+    await db.notifications.insert_one({
+        'id': str(uuid.uuid4()), 'user_id': transfer['from_user'],
+        'title': f"Ownership transfer accepted · {org['name']}",
+        'body': f"{user.get('full_name', 'The successor')} accepted organization ownership.",
+        'kind': 'ownership_transfer', 'org_id': org['id'],
+        'transfer_id': transfer_id, 'read': False, 'created_at': n})
     await write_audit(user, 'org.ownership_transfer_accept',
                       f"Accepted ownership of {org['name']} from {transfer.get('from_name')} "
                       f"(handover: {handover})",
                       target_id=transfer_id, org_id=org['id'])
     return {'ok': True, 'id': transfer_id, 'status': 'accepted', 'handover': handover}
+
+
+@router.post('/{org_id}/ownership-transfer/{transfer_id}/decline')
+async def org_decline_ownership_transfer(
+        transfer_id: str, body: OwnershipTransferDeclineIn,
+        ctx=Depends(org_member_ctx)):
+    """Declined by the designated successor; no account privileges change."""
+    org, user = ctx['org'], ctx['user']
+    transfer = await db.ownership_transfers.find_one(
+        {'id': transfer_id}, {'_id': 0})
+    if not transfer or transfer.get('org_id') != org['id']:
+        raise HTTPException(404, 'Transfer not found')
+    if transfer.get('status') != 'pending':
+        raise HTTPException(400, f"This transfer is already {transfer.get('status')}")
+    if transfer.get('to_user') != user['id']:
+        raise HTTPException(403, 'Only the designated successor can decline this transfer')
+    n = now()
+    changed = await db.ownership_transfers.update_one(
+        {'id': transfer_id, 'status': 'pending'}, {'$set': {
+            'status': 'declined', 'declined_at': n, 'declined_by': user['id'],
+            'decline_reason': (body.reason or '').strip(),
+        }})
+    if not changed.modified_count:
+        raise HTTPException(409, 'This transfer was already actioned')
+    await db.notifications.insert_one({
+        'id': str(uuid.uuid4()), 'user_id': transfer['from_user'],
+        'title': f"Ownership transfer declined · {org['name']}",
+        'body': (
+            f"{user.get('full_name', 'The successor')} declined organization ownership."
+            + (f" {(body.reason or '').strip()}" if (body.reason or '').strip() else '')
+        ),
+        'kind': 'ownership_transfer', 'org_id': org['id'],
+        'transfer_id': transfer_id, 'read': False, 'created_at': n})
+    await write_audit(
+        user, 'org.ownership_transfer_decline',
+        f"Declined ownership of {org['name']} from {transfer.get('from_name')}"
+        + (f" — {(body.reason or '').strip()}" if (body.reason or '').strip() else ''),
+        target_id=transfer_id, org_id=org['id'])
+    return {'ok': True, 'id': transfer_id, 'status': 'declined'}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -359,6 +422,13 @@ async def org_trials(ctx=Depends(org_admin_ctx)):
     org = ctx['org']
     member_ids = set(await _org_member_ids(org))
     granted = await _org_trial_ids_with_grant(org['id'])
+    member_rows = await db.users.find(
+        {'id': {'$in': list(member_ids)}}, {'_id': 0, 'id': 1, 'site': 1}
+    ).to_list(5000)
+    member_site = {
+        row['id']: (row.get('site') or '').strip()
+        for row in member_rows if (row.get('site') or '').strip()
+    }
 
     # candidate trials: owned by the org (sponsor_name / creator) or worked by
     # its staff (a patient at this org's site), or explicitly granted.
@@ -380,14 +450,84 @@ async def org_trials(ctx=Depends(org_admin_ctx)):
         full = (t.get('sponsor_name') == org['name']
                 or t.get('created_by') in member_ids
                 or t['id'] in granted)
+        owner = (t.get('sponsor_name') == org['name']
+                 or t.get('owning_organization_id') == org['id']
+                 or t.get('created_by') in member_ids)
+        creator = await db.users.find_one(
+            {'id': t.get('created_by')},
+            {'_id': 0, 'id': 1, 'full_name': 1, 'role': 1, 'organization': 1})
+        creator_role = (creator or {}).get('role', '')
+        creator_org = (creator or {}).get('organization', '')
         row = {
             'id': t['id'], 'title': t.get('title'), 'protocol_id': t.get('protocol_id'),
             'phase': t.get('phase'), 'condition': t.get('condition'),
             'status': t.get('status', 'active'),
+            'archived': bool(t.get('archived')),
+            'duration': t.get('duration'),
+            'drug': t.get('drug'),
+            'recruitment_status': t.get('recruitment_status'),
             'accessLevel': 'full' if full else 'restricted',
+            'accessStatus': 'full' if full else 'restricted',
             'createdBy': t.get('created_by'),
             'enrolled': await db.patients.count_documents({'trial_id': t['id']}),
+            'target': t.get('target_enrollment'),
+            'target_enrollment': t.get('target_enrollment'),
+            'sponsor': (
+                t.get('sponsor_name')
+                or (creator_org if creator_role == 'sponsor' else '')
+            ),
+            'cro': (
+                t.get('cro_name')
+                or (creator_org if creator_role == 'cro' else '')
+            ),
+            'documentCount': await db.files.count_documents({
+                'scope_type': 'trial', 'scope_id': t['id']}),
+            'updatedAt': iso(t.get('updated_at') or t.get('created_at')),
+            'updatedBy': {
+                'id': t.get('updated_by') or t.get('created_by'),
+                'name': t.get('updated_by_name') or (creator or {}).get('full_name', ''),
+            },
+            'permissions': {
+                'canViewDetails': full,
+                'canEdit': bool(owner and full),
+                'canArchive': bool(owner and full),
+                'canManageDocuments': bool(owner and full),
+                'canRequestAccess': not full,
+            },
         }
+        assigned_staff = await db.patients.find(
+            {'trial_id': t['id']}, {'_id': 0, 'pi_id': 1, 'crc_id': 1}
+        ).to_list(1000)
+        pi_ids = sorted({
+            patient.get('pi_id') for patient in assigned_staff
+            if patient.get('pi_id')
+        })
+        crc_ids = sorted({
+            patient.get('crc_id') for patient in assigned_staff
+            if patient.get('crc_id')
+        })
+        clinical_ids = sorted(set(pi_ids + crc_ids))
+        clinical_rows = await db.users.find(
+            {'id': {'$in': clinical_ids}},
+            {'_id': 0, 'id': 1, 'full_name': 1, 'organization': 1},
+        ).to_list(1000) if clinical_ids else []
+        clinical_map = {member['id']: member for member in clinical_rows}
+        row['pis'] = [{
+            'id': staff_id,
+            'name': clinical_map.get(staff_id, {}).get('full_name', ''),
+            'organization': clinical_map.get(staff_id, {}).get('organization', ''),
+        } for staff_id in pi_ids]
+        row['crcs'] = [{
+            'id': staff_id,
+            'name': clinical_map.get(staff_id, {}).get('full_name', ''),
+            'organization': clinical_map.get(staff_id, {}).get('organization', ''),
+        } for staff_id in crc_ids]
+        row['sites'] = sorted({
+            member_site[staff_id]
+            for patient in assigned_staff
+            for staff_id in (patient.get('pi_id'), patient.get('crc_id'))
+            if staff_id in member_site
+        })
         visits = await db.visits.find({'trial_id': t['id']}, {'_id': 0}) \
             .sort('visit_number', 1).to_list(200)
         row['schedule'] = [{'visit_number': v.get('visit_number'), 'name': v.get('name'),
@@ -400,12 +540,154 @@ async def org_trials(ctx=Depends(org_admin_ctx)):
     return out
 
 
+# ── Org-admin trial edit & archive (owner + full access only) ────────────────
+class OrgTrialPatch(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=300)
+    condition: Optional[str] = Field(None, max_length=300)
+    drug: Optional[str] = Field(None, max_length=300)
+    duration: Optional[str] = Field(None, max_length=120)
+    target_enrollment: Optional[int] = Field(None, ge=0, le=1000000)
+    recruitment_status: Optional[str] = Field(None, max_length=60)
+    status: Optional[Literal['active', 'completed', 'terminated']] = None
+
+
+class OrgTrialArchiveIn(BaseModel):
+    archived: bool = True
+
+
+async def _org_owned_full_trial(org: dict, trial_id: str) -> dict:
+    """Return the trial only when the org OWNS it with FULL access — the same
+    rule that computes canEdit/canArchive/canManageDocuments in org_trials."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    member_ids = set(await _org_member_ids(org))
+    granted = await _org_trial_ids_with_grant(org['id'])
+    full = (trial.get('sponsor_name') == org['name']
+            or trial.get('created_by') in member_ids
+            or trial['id'] in granted)
+    owner = (trial.get('sponsor_name') == org['name']
+             or trial.get('owning_organization_id') == org['id']
+             or trial.get('created_by') in member_ids)
+    if not (owner and full):
+        raise HTTPException(403, 'Only the owning organization can modify this trial')
+    return trial
+
+
+@router.patch('/{org_id}/trials/{trial_id}')
+async def org_edit_trial(trial_id: str, body: OrgTrialPatch, ctx=Depends(org_admin_ctx)):
+    org, user = ctx['org'], ctx['user']
+    trial = await _org_owned_full_trial(org, trial_id)
+    upd = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not upd:
+        raise HTTPException(400, 'No changes were provided')
+    if trial.get('archived'):
+        raise HTTPException(409, 'Unarchive this trial before editing it')
+    upd['updated_by'] = user['id']
+    upd['updated_by_name'] = user.get('full_name', '')
+    upd['updated_at'] = now()
+    await db.trials.update_one({'id': trial_id}, {'$set': upd})
+    changed = sorted(set(upd) - {'updated_by', 'updated_by_name', 'updated_at'})
+    await write_audit(user, 'org.trial_edit',
+                      f"Edited trial {trial.get('protocol_id') or trial_id}: "
+                      f"{', '.join(changed)}",
+                      target_id=trial_id, org_id=org['id'], trial_id=trial_id,
+                      changes={k: upd[k] for k in changed})
+    fresh = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    return serialize(fresh)
+
+
+@router.post('/{org_id}/trials/{trial_id}/archive')
+async def org_archive_trial(trial_id: str, body: OrgTrialArchiveIn,
+                            ctx=Depends(org_admin_ctx)):
+    org, user = ctx['org'], ctx['user']
+    trial = await _org_owned_full_trial(org, trial_id)
+    if bool(trial.get('archived')) == body.archived:
+        raise HTTPException(409, 'This trial is already in that archive state')
+    n = now()
+    if body.archived:
+        sets = {'archived': True, 'archived_at': n, 'archived_by': user['id'],
+                'updated_by': user['id'], 'updated_by_name': user.get('full_name', ''),
+                'updated_at': n}
+        await db.trials.update_one({'id': trial_id}, {'$set': sets})
+    else:
+        await db.trials.update_one(
+            {'id': trial_id},
+            {'$set': {'archived': False, 'updated_by': user['id'],
+                      'updated_by_name': user.get('full_name', ''), 'updated_at': n},
+             '$unset': {'archived_at': '', 'archived_by': ''}})
+    verb = 'archive' if body.archived else 'unarchive'
+    await write_audit(user, f'org.trial_{verb}',
+                      f"{verb.capitalize()}d trial {trial.get('protocol_id') or trial_id}",
+                      target_id=trial_id, org_id=org['id'], trial_id=trial_id)
+    return {'ok': True, 'id': trial_id, 'archived': body.archived}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # TRIAL ACCESS REQUESTS — /api/trials/{id}/access-requests (+grant)
 # ═════════════════════════════════════════════════════════════════════════════
 class AccessRequestIn(BaseModel):
     org_id: str
     reason: Optional[str] = ''
+
+
+class AccessRequestDecisionIn(BaseModel):
+    reason: Optional[str] = Field('', max_length=1000)
+
+
+async def _trial_owner_org(trial: dict) -> Optional[dict]:
+    if trial.get('owning_organization_id'):
+        org = await db.organizations.find_one(
+            {'id': trial['owning_organization_id']}, {'_id': 0})
+        if org:
+            return org
+    sponsor_name = (trial.get('sponsor_name') or '').strip()
+    if sponsor_name:
+        org = await db.organizations.find_one(
+            {'name': sponsor_name}, {'_id': 0})
+        if org:
+            return org
+    creator = await db.users.find_one(
+        {'id': trial.get('created_by')}, {'_id': 0, 'organization': 1})
+    creator_org = (creator or {}).get('organization', '').strip()
+    return await db.organizations.find_one(
+        {'name': creator_org}, {'_id': 0}) if creator_org else None
+
+
+async def _can_decide_trial_access(user: dict, trial: dict) -> bool:
+    if user.get('role') == 'admin':
+        return True
+    if not user.get('org_admin'):
+        return False
+    owner_org = await _trial_owner_org(trial)
+    return bool(owner_org and _same_org(user, owner_org))
+
+
+@router.get('/{org_id}/trial-access-requests')
+async def org_trial_access_requests(
+        status: Optional[str] = None, ctx=Depends(org_admin_ctx)):
+    org = ctx['org']
+    if status and status not in ('pending', 'granted', 'rejected'):
+        raise HTTPException(400, 'Invalid access-request status')
+    member_ids = await _org_member_ids(org)
+    owned_trials = await db.trials.find({
+        '$or': [
+            {'owning_organization_id': org['id']},
+            {'sponsor_name': org['name']},
+            {'created_by': {'$in': member_ids}},
+        ],
+    }, {'_id': 0, 'id': 1, 'title': 1, 'protocol_id': 1}).to_list(1000)
+    trial_map = {trial['id']: trial for trial in owned_trials}
+    q: Dict = {'trial_id': {'$in': list(trial_map)}}
+    if status:
+        q['status'] = status
+    rows = await db.trial_access_requests.find(
+        q, {'_id': 0}).sort('created_at', -1).to_list(1000)
+    return [serialize({
+        **row,
+        'trial_title': trial_map.get(row['trial_id'], {}).get('title', ''),
+        'protocol_id': trial_map.get(row['trial_id'], {}).get('protocol_id', ''),
+    }) for row in rows]
 
 
 @trial_access_router.post('/{trial_id}/access-requests')
@@ -433,6 +715,20 @@ async def trial_request_access(trial_id: str, body: AccessRequestIn,
         'status': 'pending', 'created_at': now(),
     }
     await db.trial_access_requests.insert_one(doc)
+    owner_org = await _trial_owner_org(trial)
+    if owner_org:
+        owner_admins = await db.users.find({
+            'organization': owner_org['name'], 'org_admin': True,
+            'status': {'$nin': ['Suspended', 'Deactivated', 'Removed']},
+        }, {'_id': 0, 'id': 1}).to_list(100)
+        if owner_admins:
+            await db.notifications.insert_many([{
+                'id': str(uuid.uuid4()), 'user_id': owner['id'],
+                'title': f"Trial access request · {trial.get('protocol_id', trial_id)}",
+                'body': f"{org['name']} requested full access to this trial.",
+                'kind': 'trial_access_request', 'trial_id': trial_id,
+                'request_id': doc['id'], 'read': False, 'created_at': now(),
+            } for owner in owner_admins])
     await write_audit(user, 'org.trial_access_request',
                       f"Requested full access to trial {trial.get('protocol_id', trial_id)} "
                       f"for {org['name']}", target_id=doc['id'],
@@ -451,26 +747,77 @@ async def trial_grant_access(trial_id: str, request_id: str, user=Depends(curren
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
-    if user['role'] != 'admin':
-        owns = user.get('org_admin') and (
-            (user.get('organization') or '').strip() == (trial.get('sponsor_name') or '').strip()
-            or trial.get('created_by') == user['id'])
-        if not owns:
-            raise HTTPException(403, 'Only the trial-owning organization admin '
-                                     'or a platform admin can grant access')
+    if not await _can_decide_trial_access(user, trial):
+        raise HTTPException(403, 'Only the trial-owning organization admin '
+                                 'or a platform admin can grant access')
     n = now()
     await db.org_trial_access.update_one(
         {'org_id': req['org_id'], 'trial_id': trial_id},
         {'$set': {'granted': True, 'granted_by': user['id'], 'granted_at': n},
          '$setOnInsert': {'id': str(uuid.uuid4())}},
         upsert=True)
-    await db.trial_access_requests.update_one({'id': request_id}, {'$set': {
-        'status': 'granted', 'granted_by': user['id'], 'granted_at': n}})
+    changed = await db.trial_access_requests.update_one(
+        {'id': request_id, 'status': 'pending'}, {'$set': {
+            'status': 'granted', 'granted_by': user['id'],
+            'granted_by_name': user.get('full_name', ''), 'granted_at': n}})
+    if not changed.modified_count:
+        raise HTTPException(409, 'This request was already actioned')
+    if req.get('requested_by'):
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': req['requested_by'],
+            'title': f"Trial access granted · {trial.get('protocol_id', trial_id)}",
+            'body': f"{req.get('org_name')} now has full access to this trial.",
+            'kind': 'trial_access_decision', 'trial_id': trial_id,
+            'request_id': request_id, 'read': False, 'created_at': n})
     await write_audit(user, 'org.trial_access_grant',
                       f"Granted {req.get('org_name')} full access to trial "
                       f"{trial.get('protocol_id', trial_id)}",
                       target_id=request_id, trial_id=trial_id, org_id=req['org_id'])
     return {'ok': True, 'id': request_id, 'status': 'granted'}
+
+
+@trial_access_router.post('/{trial_id}/access-requests/{request_id}/reject')
+async def trial_reject_access(
+        trial_id: str, request_id: str, body: AccessRequestDecisionIn,
+        user=Depends(current_user)):
+    req = await db.trial_access_requests.find_one(
+        {'id': request_id}, {'_id': 0})
+    if not req or req.get('trial_id') != trial_id:
+        raise HTTPException(404, 'Access request not found')
+    if req.get('status') != 'pending':
+        raise HTTPException(400, f"This request is already {req.get('status')}")
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_decide_trial_access(user, trial):
+        raise HTTPException(403, 'Only the trial-owning organization admin '
+                                 'or a platform admin can reject access')
+    n = now()
+    changed = await db.trial_access_requests.update_one(
+        {'id': request_id, 'status': 'pending'}, {'$set': {
+            'status': 'rejected', 'rejected_by': user['id'],
+            'rejected_by_name': user.get('full_name', ''),
+            'rejected_at': n, 'decision_reason': (body.reason or '').strip(),
+        }})
+    if not changed.modified_count:
+        raise HTTPException(409, 'This request was already actioned')
+    if req.get('requested_by'):
+        await db.notifications.insert_one({
+            'id': str(uuid.uuid4()), 'user_id': req['requested_by'],
+            'title': f"Trial access declined · {trial.get('protocol_id', trial_id)}",
+            'body': (
+                f"Full access for {req.get('org_name')} was declined."
+                + (f" {(body.reason or '').strip()}" if (body.reason or '').strip() else '')
+            ),
+            'kind': 'trial_access_decision', 'trial_id': trial_id,
+            'request_id': request_id, 'read': False, 'created_at': n})
+    await write_audit(
+        user, 'org.trial_access_reject',
+        f"Rejected {req.get('org_name')} full access to trial "
+        f"{trial.get('protocol_id', trial_id)}"
+        + (f" — {(body.reason or '').strip()}" if (body.reason or '').strip() else ''),
+        target_id=request_id, trial_id=trial_id, org_id=req['org_id'])
+    return {'ok': True, 'id': request_id, 'status': 'rejected'}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

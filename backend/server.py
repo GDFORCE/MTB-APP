@@ -14,7 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument, UpdateOne
-import os, re, json, logging, uuid, asyncio
+import os, re, json, logging, uuid, asyncio, hashlib
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Literal
@@ -49,6 +49,54 @@ oauth2 = OAuth2PasswordBearer(tokenUrl='/api/auth/login', auto_error=False)
 def now(): return datetime.now(timezone.utc)
 def iso(d): return d.isoformat() if isinstance(d, datetime) else d
 
+
+def normalize_email(value: Optional[str]) -> Optional[str]:
+    clean = str(value or '').strip().lower()
+    return clean or None
+
+
+def normalize_indian_phone(value: Optional[str]) -> Optional[str]:
+    """Canonicalize supported registration phones to Indian E.164."""
+    if value is None or not str(value).strip():
+        return None
+    digits = re.sub(r'\D', '', str(value))
+    if digits.startswith('0091'):
+        digits = digits[4:]
+    elif digits.startswith('91') and len(digits) == 12:
+        digits = digits[2:]
+    elif digits.startswith('0') and len(digits) == 11:
+        digits = digits[1:]
+    if not re.fullmatch(r'[6-9]\d{9}', digits):
+        raise HTTPException(400, 'Enter a valid 10-digit Indian mobile number')
+    return f'+91{digits}'
+
+
+def normalize_registration_profile(role: str, profile: Optional[Dict]) -> Dict:
+    """Validate role-specific dates and replace client-supplied age with truth."""
+    normalized = {
+        str(key): value.strip() if isinstance(value, str) else value
+        for key, value in (profile or {}).items()
+    }
+    raw_dob = normalized.get('dob')
+    if role == 'patient' and not raw_dob:
+        raise HTTPException(400, 'Date of birth is required for patient registration')
+    if raw_dob:
+        try:
+            dob = date.fromisoformat(str(raw_dob))
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'Date of birth must be a real date in YYYY-MM-DD format')
+        today = now().date()
+        if dob > today:
+            raise HTTPException(400, 'Date of birth cannot be in the future')
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        if age < 0 or age > 120:
+            raise HTTPException(400, 'Date of birth must produce an age between 0 and 120')
+        normalized['dob'] = dob.isoformat()
+        normalized['age'] = age
+    else:
+        normalized.pop('age', None)
+    return normalized
+
 # ── Models ───────────────────────────────────────────────────────────────────
 Role = Literal['sponsor', 'cro', 'smo', 'site', 'pi', 'crc', 'patient', 'admin']
 
@@ -77,6 +125,8 @@ class RegisterStartIn(BaseModel):
     security_questions: Optional[List[Dict]] = None
     profile: Optional[Dict] = None   # extra role-specific fields (designation, dob, gender…)
 
+    invite_token: Optional[str] = None
+
 class RegisterVerifyIn(BaseModel):
     registration_id: str
     email_otp: Optional[str] = None
@@ -95,12 +145,19 @@ class LoginIn(BaseModel):
     password: str
 
 class ForgotIn(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 class ResetIn(BaseModel):
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    recovery_id: Optional[str] = None
     otp: str
     new_password: str
+
+class PasswordResetLinkIn(BaseModel):
+    token: str = Field(min_length=20)
+    new_password: str = Field(min_length=8)
 
 class ProfileUpdateIn(BaseModel):
     full_name: Optional[str] = None
@@ -127,6 +184,12 @@ class TicketIn(BaseModel):
     subject: str
     description: Optional[str] = ''
 
+class EmergencyContactIn(BaseModel):
+    name: str = Field(min_length=1)
+    phone: str = Field(min_length=6)
+    email: Optional[EmailStr] = None
+    instructions: Optional[str] = ''
+
 class TrialIn(BaseModel):
     title: str
     protocol_id: str
@@ -134,6 +197,53 @@ class TrialIn(BaseModel):
     condition: str
     description: Optional[str] = ''
     sponsor_name: Optional[str] = ''
+    drug: Optional[str] = ''
+    duration: Optional[str] = ''
+    target_enrollment: Optional[int] = None
+    recruitment_status: Optional[str] = 'recruiting'
+    ctri_number: Optional[str] = ''
+    indications: List[str] = Field(default_factory=list)
+    risks: List[str] = Field(default_factory=list)
+    side_effects: List[str] = Field(default_factory=list)
+    emergency_contact: Optional[EmergencyContactIn] = None
+    total_visits: Optional[int] = Field(default=None, ge=0)
+    status: Optional[Literal['active', 'completed', 'terminated']] = 'active'
+
+class TrialPatchIn(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1)
+    phase: Optional[str] = None
+    condition: Optional[str] = None
+    description: Optional[str] = None
+    drug: Optional[str] = None
+    duration: Optional[str] = None
+    target_enrollment: Optional[int] = Field(default=None, ge=0)
+    recruitment_status: Optional[str] = None
+    ctri_number: Optional[str] = None
+    indications: Optional[List[str]] = None
+    risks: Optional[List[str]] = None
+    side_effects: Optional[List[str]] = None
+    emergency_contact: Optional[EmergencyContactIn] = None
+    total_visits: Optional[int] = Field(default=None, ge=0)
+    status: Optional[Literal['active', 'completed', 'terminated']] = None
+
+class SponsorTrialSiteIn(BaseModel):
+    """A sponsor-owned site assignment for one trial.
+
+    The site record is persistent and may be reused across trials. Professional
+    contact details are intentionally limited to the PI/site team; patient PII
+    is never accepted or returned by this contract.
+    """
+    name: str = Field(min_length=1)
+    address: Optional[str] = ''
+    city: Optional[str] = ''
+    state: Optional[str] = ''
+    hospital_type: Optional[Literal['Private', 'Government']] = 'Private'
+    department: Optional[str] = ''
+    pi_name: str = Field(min_length=1)
+    pi_email: EmailStr
+    pi_phone: Optional[str] = ''
+    target_enrollment: Optional[int] = Field(default=None, ge=0)
+    access_type: Literal['full', 'restricted', 'view_only'] = 'full'
 
 class VisitIn(BaseModel):
     trial_id: str
@@ -142,7 +252,16 @@ class VisitIn(BaseModel):
     day_offset: int
     window_days: int = 3
     activities: List[str] = []
+    procedures: List[Dict] = Field(default_factory=list)
+    visit_type: Optional[str] = ''
+    location: Optional[str] = ''
     checklist: List[str] = []   # "before you come in" patient-prep steps
+    clinical_tasks: List[str] = []
+    admin_tasks: List[str] = []
+    comments: Optional[str] = ''
+    extraction_warning: bool = False
+    review_status: Literal['pending', 'ok'] = 'ok'
+    extracted_from_protocol: bool = False
 
 class VisitUpdate(BaseModel):
     """Partial edit of an existing visit TEMPLATE (Task 4.1 edit mode). Only the
@@ -155,7 +274,16 @@ class VisitUpdate(BaseModel):
     day_offset: Optional[int] = None
     window_days: Optional[int] = None
     activities: Optional[List[str]] = None
+    procedures: Optional[List[Dict]] = None
+    visit_type: Optional[str] = None
+    location: Optional[str] = None
     checklist: Optional[List[str]] = None
+    clinical_tasks: Optional[List[str]] = None
+    admin_tasks: Optional[List[str]] = None
+    comments: Optional[str] = None
+    extraction_warning: Optional[bool] = None
+    review_status: Optional[Literal['pending', 'ok']] = None
+    extracted_from_protocol: Optional[bool] = None
 
 class PatientIn(BaseModel):
     full_name: str
@@ -175,10 +303,19 @@ class MessageIn(BaseModel):
     conversation_id: str
     content: str
 
+class ChatMessageIn(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
 class ConversationIn(BaseModel):
     participant_ids: List[str]
     title: Optional[str] = None
     is_group: bool = False
+
+class TeamMemberPatchIn(BaseModel):
+    full_name: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    designation: Optional[str] = Field(default=None, max_length=120)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    role: Optional[str] = None
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def make_token(sub: str, role: str, kind: str = 'access'):
@@ -306,16 +443,20 @@ async def ensure_organization(name: Optional[str], org_type: str = 'site', actor
 async def register(body: RegisterIn):
     if body.role == 'admin':
         raise HTTPException(403, 'This role cannot self-register')
-    if await db.users.find_one({'email': body.email.lower()}):
+    email = normalize_email(body.email)
+    phone = normalize_indian_phone(body.phone)
+    if await db.users.find_one({'email': email}):
         raise HTTPException(400, 'Email already registered')
+    if phone and await db.users.find_one({'phone': phone}):
+        raise HTTPException(400, 'Phone number already registered')
     uid = str(uuid.uuid4())
     doc = {
         'id': uid,
-        'email': body.email.lower(),
-        'full_name': body.full_name,
+        'email': email,
+        'full_name': body.full_name.strip(),
         'role': body.role,
-        'phone': body.phone or '',
-        'organization': body.organization or '',
+        'phone': phone or '',
+        'organization': (body.organization or '').strip(),
         'hashed_password': pwd_ctx.hash(body.password),
         'security_question': body.security_question or '',
         'security_answer_hash': pwd_ctx.hash(body.security_answer.lower()) if body.security_answer else '',
@@ -363,15 +504,22 @@ async def update_me(body: ProfileUpdateIn, user=Depends(current_user)):
         updates['full_name'] = name
         updates['avatar_initials'] = ''.join([w[0].upper() for w in name.split()[:2]]) or 'U'
     if body.phone is not None:
-        updates['phone'] = body.phone.strip()
+        updates['phone'] = normalize_indian_phone(body.phone) or ''
     if body.email is not None:
-        email = body.email.lower().strip()
+        email = normalize_email(body.email)
         existing = await db.users.find_one({'email': email, 'id': {'$ne': user['id']}})
         if existing:
             raise HTTPException(400, 'That email is already in use by another account.')
         updates['email'] = email
     # profile sub-fields
-    for key, val in (('dob', body.dob), ('gender', body.gender), ('language', body.language)):
+    normalized_dob = None
+    if body.dob is not None:
+        normalized_profile = normalize_registration_profile(
+            user.get('role') or '', {'dob': body.dob})
+        normalized_dob = normalized_profile.get('dob')
+        if 'age' in normalized_profile:
+            updates['profile.age'] = normalized_profile['age']
+    for key, val in (('dob', normalized_dob), ('gender', body.gender), ('language', body.language)):
         if val is not None:
             updates[f'profile.{key}'] = val
     if body.avatar_file_id is not None:
@@ -411,22 +559,140 @@ async def create_ticket(body: TicketIn, user=Depends(current_user)):
 
 @api.post('/auth/forgot')
 async def forgot(body: ForgotIn):
-    # Demo: returns OTP directly. Production would send via SMTP.
-    user = await db.users.find_one({'email': body.email.lower()})
+    email = normalize_email(body.email)
+    phone = normalize_indian_phone(body.phone)
+    if bool(email) == bool(phone):
+        raise HTTPException(400, 'Enter either your registered email or phone number')
+    channel = 'email' if email else 'phone'
+    target = email or phone
+    user = await db.users.find_one({channel: target})
+    recovery_id = str(uuid.uuid4())
+    response = {
+        'ok': True,
+        'message': 'If the account exists, a code has been sent',
+        'recovery_id': recovery_id,
+        'channel': channel,
+        'expires_in': otp_service.OTP_TTL_MIN * 60,
+        'resend_cooldown': OTP_RESEND_COOLDOWN_SEC,
+        'resend_limit': OTP_MAX_RESENDS,
+    }
     if not user:
-        return {'ok': True, 'otp': None}  # don't leak
-    otp = str(uuid.uuid4().int)[:6]
-    await db.users.update_one({'email': body.email.lower()}, {'$set': {'reset_otp': otp, 'reset_otp_at': now()}})
-    return {'ok': True, 'otp': otp, 'message': 'OTP generated (returned for demo)'}
+        return {**response, 'resend_count': 0}
+    await _enforce_rate_limit(f'forgot:{target}')
+    previous_at = user.get('reset_otp_at')
+    previous_count = int(user.get('reset_otp_send_count') or 0)
+    if previous_at:
+        age = (now() - previous_at).total_seconds()
+        if age < OTP_RESEND_COOLDOWN_SEC:
+            raise HTTPException(429, f'Please wait {OTP_RESEND_COOLDOWN_SEC - int(age)} seconds before requesting another code.')
+        if age > 30 * 60:
+            previous_count = 0
+    if previous_count >= OTP_MAX_RESENDS + 1:
+        raise HTTPException(429, 'Maximum resend attempts reached. Please try again later.')
+    code = DEV_OTP_CODE if DEV_OTP_MODE and not _channel_configured(channel) else otp_service.generate_code()
+    await _deliver_otp(channel, target, code)
+    await db.users.update_one(
+        {'id': user['id']},
+        {'$set': {
+            'reset_otp_hash': pwd_ctx.hash(code),
+            'reset_otp_at': now(),
+            'reset_otp_attempts': 0,
+            'reset_otp_send_count': previous_count + 1,
+            'reset_recovery_id': recovery_id,
+            'reset_channel': channel,
+        }, '$unset': {'reset_otp': ''}}
+    )
+    return {**response, 'resend_count': max(previous_count, 0)}
 
 @api.post('/auth/reset')
 async def reset(body: ResetIn):
-    user = await db.users.find_one({'email': body.email.lower()})
-    if not user or user.get('reset_otp') != body.otp:
+    email = normalize_email(body.email)
+    phone = normalize_indian_phone(body.phone)
+    if body.recovery_id:
+        user = await db.users.find_one({'reset_recovery_id': body.recovery_id})
+    elif bool(email) != bool(phone):
+        user = await db.users.find_one({'email' if email else 'phone': email or phone})
+    else:
+        raise HTTPException(400, 'Recovery session is required')
+    sent_at = user.get('reset_otp_at') if user else None
+    expired = not sent_at or (now() - sent_at).total_seconds() > otp_service.OTP_TTL_MIN * 60
+    attempts = int(user.get('reset_otp_attempts') or 0) if user else 0
+    valid = bool(user) and not expired and attempts < OTP_MAX_VERIFY_ATTEMPTS and _otp_matches(
+        body.otp, user.get('reset_otp_hash')
+    )
+    if not valid:
+        if user and not expired and attempts < OTP_MAX_VERIFY_ATTEMPTS:
+            await db.users.update_one({'id': user['id']}, {'$inc': {'reset_otp_attempts': 1}})
+        if expired:
+            raise HTTPException(400, 'Verification code expired. Request a new code.')
+        if attempts >= OTP_MAX_VERIFY_ATTEMPTS:
+            raise HTTPException(429, 'Too many incorrect attempts. Request a new code.')
         raise HTTPException(400, 'Invalid OTP')
     await db.users.update_one(
-        {'email': body.email.lower()},
-        {'$set': {'hashed_password': pwd_ctx.hash(body.new_password)}, '$unset': {'reset_otp': '', 'reset_otp_at': ''}}
+        {'id': user['id']},
+        {'$set': {'hashed_password': pwd_ctx.hash(body.new_password)},
+         '$unset': {
+             'reset_otp': '', 'reset_otp_hash': '', 'reset_otp_at': '',
+             'reset_otp_attempts': '', 'reset_otp_send_count': '',
+             'reset_recovery_id': '', 'reset_channel': '',
+         }}
+    )
+    return {'ok': True}
+
+
+@api.post('/auth/password-reset-link')
+async def complete_password_reset_link(body: PasswordResetLinkIn):
+    """Consume an admin-issued reset/setup link exactly once.
+
+    Only a SHA-256 digest is stored. Claiming the token is atomic, so concurrent
+    or replayed submissions cannot both reset the account.
+    """
+    password = body.new_password
+    if not (
+        len(password) >= 8
+        and re.search(r'[A-Z]', password)
+        and re.search(r'[a-z]', password)
+        and re.search(r'\d', password)
+        and re.search(r'[^A-Za-z0-9]', password)
+    ):
+        raise HTTPException(
+            400,
+            'Password must include uppercase, lowercase, number, and special character.')
+    token_hash = hashlib.sha256(body.token.encode('utf-8')).hexdigest()
+    consumed_at = now()
+    token_doc = await db.password_reset_tokens.find_one_and_update(
+        {
+            'token_hash': token_hash,
+            'used_at': None,
+            'revoked_at': None,
+            'expires_at': {'$gt': consumed_at},
+        },
+        {'$set': {'used_at': consumed_at}},
+        projection={'_id': 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not token_doc:
+        raise HTTPException(400, 'This password link is invalid, expired, or already used.')
+    user = await db.users.find_one({'id': token_doc['user_id']})
+    if not user:
+        raise HTTPException(400, 'This password link is invalid, expired, or already used.')
+    await db.users.update_one(
+        {'id': user['id']},
+        {
+            '$set': {
+                'hashed_password': pwd_ctx.hash(password),
+                'force_logout_at': consumed_at,
+                'password_changed_at': consumed_at,
+                'status': 'Active',
+            },
+            '$unset': {'must_reset_password': ''},
+        })
+    await write_audit(
+        user,
+        'account.password_reset_link_complete',
+        'Completed a single-use password setup/reset link',
+        target_id=user['id'],
+        reset_token_id=token_doc['id'],
     )
     return {'ok': True}
 
@@ -532,13 +798,132 @@ async def _finalize_registration(pending: dict) -> dict:
     refresh = make_token(uid, doc['role'], 'refresh')
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
 
+
+async def _complete_registration(pending: dict) -> dict:
+    """Create the account and consume its invitation as one lifecycle."""
+    invitation = None
+    invitation_id = pending.get('invitation_id')
+    if invitation_id:
+        invitation = await db.invitations.find_one_and_update(
+            {
+                'id': invitation_id,
+                'token': pending.get('invite_token'),
+                'status': 'pending',
+            },
+            {'$set': {
+                'status': 'accepting',
+                'registration_id': pending['id'],
+                'accepting_at': now(),
+            }},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not invitation:
+            current = await db.invitations.find_one(
+                {'id': invitation_id}, {'_id': 0, 'status': 1})
+            status = (current or {}).get('status', 'unavailable')
+            raise HTTPException(
+                409, f'This invitation is {status} and can no longer be used')
+
+    created_user_id = None
+    try:
+        session = await _finalize_registration(pending)
+        created_user_id = session['user']['id']
+        if invitation:
+            accepted_details = {
+                'full_name': pending.get('full_name') or '',
+                'designation': (pending.get('profile') or {}).get('designation', ''),
+                'phone': pending.get('phone') or '',
+                'role': pending.get('role') or invitation.get('role') or 'patient',
+            }
+            result = await db.invitations.update_one(
+                {
+                    'id': invitation['id'],
+                    'status': 'accepting',
+                    'registration_id': pending['id'],
+                },
+                {'$set': {
+                    'status': 'accepted',
+                    'accepted_at': now(),
+                    'accepted_user_id': created_user_id,
+                    **accepted_details,
+                }, '$unset': {'accepting_at': ''}},
+            )
+            if result.modified_count != 1:
+                raise RuntimeError('Invitation acceptance could not be finalized')
+
+            if invitation.get('role') == 'patient' and invitation.get('trial_id'):
+                contacts = []
+                if pending.get('email'):
+                    contacts.append({'email': pending['email']})
+                if pending.get('phone'):
+                    contacts.append({'phone': pending['phone']})
+                if contacts:
+                    await db.patients.update_one(
+                        {
+                            '$and': [
+                                {'trial_id': invitation['trial_id']},
+                                {'$or': contacts},
+                                {'$or': [
+                                    {'user_id': {'$exists': False}},
+                                    {'user_id': None},
+                                ]},
+                            ],
+                        },
+                        {'$set': {
+                            'user_id': created_user_id,
+                            'full_name': pending.get('full_name') or invitation.get('full_name', ''),
+                            'phone': pending.get('phone') or invitation.get('phone', ''),
+                        }},
+                    )
+            await write_audit(
+                session['user'], 'invitation.accept',
+                f"Invitation for {invitation.get('email') or invitation.get('phone')} accepted",
+                target_id=invitation['id'])
+        await db.pending_registrations.delete_one({'id': pending['id']})
+        return session
+    except Exception:
+        if created_user_id:
+            await db.users.delete_one({'id': created_user_id})
+        if invitation:
+            await db.invitations.update_one(
+                {
+                    'id': invitation['id'],
+                    'status': 'accepting',
+                    'registration_id': pending['id'],
+                },
+                {'$set': {'status': 'pending'},
+                 '$unset': {'registration_id': '', 'accepting_at': ''}},
+            )
+        raise
+
+
 @api.post('/auth/register/start')
 async def register_start(body: RegisterStartIn):
-    if body.role == 'admin':
+    invitation = None
+    if body.invite_token:
+        invitation = await _find_invitation_by_code(body.invite_token)
+        if not invitation:
+            raise HTTPException(404, 'Invitation not found')
+        status = _invitation_status(invitation)
+        if status != 'pending':
+            raise HTTPException(
+                400, f'This invitation is {status} and can no longer be used')
+
+    effective_role = invitation.get('role') if invitation else body.role
+    if effective_role == 'admin':
         raise HTTPException(403, 'This role cannot self-register')
-    channels = required_channels(body.role)
-    email = (body.email or '').lower().strip() or None
-    phone = (body.phone or '').strip() or None
+    channels = required_channels(effective_role)
+    email = normalize_email(body.email)
+    phone = normalize_indian_phone(body.phone)
+    organization = (body.organization or '').strip() or None
+    if invitation:
+        invited_email = (invitation.get('email') or '').lower().strip() or None
+        if invited_email and email and invited_email != email:
+            raise HTTPException(400, 'Email must match the invitation')
+        email = invited_email or email
+        organization = (invitation.get('org') or '').strip()
+
+    profile = normalize_registration_profile(effective_role, body.profile)
 
     if 'email' in channels and not email:
         raise HTTPException(400, 'Email is required for this role')
@@ -572,18 +957,18 @@ async def register_start(body: RegisterStartIn):
     rid = str(uuid.uuid4())
     doc = {
         'id': rid,
-        'full_name': body.full_name,
-        'role': body.role,
+        'full_name': body.full_name.strip(),
+        'role': effective_role,
         'email': email,
         'phone': phone,
-        'organization': body.organization,
+        'organization': organization,
         # Password may be set now (legacy callers) or later via /register/complete.
         'hashed_password': pwd_ctx.hash(body.password) if body.password else None,
         'security_question': body.security_question or (sec_qs[0]['question'] if sec_qs else ''),
         'security_answer_hash': (pwd_ctx.hash(body.security_answer.lower()) if body.security_answer
                                  else (sec_qs[0]['answer_hash'] if sec_qs else '')),
         'security_questions': sec_qs,
-        'profile': body.profile or {},
+        'profile': profile,
         'channels': channels,
         'email_verified': False,
         'phone_verified': False,
@@ -594,6 +979,9 @@ async def register_start(body: RegisterStartIn):
         'created_at': now(),
         'expires_at': now() + timedelta(minutes=otp_service.OTP_TTL_MIN),
     }
+    if invitation:
+        doc['invitation_id'] = invitation['id']
+        doc['invite_token'] = normalize_invite_code(invitation['token'])
 
     # Generate codes, store ONLY their hashes, then deliver. If a send fails we
     # raise — nothing is persisted, so the user is never told a code is on its way.
@@ -653,8 +1041,7 @@ async def register_verify(body: RegisterVerifyIn):
         await db.pending_registrations.update_one({'id': pending['id']}, {'$set': {'fully_verified': True}})
         return {'verified': True, 'pending_password': True}
 
-    session = await _finalize_registration(pending)
-    await db.pending_registrations.delete_one({'id': pending['id']})
+    session = await _complete_registration(pending)
     return {'verified': True, **session}
 
 @api.post('/auth/register/complete')
@@ -667,8 +1054,7 @@ async def register_complete(body: RegisterCompleteIn):
     if not all(pending.get(f'{ch}_verified') for ch in pending['channels']):
         raise HTTPException(400, 'Please verify your contact details before setting a password.')
     pending['hashed_password'] = pwd_ctx.hash(body.password)
-    session = await _finalize_registration(pending)
-    await db.pending_registrations.delete_one({'id': pending['id']})
+    session = await _complete_registration(pending)
     return {'verified': True, **session}
 
 @api.post('/auth/register/resend')
@@ -780,25 +1166,149 @@ async def change_contact_verify(body: ChangeContactVerifyIn, user=Depends(curren
     return {'ok': True, 'field': field, 'value': value, 'user': serialize(fresh)}
 
 # ── Trials ───────────────────────────────────────────────────────────────────
+def _protocol_details(doc: dict) -> dict:
+    indications = doc.get('indications') or []
+    if not indications and doc.get('condition'):
+        indications = [part.strip() for part in doc['condition'].split(',')
+                       if part.strip()]
+    return {
+        'ctri_number': doc.get('ctri_number') or '',
+        'title': doc.get('title') or '',
+        'phase': doc.get('phase') or '',
+        'indications': indications,
+        'drug': doc.get('drug') or '',
+        'duration': doc.get('duration') or '',
+        'target_enrollment': doc.get('target_enrollment'),
+        'total_visits': doc.get('total_visits'),
+        'status': doc.get('status') or 'active',
+    }
+
+
+@api.get('/protocols/lookup/{protocol_id}',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def lookup_protocol(protocol_id: str, user=Depends(current_user)):
+    """Resolve a protocol without exposing another sponsor's private studies."""
+    key = protocol_id.strip()
+    if not key:
+        raise HTTPException(400, 'Protocol ID is required')
+    registry = await db.protocol_registry.find_one(
+        {'protocol_id': {'$regex': f'^{re.escape(key)}$', '$options': 'i'}},
+        {'_id': 0})
+    if registry:
+        return {'found': True, 'protocol_id': registry.get('protocol_id', key),
+                'source': 'registry', 'details': _protocol_details(registry)}
+
+    candidates = await db.trials.find(
+        {'protocol_id': {'$regex': f'^{re.escape(key)}$', '$options': 'i'}},
+        {'_id': 0}).to_list(50)
+    for trial in candidates:
+        if await _can_access_trial(user, trial):
+            details = _protocol_details(trial)
+            if details['total_visits'] is None:
+                details['total_visits'] = await db.visits.count_documents(
+                    {'trial_id': trial['id']})
+            return {'found': True, 'protocol_id': trial['protocol_id'],
+                    'source': 'organization', 'details': details}
+    return {'found': False, 'protocol_id': key, 'source': None, 'details': None}
+
+
+@api.get('/protocols/lookup',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def lookup_protocol_query(
+    protocol_id: str = Query(..., min_length=1),
+    user=Depends(current_user),
+):
+    """Query-parameter form used by the Add Trial UI.
+
+    Keep the original path-parameter endpoint for backwards compatibility;
+    both forms deliberately execute the same scoped lookup.
+    """
+    return await lookup_protocol(protocol_id, user)
+
+
+@api.post('/protocols/extract-details',
+          dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def extract_protocol_details(file: UploadFile = File(...),
+                                   user=Depends(current_user)):
+    content_type = (file.content_type or '').lower()
+    filename = (file.filename or '').lower()
+    if content_type != 'application/pdf' and not filename.endswith('.pdf'):
+        raise HTTPException(400, 'Upload a PDF protocol document')
+    data = await file.read(pe.MAX_PDF_BYTES + 1)
+    if not data:
+        raise HTTPException(400, 'The uploaded PDF is empty')
+    if len(data) > pe.MAX_PDF_BYTES:
+        raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
+    try:
+        extracted = await pe.get_details_extractor().extract_details(data)
+    except pe.ExtractionNotConfigured:
+        raise HTTPException(
+            503, 'Protocol extraction is not configured on the server')
+    except pe.ExtractionError as exc:
+        raise HTTPException(502, f'Could not extract protocol details: {exc}')
+    details = extracted.dict()
+    details['status'] = (
+        details.get('status') if details.get('status') in
+        ('active', 'completed', 'terminated') else 'active')
+    await write_audit(
+        user, 'trial.extract_details',
+        f'Extracted creation details from {file.filename or "protocol PDF"}')
+    return {'details': details}
+
+
+@api.post('/protocols/extract',
+          dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def extract_protocol_alias(file: UploadFile = File(...),
+                                 user=Depends(current_user)):
+    """Stable Add Trial extraction contract; retains /extract-details."""
+    return await extract_protocol_details(file, user)
+
+
 @api.get('/trials')
 async def list_trials(user=Depends(current_user)):
     trials = await db.trials.find({}, {'_id': 0}).to_list(500)
-    # patient: filter to enrolled trials
-    if user['role'] == 'patient':
-        enrolled = await db.patients.find({'user_id': user['id']}, {'_id': 0, 'trial_id': 1}).to_list(100)
-        ids = {p['trial_id'] for p in enrolled}
-        trials = [t for t in trials if t['id'] in ids]
+    # Every non-platform trial list is tenant/relationship scoped. A crafted
+    # client must never turn this convenient list endpoint into a global trial
+    # directory.
+    scoped = []
+    for trial in trials:
+        if await _can_access_trial(user, trial):
+            scoped.append(trial)
+    trials = scoped
 
     # Batched enrolment counts — one grouped query over db.patients (no per-trial
     # N+1). enrolled_count is an aggregate (not patient PII), fine for sponsors.
     trial_ids = [t['id'] for t in trials]
     counts: Dict[str, int] = {}
+    site_names: Dict[str, set] = {}
+    patient_rows = []
     if trial_ids:
-        async for row in db.patients.aggregate([
-            {'$match': {'trial_id': {'$in': trial_ids}}},
-            {'$group': {'_id': '$trial_id', 'n': {'$sum': 1}}},
-        ]):
-            counts[row['_id']] = row['n']
+        patient_rows = await db.patients.find(
+            {'trial_id': {'$in': trial_ids}},
+            {'_id': 0, 'trial_id': 1, 'pi_id': 1, 'crc_id': 1}
+        ).to_list(5000)
+        for patient in patient_rows:
+            tid = patient['trial_id']
+            counts[tid] = counts.get(tid, 0) + 1
+
+    creator_ids = {t.get('created_by') for t in trials if t.get('created_by')}
+    staff_ids = {
+        staff_id for patient in patient_rows
+        for staff_id in (patient.get('pi_id'), patient.get('crc_id'))
+        if staff_id
+    }
+    people_ids = list(creator_ids | staff_ids)
+    people_rows = await db.users.find(
+        {'id': {'$in': people_ids}} if people_ids else {'id': {'$in': []}},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'role': 1, 'organization': 1}
+    ).to_list(5000)
+    people = {row['id']: row for row in people_rows}
+    for patient in patient_rows:
+        tid = patient['trial_id']
+        for staff_id in (patient.get('pi_id'), patient.get('crc_id')):
+            organization = (people.get(staff_id) or {}).get('organization')
+            if organization:
+                site_names.setdefault(tid, set()).add(organization)
 
     for t in trials:
         t['enrolled_count'] = counts.get(t['id'], 0)
@@ -807,23 +1317,1087 @@ async def list_trials(user=Depends(current_user)):
         # it only when a trial doc genuinely carries it, else null — never fabricate
         # a target. Keying it explicitly makes the null obvious and consistent.
         t['target_enrollment'] = t.get('target_enrollment')
+        creator = people.get(t.get('created_by')) or {}
+        t['created_by_name'] = creator.get('full_name') or ''
+        t['created_by_role'] = creator.get('role') or ''
+        t['site_names'] = sorted(site_names.get(t['id'], set()))
+        t['site_count'] = len(t['site_names'])
         # schedule_status (approved/flagged/…) is already on `t` when stored — the
         # find() above returns the full doc, so we neither add nor fabricate it.
     return trials
 
-@api.post('/trials', dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+@api.post('/trials', dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'smo', 'site'))])
 async def create_trial(body: TrialIn, user=Depends(current_user)):
     tid = str(uuid.uuid4())
-    doc = {'id': tid, **body.dict(), 'created_by': user['id'], 'created_at': now(), 'status': 'active'}
+    values = body.model_dump()
+    # Sponsor/CRO ownership is derived from the authenticated account, never
+    # from caller-controlled JSON.
+    if user['role'] in ('sponsor', 'cro'):
+        organization = (user.get('organization') or '').strip()
+        if not organization:
+            raise HTTPException(400, 'Your account is not linked to an organization')
+        values['sponsor_name'] = organization
+    if user['role'] in ('smo', 'site'):
+        organization_name = (user.get('organization') or '').strip()
+        if not organization_name:
+            raise HTTPException(400, 'Your account is not linked to an organization')
+        if not user.get('org_admin'):
+            raise HTTPException(
+                403, 'Only the organization administrator can create delegated trials')
+        organization = await db.organizations.find_one(
+            {'name': organization_name}, {'_id': 0})
+        if not organization or organization.get('type') not in ('smo', 'site'):
+            raise HTTPException(403, 'A valid Site or SMO organization is required')
+        if not organization.get('trial_creation_delegated'):
+            raise HTTPException(
+                403, 'Active platform delegation is required before creating a trial')
+        values['owning_organization_id'] = organization['id']
+        values['owning_organization_name'] = organization['name']
+        values['created_under_delegation_request_id'] = (
+            organization.get('trial_creation_delegation_request_id'))
+    values['status'] = values.get('status') or 'active'
+    doc = {'id': tid, **values, 'created_by': user['id'], 'created_at': now()}
     await db.trials.insert_one(doc)
+    await write_audit(user, 'trial.create',
+                      f"Created trial {doc.get('protocol_id') or tid}",
+                      target_id=tid, trial_id=tid)
     return serialize(doc)
 
 @api.get('/trials/{trial_id}')
 async def get_trial(trial_id: str, user=Depends(current_user)):
     t = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not t: raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, t):
+        raise HTTPException(403, 'You do not have access to this trial')
     visits = await db.visits.find({'trial_id': trial_id}, {'_id': 0}).sort('visit_number', 1).to_list(200)
     return {**t, 'visits': visits}
+
+@api.patch('/trials/{trial_id}')
+async def patch_trial(trial_id: str, body: TrialPatchIn,
+                      user=Depends(require_roles('sponsor', 'cro', 'pi'))):
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
+    if user['role'] in ('sponsor', 'cro'):
+        if (trial.get('sponsor_name') or '').strip().casefold() != (
+                user.get('organization') or '').strip().casefold():
+            raise HTTPException(403, 'Only the owning Sponsor/CRO can edit this trial')
+    elif trial.get('created_by') != user['id']:
+        raise HTTPException(403, 'Only the trial creator can edit this trial')
+
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, 'No trial fields were provided')
+    updates.update({
+        'updated_at': now(),
+        'updated_by': user['id'],
+        'updated_by_name': user.get('full_name') or '',
+    })
+    await db.trials.update_one({'id': trial_id}, {'$set': updates})
+    await write_audit(
+        user, 'trial.update',
+        f"Updated trial {trial.get('protocol_id') or trial_id}",
+        target_id=trial_id, trial_id=trial_id,
+        changes={key: value for key, value in updates.items()
+                 if key not in ('updated_at', 'updated_by', 'updated_by_name')},
+    )
+    fresh = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    return serialize(fresh)
+
+
+@api.get('/sponsor/dashboard',
+         dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_dashboard(user=Depends(current_user)):
+    """One de-identified, organization-scoped payload for the Sponsor/CRO app.
+
+    Patient names/contact fields never leave this endpoint. Site performance is
+    derived from aggregate enrolment and visit-instance status only.
+    """
+    all_trials = await db.trials.find({}, {'_id': 0}).to_list(500)
+    trials = [trial for trial in all_trials
+              if await _can_access_trial(user, trial)]
+    trial_ids = [trial['id'] for trial in trials]
+    trial_by_id = {trial['id']: trial for trial in trials}
+
+    patients = []
+    if trial_ids:
+        patients = await db.patients.find(
+            {'trial_id': {'$in': trial_ids}},
+            {'_id': 0, 'id': 1, 'trial_id': 1, 'pi_id': 1, 'crc_id': 1,
+             'created_by': 1, 'status': 1}).to_list(5000)
+
+    counts: Dict[str, int] = {}
+    randomized_counts: Dict[str, int] = {}
+    recruitment = {
+        'screened': 0,
+        'screen_fail': 0,
+        'randomized': 0,
+        'active': 0,
+        'withdrawn': 0,
+        'dropout': 0,
+        'follow_up': 0,
+        'completed': 0,
+    }
+    for patient in patients:
+        counts[patient['trial_id']] = counts.get(patient['trial_id'], 0) + 1
+        bucket = _recruitment_bucket(patient.get('status'))
+        if bucket in recruitment:
+            recruitment[bucket] += 1
+        else:
+            recruitment['active'] += 1
+        if bucket == 'randomized':
+            randomized_counts[patient['trial_id']] = (
+                randomized_counts.get(patient['trial_id'], 0) + 1)
+
+    trial_cards = []
+    for trial in trials:
+        enrolled = counts.get(trial['id'], 0)
+        target = trial.get('target_enrollment')
+        trial_cards.append({
+            'id': trial['id'],
+            'protocol_id': trial.get('protocol_id') or trial['id'][:8],
+            'title': trial.get('title') or 'Untitled trial',
+            'phase': trial.get('phase') or '',
+            'condition': trial.get('condition') or '',
+            'drug': trial.get('drug') or '',
+            'status': trial.get('status') or 'active',
+            'recruitment_status': trial.get('recruitment_status') or '',
+            'enrolled_count': enrolled,
+            'randomized_count': randomized_counts.get(trial['id'], 0),
+            'target_enrollment': target,
+            'site_count': 0,
+            'created_by': trial.get('created_by'),
+            'created_at': iso(trial.get('created_at')),
+        })
+
+    # Resolve each enrolled subject to a site through its assigned PI/CRC. Only
+    # staff-facing professional contact data is used; subject PII is excluded.
+    staff_ids = {
+        staff_id for patient in patients
+        for staff_id in (patient.get('pi_id'), patient.get('crc_id'))
+        if staff_id
+    }
+    staff_ids.update(
+        trial.get('created_by') for trial in trials if trial.get('created_by'))
+    staff_rows = await db.users.find(
+        {'id': {'$in': list(staff_ids)}} if staff_ids else {'id': {'$in': []}},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'phone': 1,
+         'organization': 1, 'role': 1}).to_list(2000)
+    staff = {row['id']: row for row in staff_rows}
+    for card in trial_cards:
+        creator = staff.get(card.get('created_by')) or {}
+        card['created_by_name'] = creator.get('full_name') or ''
+        card['created_by_role'] = creator.get('role') or ''
+
+    site_groups: Dict[str, dict] = {}
+    patient_site: Dict[str, str] = {}
+    for patient in patients:
+        pi = staff.get(patient.get('pi_id')) or {}
+        crc = staff.get(patient.get('crc_id')) or {}
+        site_name = (pi.get('organization') or crc.get('organization') or
+                     'Unassigned site')
+        group = site_groups.setdefault(site_name, {
+            'patient_ids': [], 'trial_ids': set(), 'pi': pi, 'crc': crc})
+        group['patient_ids'].append(patient['id'])
+        group['trial_ids'].add(patient['trial_id'])
+        if pi and not group.get('pi'):
+            group['pi'] = pi
+        if crc and not group.get('crc'):
+            group['crc'] = crc
+        patient_site[patient['id']] = site_name
+
+    # Include organization-network sites even before their first enrolment.
+    org_name = (user.get('organization') or '').strip()
+    organization = await db.organizations.find_one(
+        {'name': org_name}, {'_id': 0}) if org_name else None
+    network_sites = []
+    if organization:
+        network_sites = await db.org_sites.find(
+            {'org_id': organization['id']}, {'_id': 0}).sort('name', 1).to_list(500)
+        for site in network_sites:
+            group = site_groups.setdefault(site.get('name') or 'Unnamed site', {
+                'patient_ids': [], 'trial_ids': set(), 'pi': {}, 'crc': {}})
+            group['id'] = site.get('id')
+            group['address'] = site.get('address') or ''
+            group['city'] = site.get('city') or ''
+            group['state'] = site.get('state') or ''
+            group['hospital_type'] = site.get('hospital_type') or ''
+            group['department'] = site.get('department') or ''
+            group['access_type'] = site.get('access_type') or 'full'
+            group['trial_targets'] = site.get('trial_targets') or {}
+            group['trial_ids'].update(site.get('trial_ids') or [])
+            if not group.get('pi') and site.get('pi_name'):
+                group['pi'] = {
+                    'full_name': site.get('pi_name') or '',
+                    'email': site.get('pi_email') or '',
+                    'phone': site.get('pi_phone') or '',
+                    'role': 'pi',
+                    'organization': site.get('name') or '',
+                }
+
+    instances = []
+    patient_ids = [patient['id'] for patient in patients]
+    if patient_ids:
+        instances = await db.visit_instances.find(
+            {'patient_id': {'$in': patient_ids}},
+            {'_id': 0, 'patient_id': 1, 'status': 1}).to_list(20000)
+    instance_stats: Dict[str, dict] = {}
+    for instance in instances:
+        site_name = patient_site.get(instance.get('patient_id'))
+        if not site_name:
+            continue
+        stats = instance_stats.setdefault(site_name, {'total': 0, 'completed': 0, 'overdue': 0})
+        stats['total'] += 1
+        status = (instance.get('status') or '').lower()
+        if status == 'completed':
+            stats['completed'] += 1
+        if status == 'overdue':
+            stats['overdue'] += 1
+
+    # Aggregate de-identified dose outcomes in one bounded portfolio query.
+    # This keeps the dashboard composite honest without exposing medication or
+    # patient details and avoids one adherence query per enrolled subject.
+    dose_logs = await db.dose_logs.find(
+        {'patient_id': {'$in': patient_ids}} if patient_ids else
+        {'patient_id': {'$in': []}},
+        {'_id': 0, 'patient_id': 1, 'status': 1},
+    ).to_list(50000)
+    dose_stats: Dict[str, dict] = {}
+    for log in dose_logs:
+        stats = dose_stats.setdefault(
+            log.get('patient_id'), {'total': 0, 'taken': 0})
+        stats['total'] += 1
+        if (log.get('status') or '').lower() == 'taken':
+            stats['taken'] += 1
+
+    site_cards = []
+    for index, (site_name, group) in enumerate(sorted(site_groups.items())):
+        linked_trials = [trial_by_id[trial_id] for trial_id in group['trial_ids']
+                         if trial_id in trial_by_id]
+        enrolled = len(group['patient_ids'])
+        group_patient_ids = set(group['patient_ids'])
+        site_funnel = {
+            'screened': 0, 'screen_fail': 0, 'randomized': 0, 'active': 0,
+            'withdrawn': 0, 'dropout': 0, 'follow_up': 0, 'completed': 0,
+        }
+        for patient in patients:
+            if patient.get('id') not in group_patient_ids:
+                continue
+            bucket = _recruitment_bucket(patient.get('status'))
+            site_funnel['screened'] += 1
+            if bucket in site_funnel and bucket != 'screened':
+                site_funnel[bucket] += 1
+            elif bucket not in (
+                'screen_fail', 'withdrawn', 'dropout', 'completed',
+            ):
+                site_funnel['active'] += 1
+        trial_targets = group.get('trial_targets') or {}
+        target = sum(
+            trial_targets.get(trial['id'], trial.get('target_enrollment') or 0)
+            for trial in linked_trials
+        )
+        stats = instance_stats.get(site_name, {'total': 0, 'completed': 0, 'overdue': 0})
+        compliance = round((stats['completed'] / stats['total']) * 100) if stats['total'] else 100
+        site_dose_total = sum(
+            dose_stats.get(patient_id, {}).get('total', 0)
+            for patient_id in group['patient_ids'])
+        site_dose_taken = sum(
+            dose_stats.get(patient_id, {}).get('taken', 0)
+            for patient_id in group['patient_ids'])
+        adherence = round((site_dose_taken / site_dose_total) * 100) if site_dose_total else 100
+        enrollment_pct = round((enrolled / target) * 100) if target else 0
+        performance_score = round((
+            min(100, enrollment_pct) + compliance + adherence
+        ) / 3)
+        pi, crc = group.get('pi') or {}, group.get('crc') or {}
+        site_cards.append({
+            'id': group.get('id') or (f"pi-{pi['id']}" if pi.get('id') else f'site-{index + 1}'),
+            'name': site_name,
+            'hospital': site_name,
+            'address': group.get('address') or '',
+            'city': group.get('city') or '',
+            'state': group.get('state') or '',
+            'hospital_type': group.get('hospital_type') or '',
+            'department': group.get('department') or '',
+            'access_type': group.get('access_type') or 'full',
+            'status': 'active',
+            'pi_name': pi.get('full_name') or '',
+            'pi_id': pi.get('id') or '',
+            'pi_email': pi.get('email') or '',
+            'pi_phone': pi.get('phone') or '',
+            'crc_name': crc.get('full_name') or '',
+            'enrolled': enrolled,
+            'target_enrollment': target or None,
+            'enrollment_pct': enrollment_pct,
+            'visit_compliance': compliance,
+            'adherence_pct': adherence,
+            'performance_score': performance_score,
+            'overdue_visits': stats['overdue'],
+            'recruitment': site_funnel,
+            'trials': [{
+                'id': trial['id'],
+                'protocol_id': trial.get('protocol_id') or trial['id'][:8],
+                'title': trial.get('title') or 'Untitled trial',
+                'phase': trial.get('phase') or '',
+                'condition': trial.get('condition') or '',
+                'drug': trial.get('drug') or '',
+                'status': trial.get('status') or 'active',
+            } for trial in linked_trials],
+        })
+
+    site_count_for_trial: Dict[str, int] = {}
+    for site in site_cards:
+        for trial in site['trials']:
+            site_count_for_trial[trial['id']] = site_count_for_trial.get(trial['id'], 0) + 1
+    for card in trial_cards:
+        card['site_count'] = site_count_for_trial.get(card['id'], 0)
+
+    notifications = await db.notifications.find(
+        {'user_id': user['id']}, {'_id': 0}).sort('created_at', -1).to_list(5)
+    alerts = sum(1 for notification in notifications if not notification.get('read'))
+    alerts += sum(site.get('overdue_visits', 0) for site in site_cards)
+    active_trials = sum(1 for trial in trials
+                        if (trial.get('status') or 'active').lower() == 'active')
+    enrolled = len(patients)
+    target = sum(int(trial.get('target_enrollment') or 0) for trial in trials)
+    enrollment_pct = round((enrolled / target) * 100) if target else 0
+    visit_total = sum(stats['total'] for stats in instance_stats.values())
+    visits_completed = sum(stats['completed'] for stats in instance_stats.values())
+    compliance_pct = round((visits_completed / visit_total) * 100) if visit_total else 100
+    dose_total = sum(stats['total'] for stats in dose_stats.values())
+    doses_taken = sum(stats['taken'] for stats in dose_stats.values())
+    adherence_pct = round((doses_taken / dose_total) * 100) if dose_total else 100
+    health_score = round((
+        min(100, enrollment_pct) + compliance_pct + adherence_pct
+    ) / 3) if trials else 0
+
+    pi_ids = {patient.get('pi_id') for patient in patients if patient.get('pi_id')}
+    return serialize({
+        'portfolio': {
+            'health_score': health_score,
+            'status': (
+                'no_portfolio_data' if not trials else
+                'on_track' if health_score >= 75 else
+                'steady' if health_score >= 60 else
+                'needs_attention'
+            ),
+            'active_trials': active_trials,
+            'alerts': alerts,
+            'enrolled': enrolled,
+            'target': target,
+            'enrollment_pct': enrollment_pct,
+            'compliance_pct': compliance_pct,
+            'adherence_pct': adherence_pct,
+            'recruitment': recruitment,
+        },
+        'totals': {
+            'trials': len(trials),
+            'sites': len(site_cards),
+            'subjects': len(patients),
+            'pis': len(pi_ids),
+        },
+        'trials': trial_cards,
+        'sites': site_cards,
+        'recent_notifications': notifications,
+        'capabilities': {
+            'can_add_trial': True,
+            'can_add_site': bool(user.get('org_admin')),
+            'can_share_schedule': True,
+            'can_manage_organization': bool(user.get('org_admin')),
+        },
+    })
+
+
+def _recruitment_bucket(status_value: Optional[str]) -> str:
+    status_key = (status_value or 'active').strip().lower().replace('-', '_').replace(' ', '_')
+    aliases = {
+        'screen_failure': 'screen_fail',
+        'screenfailed': 'screen_fail',
+        'followup': 'follow_up',
+        'in_follow_up': 'follow_up',
+        'drop_out': 'dropout',
+    }
+    return aliases.get(status_key, status_key)
+
+
+async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
+    """Build the sponsor/CRO detail contract from scoped aggregate data.
+
+    Subjects are represented only by study identifiers/initials. Names,
+    contact details, DOB and other direct patient identifiers are never added.
+    """
+    trial_id = trial['id']
+    patients = await db.patients.find(
+        {'trial_id': trial_id},
+        {'_id': 0, 'id': 1, 'subject_id': 1, 'avatar_initials': 1,
+         'pi_id': 1, 'crc_id': 1, 'created_by': 1, 'status': 1,
+         'enrolled_date': 1, 'created_at': 1},
+    ).to_list(5000)
+    staff_ids = {
+        staff_id for patient in patients
+        for staff_id in (patient.get('pi_id'), patient.get('crc_id'), patient.get('created_by'))
+        if staff_id
+    }
+    staff_rows = await db.users.find(
+        {'id': {'$in': list(staff_ids)}} if staff_ids else {'id': {'$in': []}},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'phone': 1,
+         'organization': 1, 'role': 1, 'profile.designation': 1},
+    ).to_list(2000)
+    staff = {row['id']: row for row in staff_rows}
+
+    org_name = (user.get('organization') or '').strip()
+    organization = await db.organizations.find_one(
+        {'name': org_name}, {'_id': 0, 'id': 1}) if org_name else None
+    stored_sites = await db.org_sites.find(
+        {'org_id': organization['id'], 'trial_ids': trial_id},
+        {'_id': 0},
+    ).sort('name', 1).to_list(500) if organization else []
+
+    site_groups: Dict[str, dict] = {}
+    for site in stored_sites:
+        site_groups[site.get('name') or 'Unnamed site'] = {
+            **site, 'patients': [], 'staff': [],
+        }
+    for patient in patients:
+        pi = staff.get(patient.get('pi_id')) or {}
+        crc = staff.get(patient.get('crc_id')) or {}
+        creator = staff.get(patient.get('created_by')) or {}
+        site_name = (
+            pi.get('organization') or crc.get('organization')
+            or creator.get('organization') or 'Unassigned site'
+        )
+        group = site_groups.setdefault(site_name, {
+            'id': f"site-{len(site_groups) + 1}",
+            'name': site_name,
+            'address': '', 'city': '', 'state': '', 'department': '',
+            'hospital_type': '', 'trial_targets': {}, 'patients': [], 'staff': [],
+        })
+        group['patients'].append(patient)
+        for person in (pi, crc):
+            if person and person.get('id') and all(
+                current.get('id') != person['id'] for current in group['staff']
+            ):
+                group['staff'].append(person)
+
+    patient_ids = [patient['id'] for patient in patients]
+    visit_instances = await db.visit_instances.find(
+        {'patient_id': {'$in': patient_ids}} if patient_ids else
+        {'patient_id': {'$in': []}},
+        {'_id': 0, 'patient_id': 1, 'status': 1},
+    ).to_list(20000)
+    completed_visits: Dict[str, int] = {}
+    site_visit_stats: Dict[str, dict] = {}
+    patient_site: Dict[str, str] = {}
+    for site_name, group in site_groups.items():
+        for patient in group['patients']:
+            patient_site[patient['id']] = site_name
+    for instance in visit_instances:
+        patient_id = instance.get('patient_id')
+        site_name = patient_site.get(patient_id)
+        if not site_name:
+            continue
+        stats = site_visit_stats.setdefault(
+            site_name, {'total': 0, 'completed': 0, 'overdue': 0})
+        stats['total'] += 1
+        instance_status = (instance.get('status') or '').lower()
+        if instance_status == 'completed':
+            stats['completed'] += 1
+            completed_visits[patient_id] = completed_visits.get(patient_id, 0) + 1
+        if instance_status == 'overdue':
+            stats['overdue'] += 1
+
+    funnel_keys = (
+        'screened', 'screen_fail', 'randomized', 'active', 'withdrawn',
+        'dropout', 'follow_up', 'completed',
+    )
+    recruitment = {key: 0 for key in funnel_keys}
+    subjects = []
+    for index, patient in enumerate(patients):
+        bucket = _recruitment_bucket(patient.get('status'))
+        recruitment['screened'] += 1
+        if bucket in recruitment and bucket != 'screened':
+            recruitment[bucket] += 1
+        elif bucket not in ('screen_fail', 'withdrawn', 'dropout', 'completed'):
+            recruitment['active'] += 1
+        site_name = patient_site.get(patient['id'], 'Unassigned site')
+        subjects.append({
+            'id': patient['id'],
+            'subject_id': patient.get('subject_id') or f"SUBJ-{index + 1:03d}",
+            'initials': patient.get('avatar_initials') or '',
+            'site': site_name,
+            'status': patient.get('status') or 'active',
+            'enrolled_at': iso(patient.get('enrolled_date') or patient.get('created_at')),
+            'visits_completed': completed_visits.get(patient['id'], 0),
+            'deidentified': True,
+        })
+
+    sites = []
+    team_by_id: Dict[str, dict] = {}
+    for site_name, group in site_groups.items():
+        site_patients = group['patients']
+        site_funnel = {key: 0 for key in funnel_keys}
+        for patient in site_patients:
+            bucket = _recruitment_bucket(patient.get('status'))
+            site_funnel['screened'] += 1
+            if bucket in site_funnel and bucket != 'screened':
+                site_funnel[bucket] += 1
+            elif bucket not in ('screen_fail', 'withdrawn', 'dropout', 'completed'):
+                site_funnel['active'] += 1
+        site_staff = group.get('staff') or []
+        pi = next((person for person in site_staff if person.get('role') == 'pi'), None)
+        crc = next((person for person in site_staff if person.get('role') == 'crc'), None)
+        if not pi and group.get('pi_name'):
+            pi = {
+                'id': f"{group.get('id')}-pi",
+                'full_name': group.get('pi_name') or '',
+                'email': group.get('pi_email') or '',
+                'phone': group.get('pi_phone') or '',
+                'role': 'pi',
+                'organization': site_name,
+            }
+        for person in filter(None, (pi, crc)):
+            team_by_id[person['id']] = {
+                'id': person['id'],
+                'name': person.get('full_name') or '',
+                'role': person.get('role') or '',
+                'organization': person.get('organization') or site_name,
+                'designation': (person.get('profile') or {}).get('designation') or '',
+                'email': person.get('email') or '',
+                'phone': person.get('phone') or '',
+            }
+        stats = site_visit_stats.get(
+            site_name, {'total': 0, 'completed': 0, 'overdue': 0})
+        trial_target = (group.get('trial_targets') or {}).get(
+            trial_id, trial.get('target_enrollment') or 0)
+        sites.append({
+            'id': group.get('id'),
+            'name': site_name,
+            'address': group.get('address') or '',
+            'city': group.get('city') or '',
+            'state': group.get('state') or '',
+            'hospital_type': group.get('hospital_type') or '',
+            'department': group.get('department') or '',
+            'access_type': group.get('access_type') or 'full',
+            'status': group.get('status') or 'active',
+            'pi_name': (pi or {}).get('full_name') or '',
+            'pi_email': (pi or {}).get('email') or '',
+            'pi_phone': (pi or {}).get('phone') or '',
+            'crc_name': (crc or {}).get('full_name') or '',
+            'enrolled': len(site_patients),
+            'target_enrollment': trial_target or None,
+            'enrollment_pct': round((len(site_patients) / trial_target) * 100)
+            if trial_target else 0,
+            'visit_compliance': round((stats['completed'] / stats['total']) * 100)
+            if stats['total'] else 0,
+            'overdue_visits': stats['overdue'],
+            'recruitment': site_funnel,
+        })
+
+    creator = await db.users.find_one(
+        {'id': trial.get('created_by')},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'role': 1},
+    ) or {}
+    sponsor_contact = {
+        'id': user['id'],
+        'name': user.get('full_name') or '',
+        'role': user.get('role') or '',
+        'organization': org_name,
+        'designation': (user.get('profile') or {}).get('designation') or '',
+        'email': user.get('email') or '',
+        'phone': user.get('phone') or '',
+    }
+    team = [sponsor_contact, *team_by_id.values()]
+    visits = await db.visits.find(
+        {'trial_id': trial_id}, {'_id': 0}).sort('visit_number', 1).to_list(200)
+    documents = await db.files.find(
+        {'scope.type': 'trial', 'scope.id': trial_id},
+        {'_id': 0, 'key': 0},
+    ).sort('created_at', -1).to_list(500)
+    for document in documents:
+        document['url'] = f"/api/files/{document['id']}"
+    version_rows = await db.schedule_versions.find(
+        {'trial_id': trial_id},
+        {'_id': 0, 'visits': 0},
+    ).sort('version', -1).to_list(500)
+
+    return serialize({
+        **trial,
+        'visits': visits,
+        'total_visits': len(visits),
+        'site_count': len(sites),
+        'enrolled_count': len(patients),
+        'created_by_name': creator.get('full_name') or '',
+        'created_by_role': creator.get('role') or '',
+        'recruitment': recruitment,
+        'sites': sites,
+        'subjects': subjects,
+        'team': team,
+        'documents': documents,
+        'schedule_version': trial.get('schedule_version') or (
+            version_rows[0].get('version') if version_rows else 0),
+        'versions': version_rows,
+        'capabilities': {
+            'can_add_site': bool(user.get('org_admin')),
+            'can_manage_schedule': True,
+            'can_share': True,
+        },
+    })
+
+
+async def _require_sponsor_trial_detail(trial_id: str, user: dict) -> dict:
+    """Resolve one trial and enforce its role-appropriate relationship boundary."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
+    return trial
+
+
+@api.get('/trials/{trial_id}/recruitment',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def trial_recruitment(trial_id: str, user=Depends(current_user)):
+    trial = await _require_sponsor_trial_detail(trial_id, user)
+    payload = await _sponsor_trial_detail_payload(trial, user)
+    return {
+        'trial_id': trial_id,
+        'recruitment': payload['recruitment'],
+        'sites': [{
+            'id': site.get('id'),
+            'name': site.get('name'),
+            'target_enrollment': site.get('target_enrollment'),
+            'enrolled': site.get('enrolled', 0),
+            'enrollment_pct': site.get('enrollment_pct', 0),
+            'recruitment': site.get('recruitment') or {},
+            'department': site.get('department') or '',
+            'pi_name': site.get('pi_name') or '',
+            'pi_email': site.get('pi_email') or '',
+            'pi_phone': site.get('pi_phone') or '',
+        } for site in payload['sites']],
+    }
+
+
+@api.get('/trials/{trial_id}/subjects',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def trial_subjects(
+    trial_id: str,
+    site: Optional[str] = None,
+    subject_status: Optional[str] = Query(None, alias='status'),
+    user=Depends(current_user),
+):
+    trial = await _require_sponsor_trial_detail(trial_id, user)
+    rows = (await _sponsor_trial_detail_payload(trial, user))['subjects']
+    if site:
+        rows = [row for row in rows if row.get('site') == site]
+    if subject_status:
+        wanted = _recruitment_bucket(subject_status)
+        rows = [row for row in rows
+                if _recruitment_bucket(row.get('status')) == wanted]
+    return rows
+
+
+@api.get('/trials/{trial_id}/subjects/{subject_id}/visits',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def trial_subject_visits(
+    trial_id: str,
+    subject_id: str,
+    user=Depends(current_user),
+):
+    await _require_sponsor_trial_detail(trial_id, user)
+    subject = await db.patients.find_one(
+        {
+            'trial_id': trial_id,
+            '$or': [{'id': subject_id}, {'subject_id': subject_id}],
+        },
+        {'_id': 0, 'id': 1},
+    )
+    if not subject:
+        raise HTTPException(404, 'Subject not found in this trial')
+    rows = await db.visit_instances.find(
+        {'trial_id': trial_id, 'patient_id': subject['id']},
+        {
+            '_id': 0, 'id': 1, 'visit_id': 1, 'visit_number': 1, 'name': 1,
+            'status': 1, 'scheduled_date': 1, 'window_start': 1,
+            'window_end': 1, 'completed_at': 1,
+        },
+    ).sort('visit_number', 1).to_list(500)
+    return rows
+
+
+@api.get('/trials/{trial_id}/team',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def trial_team(trial_id: str, user=Depends(current_user)):
+    trial = await _require_sponsor_trial_detail(trial_id, user)
+    return (await _sponsor_trial_detail_payload(trial, user))['team']
+
+
+@api.get('/trials/{trial_id}/documents',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def trial_documents(trial_id: str, user=Depends(current_user)):
+    trial = await _require_sponsor_trial_detail(trial_id, user)
+    return (await _sponsor_trial_detail_payload(trial, user))['documents']
+
+
+@api.get('/trials/{trial_id}/versions',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def trial_versions(trial_id: str, user=Depends(current_user)):
+    await _require_sponsor_trial_detail(trial_id, user)
+    rows = await db.schedule_versions.find(
+        {'trial_id': trial_id},
+        {'_id': 0, 'visits': 0},
+    ).sort('version', -1).to_list(500)
+    return rows
+
+
+@api.get('/sponsor/trials/{trial_id}',
+         dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_trial_detail(trial_id: str, user=Depends(current_user)):
+    trial = await _require_sponsor_trial_detail(trial_id, user)
+    return await _sponsor_trial_detail_payload(trial, user)
+
+
+@api.get('/sponsor/trials/{trial_id}/subjects',
+         dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_trial_subjects(trial_id: str,
+                                 site: Optional[str] = None,
+                                 subject_status: Optional[str] = Query(
+                                     None, alias='status'),
+                                 user=Depends(current_user)):
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _trial_in_caller_org(user, trial_id):
+        raise HTTPException(403, 'You do not have access to this trial')
+    payload = await _sponsor_trial_detail_payload(trial, user)
+    rows = payload['subjects']
+    if site:
+        rows = [row for row in rows if row.get('site') == site]
+    if subject_status:
+        wanted = _recruitment_bucket(subject_status)
+        rows = [
+            row for row in rows
+            if _recruitment_bucket(row.get('status')) == wanted
+        ]
+    return rows
+
+
+@api.post('/sponsor/trials/{trial_id}/sites',
+          dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
+                                 user=Depends(current_user)):
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _trial_in_caller_org(user, trial_id):
+        raise HTTPException(403, 'You do not have access to this trial')
+    if not user.get('org_admin'):
+        raise HTTPException(403, 'Only an organization admin can add trial sites')
+    org_name = (user.get('organization') or '').strip()
+    organization = await db.organizations.find_one(
+        {'name': org_name}, {'_id': 0})
+    if not organization:
+        raise HTTPException(400, 'Your organization could not be resolved')
+
+    site_name = body.name.strip()
+    existing = await db.org_sites.find_one(
+        {'org_id': organization['id'], 'name': site_name}, {'_id': 0})
+    fields = {
+        'address': (body.address or '').strip(),
+        'city': (body.city or '').strip(),
+        'state': (body.state or '').strip(),
+        'hospital_type': body.hospital_type or 'Private',
+        'department': (body.department or '').strip(),
+        'pi_name': body.pi_name.strip(),
+        'pi_email': str(body.pi_email).lower(),
+        'pi_phone': (body.pi_phone or '').strip(),
+        'access_type': body.access_type,
+        'status': 'active',
+        'updated_at': now(),
+        'updated_by': user['id'],
+    }
+    target_path = f'trial_targets.{trial_id}'
+    if existing:
+        update_set = dict(fields)
+        if body.target_enrollment is not None:
+            update_set[target_path] = body.target_enrollment
+        await db.org_sites.update_one(
+            {'id': existing['id']},
+            {'$set': update_set, '$addToSet': {'trial_ids': trial_id}},
+        )
+        site_id = existing['id']
+    else:
+        site_id = str(uuid.uuid4())
+        doc = {
+            'id': site_id, 'org_id': organization['id'], 'name': site_name,
+            **fields, 'trial_ids': [trial_id],
+            'trial_targets': {
+                trial_id: body.target_enrollment
+            } if body.target_enrollment is not None else {},
+            'created_at': now(), 'created_by': user['id'],
+        }
+        await db.org_sites.insert_one(doc)
+
+    # "Save & Share with PI": persist an invitation alongside the site
+    # assignment. Reuse a still-pending invite rather than sending duplicates.
+    invitation = await db.invitations.find_one({
+        'email': str(body.pi_email).lower(), 'trial_id': trial_id,
+        'role': 'pi', 'status': 'pending',
+    }, {'_id': 0})
+    if not invitation:
+        token = uuid.uuid4().hex
+        invitation = {
+            'id': str(uuid.uuid4()), 'token': token,
+            'email': str(body.pi_email).lower(), 'phone': body.pi_phone or '',
+            'full_name': body.pi_name.strip(), 'role': 'pi',
+            'trial_id': trial_id, 'invited_by': user['id'],
+            'org': site_name, 'organization': site_name,
+            'status': 'pending', 'created_at': now(),
+            'expires_at': now() + timedelta(days=7),
+            'resend_count': 0,
+        }
+        await db.invitations.insert_one(invitation)
+    await write_audit(
+        user, 'trial.site_add',
+        f'Added {site_name} to {trial.get("protocol_id") or trial_id} and shared with PI',
+        target_id=site_id, trial_id=trial_id, org_id=organization['id'])
+    stored = await db.org_sites.find_one({'id': site_id}, {'_id': 0})
+    return {
+        'site': serialize(stored),
+        'invitation': {
+            'id': invitation['id'],
+            'status': invitation.get('status') or 'pending',
+            'invite_link': _invite_link(invitation['token']),
+            'expires_at': iso(invitation.get('expires_at')),
+        },
+    }
+
+
+@api.post('/sponsor/trials/{trial_id}/sites/import',
+          dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_import_trial_sites(
+    trial_id: str,
+    file: UploadFile = File(...),
+    user=Depends(current_user),
+):
+    """Import a CSV site roster with explicit per-row success/error results.
+
+    Successful rows use the exact same persistent site-assignment and PI
+    invitation workflow as single entry. A malformed row cannot be mistaken
+    for an import: it is returned with its 1-based spreadsheet row number and
+    validation message.
+    """
+    import csv
+    import io
+
+    trial = await _require_sponsor_trial_detail(trial_id, user)
+    if not user.get('org_admin'):
+        raise HTTPException(403, 'Only an organization admin can import trial sites')
+    filename = (file.filename or '').strip().lower()
+    content_type = (file.content_type or '').lower().split(';')[0]
+    if not filename.endswith('.csv') and content_type not in (
+        'text/csv', 'application/csv', 'application/vnd.ms-excel',
+    ):
+        raise HTTPException(400, 'Upload a CSV site roster')
+    data = await file.read(2 * 1024 * 1024 + 1)
+    if not data:
+        raise HTTPException(400, 'The uploaded CSV is empty')
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(413, 'Site roster is too large (maximum 2 MB)')
+    try:
+        text = data.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        raise HTTPException(400, 'Site roster must be UTF-8 encoded CSV')
+    reader = csv.DictReader(io.StringIO(text))
+    headers = {
+        (header or '').strip().lower() for header in (reader.fieldnames or [])
+    }
+    required_headers = {'name', 'pi_name', 'pi_email'}
+    missing_headers = sorted(required_headers - headers)
+    if missing_headers:
+        raise HTTPException(
+            400, f"Missing required CSV columns: {', '.join(missing_headers)}")
+
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(400, 'Site roster contains no data rows')
+    if len(rows) > 500:
+        raise HTTPException(413, 'Site roster may contain at most 500 rows')
+
+    results = []
+    for index, raw in enumerate(rows, start=2):
+        normalized = {
+            (key or '').strip().lower(): (value or '').strip()
+            for key, value in raw.items()
+        }
+        try:
+            target_raw = normalized.get('target_enrollment') or ''
+            try:
+                target = int(target_raw) if target_raw else None
+            except ValueError:
+                raise ValueError('target_enrollment must be a whole number')
+            hospital = normalized.get('hospital_type') or 'Private'
+            hospital = hospital[:1].upper() + hospital[1:].lower()
+            access_type = (
+                normalized.get('access_type') or 'full'
+            ).lower().replace(' ', '_')
+            body = SponsorTrialSiteIn(
+                name=normalized.get('name') or '',
+                address=normalized.get('address') or '',
+                city=normalized.get('city') or '',
+                state=normalized.get('state') or '',
+                hospital_type=hospital,
+                department=normalized.get('department') or '',
+                pi_name=normalized.get('pi_name') or '',
+                pi_email=normalized.get('pi_email') or '',
+                pi_phone=normalized.get('pi_phone') or '',
+                target_enrollment=target,
+                access_type=access_type,
+            )
+            imported = await sponsor_add_trial_site(trial_id, body, user)
+            results.append({
+                'row': index,
+                'status': 'imported',
+                'site_id': imported['site']['id'],
+                'invitation_id': imported['invitation']['id'],
+            })
+        except HTTPException as exc:
+            results.append({
+                'row': index, 'status': 'error', 'error': str(exc.detail)})
+        except Exception as exc:
+            results.append({
+                'row': index, 'status': 'error', 'error': str(exc)})
+
+    imported_count = sum(
+        1 for result in results if result['status'] == 'imported')
+    await write_audit(
+        user, 'trial.site_import',
+        f"Imported {imported_count}/{len(results)} sites for "
+        f"{trial.get('protocol_id') or trial_id}",
+        trial_id=trial_id, imported=imported_count,
+        failed=len(results) - imported_count,
+    )
+    return {
+        'total': len(results),
+        'imported': imported_count,
+        'failed': len(results) - imported_count,
+        'results': results,
+    }
+
+
+@api.get('/smo/dashboard', dependencies=[Depends(require_roles('smo', 'site'))])
+@api.get('/site/dashboard', dependencies=[Depends(require_roles('smo', 'site'))])
+async def smo_dashboard(user=Depends(current_user)):
+    """De-identified OPERATIONAL dashboard for SMO/Site organization members.
+
+    Deliberately separate from the org-admin console: this is available to
+    every SMO/Site account and exposes network totals, masked subjects and
+    visit workload, while member management, ownership transfer and other
+    governance remain in the org-admin console (org_admin only).
+    """
+    org_name = (user.get('organization') or '').strip()
+    if not org_name:
+        raise HTTPException(400, 'Your account is not linked to an organization')
+
+    all_trials = await db.trials.find({}, {'_id': 0}).to_list(1000)
+    trials = [trial for trial in all_trials if await _can_access_trial(user, trial)]
+    trial_ids = [trial['id'] for trial in trials]
+    patients = await db.patients.find(
+        {'trial_id': {'$in': trial_ids}} if trial_ids else {'trial_id': {'$in': []}},
+        {'_id': 0, 'id': 1, 'trial_id': 1, 'pi_id': 1, 'crc_id': 1,
+         'avatar_initials': 1, 'subject_id': 1, 'status': 1}).to_list(5000)
+
+    staff_ids = {
+        staff_id for patient in patients
+        for staff_id in (patient.get('pi_id'), patient.get('crc_id'))
+        if staff_id
+    }
+    staff_rows = await db.users.find(
+        {'id': {'$in': list(staff_ids)}} if staff_ids else {'id': {'$in': []}},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'organization': 1,
+         'role': 1}).to_list(2000)
+    staff = {row['id']: row for row in staff_rows}
+
+    masked_patients = []
+    patient_ids = []
+    for patient in patients:
+        patient_ids.append(patient['id'])
+        pi = staff.get(patient.get('pi_id')) or {}
+        crc = staff.get(patient.get('crc_id')) or {}
+        masked_patients.append({
+            'id': patient['id'],
+            'subject_id': patient.get('subject_id') or
+                          f"SUBJ-{patient['id'][-3:].upper()}",
+            'avatar_initials': patient.get('avatar_initials') or '',
+            'trial_id': patient.get('trial_id'),
+            'site': pi.get('organization') or crc.get('organization') or '',
+            'pi_name': pi.get('full_name') or '',
+            'status': patient.get('status') or 'active',
+        })
+
+    upcoming = []
+    if patient_ids:
+        rows = await db.visit_instances.find({
+            'patient_id': {'$in': patient_ids},
+            'status': {'$in': ['scheduled', 'upcoming', 'overdue']},
+        }, {'_id': 0}).sort('scheduled_date', 1).to_list(100)
+        patient_map = {patient['id']: patient for patient in masked_patients}
+        for row in rows:
+            patient = patient_map.get(row.get('patient_id')) or {}
+            upcoming.append({
+                'id': row.get('id'),
+                'type': 'overdue_visit' if row.get('status') == 'overdue' else 'visit_today',
+                'title': row.get('name') or 'Scheduled visit',
+                'subtitle': ' · '.join(filter(None, [
+                    patient.get('subject_id'), patient.get('site')])),
+                'due': iso(row.get('scheduled_date')),
+                'patient_id': row.get('patient_id'),
+                'trial_id': row.get('trial_id') or patient.get('trial_id'),
+                'priority': 'high' if row.get('status') == 'overdue' else 'medium',
+                'status': row.get('status'),
+            })
+
+    organization = await db.organizations.find_one(
+        {'name': org_name}, {'_id': 0}) or {}
+    network_sites = await db.org_sites.find(
+        {'org_id': organization.get('id')},
+        {'_id': 0}).sort('name', 1).to_list(500) if organization.get('id') else []
+    site_names = {site.get('name') for site in network_sites if site.get('name')}
+    site_names.update(patient.get('site') for patient in masked_patients
+                      if patient.get('site'))
+
+    sponsors = {trial.get('sponsor_name') for trial in trials
+                if trial.get('sponsor_name') and trial.get('sponsor_name') != org_name}
+    trial_cards = []
+    counts: Dict[str, int] = {}
+    for patient in masked_patients:
+        counts[patient['trial_id']] = counts.get(patient['trial_id'], 0) + 1
+    for trial in trials:
+        trial_cards.append({
+            **trial,
+            'enrolled_count': counts.get(trial['id'], 0),
+            'target_enrollment': trial.get('target_enrollment'),
+        })
+
+    return serialize({
+        'organization': {
+            'name': org_name,
+            'type': organization.get('type')
+                    or ('site' if user.get('role') == 'site' else 'smo'),
+            'org_admin': bool(user.get('org_admin')),
+        },
+        'totals': {
+            'trials': len(trials),
+            'sites': len(site_names),
+            'subjects': len(masked_patients),
+            'sponsors': len(sponsors),
+        },
+        'trials': trial_cards,
+        'subjects': masked_patients,
+        'tasks': upcoming,
+        'sites': network_sites,
+    })
 
 @api.post('/trials/{trial_id}/extract-schedule',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
@@ -865,11 +2439,28 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         user, 'trial.extract_schedule',
         f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
         f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
-    return {'visits': [v.dict() for v in schedule.visits]}
+    visits = []
+    for visit in schedule.visits:
+        row = visit.model_dump()
+        warning = row.get('day_offset') is None
+        row['day_offset'] = row.get('day_offset') or 0
+        row['clinical_tasks'] = row.get('activities') or []
+        row['admin_tasks'] = []
+        row['comments'] = ''
+        row['extraction_warning'] = warning
+        row['review_status'] = 'pending' if warning else 'ok'
+        row['extracted_from_protocol'] = True
+        visits.append(row)
+    return {'visits': visits}
 
 # ── Visit schedule ──────────────────────────────────────────────────────────
 @api.post('/visits')
 async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
+    trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
     vid = str(uuid.uuid4())
     doc = {'id': vid, **body.dict(), 'created_at': now()}
     await db.visits.insert_one(doc)
@@ -959,15 +2550,26 @@ async def _patient_care_context(patient) -> dict:
     PI (name / phone / email for tel:+mailto: links) instead of hardcoding
     "AIIMS Delhi / Dr. Sharma". All keys are always present (empty string when
     the patient has no PI assigned) so the client can rely on the shape."""
-    pi = None
-    if patient.get('pi_id'):
-        pi = await db.users.find_one({'id': patient['pi_id']}, {'_id': 0})
-    pi = pi or {}
+    ids = [value for value in (patient.get('pi_id'), patient.get('crc_id')) if value]
+    staff_rows = await db.users.find(
+        {'id': {'$in': ids}}, {'_id': 0}).to_list(2) if ids else []
+    staff = {row['id']: row for row in staff_rows}
+    pi = staff.get(patient.get('pi_id')) or {}
+    crc = staff.get(patient.get('crc_id')) or {}
+    contact = crc or pi
     return {
-        'site': pi.get('organization') or '',
+        'pi_id': pi.get('id') or '',
+        'site': pi.get('organization') or crc.get('organization') or '',
         'pi_name': pi.get('full_name') or '',
         'pi_phone': pi.get('phone') or '',
         'pi_email': pi.get('email') or '',
+        'crc_id': crc.get('id') or '',
+        'crc_name': crc.get('full_name') or '',
+        'crc_phone': crc.get('phone') or '',
+        'crc_email': crc.get('email') or '',
+        'assigned_contact_id': contact.get('id') or '',
+        'assigned_contact_name': contact.get('full_name') or '',
+        'assigned_contact_role': contact.get('role') or '',
     }
 
 async def _trial_checklist_map(trial_id) -> dict:
@@ -976,6 +2578,92 @@ async def _trial_checklist_map(trial_id) -> dict:
     tpls = await db.visits.find({'trial_id': trial_id},
                                 {'_id': 0, 'id': 1, 'checklist': 1}).to_list(500)
     return {t['id']: (t.get('checklist') or []) for t in tpls}
+
+
+def _structured_visit_procedures(template: dict, instance: dict) -> list:
+    """Return patient-safe structured procedure rows without inventing copy."""
+    source = (
+        template.get('procedures')
+        or template.get('activities')
+        or instance.get('procedures')
+        or instance.get('activities')
+        or []
+    )
+    rows = []
+    for index, item in enumerate(source):
+        if isinstance(item, dict):
+            label = str(
+                item.get('label') or item.get('name') or item.get('title') or ''
+            ).strip()
+            description = str(
+                item.get('description') or item.get('detail') or ''
+            ).strip()
+        else:
+            label = str(item).strip()
+            description = ''
+        if label:
+            rows.append({
+                'id': str(item.get('id') if isinstance(item, dict) and item.get('id')
+                          else f'procedure-{index + 1}'),
+                'label': label,
+                'description': description,
+            })
+    return rows
+
+
+async def _patient_visit_detail(patient: dict, visit: dict) -> dict:
+    """Enrich an owned visit instance/template for the patient detail screen."""
+    template_id = visit.get('visit_template_id') or visit.get('id')
+    template = await db.visits.find_one({'id': template_id}, {'_id': 0}) or {}
+    trial = await db.trials.find_one(
+        {'id': visit.get('trial_id') or patient.get('trial_id')}, {'_id': 0}) or {}
+    care = await _patient_care_context(patient)
+    completed_by = {}
+    if visit.get('completed_by'):
+        completed_by = await db.users.find_one(
+            {'id': visit['completed_by']}, {'_id': 0}) or {}
+    scheduled = visit.get('scheduled_date')
+    window_days = visit.get('window_days', template.get('window_days', 0))
+    window_start = visit.get('window_start')
+    window_end = visit.get('window_end')
+    if scheduled and (not window_start or not window_end):
+        try:
+            parsed = scheduled if isinstance(scheduled, datetime) else datetime.fromisoformat(
+                str(scheduled).replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            window_start = window_start or parsed - timedelta(days=window_days)
+            window_end = window_end or parsed + timedelta(days=window_days)
+        except (TypeError, ValueError):
+            pass
+    preparation = template.get('checklist') or visit.get('checklist') or []
+    return serialize({
+        **template,
+        **visit,
+        **care,
+        'protocol_id': trial.get('protocol_id') or '',
+        'phase': trial.get('phase') or '',
+        'indication': trial.get('condition') or trial.get('indication') or '',
+        'visit_type': (
+            visit.get('visit_type') or template.get('visit_type')
+            or visit.get('type') or template.get('type') or ''
+        ),
+        'location': (
+            visit.get('location') or template.get('location') or care.get('site') or ''
+        ),
+        'window_start': window_start,
+        'window_end': window_end,
+        'window_days': window_days,
+        'completion_timestamp': visit.get('completed_at'),
+        'clinician_id': completed_by.get('id') or '',
+        'clinician_name': (
+            completed_by.get('full_name') or visit.get('completed_by_name') or ''
+        ),
+        'clinician_role': completed_by.get('role') or '',
+        'procedures': _structured_visit_procedures(template, visit),
+        'preparation': preparation,
+        'checklist': preparation,
+    })
 
 @api.get('/visits/mine')
 async def my_visits(user=Depends(current_user)):
@@ -1014,6 +2702,39 @@ async def my_visits(user=Depends(current_user)):
         })
     return result
 
+
+@api.get('/visits/mine/{visit_id}')
+async def my_visit_detail(visit_id: str, user=Depends(current_user)):
+    """Return exactly one visit owned by the logged-in patient.
+
+    A real but foreign visit is a 403; an unknown visit is a 404. This prevents
+    the detail UI from downloading the whole schedule and selecting a fallback.
+    """
+    if user.get('role') != 'patient':
+        raise HTTPException(403, 'Patient access required')
+    patient = await db.patients.find_one({'user_id': user['id']}, {'_id': 0})
+    if not patient:
+        raise HTTPException(404, 'Patient record not found')
+    visit = await db.visit_instances.find_one({'id': visit_id}, {'_id': 0})
+    if visit:
+        if visit.get('patient_id') != patient.get('id'):
+            raise HTTPException(403, 'You do not have access to this visit')
+        visit = await _ensure_visit_instance_workflow(visit)
+        return await _patient_visit_detail(patient, visit)
+
+    # Legacy patients may still render template IDs until instances are
+    # materialized. Only allow a template from this patient's enrolled trial.
+    template = await db.visits.find_one({'id': visit_id}, {'_id': 0})
+    if not template:
+        raise HTTPException(404, 'Visit not found')
+    if template.get('trial_id') != patient.get('trial_id'):
+        raise HTTPException(403, 'You do not have access to this visit')
+    legacy_rows = await my_visits(user)
+    legacy = next((row for row in legacy_rows if row.get('id') == visit_id), None)
+    if not legacy:
+        raise HTTPException(404, 'Visit not found')
+    return await _patient_visit_detail(patient, legacy)
+
 # ── Visit instances (per-patient copies of the trial's visit templates) ─────
 # The shared `visits` docs are TEMPLATES. Mutating them per patient would leak
 # one patient's completion into every other patient's schedule, so on enrollment
@@ -1039,6 +2760,80 @@ def _patient_visit_anchor(patient) -> datetime:
     return base
 
 
+def _visit_task_snapshot(template: dict, kind: str, tasks: list) -> list:
+    """Create deterministic task rows for a per-patient visit instance.
+
+    IDs are derived from template + task kind + original position, so repeated
+    materialization/migration produces the same identity while duplicate labels
+    remain distinct.
+    """
+    template_id = str(template.get('id') or template.get('visit_template_id') or '')
+    rows = []
+    for index, item in enumerate(tasks or []):
+        if isinstance(item, dict):
+            label = str(item.get('label') or item.get('name') or item.get('title') or '').strip()
+        else:
+            label = str(item).strip()
+        if not label:
+            continue
+        stable = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f'mtb:visit-task:{template_id}:{kind}:{index}:{label}',
+        ))
+        rows.append({
+            'id': stable,
+            'label': label,
+            'completed': False,
+            'completed_by': None,
+            'completed_by_name': None,
+            'completed_at': None,
+        })
+    return rows
+
+
+def _effective_visit_status(instance: dict) -> str:
+    """Return the approved display status without overwriting explicit history."""
+    status = instance.get('status') or 'scheduled'
+    if status not in ('scheduled', 'upcoming'):
+        return status
+    due = instance.get('window_end') or instance.get('scheduled_date')
+    if isinstance(due, str):
+        try:
+            due = datetime.fromisoformat(due.replace('Z', '+00:00'))
+        except ValueError:
+            due = None
+    if isinstance(due, datetime):
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        if due < now():
+            return 'overdue'
+    return status
+
+
+async def _ensure_visit_instance_workflow(instance: dict) -> dict:
+    """Lazily migrate legacy instances to per-visit task/comment snapshots."""
+    if not instance:
+        return instance
+    missing_tasks = 'clinical_tasks' not in instance or 'admin_tasks' not in instance
+    missing_comments = 'comments' not in instance
+    updates: Dict = {}
+    if missing_tasks:
+        template = await db.visits.find_one(
+            {'id': instance.get('visit_template_id')}, {'_id': 0}) or {}
+        if 'clinical_tasks' not in instance:
+            updates['clinical_tasks'] = _visit_task_snapshot(
+                template or instance, 'clinical', template.get('clinical_tasks') or [])
+        if 'admin_tasks' not in instance:
+            updates['admin_tasks'] = _visit_task_snapshot(
+                template or instance, 'admin', template.get('admin_tasks') or [])
+    if missing_comments:
+        updates['comments'] = []
+    if updates:
+        await db.visit_instances.update_one({'id': instance['id']}, {'$set': updates})
+        instance = {**instance, **updates}
+    return {**instance, 'status': _effective_visit_status(instance)}
+
+
 async def materialize_visit_instances(patient) -> int:
     """Create one visit_instance per trial visit template for `patient`.
 
@@ -1062,6 +2857,8 @@ async def materialize_visit_instances(patient) -> int:
     for t in templates:
         sched = base + timedelta(days=t.get('day_offset', 0))
         wd = t.get('window_days', 3)
+        clinical_tasks = _visit_task_snapshot(t, 'clinical', t.get('clinical_tasks') or [])
+        admin_tasks = _visit_task_snapshot(t, 'admin', t.get('admin_tasks') or [])
         docs.append({
             'id': str(uuid.uuid4()),
             'patient_id': patient['id'],
@@ -1072,6 +2869,9 @@ async def materialize_visit_instances(patient) -> int:
             # duplicated template fields the RN app reads from /visits/mine
             'visit_number': t.get('visit_number'),
             'activities': t.get('activities', []),
+            'procedures': t.get('procedures', []),
+            'visit_type': t.get('visit_type', ''),
+            'location': t.get('location', ''),
             'window_days': wd,
             'scheduled_date': sched,
             'window_start': sched - timedelta(days=wd),
@@ -1079,6 +2879,11 @@ async def materialize_visit_instances(patient) -> int:
             'status': 'completed' if t['id'] in completed
                       else ('upcoming' if sched >= n else 'missed'),
             'note': '',
+            # Immutable per-patient copies of the approved template tasks.
+            # Completion metadata is subsequently updated only on this instance.
+            'clinical_tasks': clinical_tasks,
+            'admin_tasks': admin_tasks,
+            'comments': [],
             'updated_by': None,
             'updated_at': n,
             'created_at': n,
@@ -1121,12 +2926,20 @@ async def _materialize_new_template_for_enrolled(template) -> int:
             'seq': template.get('visit_number'),
             'visit_number': template.get('visit_number'),
             'activities': template.get('activities', []),
+            'procedures': template.get('procedures', []),
+            'visit_type': template.get('visit_type', ''),
+            'location': template.get('location', ''),
             'window_days': wd,
             'scheduled_date': sched,
             'window_start': sched - timedelta(days=wd),
             'window_end': sched + timedelta(days=wd),
             'status': 'upcoming' if sched >= n else 'missed',
             'note': '',
+            'clinical_tasks': _visit_task_snapshot(
+                template, 'clinical', template.get('clinical_tasks') or []),
+            'admin_tasks': _visit_task_snapshot(
+                template, 'admin', template.get('admin_tasks') or []),
+            'comments': [],
             'updated_by': None,
             'updated_at': n,
             'created_at': n,
@@ -1189,6 +3002,9 @@ async def _rematerialize_template_change(template) -> int:
             'seq': template.get('visit_number'),
             'visit_number': template.get('visit_number'),
             'activities': template.get('activities', []),
+            'procedures': template.get('procedures', []),
+            'visit_type': template.get('visit_type', ''),
+            'location': template.get('location', ''),
             'window_days': wd,
             'scheduled_date': sched,
             'window_start': sched - timedelta(days=wd),
@@ -1314,7 +3130,99 @@ async def _trial_in_caller_org(user: dict, trial_id: Optional[str]) -> bool:
     if trial.get('created_by') == user['id']:
         return True
     org = (user.get('organization') or '').strip()
-    return bool(org) and (trial.get('sponsor_name') or '').strip() == org
+    if bool(org) and (trial.get('sponsor_name') or '').strip() == org:
+        return True
+    if not org:
+        return False
+    organization = await db.organizations.find_one(
+        {'name': org}, {'_id': 0, 'id': 1})
+    if not organization:
+        return False
+    grant = await db.org_trial_access.find_one(
+        {'org_id': organization['id'], 'trial_id': trial_id, 'granted': True},
+        {'_id': 0, 'trial_id': 1})
+    return grant is not None
+
+
+async def _can_access_trial(user: dict, trial: dict) -> bool:
+    """Relationship-scoped trial access shared by list/detail/mutations.
+
+    Sponsor/CRO: owned by or explicitly granted to their organization.
+    PI: creator, same trial organization, or assigned to an enrolled subject.
+    CRC: creator or assigned to an enrolled subject.
+    Patient: enrolled in the trial through their own account.
+    """
+    role = user.get('role')
+    if role in ('sponsor', 'cro'):
+        return await _trial_in_caller_org(user, trial.get('id'))
+    if role == 'pi':
+        if await _pi_owns_trial(user, trial):
+            return True
+        return await _has_accepted_trial_invitation(user, trial.get('id'))
+    if role == 'crc':
+        if trial.get('created_by') == user.get('id'):
+            return True
+        assigned = await db.patients.find_one(
+            {'trial_id': trial.get('id'), 'crc_id': user.get('id')},
+            {'_id': 0, 'id': 1})
+        if assigned:
+            return True
+        return await _has_accepted_trial_invitation(user, trial.get('id'))
+    if role == 'patient':
+        enrolled = await db.patients.find_one(
+            {'trial_id': trial.get('id'), 'user_id': user.get('id')},
+            {'_id': 0, 'id': 1})
+        return enrolled is not None
+    if role in ('smo', 'site'):
+        org = (user.get('organization') or '').strip()
+        if not org:
+            return False
+        if trial.get('created_by') == user.get('id'):
+            return True
+        organization = await db.organizations.find_one(
+            {'name': org}, {'_id': 0, 'id': 1})
+        if organization:
+            grant = await db.org_trial_access.find_one(
+                {'org_id': organization['id'], 'trial_id': trial.get('id'),
+                 'granted': True}, {'_id': 0, 'trial_id': 1})
+            if grant:
+                return True
+        member_ids = await db.users.distinct('id', {'organization': org})
+        if trial.get('created_by') in member_ids:
+            return True
+        linked = await db.patients.find_one({
+            'trial_id': trial.get('id'),
+            '$or': [
+                {'pi_id': {'$in': member_ids}},
+                {'crc_id': {'$in': member_ids}},
+                {'created_by': {'$in': member_ids}},
+            ],
+        }, {'_id': 0, 'id': 1})
+        return linked is not None
+    return False
+
+
+async def _has_accepted_trial_invitation(user: dict, trial_id: Optional[str]) -> bool:
+    """Match an accepted invite only on a real contact identifier.
+
+    Empty phone values are common for email registrations and must never make
+    unrelated users equivalent.
+    """
+    contacts = []
+    email = (user.get('email') or '').strip().lower()
+    phone = (user.get('phone') or '').strip()
+    if email:
+        contacts.append({'email': email})
+    if phone:
+        contacts.append({'phone': phone})
+    if not trial_id or not contacts:
+        return False
+    invitation = await db.invitations.find_one({
+        'trial_id': trial_id,
+        'status': 'accepted',
+        '$or': contacts,
+    }, {'_id': 0, 'id': 1})
+    return invitation is not None
 
 async def _can_access_patient(user: dict, patient: dict) -> bool:
     """Ownership predicate shared by every single-patient staff endpoint.
@@ -1397,8 +3305,34 @@ async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'
             p['next_visit'] = next_visit
     return patients
 
-@api.post('/patients', dependencies=[Depends(require_roles('pi', 'crc'))])
+@api.post('/patients', dependencies=[Depends(require_roles('pi', 'crc', 'smo', 'site'))])
 async def add_patient(body: PatientIn, user=Depends(current_user)):
+    trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to enroll patients in this trial')
+
+    caller_org = (user.get('organization') or '').strip()
+    if user['role'] in ('smo', 'site'):
+        if not user.get('org_admin'):
+            raise HTTPException(403, 'Organization-admin access is required to enroll patients')
+        if not body.pi_id:
+            raise HTTPException(400, 'Select the PI responsible for this patient')
+    pi_id = user['id'] if user['role'] == 'pi' else body.pi_id
+    crc_id = user['id'] if user['role'] == 'crc' else body.crc_id
+    for staff_id, expected_role, label in (
+        (pi_id, 'pi', 'PI'), (crc_id, 'crc', 'CRC'),
+    ):
+        if not staff_id:
+            continue
+        staff = await db.users.find_one(
+            {'id': staff_id}, {'_id': 0, 'role': 1, 'organization': 1})
+        if not staff or staff.get('role') != expected_role:
+            raise HTTPException(400, f'Selected {label} is invalid')
+        if caller_org and (staff.get('organization') or '').strip() != caller_org:
+            raise HTTPException(403, f'Selected {label} must belong to your site')
+
     # Server-side duplicate subject-ID guard (scoped to the trial) — the client
     # warns optimistically, but the DB is the source of truth.
     if body.subject_id:
@@ -1408,8 +3342,11 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
         if dup:
             raise HTTPException(409, f'Subject ID {body.subject_id} already exists in this trial')
     pid = str(uuid.uuid4())
+    values = body.dict()
+    values['pi_id'] = pi_id
+    values['crc_id'] = crc_id
     doc = {
-        'id': pid, **body.dict(),
+        'id': pid, **values,
         'created_by': user['id'],
         'created_at': now(),
         'enrolled_date': body.enrolled_date or now().date().isoformat(),
@@ -1429,15 +3366,17 @@ async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cr
     """Patient detail: the patient record + its trial + its visit instances."""
     p = await _require_patient(user, patient_id)
     trial = await db.trials.find_one({'id': p.get('trial_id')}, {'_id': 0})
-    instances = await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
-                                        .sort('seq', 1).to_list(500)
+    raw_instances = await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
+                                            .sort('seq', 1).to_list(500)
+    instances = [await _ensure_visit_instance_workflow(row) for row in raw_instances]
     return {**p, 'trial': trial, 'instances': instances}
 
 @api.get('/patients/{patient_id}/visits')
 async def get_patient_visits(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
     await _require_patient(user, patient_id)
-    return await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
+    rows = await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}) \
                                    .sort('seq', 1).to_list(500)
+    return [await _ensure_visit_instance_workflow(row) for row in rows]
 
 # ── Organizations directory ─────────────────────────────────────────────────
 @api.get('/organizations')
@@ -1445,9 +3384,10 @@ async def list_organizations(type: Optional[str] = None, search: Optional[str] =
                              include_platform_contact: bool = False):
     """Public directory of known organizations (used by the register screen).
 
-    Platform-contact details are opt-in so live typeahead searches do not return
-    user contact data. The registration Continue action requests them only after
-    an exact organization match has been entered.
+    Directory searches never include staff contact data. The deprecated
+    ``include_platform_contact`` parameter is accepted for client compatibility
+    but intentionally ignored; callers must use the exact organization contact
+    endpoint after selecting a specific organization.
     """
     q: Dict = {}
     if type:
@@ -1455,43 +3395,60 @@ async def list_organizations(type: Optional[str] = None, search: Optional[str] =
     if search and search.strip():
         q['name'] = {'$regex': re.escape(search.strip()), '$options': 'i'}
     organizations = await db.organizations.find(q, {'_id': 0}).sort('name', 1).to_list(200)
-    if not include_platform_contact or not organizations:
-        return organizations
-
-    names = [org['name'] for org in organizations]
-    representatives = await db.users.find(
-        {'organization': {'$in': names}, 'role': {'$ne': 'patient'}},
-        {'_id': 0, 'organization': 1, 'full_name': 1, 'email': 1, 'phone': 1,
-         'role': 1, 'org_admin': 1, 'profile.designation': 1},
-    ).sort([('org_admin', -1), ('created_at', 1)]).to_list(1000)
-
-    contacts: Dict[str, dict] = {}
-    for user in representatives:
-        organization = user.get('organization')
-        if not organization or organization in contacts:
-            continue
-        profile = user.get('profile') or {}
-        contacts[organization] = {
-            'name': user.get('full_name') or 'Organization Admin',
-            'designation': profile.get('designation') or (
-                'Platform Contact Admin' if user.get('org_admin') else 'Organization Representative'
-            ),
-            'email': user.get('email') or '',
-            'phone': user.get('phone') or '',
-        }
-
-    for org in organizations:
-        contact = contacts.get(org['name'])
-        if contact:
-            org['platform_contact'] = contact
-        elif org.get('email') or org.get('contact'):
-            org['platform_contact'] = {
-                'name': 'Organization Admin',
-                'designation': 'Platform Contact Admin',
-                'email': org.get('email') or '',
-                'phone': org.get('contact') or '',
-            }
     return organizations
+
+
+async def _public_org_admin_contact(organization: dict) -> Optional[dict]:
+    """Return designated-admin business contact data, never arbitrary staff."""
+    admin = await db.users.find_one(
+        {
+            'organization': organization.get('name'),
+            'org_admin': True,
+            'role': {'$ne': 'patient'},
+            'status': {'$ne': 'Suspended'},
+        },
+        {
+            '_id': 0, 'full_name': 1, 'email': 1, 'phone': 1,
+            'profile.designation': 1,
+        },
+        sort=[('created_at', 1)],
+    )
+    if admin:
+        profile = admin.get('profile') or {}
+        return {
+            'name': admin.get('full_name') or 'Organization Admin',
+            'designation': profile.get('designation') or 'Platform Contact Admin',
+            'email': admin.get('email') or '',
+            'phone': admin.get('phone') or '',
+        }
+    if organization.get('email') or organization.get('contact'):
+        return {
+            'name': organization.get('contact_name') or 'Organization Admin',
+            'designation': 'Platform Contact Admin',
+            'email': organization.get('email') or '',
+            'phone': organization.get('contact') or '',
+        }
+    return None
+
+
+@api.get('/organizations/{org_id}/platform-contact')
+async def organization_platform_contact(org_id: str):
+    """Exact-match registration confirmation contract for an existing org."""
+    organization = await db.organizations.find_one(
+        {'id': org_id, 'status': {'$ne': 'merged'}},
+        {'_id': 0, 'id': 1, 'name': 1, 'type': 1, 'status': 1,
+         'email': 1, 'contact': 1, 'contact_name': 1},
+    )
+    if not organization:
+        raise HTTPException(404, 'Organization not found')
+    return {
+        'organization': {
+            'id': organization['id'],
+            'name': organization.get('name') or '',
+            'type': organization.get('type') or '',
+        },
+        'platform_contact': await _public_org_admin_contact(organization),
+    }
 
 # ── Notifications ───────────────────────────────────────────────────────────
 @api.get('/notifications')
@@ -1518,25 +3475,190 @@ async def mark_read(nid: str, user=Depends(current_user)):
     return {'ok': True}
 
 # ── Conversations & Messages ────────────────────────────────────────────────
+async def _require_conversation_member(cid: str, user_id: str) -> dict:
+    """Load a conversation and fail closed unless the caller participates."""
+    conv = await db.conversations.find_one({'id': cid}, {'_id': 0})
+    if not conv:
+        raise HTTPException(404, 'Conversation not found')
+    if user_id not in conv.get('participant_ids', []):
+        raise HTTPException(403, 'You are not a participant in this conversation')
+    return conv
+
+
+async def _patient_chat_assignment(patient_user_id: str, staff_user_id: str) -> bool:
+    """Patients may chat only with the PI/CRC assigned to their enrollment."""
+    patient_user = await db.users.find_one(
+        {'id': patient_user_id}, {'_id': 0, 'email': 1})
+    if not patient_user:
+        return False
+    patient = await db.patients.find_one({
+        '$and': [
+            {'$or': [
+                {'user_id': patient_user_id},
+                {'user_id': {'$exists': False}, 'email': patient_user.get('email')},
+                {'user_id': None, 'email': patient_user.get('email')},
+            ]},
+            {'$or': [{'pi_id': staff_user_id}, {'crc_id': staff_user_id}]},
+        ],
+    }, {'_id': 0, 'id': 1})
+    return patient is not None
+
+
+async def _chat_trial_ids(user: dict) -> set:
+    """Trials that establish a clinical working relationship for a staff user."""
+    ids = set()
+    uid = user['id']
+    role = user.get('role')
+    org = (user.get('organization') or '').strip()
+
+    if role in ('pi', 'crc'):
+        key = 'pi_id' if role == 'pi' else 'crc_id'
+        ids.update(await db.patients.distinct('trial_id', {key: uid}))
+
+    ids.update(await db.trials.distinct('id', {'created_by': uid}))
+
+    if role in ('sponsor', 'cro') and org:
+        ids.update(await db.trials.distinct('id', {'sponsor_name': org}))
+
+    if role in ('smo', 'site') and org:
+        member_ids = await db.users.distinct('id', {'organization': org})
+        ids.update(await db.trials.distinct('id', {'created_by': {'$in': member_ids}}))
+        ids.update(await db.patients.distinct('trial_id', {
+            '$or': [
+                {'pi_id': {'$in': member_ids}},
+                {'crc_id': {'$in': member_ids}},
+                {'created_by': {'$in': member_ids}},
+            ],
+        }))
+
+    invitation_contacts = []
+    if (user.get('email') or '').strip():
+        invitation_contacts.append({'email': user['email'].strip().lower()})
+    if (user.get('phone') or '').strip():
+        invitation_contacts.append({'phone': user['phone'].strip()})
+    if invitation_contacts:
+        invitation_ids = await db.invitations.distinct('trial_id', {
+            'status': 'accepted', '$or': invitation_contacts,
+        })
+        ids.update(tid for tid in invitation_ids if tid)
+
+    if org:
+        organization = await db.organizations.find_one(
+            {'name': org}, {'_id': 0, 'id': 1})
+        if organization:
+            ids.update(await db.org_trial_access.distinct('trial_id', {
+                'org_id': organization['id'], 'granted': True,
+            }))
+    return {tid for tid in ids if tid}
+
+
+async def _can_chat_with(user: dict, other: dict) -> bool:
+    """Allow chat only inside an organization or an assigned trial relationship."""
+    if user['id'] == other['id'] or other.get('status') == 'Suspended':
+        return False
+
+    user_org = (user.get('organization') or '').strip().casefold()
+    other_org = (other.get('organization') or '').strip().casefold()
+    if user_org and user_org == other_org:
+        return True
+
+    if user.get('role') == 'patient':
+        return await _patient_chat_assignment(user['id'], other['id'])
+    if other.get('role') == 'patient':
+        return await _patient_chat_assignment(other['id'], user['id'])
+
+    return bool(await _chat_trial_ids(user) & await _chat_trial_ids(other))
+
+
+async def _create_chat_message(cid: str, content: str, sender_id: str,
+                               conv: Optional[dict] = None) -> dict:
+    conv = conv or await _require_conversation_member(cid, sender_id)
+    clean_content = content.strip()
+    if not clean_content:
+        raise HTTPException(422, 'Message content cannot be blank')
+    created_at = now()
+    msg = {
+        'id': str(uuid.uuid4()), 'conversation_id': cid,
+        'sender_id': sender_id, 'content': clean_content,
+        'created_at': created_at, 'read_by': {sender_id: created_at},
+    }
+    await db.messages.insert_one(msg)
+    await db.conversations.update_one(
+        {'id': cid},
+        {'$set': {'last_message': clean_content, 'updated_at': created_at}})
+    return msg
+
+
 @api.get('/conversations')
 async def list_conversations(user=Depends(current_user)):
     convs = await db.conversations.find({'participant_ids': user['id']}, {'_id': 0}).sort('updated_at', -1).to_list(200)
-    # enrich with other participant info + unread count
+    # enrich with other participant info + unread count + caller pin/mute flags
     out = []
     for c in convs:
         unread = await db.messages.count_documents({'conversation_id': c['id'], 'sender_id': {'$ne': user['id']}, f'read_by.{user["id"]}': {'$exists': False}})
         # other participant for 1-1
         other = None
+        participants = None
         if not c.get('is_group'):
             other_id = next((p for p in c['participant_ids'] if p != user['id']), None)
             if other_id:
                 other = await db.users.find_one({'id': other_id}, {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0})
-        out.append({**c, 'unread_count': unread, 'other_participant': other})
+        else:
+            rows = await db.users.find(
+                {'id': {'$in': c.get('participant_ids', [])}},
+                {'_id': 0, 'id': 1, 'full_name': 1, 'role': 1,
+                 'organization': 1, 'avatar_initials': 1, 'is_online': 1},
+            ).to_list(100)
+            participants = rows
+        out.append({
+            **c, 'unread_count': unread, 'other_participant': other,
+            'participants': participants,
+            'pinned': user['id'] in (c.get('pinned_by') or []),
+            'muted': user['id'] in (c.get('muted_by') or []),
+        })
     return out
+
+
+class ConversationFlagsIn(BaseModel):
+    pinned: Optional[bool] = None
+    muted: Optional[bool] = None
+
+
+@api.post('/conversations/{cid}/flags')
+async def set_conversation_flags(cid: str, body: ConversationFlagsIn,
+                                 user=Depends(current_user)):
+    """Per-user pin/mute stored on the conversation (member-gated)."""
+    await _require_conversation_member(cid, user['id'])
+    if body.pinned is None and body.muted is None:
+        raise HTTPException(400, 'Provide pinned and/or muted')
+    for field, value in (('pinned_by', body.pinned), ('muted_by', body.muted)):
+        if value is None:
+            continue
+        op = {'$addToSet' if value else '$pull': {field: user['id']}}
+        await db.conversations.update_one({'id': cid}, op)
+    fresh = await db.conversations.find_one({'id': cid}, {'_id': 0})
+    return {'ok': True,
+            'pinned': user['id'] in (fresh.get('pinned_by') or []),
+            'muted': user['id'] in (fresh.get('muted_by') or [])}
 
 @api.post('/conversations')
 async def create_conversation(body: ConversationIn, user=Depends(current_user)):
     pids = sorted(set(body.participant_ids + [user['id']]))
+    if len(pids) < 2:
+        raise HTTPException(400, 'A conversation requires another participant')
+    if not body.is_group and len(pids) != 2:
+        raise HTTPException(400, 'A direct conversation must have exactly two participants')
+    participants = await db.users.find(
+        {'id': {'$in': pids}},
+        {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0}
+    ).to_list(len(pids))
+    if len(participants) != len(pids):
+        raise HTTPException(404, 'One or more participants were not found')
+    for participant in participants:
+        if participant['id'] != user['id'] and not await _can_chat_with(user, participant):
+            raise HTTPException(
+                403,
+                'You may only message members of your organization or assigned clinical team')
     if not body.is_group:
         existing = await db.conversations.find_one({'participant_ids': pids, 'is_group': False}, {'_id': 0})
         if existing: return existing
@@ -1546,8 +3668,24 @@ async def create_conversation(body: ConversationIn, user=Depends(current_user)):
     await db.conversations.insert_one(doc)
     return serialize(doc)
 
+
+@api.get('/messaging/recipients')
+async def list_messaging_recipients(user=Depends(current_user)):
+    """Only return people the caller may legally start a conversation with."""
+    candidates = await db.users.find(
+        {'id': {'$ne': user['id']}, 'status': {'$ne': 'Suspended'}},
+        {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0,
+         'reset_otp': 0, 'reset_otp_hash': 0},
+    ).to_list(500)
+    return [
+        candidate for candidate in candidates
+        if await _can_chat_with(user, candidate)
+    ]
+
+
 @api.get('/conversations/{cid}/messages')
 async def get_messages(cid: str, user=Depends(current_user)):
+    await _require_conversation_member(cid, user['id'])
     msgs = await db.messages.find({'conversation_id': cid}, {'_id': 0}).sort('created_at', 1).to_list(500)
     # mark all as read
     await db.messages.update_many(
@@ -1556,6 +3694,35 @@ async def get_messages(cid: str, user=Depends(current_user)):
     )
     return msgs
 
+
+@api.post('/conversations/{cid}/messages')
+async def post_message(cid: str, body: ChatMessageIn,
+                       user=Depends(current_user)):
+    conv = await _require_conversation_member(cid, user['id'])
+    msg = await _create_chat_message(cid, body.content, user['id'], conv)
+    out = {**serialize(msg), 'type': 'message'}
+    for pid in conv['participant_ids']:
+        await manager.send(pid, out)
+    return out
+
+
+@api.post('/conversations/{cid}/read')
+async def mark_conversation_read(cid: str, user=Depends(current_user)):
+    conv = await _require_conversation_member(cid, user['id'])
+    read_at = now()
+    result = await db.messages.update_many(
+        {'conversation_id': cid, 'sender_id': {'$ne': user['id']},
+         f'read_by.{user["id"]}': {'$exists': False}},
+        {'$set': {f'read_by.{user["id"]}': read_at}})
+    event = {
+        'type': 'read', 'conversation_id': cid,
+        'user_id': user['id'], 'read_at': iso(read_at),
+    }
+    for pid in conv['participant_ids']:
+        if pid != user['id']:
+            await manager.send(pid, event)
+    return {'ok': True, 'count': result.modified_count, 'read_at': iso(read_at)}
+
 # ── Users (directory) ───────────────────────────────────────────────────────
 @api.get('/users')
 async def list_users(user=Depends(current_user)):
@@ -1563,6 +3730,15 @@ async def list_users(user=Depends(current_user)):
     return [u for u in users if u['id'] != user['id']]
 
 TEAM_ROLES = ['pi', 'crc', 'sponsor', 'cro', 'smo', 'site']
+
+def _can_manage_team_member(user: dict, member: dict) -> bool:
+    return bool(
+        user.get('org_admin')
+        and user.get('id') != member.get('id')
+        and (user.get('organization') or '').strip()
+        and (user.get('organization') or '').strip()
+            == (member.get('organization') or '').strip()
+    )
 
 @api.get('/team')
 async def list_team(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 'smo', 'site'))):
@@ -1606,12 +3782,143 @@ async def list_team(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 's
     if not ors:
         return []
     members = await db.users.find(
-        {'role': {'$in': TEAM_ROLES}, '$or': ors},
+        {
+            'role': {'$in': TEAM_ROLES},
+            'status': {'$nin': ['Inactive', 'Removed', 'Suspended']},
+            '$or': ors,
+        },
         {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0, 'reset_otp': 0}
     ).to_list(500)
-    return [m for m in members if m['id'] != user['id']]
+    return [
+        {
+            **member,
+            'designation': (
+                member.get('designation')
+                or (member.get('profile') or {}).get('designation')
+                or ''
+            ),
+            'capabilities': {
+                'can_edit': _can_manage_team_member(user, member),
+                'can_remove': _can_manage_team_member(user, member),
+            },
+        }
+        for member in members if member['id'] != user['id']
+    ]
 
 # ── WebSocket chat ──────────────────────────────────────────────────────────
+async def _manageable_team_member(user: dict, member_id: str) -> dict:
+    member = await db.users.find_one(
+        {'id': member_id, 'role': {'$in': TEAM_ROLES}},
+        {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0},
+    )
+    if not member:
+        raise HTTPException(404, 'Team member not found')
+    scoped = await list_team(user)
+    if not any(row.get('id') == member_id for row in scoped):
+        raise HTTPException(403, 'This team member is outside your scope')
+    if not _can_manage_team_member(user, member):
+        raise HTTPException(403, 'Organization admin permission is required')
+    return member
+
+async def _ensure_pi_remains(member: dict, next_role: Optional[str] = None):
+    if member.get('role') != 'pi' or next_role == 'pi':
+        return
+    remaining = await db.users.count_documents({
+        'organization': member.get('organization'),
+        'role': 'pi',
+        'id': {'$ne': member['id']},
+        'status': {'$nin': ['Inactive', 'Removed', 'Suspended']},
+    })
+    if remaining < 1:
+        raise HTTPException(409, 'At least one active PI must remain in the organization')
+
+@api.patch('/team/{member_id}')
+async def patch_team_member(
+    member_id: str,
+    body: TeamMemberPatchIn,
+    user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 'smo', 'site')),
+):
+    member = await _manageable_team_member(user, member_id)
+    values = {key: value for key, value in body.dict().items() if value is not None}
+    if not values:
+        raise HTTPException(400, 'No team member changes supplied')
+    if 'role' in values:
+        values['role'] = values['role'].strip().lower()
+        if values['role'] not in TEAM_ROLES:
+            raise HTTPException(400, 'Unsupported team role')
+        await _ensure_pi_remains(member, values['role'])
+    updates = {}
+    for field in ('full_name', 'phone', 'role'):
+        if field in values:
+            updates[field] = values[field].strip()
+    if 'designation' in values:
+        updates['profile.designation'] = values['designation'].strip()
+    updates.update({
+        'updated_at': now(),
+        'updated_by': user['id'],
+        'updated_by_name': user.get('full_name') or '',
+    })
+    await db.users.update_one({'id': member_id}, {'$set': updates})
+    await db.notifications.insert_one({
+        'id': str(uuid.uuid4()),
+        'user_id': member_id,
+        'title': 'Team profile updated',
+        'body': f"{user.get('full_name') or 'Your organization admin'} updated your team profile.",
+        'type': 'team',
+        'read': False,
+        'created_at': now(),
+    })
+    await write_audit(
+        user,
+        'team.member_update',
+        f"Updated team member {member.get('full_name') or member_id}",
+        target_id=member_id,
+        changes=values,
+    )
+    fresh = await db.users.find_one(
+        {'id': member_id},
+        {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0},
+    )
+    return serialize({
+        **fresh,
+        'designation': (fresh.get('profile') or {}).get('designation') or '',
+        'capabilities': {'can_edit': True, 'can_remove': True},
+    })
+
+@api.delete('/team/{member_id}')
+async def remove_team_member(
+    member_id: str,
+    user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 'smo', 'site')),
+):
+    member = await _manageable_team_member(user, member_id)
+    await _ensure_pi_remains(member, None)
+    removed_at = now()
+    await db.notifications.insert_one({
+        'id': str(uuid.uuid4()),
+        'user_id': member_id,
+        'title': 'Organization access removed',
+        'body': f"{user.get('full_name') or 'Your organization admin'} removed your organization access.",
+        'type': 'team',
+        'read': False,
+        'created_at': removed_at,
+    })
+    await db.users.update_one(
+        {'id': member_id},
+        {'$set': {
+            'status': 'Suspended',
+            'removed_from_team_at': removed_at,
+            'removed_from_team_by': user['id'],
+            'force_logout_at': removed_at,
+        }},
+    )
+    await write_audit(
+        user,
+        'team.member_remove',
+        f"Removed team member {member.get('full_name') or member_id}",
+        target_id=member_id,
+    )
+    return {'removed': True, 'member_id': member_id}
+
 class WSManager:
     def __init__(self):
         self.connections: Dict[str, WebSocket] = {}
@@ -1638,8 +3945,14 @@ manager = WSManager()
 async def ws_endpoint(websocket: WebSocket, token: str = Query(...)):
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGO])
+        if payload.get('kind') != 'access':
+            raise jwt.InvalidTokenError()
         user_id = payload['sub']
     except jwt.PyJWTError:
+        await websocket.close(code=1008); return
+    user = await db.users.find_one(
+        {'id': user_id}, {'_id': 0, 'status': 1})
+    if not user or user.get('status') == 'Suspended':
         await websocket.close(code=1008); return
 
     await manager.connect(websocket, user_id)
@@ -1651,40 +3964,42 @@ async def ws_endpoint(websocket: WebSocket, token: str = Query(...)):
 
             if event == 'message':
                 cid = data['conversation_id']
-                conv = await db.conversations.find_one({'id': cid})
-                if not conv or user_id not in conv['participant_ids']:
+                conv = await db.conversations.find_one(
+                    {'id': cid, 'participant_ids': user_id}, {'_id': 0})
+                if not conv:
                     continue
-                mid = str(uuid.uuid4())
-                msg = {
-                    'id': mid, 'conversation_id': cid, 'sender_id': user_id,
-                    'content': data['content'], 'created_at': now(),
-                    'read_by': {user_id: now()},
-                }
-                await db.messages.insert_one(msg)
-                await db.conversations.update_one({'id': cid}, {'$set': {'last_message': data['content'], 'updated_at': now()}})
-                out = {**msg, 'created_at': iso(msg['created_at']), 'type': 'message'}
+                try:
+                    msg = await _create_chat_message(
+                        cid, str(data.get('content') or ''), user_id, conv)
+                except HTTPException:
+                    continue
+                out = {**serialize(msg), 'type': 'message'}
                 for pid in conv['participant_ids']:
                     await manager.send(pid, out)
 
             elif event == 'typing':
                 cid = data['conversation_id']
-                conv = await db.conversations.find_one({'id': cid})
-                if not conv: continue
+                conv = await db.conversations.find_one(
+                    {'id': cid, 'participant_ids': user_id}, {'_id': 0})
+                if not conv:
+                    continue
                 for pid in conv['participant_ids']:
                     if pid != user_id:
                         await manager.send(pid, {'type': 'typing', 'conversation_id': cid, 'user_id': user_id})
 
             elif event == 'read':
                 cid = data['conversation_id']
+                conv = await db.conversations.find_one(
+                    {'id': cid, 'participant_ids': user_id}, {'_id': 0})
+                if not conv:
+                    continue
                 await db.messages.update_many(
                     {'conversation_id': cid, 'sender_id': {'$ne': user_id}},
                     {'$set': {f'read_by.{user_id}': now()}}
                 )
-                conv = await db.conversations.find_one({'id': cid})
-                if conv:
-                    for pid in conv['participant_ids']:
-                        if pid != user_id:
-                            await manager.send(pid, {'type': 'read', 'conversation_id': cid, 'user_id': user_id})
+                for pid in conv['participant_ids']:
+                    if pid != user_id:
+                        await manager.send(pid, {'type': 'read', 'conversation_id': cid, 'user_id': user_id})
     except WebSocketDisconnect:
         manager.disconnect(user_id)
         await db.users.update_one({'id': user_id}, {'$set': {'is_online': False, 'last_seen': now()}})
@@ -2049,26 +4364,43 @@ class VisitPatch(BaseModel):
     note: Optional[str] = None
 
 @api.patch('/visits/{visit_id}')
-async def patch_visit(visit_id: str, body: VisitPatch, user=Depends(require_roles('pi', 'crc', 'sponsor'))):
+async def patch_visit(visit_id: str, body: VisitPatch,
+                      user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))):
+    visit = await db.visits.find_one({'id': visit_id}, {'_id': 0})
+    if not visit:
+        raise HTTPException(404, 'Visit not found')
+    trial = await db.trials.find_one({'id': visit.get('trial_id')}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
     upd = {k: v for k, v in body.dict().items() if v is not None}
     if not upd: raise HTTPException(400, 'Nothing to update')
     upd['updated_by'] = user['id']; upd['updated_at'] = now()
-    r = await db.visits.update_one({'id': visit_id}, {'$set': upd})
-    if r.matched_count == 0: raise HTTPException(404, 'Visit not found')
+    await db.visits.update_one({'id': visit_id}, {'$set': upd})
     v = await db.visits.find_one({'id': visit_id}, {'_id': 0})
     await write_audit(user, 'visit.patch', f'Updated visit {visit_id}: {", ".join(sorted(set(upd) - {"updated_by", "updated_at"}))}',
-                      target_id=visit_id, changes=upd)
+                      target_id=visit_id, trial_id=trial['id'], changes=upd)
     return v
 
 # ── Visit-instance mutations (per-patient — never touches the template) ─────
 class VisitInstancePatch(BaseModel):
-    status: Optional[Literal['scheduled', 'upcoming', 'completed', 'missed', 'overdue']] = None
+    status: Optional[Literal[
+        'scheduled', 'upcoming', 'completed', 'missed', 'overdue',
+        'screen_pass', 'screen_fail', 'withdrawn', 'dropout',
+    ]] = None
     scheduled_date: Optional[str] = None
-    note: Optional[str] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+class VisitInstanceTaskPatch(BaseModel):
+    completed: bool
+
+class VisitInstanceCommentIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
 
 @api.patch('/visit-instances/{instance_id}')
 async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
-                               user=Depends(require_roles('pi', 'crc', 'sponsor'))):
+                               user=Depends(require_roles('pi', 'crc'))):
     inst = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
     if not inst:
         raise HTTPException(404, 'Visit instance not found')
@@ -2078,6 +4410,14 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
     upd: Dict = {}
     if body.status is not None:
         upd['status'] = body.status
+        if body.status == 'completed':
+            upd['completed_by'] = user['id']
+            upd['completed_by_name'] = user.get('full_name') or ''
+            upd['completed_at'] = now()
+        elif inst.get('status') == 'completed':
+            upd['completed_by'] = None
+            upd['completed_by_name'] = None
+            upd['completed_at'] = None
     if body.note is not None:
         upd['note'] = body.note
     if body.scheduled_date is not None:
@@ -2103,11 +4443,125 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
                       target_id=instance_id, patient_id=inst.get('patient_id'),
                       trial_id=inst.get('trial_id'),
                       changes={k: iso(v) for k, v in upd.items()})
-    return fresh
+    return await _ensure_visit_instance_workflow(fresh)
+
+
+@api.patch('/visit-instances/{instance_id}/tasks/{task_id}')
+async def patch_visit_instance_task(
+    instance_id: str,
+    task_id: str,
+    body: VisitInstanceTaskPatch,
+    user=Depends(require_roles('pi', 'crc')),
+):
+    """Complete/reopen one stable task on one patient's visit instance."""
+    inst = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
+    if not inst:
+        raise HTTPException(404, 'Visit instance not found')
+    await _require_patient(user, inst.get('patient_id'))
+    inst = await _ensure_visit_instance_workflow(inst)
+
+    task_kind = None
+    task_row = None
+    updated_tasks = None
+    for field in ('clinical_tasks', 'admin_tasks'):
+        rows = [dict(row) for row in (inst.get(field) or [])]
+        for index, row in enumerate(rows):
+            if row.get('id') == task_id:
+                task_kind = field
+                task_row = row
+                if bool(row.get('completed')) == body.completed:
+                    return inst
+                rows[index] = {
+                    **row,
+                    'completed': body.completed,
+                    'completed_by': user['id'] if body.completed else None,
+                    'completed_by_name': (user.get('full_name') or '') if body.completed else None,
+                    'completed_at': now() if body.completed else None,
+                }
+                updated_tasks = rows
+                break
+        if task_row:
+            break
+    if not task_row or not task_kind or updated_tasks is None:
+        raise HTTPException(404, 'Visit task not found')
+
+    changed_at = now()
+    await db.visit_instances.update_one(
+        {'id': instance_id},
+        {'$set': {
+            task_kind: updated_tasks,
+            'updated_by': user['id'],
+            'updated_at': changed_at,
+        }},
+    )
+    fresh = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
+    await write_audit(
+        user,
+        'visit_instance.task_complete' if body.completed else 'visit_instance.task_reopen',
+        f"{'Completed' if body.completed else 'Reopened'} "
+        f"{'clinical' if task_kind == 'clinical_tasks' else 'administrative'} "
+        f"task {task_row.get('label', '')}",
+        target_id=instance_id,
+        task_id=task_id,
+        patient_id=inst.get('patient_id'),
+        trial_id=inst.get('trial_id'),
+        changes={'completed': body.completed, 'task_kind': task_kind},
+    )
+    return await _ensure_visit_instance_workflow(fresh)
+
+
+@api.post('/visit-instances/{instance_id}/comments')
+async def add_visit_instance_comment(
+    instance_id: str,
+    body: VisitInstanceCommentIn,
+    user=Depends(require_roles('pi', 'crc')),
+):
+    """Append an attributed, immutable clinical/admin visit comment."""
+    inst = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
+    if not inst:
+        raise HTTPException(404, 'Visit instance not found')
+    await _require_patient(user, inst.get('patient_id'))
+    inst = await _ensure_visit_instance_workflow(inst)
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, 'Comment cannot be blank')
+    created_at = now()
+    comment = {
+        'id': str(uuid.uuid4()),
+        'text': text,
+        'created_by': user['id'],
+        'created_by_name': user.get('full_name') or '',
+        'created_at': created_at,
+    }
+    await db.visit_instances.update_one(
+        {'id': instance_id},
+        {
+            '$push': {'comments': comment},
+            '$set': {'updated_by': user['id'], 'updated_at': created_at},
+        },
+    )
+    fresh = await db.visit_instances.find_one({'id': instance_id}, {'_id': 0})
+    await write_audit(
+        user,
+        'visit_instance.comment_add',
+        f"Added a comment to visit instance {instance_id} ({inst.get('name', '')})",
+        target_id=instance_id,
+        comment_id=comment['id'],
+        patient_id=inst.get('patient_id'),
+        trial_id=inst.get('trial_id'),
+    )
+    return await _ensure_visit_instance_workflow(fresh)
 
 # ── Visit-schedule review (PI approves or flags a trial's schedule) ─────────
 class ScheduleFlagIn(BaseModel):
     reason: str
+
+class ScheduleDecisionIn(BaseModel):
+    notes: Optional[str] = Field(default='', max_length=1000)
+
+class ScheduleRejectIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+    notes: Optional[str] = Field(default='', max_length=1000)
 
 async def _notify_trial_sponsors(trial, title, body_text):
     """Notify the trial's sponsor users: its creator (if sponsor/cro) plus every
@@ -2162,6 +4616,141 @@ async def approve_schedule(trial_id: str, user=Depends(require_roles('pi'))):
 async def flag_schedule(trial_id: str, body: ScheduleFlagIn, user=Depends(require_roles('pi'))):
     return await _review_schedule(trial_id, user, 'flagged', reason=body.reason)
 
+async def _refresh_trial_schedule_status(trial_id: str):
+    """Keep the legacy trial-level status useful without losing per-site state.
+
+    A rejected site makes the aggregate flagged. The schedule becomes approved
+    only after every assigned site review is approved; otherwise it is pending.
+    """
+    rows = await db.schedule_reviews.find(
+        {'trial_id': trial_id}, {'_id': 0, 'status': 1}).to_list(1000)
+    assigned = [row for row in rows if row.get('status') != 'pending_assignment']
+    statuses = {row.get('status') for row in assigned}
+    if 'rejected' in statuses:
+        status = 'flagged'
+    elif assigned and statuses == {'approved'}:
+        status = 'approved'
+    else:
+        status = 'pending_review'
+    await db.trials.update_one(
+        {'id': trial_id},
+        {'$set': {'schedule_status': status, 'schedule_status_updated_at': now()}})
+    return status
+
+async def _schedule_review_row(row: dict) -> dict:
+    trial = await db.trials.find_one({'id': row['trial_id']}, {'_id': 0}) or {}
+    share = await db.shares.find_one({'id': row.get('share_id')}, {'_id': 0}) or {}
+    version = await db.schedule_versions.find_one(
+        {'id': row.get('version_id')}, {'_id': 0}) if row.get('version_id') else None
+    visits = (
+        row.get('visit_snapshot')
+        or (version or {}).get('visits')
+        or share.get('visit_snapshot')
+    )
+    # Legacy shares made before version snapshots existed retain their old
+    # behavior, while every new review is pinned to the immutable shared rows.
+    if visits is None:
+        visits = await db.visits.find(
+            {'trial_id': row['trial_id']}, {'_id': 0},
+        ).sort('visit_number', 1).to_list(500)
+    document = (
+        row.get('document') or (version or {}).get('document')
+        or share.get('document')
+    )
+    if not document and row.get('document_id'):
+        stored_document = await db.files.find_one(
+            {'id': row['document_id']}, {'_id': 0, 'key': 0})
+        document = _shared_document_metadata(stored_document)
+    return serialize({
+        **row,
+        'protocol_id': trial.get('protocol_id') or '',
+        'trial_title': trial.get('title') or '',
+        'phase': trial.get('phase') or '',
+        'condition': trial.get('condition') or '',
+        'visits': visits,
+        'schedule_version': (
+            row.get('schedule_version') or (version or {}).get('version')
+            or share.get('schedule_version') or 0
+        ),
+        'version_id': row.get('version_id') or share.get('version_id') or '',
+        'changed_visits': (
+            row.get('changed_visits')
+            or (version or {}).get('changed_visits')
+            or share.get('changed_visits')
+            or []
+        ),
+        'document': document,
+        'share_token': share.get('token') or '',
+        'share_expires_at': share.get('expires_at'),
+    })
+
+@api.get('/schedule-reviews')
+async def list_schedule_reviews(user=Depends(require_roles('pi'))):
+    """PI inbox of schedule packages explicitly shared with this user."""
+    rows = await db.schedule_reviews.find(
+        {'reviewer_id': user['id']}, {'_id': 0}).sort('created_at', -1).to_list(500)
+    return [await _schedule_review_row(row) for row in rows]
+
+@api.get('/schedule-reviews/{review_id}')
+async def get_schedule_review(review_id: str, user=Depends(require_roles('pi'))):
+    row = await db.schedule_reviews.find_one({'id': review_id}, {'_id': 0})
+    if not row:
+        raise HTTPException(404, 'Schedule review not found')
+    if row.get('reviewer_id') != user['id']:
+        raise HTTPException(403, 'This schedule review is assigned to another investigator')
+    return await _schedule_review_row(row)
+
+async def _decide_schedule_review(review_id: str, user: dict, status: str,
+                                  notes: str = '', reason: str = ''):
+    row = await db.schedule_reviews.find_one({'id': review_id}, {'_id': 0})
+    if not row:
+        raise HTTPException(404, 'Schedule review not found')
+    if row.get('reviewer_id') != user['id']:
+        raise HTTPException(403, 'This schedule review is assigned to another investigator')
+    if row.get('status') != 'pending':
+        raise HTTPException(409, f"Schedule was already {row.get('status', 'reviewed')}")
+    updates = {
+        'status': status,
+        'pi_notes': (notes or '').strip(),
+        'reviewed_by': user['id'],
+        'reviewed_at': now(),
+    }
+    if status == 'rejected':
+        updates['rejection_reason'] = reason.strip()
+    await db.schedule_reviews.update_one({'id': review_id}, {'$set': updates})
+    aggregate = await _refresh_trial_schedule_status(row['trial_id'])
+    trial = await db.trials.find_one({'id': row['trial_id']}, {'_id': 0}) or {}
+    label = trial.get('protocol_id') or trial.get('title') or row['trial_id']
+    if status == 'approved':
+        title = f'Schedule approved · {label}'
+        body_text = f"{user['full_name']} approved the schedule for {row.get('site_name') or 'their site'}."
+    else:
+        title = f'Schedule rejected · {label}'
+        body_text = (
+            f"{user['full_name']} rejected the schedule for "
+            f"{row.get('site_name') or 'their site'}: {reason.strip()}"
+        )
+    notified = await _notify_trial_sponsors(trial, title, body_text)
+    await write_audit(
+        user, f'schedule_review.{status}',
+        f"{label} schedule {status} for {row.get('site_name') or 'site'}",
+        target_id=review_id, trial_id=row['trial_id'], share_id=row.get('share_id'),
+        notes=(notes or '').strip(), reason=reason.strip(), notified=notified,
+    )
+    fresh = await db.schedule_reviews.find_one({'id': review_id}, {'_id': 0})
+    return {**await _schedule_review_row(fresh), 'trial_schedule_status': aggregate}
+
+@api.post('/schedule-reviews/{review_id}/approve')
+async def approve_schedule_review(review_id: str, body: ScheduleDecisionIn,
+                                  user=Depends(require_roles('pi'))):
+    return await _decide_schedule_review(review_id, user, 'approved', notes=body.notes or '')
+
+@api.post('/schedule-reviews/{review_id}/reject')
+async def reject_schedule_review(review_id: str, body: ScheduleRejectIn,
+                                 user=Depends(require_roles('pi'))):
+    return await _decide_schedule_review(
+        review_id, user, 'rejected', notes=body.notes or '', reason=body.reason)
+
 # ── Tasks queue (pi/crc action items, computed on read) ─────────────────────
 @api.get('/tasks')
 async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
@@ -2199,8 +4788,32 @@ async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
                 'priority': 'high' if overdue else 'medium',
             })
 
+    if user['role'] == 'pi':
+        pending_reviews = await db.schedule_reviews.find(
+            {'reviewer_id': user['id'], 'status': 'pending'}, {'_id': 0}
+        ).sort('created_at', 1).to_list(500)
+        review_trial_ids = sorted({row['trial_id'] for row in pending_reviews})
+        review_trials = await db.trials.find(
+            {'id': {'$in': review_trial_ids}} if review_trial_ids else {'id': {'$in': []}},
+            {'_id': 0}).to_list(500)
+        review_trial_map = {trial['id']: trial for trial in review_trials}
+        for review in pending_reviews:
+            t = review_trial_map.get(review['trial_id'], {})
+            tasks.append({
+                'id': f"schedule_review:{review['id']}",
+                'type': 'schedule_review',
+                'title': f"Review visit schedule · {t.get('protocol_id') or t.get('title', '')}",
+                'subtitle': review.get('site_name') or t.get('title', ''),
+                'due': None,
+                'trial_id': review['trial_id'],
+                'schedule_review_id': review['id'],
+                'priority': 'medium',
+            })
+
     trial_ids = sorted({p['trial_id'] for p in patients if p.get('trial_id')})
-    if trial_ids:
+    if user['role'] == 'pi' and not pending_reviews and trial_ids:
+        # Compatibility for older trials created before per-site submissions
+        # existed. Newly shared schedules always use the assigned queue above.
         pending = await db.trials.find(
             {'id': {'$in': trial_ids}, 'schedule_status': {'$nin': ['approved', 'flagged']}},
             {'_id': 0}).to_list(200)
@@ -2323,6 +4936,123 @@ async def team_calendar(from_: Optional[str] = Query(None, alias='from'),
     return out
 
 # ── Reminders (patient medication reminders) ──────────────────────────────
+async def _clinical_dashboard_payload(user: dict) -> dict:
+    """Normalized, relationship-scoped dashboard for PI and CRC users."""
+    role = user['role']
+    key = 'pi_id' if role == 'pi' else 'crc_id'
+    patients = await db.patients.find(
+        {key: user['id']}, {'_id': 0}).to_list(500)
+    patient_ids = [patient['id'] for patient in patients]
+    trials = await list_trials(user)
+    tasks = await my_tasks(user)
+
+    today = now().date()
+    upcoming = await team_calendar(
+        from_=today.isoformat(),
+        to=(today + timedelta(days=6)).isoformat(),
+        user=user,
+    )
+    today_visits = [
+        visit for visit in upcoming
+        if (visit.get('scheduled_date') or '')[:10] == today.isoformat()
+    ]
+    start_today = datetime(
+        today.year, today.month, today.day, tzinfo=timezone.utc)
+    overdue_count = 0
+    if patient_ids:
+        overdue_count = await db.visit_instances.count_documents({
+            'patient_id': {'$in': patient_ids},
+            'scheduled_date': {'$lt': start_today},
+            'status': {'$nin': ['completed', 'missed']},
+        })
+    completed_today = sum(
+        1 for visit in today_visits if visit.get('status') == 'completed')
+    pending_today = sum(
+        1 for visit in today_visits
+        if visit.get('status') not in ('completed', 'missed'))
+
+    sponsor_names = sorted({
+        (trial.get('sponsor_name') or '').strip()
+        for trial in trials if (trial.get('sponsor_name') or '').strip()
+    })
+    site_names = {
+        name for trial in trials for name in (trial.get('site_names') or [])
+        if name
+    }
+    own_org = (user.get('organization') or '').strip()
+    if own_org:
+        site_names.add(own_org)
+
+    pi_ids = {patient.get('pi_id') for patient in patients
+              if patient.get('pi_id')}
+    crc_ids = {patient.get('crc_id') for patient in patients
+               if patient.get('crc_id')}
+    team_ids = pi_ids | crc_ids | {user['id']}
+    team_rows = await db.users.find(
+        {'id': {'$in': list(team_ids)}},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'role': 1,
+         'organization': 1, 'avatar_initials': 1},
+    ).sort('full_name', 1).to_list(500)
+
+    patient_counts: Dict[str, int] = {}
+    for patient in patients:
+        trial_id = patient.get('trial_id')
+        if trial_id:
+            patient_counts[trial_id] = patient_counts.get(trial_id, 0) + 1
+    for trial in trials:
+        trial['my_patient_count'] = patient_counts.get(trial['id'], 0)
+
+    return serialize({
+        'role': role,
+        'generated_at': now(),
+        'totals': {
+            'trials': len(trials),
+            'patients': len(patients),
+            'sites': len(site_names),
+            'sponsors': len(sponsor_names),
+            'team': len(team_rows),
+            'pis': sum(1 for member in team_rows
+                       if member.get('role') == 'pi'),
+            'crcs': sum(1 for member in team_rows
+                        if member.get('role') == 'crc'),
+        },
+        'today': {
+            'date': today.isoformat(),
+            'total': len(today_visits),
+            'completed': completed_today,
+            'pending': pending_today,
+            'overdue': overdue_count,
+        },
+        'trials': trials,
+        'patients': patients,
+        'tasks': tasks,
+        'today_visits': today_visits,
+        'upcoming_visits': upcoming,
+        'team': team_rows,
+        'sites': sorted(site_names),
+        'sponsors': sponsor_names,
+        'capabilities': {
+            'can_add_patient': True,
+            'can_create_trial': role == 'pi',
+            'can_review_schedules': role == 'pi',
+            'can_complete_visits': True,
+            'can_invite_patients': True,
+            'can_view_team_calendar': True,
+            'can_manage_organization': bool(user.get('org_admin')),
+        },
+    })
+
+
+@api.get('/pi/dashboard', dependencies=[Depends(require_roles('pi'))])
+async def pi_dashboard(user=Depends(current_user)):
+    return await _clinical_dashboard_payload(user)
+
+
+@api.get('/crc/dashboard', dependencies=[Depends(require_roles('crc'))])
+async def crc_dashboard(user=Depends(current_user)):
+    return await _clinical_dashboard_payload(user)
+
+
 class ReminderIn(BaseModel):
     medication: str; dosage: str; time: str; enabled: bool = True
 
@@ -2606,9 +5336,36 @@ class InvitationIn(BaseModel):
     organization: Optional[str] = None   # defaults to the inviter's org
     site: Optional[str] = None
 
+def normalize_invite_code(value: Optional[str]) -> str:
+    """Canonical friendly code while retaining legacy UUID-token support."""
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    raw = raw.rstrip('/').rsplit('/', 1)[-1].split('?', 1)[0].strip()
+    compact = re.sub(r'[^A-Za-z0-9]', '', raw)
+    if compact[:3].upper() == 'MTB' and len(compact) in (7, 11):
+        suffix = compact[3:].upper()
+        return 'MTB-' + '-'.join(
+            suffix[index:index + 4] for index in range(0, len(suffix), 4))
+    if re.fullmatch(r'[A-Fa-f0-9]{32}', compact):
+        return compact.lower()
+    return raw
+
+def new_invite_code() -> str:
+    suffix = uuid.uuid4().hex[:8].upper()
+    return f'MTB-{suffix[:4]}-{suffix[4:]}'
+
+async def _find_invitation_by_code(value: str, projection=None):
+    raw = str(value or '').strip()
+    normalized = normalize_invite_code(raw)
+    candidates = list(dict.fromkeys(
+        candidate for candidate in (normalized, raw) if candidate))
+    return await db.invitations.find_one(
+        {'token': {'$in': candidates}}, projection)
+
 def _invite_link(token: str) -> str:
     base = os.environ.get('PUBLIC_APP_URL', 'https://my-trial-board.app')
-    return f"{base}/invite/{token}"
+    return f"{base}/invite/{normalize_invite_code(token)}"
 
 def _can_manage_invitation(inv: dict, user: dict) -> bool:
     """The inviter — or anyone in the same organization — may manage it."""
@@ -2619,7 +5376,7 @@ def _can_manage_invitation(inv: dict, user: dict) -> bool:
 async def create_invitation(body: InvitationIn, user=Depends(current_user)):
     if not body.email and not body.phone:
         raise HTTPException(400, 'Email or phone required')
-    token = uuid.uuid4().hex
+    token = new_invite_code()
     doc = {
         'id': str(uuid.uuid4()), 'token': token,
         'email': (body.email or '').lower(), 'phone': body.phone or '',
@@ -2670,7 +5427,7 @@ def _invitation_status(inv: dict) -> str:
 @api.get('/invitations/{token}')
 async def resolve_invitation(token: str):
     """Public: resolve an invite token for the accept screen."""
-    inv = await db.invitations.find_one({'token': token}, {'_id': 0})
+    inv = await _find_invitation_by_code(token, {'_id': 0})
     if not inv:
         raise HTTPException(404, 'Invitation not found')
     inviter = await db.users.find_one(
@@ -2697,29 +5454,23 @@ class InvitationAcceptIn(BaseModel):
 
 @api.post('/invitations/{token}/accept')
 async def accept_invitation(token: str, body: Optional[InvitationAcceptIn] = None):
-    """Public: mark an invitation accepted (the invitee then registers/signs in)."""
-    inv = await db.invitations.find_one({'token': token})
+    """Validate an invite and return registration prefills without consuming it."""
+    inv = await _find_invitation_by_code(token)
     if not inv:
         raise HTTPException(404, 'Invitation not found')
     st = _invitation_status(inv)
     if st != 'pending':
         raise HTTPException(400, f'This invitation is {st} and can no longer be accepted')
-    accepted_details = {
+    registration_details = {
         'full_name': (body.full_name if body else inv.get('full_name')) or '',
         'designation': (body.designation if body else inv.get('designation')) or '',
         'phone': (body.phone if body else inv.get('phone')) or '',
-        'role': (body.role if body and body.role else inv.get('role')) or 'patient',
+        'role': inv.get('role') or 'patient',
     }
-    await db.invitations.update_one(
-        {'id': inv['id']},
-        {'$set': {'status': 'accepted', 'accepted_at': now(), **accepted_details}},
-    )
-    await write_audit(None, 'invitation.accept',
-                      f"Invitation for {inv.get('email') or inv.get('phone')} accepted",
-                      target_id=inv['id'])
     return {
-        'ok': True, 'status': 'accepted', 'email': inv.get('email', ''),
-        'org': inv.get('org', ''), **accepted_details,
+        'ok': True, 'status': 'pending', 'registration_required': True,
+        'email': inv.get('email', ''), 'org': inv.get('org', ''),
+        **registration_details,
     }
 
 @api.post('/invitations/{invitation_id}/resend')
@@ -2759,20 +5510,262 @@ async def cancel_invitation(invitation_id: str, user=Depends(require_roles('pi',
     return {'ok': True, 'status': 'cancelled'}
 
 # ── Shares + PDF export ────────────────────────────────────────────────────
+class ShareSiteIn(BaseModel):
+    id: str
+    name: str = Field(min_length=1, max_length=200)
+    reviewer_id: Optional[str] = None
+
 class ShareIn(BaseModel):
     trial_id: str
     via: Literal['email', 'link', 'pdf'] = 'link'
     recipients: List[EmailStr] = []
+    sites: List[ShareSiteIn] = []
+    message: Optional[str] = Field(default='', max_length=300)
+    document_id: Optional[str] = None
+    document_name: Optional[str] = Field(default='', max_length=255)
+    version_note: Optional[str] = Field(default='', max_length=500)
+
+async def _validate_share_site(user: dict, trial: dict, site: ShareSiteIn):
+    """Validate a selected site against live trial/network relationships.
+
+    Client-provided names are display metadata only. A reviewer is accepted
+    when they are a PI already attached to this trial, or work at a site in the
+    sponsor organization's managed network.
+    """
+    reviewer = None
+    if site.reviewer_id:
+        reviewer = await db.users.find_one(
+            {'id': site.reviewer_id, 'role': 'pi'},
+            {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'organization': 1})
+        if not reviewer:
+            raise HTTPException(400, f'No PI is available for {site.name}')
+        assigned = await db.patients.find_one(
+            {'trial_id': trial['id'], 'pi_id': reviewer['id']}, {'_id': 0, 'id': 1})
+        sponsor_org = (user.get('organization') or '').strip()
+        org = await db.organizations.find_one(
+            {'name': sponsor_org}, {'_id': 0, 'id': 1}) if sponsor_org else None
+        network_site = None
+        if org and reviewer.get('organization'):
+            network_site = await db.org_sites.find_one({
+                'org_id': org['id'],
+                'name': reviewer['organization'],
+            }, {'_id': 0, 'id': 1})
+        if not assigned and not network_site:
+            raise HTTPException(403, f'{reviewer["full_name"]} is not linked to this trial network')
+    else:
+        sponsor_org = (user.get('organization') or '').strip()
+        org = await db.organizations.find_one(
+            {'name': sponsor_org}, {'_id': 0, 'id': 1}) if sponsor_org else None
+        network_site = await db.org_sites.find_one(
+            {'org_id': org['id'], 'id': site.id}, {'_id': 0, 'id': 1}) if org else None
+        if not network_site:
+            raise HTTPException(400, f'{site.name} has no assigned PI')
+    return reviewer
+
+
+_SCHEDULE_DIFF_FIELDS = (
+    'visit_number', 'name', 'day_offset', 'window_days', 'activities',
+    'checklist', 'clinical_tasks', 'admin_tasks', 'comments',
+    'extraction_warning', 'review_status', 'extracted_from_protocol',
+)
+
+
+def _schedule_visit_diff(previous: List[dict], current: List[dict]) -> List[dict]:
+    """Return a field-level diff between two immutable visit snapshots."""
+    previous_by_id = {row.get('id'): row for row in previous if row.get('id')}
+    current_by_id = {row.get('id'): row for row in current if row.get('id')}
+    changed = []
+    ordered_ids = [
+        *[row['id'] for row in current if row.get('id')],
+        *[row['id'] for row in previous
+          if row.get('id') and row['id'] not in current_by_id],
+    ]
+    for visit_id in ordered_ids:
+        before = previous_by_id.get(visit_id)
+        after = current_by_id.get(visit_id)
+        if before is None:
+            change_type = 'added'
+            changed_fields = [
+                field for field in _SCHEDULE_DIFF_FIELDS if field in (after or {})
+            ]
+        elif after is None:
+            change_type = 'removed'
+            changed_fields = [
+                field for field in _SCHEDULE_DIFF_FIELDS if field in before
+            ]
+        else:
+            changed_fields = [
+                field for field in _SCHEDULE_DIFF_FIELDS
+                if before.get(field) != after.get(field)
+            ]
+            if not changed_fields:
+                continue
+            change_type = 'modified'
+        display = after or before or {}
+        changed.append({
+            'id': visit_id,
+            'visit_number': display.get('visit_number'),
+            'name': display.get('name') or '',
+            'change_type': change_type,
+            'changed_fields': changed_fields,
+            'before': before,
+            'after': after,
+        })
+    return changed
+
+
+def _shared_document_metadata(document: Optional[dict]) -> Optional[dict]:
+    if not document:
+        return None
+    return {
+        'id': document.get('id'),
+        'name': document.get('name') or '',
+        'content_type': document.get('content_type') or '',
+        'size': document.get('size'),
+        'url': f"/api/files/{document['id']}" if document.get('id') else '',
+        'created_at': document.get('created_at'),
+    }
+
 
 @api.post('/shares', dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def create_share(body: ShareIn, user=Depends(current_user)):
+    trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
+    selected_document = None
+    if body.document_id:
+        selected_document = await db.files.find_one(
+            {'id': body.document_id}, {'_id': 0, 'key': 0})
+        if not selected_document:
+            raise HTTPException(404, 'Selected document was not found')
+        scope = selected_document.get('scope') or {}
+        if scope.get('type') != 'trial' or scope.get('id') != body.trial_id:
+            raise HTTPException(400, 'Selected document does not belong to this trial')
+        if not await _file_access_allowed(user, selected_document):
+            raise HTTPException(403, 'You do not have access to the selected document')
+    validated_sites = []
+    for site in body.sites:
+        validated_sites.append((site, await _validate_share_site(user, trial, site)))
+
+    visit_snapshot = await db.visits.find(
+        {'trial_id': body.trial_id}, {'_id': 0},
+    ).sort('visit_number', 1).to_list(500)
+    previous_version = await db.schedule_versions.find_one(
+        {'trial_id': body.trial_id},
+        {'_id': 0},
+        sort=[('version', -1)],
+    )
+    changed_visits = _schedule_visit_diff(
+        (previous_version or {}).get('visits') or [], visit_snapshot)
+    versioned_trial = await db.trials.find_one_and_update(
+        {'id': body.trial_id},
+        {
+            '$inc': {'schedule_version': 1},
+            '$set': {
+                'schedule_modified_at': now(),
+                'schedule_modified_by': user['id'],
+            },
+        },
+        projection={'_id': 0, 'schedule_version': 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    schedule_version = (versioned_trial or {}).get('schedule_version', 1)
+    version_id = str(uuid.uuid4())
+    document_metadata = _shared_document_metadata(selected_document)
+    version_doc = {
+        'id': version_id,
+        'trial_id': body.trial_id,
+        'version': schedule_version,
+        'visits': visit_snapshot,
+        'changed_visits': changed_visits,
+        'version_note': (body.version_note or '').strip(),
+        'document': document_metadata,
+        'document_id': body.document_id or None,
+        'document_name': (
+            (body.document_name or '').strip()
+            or (selected_document or {}).get('name', '')
+        ),
+        'created_by': user['id'],
+        'created_by_name': user.get('full_name') or '',
+        'created_at': now(),
+    }
+    await db.schedule_versions.insert_one(version_doc)
+
     token = uuid.uuid4().hex
     doc = {'id': str(uuid.uuid4()), 'token': token, 'trial_id': body.trial_id, 'via': body.via,
            'recipients': body.recipients, 'created_by': user['id'], 'created_at': now(),
-           'expires_at': now() + timedelta(days=7), 'views': 0}
+           'expires_at': now() + timedelta(days=7), 'views': 0,
+           'message': (body.message or '').strip(),
+           'document_id': body.document_id or None,
+           'document_name': ((body.document_name or '').strip()
+                             or (selected_document or {}).get('name', '')),
+           'version_note': (body.version_note or '').strip(),
+           'document': document_metadata,
+           'version_id': version_id,
+           'schedule_version': schedule_version,
+           'visit_snapshot': visit_snapshot,
+           'changed_visits': changed_visits,
+           'site_ids': [site.id for site, _ in validated_sites]}
     await db.shares.insert_one(doc)
+    review_ids = []
+    for site, reviewer in validated_sites:
+        rid = str(uuid.uuid4())
+        review = {
+            'id': rid,
+            'share_id': doc['id'],
+            'trial_id': body.trial_id,
+            'site_id': site.id,
+            'site_name': site.name,
+            'reviewer_id': reviewer.get('id') if reviewer else None,
+            'reviewer_name': reviewer.get('full_name') if reviewer else '',
+            'reviewer_email': reviewer.get('email') if reviewer else '',
+            'status': 'pending' if reviewer else 'pending_assignment',
+            'message': doc['message'],
+            'document_id': doc['document_id'],
+            'document_name': doc['document_name'] or f"{trial.get('protocol_id') or 'Trial'} Visit Schedule.pdf",
+            'document': document_metadata,
+            'version_note': doc['version_note'],
+            'version_id': version_id,
+            'schedule_version': schedule_version,
+            'visit_snapshot': visit_snapshot,
+            'changed_visits': changed_visits,
+            'shared_by': user['id'],
+            'shared_by_name': user.get('full_name') or '',
+            'shared_by_org': user.get('organization') or '',
+            'created_at': now(),
+        }
+        await db.schedule_reviews.insert_one(review)
+        review_ids.append(rid)
+        if reviewer:
+            await db.notifications.insert_one({
+                'id': str(uuid.uuid4()),
+                'user_id': reviewer['id'],
+                'title': f"Schedule review · {trial.get('protocol_id') or trial.get('title')}",
+                'body': doc['message'] or f"{user.get('full_name', 'Sponsor')} shared a visit schedule for review.",
+                'kind': 'schedule',
+                'trial_id': body.trial_id,
+                'schedule_review_id': rid,
+                'read': False,
+                'created_at': now(),
+            })
+    if validated_sites:
+        await _refresh_trial_schedule_status(body.trial_id)
+    await write_audit(user, 'schedule.share',
+                      f"Shared schedule for {trial.get('protocol_id') or body.trial_id}",
+                      target_id=doc['id'], trial_id=body.trial_id,
+                      delivery=body.via, recipient_count=len(body.recipients),
+                      site_count=len(validated_sites), review_ids=review_ids,
+                      schedule_version=schedule_version,
+                      changed_visit_count=len(changed_visits))
     base = os.environ.get('PUBLIC_APP_URL', 'https://my-trial-board.app')
-    return {**serialize(doc), 'share_link': f'{base}/s/{token}', 'pdf_link': f'/api/shares/{token}/schedule.pdf'}
+    return {
+        **serialize(doc),
+        'review_ids': review_ids,
+        'share_link': f'{base}/s/{token}',
+        'pdf_link': f'/api/shares/{token}/schedule.pdf',
+    }
 
 @api.get('/shares/{token}/schedule.pdf')
 async def share_pdf(token: str):
@@ -2788,7 +5781,11 @@ async def share_pdf(token: str):
         raise HTTPException(410, 'Share link expired')
     await db.shares.update_one({'token': token}, {'$inc': {'views': 1}})
     trial = await db.trials.find_one({'id': s['trial_id']}, {'_id': 0}) or {}
-    visits = await db.visits.find({'trial_id': s['trial_id']}, {'_id': 0}).sort('visit_number', 1).to_list(200)
+    visits = s.get('visit_snapshot')
+    if visits is None:
+        visits = await db.visits.find(
+            {'trial_id': s['trial_id']}, {'_id': 0},
+        ).sort('visit_number', 1).to_list(200)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, title=f"Visit Schedule · {trial.get('protocol_id', '')}")
     styles = getSampleStyleSheet()
@@ -3021,6 +6018,163 @@ async def app_config():
     doc.pop('key', None)
     return doc
 
+
+@api.get('/support/contact')
+async def support_contact():
+    """Public contact data used by pre-auth Help & Support navigation."""
+    config = await app_config()
+    return {
+        'name': 'MTB Platform Support',
+        'email': config.get('support_email') or '',
+        'phone': config.get('support_phone') or '',
+        'hours': config.get('support_hours') or '',
+        'channels': {
+            'email': bool(config.get('support_email')),
+            'phone': bool(config.get('support_phone')),
+        },
+    }
+
+
+# ── Role-scoped report exports (approved profile → Reports section) ─────────
+# Non-admin report generation. Every dataset is scoped through the caller's
+# real trial relationships (_can_access_trial) and Sponsor/CRO exports stay
+# de-identified (pseudo subject labels, never patient names/contacts).
+ROLE_REPORT_ROLES = ('sponsor', 'cro', 'smo', 'site', 'pi', 'crc')
+
+class RoleReportIn(BaseModel):
+    type: Literal['enrolment-summary', 'visit-compliance', 'patient-status']
+    format: Literal['pdf', 'xlsx'] = 'pdf'
+
+async def _role_report_scope(user) -> list:
+    trials = await db.trials.find({}, {'_id': 0}).to_list(500)
+    return [t for t in trials if await _can_access_trial(user, t)]
+
+async def _role_report_rows(user, rtype: str):
+    trials = await _role_report_scope(user)
+    trial_ids = [t['id'] for t in trials]
+    by_trial = {t['id']: t for t in trials}
+    patients = await db.patients.find(
+        {'trial_id': {'$in': trial_ids}}, {'_id': 0}).to_list(10000) if trial_ids else []
+    deidentified = user['role'] in ('sponsor', 'cro')
+
+    if rtype == 'enrolment-summary':
+        headers = ['protocol', 'title', 'trial_status', 'enrolled',
+                   'target_enrollment', 'patient_statuses']
+        rows = []
+        for t in trials:
+            enrolled = [p for p in patients if p.get('trial_id') == t['id']]
+            buckets: Dict[str, int] = {}
+            for p in enrolled:
+                key = (p.get('status') or '(not set)').strip() or '(not set)'
+                buckets[key] = buckets.get(key, 0) + 1
+            breakdown = ', '.join(f'{k}: {v}' for k, v in sorted(buckets.items())) or '—'
+            rows.append([t.get('protocol_id') or t['id'], t.get('title') or '',
+                         t.get('status') or '', len(enrolled),
+                         t.get('target_enrollment') if t.get('target_enrollment') is not None else '',
+                         breakdown])
+        return headers, rows
+
+    if rtype == 'visit-compliance':
+        headers = ['protocol', 'title', 'visits_total', 'completed',
+                   'scheduled_upcoming', 'overdue', 'missed']
+        today = now().date().isoformat()
+        instances = await db.visit_instances.find(
+            {'trial_id': {'$in': trial_ids}},
+            {'_id': 0, 'trial_id': 1, 'status': 1, 'scheduled_date': 1},
+        ).to_list(20000) if trial_ids else []
+        per: Dict[str, Dict[str, int]] = {}
+        for inst in instances:
+            tid = inst.get('trial_id')
+            if tid not in by_trial:
+                continue
+            counts = per.setdefault(tid, {'total': 0, 'completed': 0,
+                                          'upcoming': 0, 'overdue': 0, 'missed': 0})
+            counts['total'] += 1
+            status = (inst.get('status') or 'scheduled').lower()
+            scheduled = str(inst.get('scheduled_date') or '')[:10]
+            if status in ('completed', 'screen_pass', 'screen_fail'):
+                counts['completed'] += 1
+            elif status == 'missed':
+                counts['missed'] += 1
+            elif status in ('scheduled', 'upcoming'):
+                if scheduled and scheduled < today:
+                    counts['overdue'] += 1
+                else:
+                    counts['upcoming'] += 1
+        rows = []
+        for t in trials:
+            counts = per.get(t['id'], {'total': 0, 'completed': 0,
+                                       'upcoming': 0, 'overdue': 0, 'missed': 0})
+            rows.append([t.get('protocol_id') or t['id'], t.get('title') or '',
+                         counts['total'], counts['completed'], counts['upcoming'],
+                         counts['overdue'], counts['missed']])
+        return headers, rows
+
+    # patient-status
+    headers = ['subject', 'trial', 'status', 'enrolled_date']
+    rows = []
+    for p in patients:
+        trial = by_trial.get(p.get('trial_id')) or {}
+        label = (f"SUBJ-{(p.get('id') or '')[-3:]} ({p.get('avatar_initials', '')})"
+                 if deidentified else (p.get('full_name') or p.get('subject_id') or p.get('id')))
+        rows.append([label, trial.get('protocol_id') or trial.get('title') or '',
+                     p.get('status') or '(not set)', p.get('enrolled_date') or ''])
+    rows.sort(key=lambda r: (str(r[1]), str(r[0])))
+    return headers, rows
+
+@api.post('/reports/generate')
+async def role_generate_report(body: RoleReportIn,
+                               user=Depends(require_roles(*ROLE_REPORT_ROLES))):
+    import admin_routes as _admin  # deferred: admin_routes imports server at startup
+    headers, rows = await _role_report_rows(user, body.type)
+    n = now()
+    title = f"{body.type.replace('-', ' ').title()} report"
+    data, content_type, extension = _admin._report_bytes(title, headers, rows, body.format)
+    key = f'role-reports/{uuid.uuid4()}.{extension}'
+    await file_storage.get_storage().save(key, data, content_type)
+    doc = {
+        'id': str(uuid.uuid4()), 'type': body.type,
+        'name': f"{body.type}-{n.strftime('%Y%m%d-%H%M%S')}.{extension}",
+        'format': extension, 'content_type': content_type,
+        'key': key, 'size': len(data), 'rows': len(rows),
+        'created_by': user['id'], 'created_by_name': user.get('full_name', ''),
+        'role': user['role'], 'deidentified': user['role'] in ('sponsor', 'cro'),
+        'created_at': n,
+    }
+    await db.role_reports.insert_one(doc)
+    await write_audit(user, 'report.generate',
+                      f"Generated {body.type} {extension.upper()} report ({len(rows)} rows)",
+                      target_id=doc['id'])
+    return {**serialize(doc), 'download_url': f"/api/reports/{doc['id']}/download"}
+
+@api.get('/reports/recent')
+async def role_recent_reports(user=Depends(require_roles(*ROLE_REPORT_ROLES))):
+    rows = await db.role_reports.find(
+        {'created_by': user['id']}, {'_id': 0}).sort('created_at', -1).to_list(20)
+    for r in rows:
+        r['download_url'] = f"/api/reports/{r['id']}/download"
+    return rows
+
+@api.get('/reports/{report_id}/download')
+async def role_download_report(report_id: str,
+                               user=Depends(require_roles(*ROLE_REPORT_ROLES))):
+    rep = await db.role_reports.find_one({'id': report_id}, {'_id': 0})
+    if not rep:
+        raise HTTPException(404, 'Report not found')
+    if rep.get('created_by') != user['id']:
+        raise HTTPException(403, 'You can only download your own reports')
+    from fastapi.responses import Response as FastResp
+    try:
+        data, _ct = await file_storage.get_storage().open(rep['key'])
+    except FileNotFoundError:
+        raise HTTPException(404, 'Report file is missing')
+    await write_audit(user, 'report.download',
+                      f"Downloaded report {rep.get('name')}", target_id=report_id)
+    return FastResp(content=data, media_type=rep.get('content_type') or 'application/pdf',
+                    headers={'Content-Disposition':
+                             f"attachment; filename=\"{rep.get('name', 'report')}\""})
+
+
 @api.get('/faq')
 async def get_faq():
     items = await db.faq.find({}, {'_id': 0}).sort('order', 1).to_list(100)
@@ -3142,6 +6296,14 @@ async def upload_file(file: UploadFile = File(...),
     # trial/ticket scopes and defaults to the caller for a user scope.
     sid = (scope_id or '').strip() or user['id']
     scope = {'type': stype, 'id': sid}
+    if stype == 'trial':
+        trial = await db.trials.find_one({'id': sid}, {'_id': 0, 'id': 1})
+        if not trial:
+            raise HTTPException(404, 'Trial not found')
+        if user['role'] != 'admin' and not await _caller_in_trial(user, sid):
+            raise HTTPException(403, 'You do not have access to upload files to this trial')
+    elif stype == 'user' and sid != user['id'] and user['role'] != 'admin':
+        raise HTTPException(403, 'You cannot upload files for another user')
 
     # Prefer the declared content-type; fall back to a canonical one per ext.
     stored_ct = ctype or next(iter(allowed_cts - {'application/octet-stream'}), 'application/octet-stream')
@@ -3160,6 +6322,31 @@ async def upload_file(file: UploadFile = File(...),
     url = st.url(key) or f"/api/files/{doc['id']}"
     return {'id': doc['id'], 'name': name, 'size': len(data),
             'content_type': stored_ct, 'url': url}
+
+
+@api.get('/files')
+async def list_files(scope_type: str = Query(...),
+                     scope_id: str = Query(...),
+                     user=Depends(current_user)):
+    """List metadata for files in one authorized scope.
+
+    The response never exposes storage keys. Trial lists use the same access
+    check as downloads and return persistent document metadata for trial
+    summary/version-history screens.
+    """
+    stype = (scope_type or '').strip().lower()
+    sid = (scope_id or '').strip()
+    if stype not in _FILE_SCOPE_TYPES or not sid:
+        raise HTTPException(400, 'Valid scope_type and scope_id are required')
+    probe = {'owner_id': '', 'scope': {'type': stype, 'id': sid}}
+    if not await _file_access_allowed(user, probe):
+        raise HTTPException(403, 'You do not have access to this file scope')
+    rows = await db.files.find(
+        {'scope.type': stype, 'scope.id': sid}, {'_id': 0, 'key': 0}
+    ).sort('created_at', -1).to_list(500)
+    for row in rows:
+        row['url'] = f"/api/files/{row['id']}"
+    return serialize(rows)
 
 
 @api.get('/files/{file_id}')
@@ -3273,6 +6460,8 @@ async def startup():
     asyncio.create_task(_migrate_visit_instances())
     # Make sure the platform-admin login exists (idempotent).
     asyncio.create_task(_ensure_admin_seed())
+    # Deliver due scheduled broadcasts exactly once (idempotent claim + fan-out).
+    asyncio.create_task(admin_routes.broadcast_worker_loop())
 
 @app.on_event('shutdown')
 async def shutdown(): client.close()

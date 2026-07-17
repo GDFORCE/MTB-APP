@@ -12,22 +12,20 @@
 // sees exactly how many users a target expression reaches. Targets are built as
 // "all" | "<kind>:<value>" (role/entity/org/site/trial/user) — the same grammar
 // the backend resolves.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, ScrollView, Pressable, StatusBar, Text as RNText, Modal, Animated,
-  RefreshControl, KeyboardAvoidingView, Platform, StyleSheet, ActivityIndicator, Switch,
+  RefreshControl, StyleSheet, ActivityIndicator, Switch,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  Menu, RefreshCcw, X, Send, Users, AlertTriangle, MessageSquare, CheckCircle2,
+  Menu, RefreshCcw, Send, Users, AlertTriangle, CheckCircle2,
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, EmptyCard, Toast, Input, st } from "./users";
-
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 
 const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
 

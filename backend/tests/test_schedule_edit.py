@@ -90,6 +90,23 @@ async def _make_trial(sponsor_headers,
 
 
 async def _enroll(staff_headers, trial_id, pi_id=None, days_ago=5):
+    if pi_id:
+        pi_user = await server.db.users.find_one(
+            {'id': pi_id}, {'_id': 0, 'email': 1, 'phone': 1})
+        contacts = {
+            'email': (pi_user or {}).get('email') or '',
+            'phone': (pi_user or {}).get('phone') or '',
+        }
+        await server.db.invitations.update_one(
+            {'trial_id': trial_id, 'role': 'pi', 'accepted_user_id': pi_id},
+            {'$setOnInsert': {
+                'id': str(uuid.uuid4()), 'token': uuid.uuid4().hex,
+                'trial_id': trial_id, 'role': 'pi', 'status': 'accepted',
+                'accepted_user_id': pi_id, 'accepted_at': server.now(),
+                'created_at': server.now(), **contacts,
+            }},
+            upsert=True,
+        )
     enrolled = (server.now() - timedelta(days=days_ago)).date().isoformat()
     async with make_client() as cli:
         r = await cli.post('/api/patients', headers=staff_headers, json={
@@ -125,6 +142,7 @@ def _cleanup():
         await db.visits.delete_many({'trial_id': {'$in': _trial_ids}})
         await db.patients.delete_many({'email': {'$regex': f'test-{RUN_ID}-'}})
         await db.visit_instances.delete_many({'trial_id': {'$in': _trial_ids}})
+        await db.invitations.delete_many({'trial_id': {'$in': _trial_ids}})
         await db.audit_logs.delete_many({'user_name': {'$regex': RUN_ID}})
     run(clean())
     LOOP.close()
@@ -160,6 +178,43 @@ class TestListTemplates:
             for v in got:
                 for key in ('id', 'trial_id', 'name', 'day_offset', 'window_days', 'activities'):
                     assert key in v, f'missing field {key}'
+        run(flow())
+
+    def test_review_fields_persist_through_create_and_update(self, sponsor):
+        _, sp_headers = sponsor
+        async def flow():
+            trial, _ = await _make_trial(sp_headers, templates=())
+            async with make_client() as cli:
+                created = await cli.post('/api/visits', headers=sp_headers, json={
+                    'trial_id': trial['id'], 'visit_number': 1,
+                    'name': 'Extraction review', 'day_offset': 0,
+                    'window_days': 2, 'activities': ['Vitals'],
+                    'clinical_tasks': ['Vitals', 'ECG'],
+                    'admin_tasks': ['eCRF'],
+                    'comments': 'Confirm timing with the site.',
+                    'extraction_warning': True,
+                    'review_status': 'pending',
+                })
+                assert created.status_code == 200, created.text
+                row = created.json()
+                assert row['clinical_tasks'] == ['Vitals', 'ECG']
+                assert row['admin_tasks'] == ['eCRF']
+                assert row['comments'] == 'Confirm timing with the site.'
+                assert row['extraction_warning'] is True
+                assert row['review_status'] == 'pending'
+
+                acknowledged = await cli.put(
+                    f"/api/visits/{row['id']}", headers=sp_headers,
+                    json={
+                        'comments': 'Timing confirmed.',
+                        'extraction_warning': False,
+                        'review_status': 'ok',
+                    },
+                )
+                assert acknowledged.status_code == 200, acknowledged.text
+                assert acknowledged.json()['comments'] == 'Timing confirmed.'
+                assert acknowledged.json()['extraction_warning'] is False
+                assert acknowledged.json()['review_status'] == 'ok'
         run(flow())
 
     def test_pi_owner_can_list(self, sponsor, pi):

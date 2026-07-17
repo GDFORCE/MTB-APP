@@ -1,17 +1,25 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle } from "react-native-svg";
 import {
-  Bell, Sun, Users, FileText, Stethoscope, ArrowUpRight, ChevronRight, FilePlus2, UserPlus, Send,
+  Bell, Sun, Users, FileText, Stethoscope, ArrowUpRight, ChevronRight, FilePlus2, UserPlus,
   ListTodo, AlertTriangle, ClipboardCheck, Home, MessageCircle, Calendar as CalIcon, User, ShieldCheck,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { useOrgContext, consoleRouteForType } from "@/src/components/org-admin-kit";
+import {
+  AnimatedCount,
+  ClinicalDashboard,
+  ClinicalDashboardTask,
+  ClinicalDashboardVisit,
+  DashboardReveal,
+  useAnimatedProgress,
+} from "@/src/features/clinical/dashboard";
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -23,48 +31,107 @@ const C = {
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 
 // GET /api/tasks item — action queue computed server-side for site staff.
-type Task = {
-  id: string;
-  type: "overdue_visit" | "visit_today" | "schedule_review" | "unread_messages";
-  title: string;
-  subtitle: string;
-  due: string | null;
-  patient_id?: string;
-  trial_id?: string;
-  priority: "high" | "medium" | "low";
-  count?: number;
-};
+type Task = ClinicalDashboardTask;
+type TeamVisit = ClinicalDashboardVisit;
 
 export default function PiDashboard() {
   const router = useRouter();
   const { user } = useAuth();
+  // SMO and Site accounts share the de-identified OPERATIONAL org dashboard;
+  // governance stays in the separate org-admin console (org_admin entry only).
+  const isSmo = user?.role === "smo" || user?.role === "site";
   const unread = useUnreadCount();
   const [trials, setTrials] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [upcomingVisits, setUpcomingVisits] = useState<TeamVisit[]>([]);
+  const [siteCount, setSiteCount] = useState(0);
+  const [smoSponsorCount, setSmoSponsorCount] = useState(0);
+  const [dashboard, setDashboard] = useState<ClinicalDashboard | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
-  useEffect(() => { (async () => {
-    const [t, p, k] = await Promise.all([
-      api.get("/trials").catch(() => ({ data: [] })),
-      api.get("/patients").catch(() => ({ data: [] })),
-      api.get("/tasks").catch(() => ({ data: [] })),
-    ]);
-    setTrials(t.data); setPatients(p.data); setTasks(k.data);
-    setLoading(false);
-  })(); }, []);
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+    if (isSmo) {
+      const response = await api.get(user?.role === "site" ? "/site/dashboard" : "/smo/dashboard");
+      const data = response.data || {};
+      setTrials(Array.isArray(data.trials) ? data.trials : []);
+      setPatients(Array.isArray(data.subjects) ? data.subjects : []);
+      setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+      setSiteCount(Number(data.totals?.sites || 0));
+      setSmoSponsorCount(Number(data.totals?.sponsors || 0));
+      return;
+    }
+    const response = await api.get<ClinicalDashboard>("/pi/dashboard");
+    const data = response.data;
+    setDashboard(data);
+    setTrials(Array.isArray(data.trials) ? data.trials : []);
+    setPatients(Array.isArray(data.patients) ? data.patients : []);
+    setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+    setUpcomingVisits(Array.isArray(data.upcoming_visits) ? data.upcoming_visits : []);
+    setSiteCount(Number(data.totals?.sites || 0));
+    setSmoSponsorCount(Number(data.totals?.sponsors || 0));
+    } catch (error: any) {
+      setLoadError(error?.response?.data?.detail || "Couldn't load your dashboard.");
+    } finally {
+      setLoading(false);
+    }
+  }, [isSmo, user?.role]);
+
+  useEffect(() => { loadDashboard(); }, [loadDashboard]);
 
   const trialById = useMemo(() => Object.fromEntries(trials.map((t: any) => [t.id, t])), [trials]);
   // PI review queue = trials awaiting schedule sign-off (server type schedule_review).
   const reviews = useMemo(() => tasks.filter(t => t.type === "schedule_review"), [tasks]);
   const overdueVisits = useMemo(() => tasks.filter(t => t.type === "overdue_visit"), [tasks]);
-  const sponsorCount = useMemo(() => new Set(trials.map((t: any) => t.sponsor_name).filter(Boolean)).size, [trials]);
+  const sponsorCount = useMemo(
+    () => isSmo ? smoSponsorCount : (dashboard?.totals.sponsors
+      ?? new Set(trials.map((t: any) => t.sponsor_name).filter(Boolean)).size),
+    [dashboard?.totals.sponsors, isSmo, smoSponsorCount, trials],
+  );
+  const siteTotal = useMemo(
+    () => isSmo ? siteCount : (dashboard?.totals.sites
+      ?? new Set(upcomingVisits.map(visit => visit.site).filter(Boolean)).size),
+    [dashboard?.totals.sites, isSmo, siteCount, upcomingVisits],
+  );
 
   const firstName = (user?.full_name || "").split(" ").pop() || "";
   const initials = user?.avatar_initials || (user?.full_name || "").split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase() || "?";
   const todayLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
-  // The queue lists only pending work, so the ring fills once the review queue is clear.
-  const dayProgress = loading ? 0 : reviews.length === 0 ? 1 : 0;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const visitsToday = useMemo(
+    () => upcomingVisits.filter(visit => visit.scheduled_date?.slice(0, 10) === todayIso),
+    [todayIso, upcomingVisits],
+  );
+  const completedToday = dashboard?.today.completed
+    ?? visitsToday.filter(visit => visit.status === "completed").length;
+  const totalToday = dashboard?.today.total ?? visitsToday.length;
+  const dayProgress = loading || totalToday === 0 ? 0 : completedToday / totalToday;
+  const weekLoad = useMemo(() => {
+    const today = new Date();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + index);
+      const next = new Date(date);
+      next.setDate(date.getDate() + 1);
+      const count = tasks.filter((task) => {
+        if (!task.due) return false;
+        const due = new Date(task.due);
+        return due >= date && due < next;
+      }).length;
+      return {
+        label: date.toLocaleDateString("en-GB", { weekday: "short" }).slice(0, 2),
+        count,
+        today: date.toDateString() === today.toDateString(),
+      };
+    });
+  }, [tasks]);
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -83,9 +150,9 @@ export default function PiDashboard() {
           <SafeAreaView edges={["top"]}>
             <View style={pi.heroTop}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={pi.eyebrowLight}>PRINCIPAL INVESTIGATOR</Text>
+                <Text style={pi.eyebrowLight}>{user?.role === "site" ? "SITE · OPERATIONS" : isSmo ? "SMO · SITE MANAGEMENT" : "PRINCIPAL INVESTIGATOR"}</Text>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-                  <Text style={pi.heroTitle}>{firstName ? `Hi, Dr. ${firstName}` : "Hello"}</Text>
+                  <Text style={pi.heroTitle}>{firstName ? `Hi, ${isSmo ? firstName : `Dr. ${firstName}`}` : "Hello"}</Text>
                   <Sun size={20} color="rgba(255,255,255,0.80)" />
                 </View>
               </View>
@@ -95,22 +162,26 @@ export default function PiDashboard() {
                   <View style={pi.bellBadge}><Text style={pi.bellBadgeText}>{unread > 9 ? "9+" : unread}</Text></View>
                 )}
               </Pressable>
-              <Pressable testID="pi-avatar" onPress={() => router.push("/(app)/patient/profile")} style={pi.iconBtn}>
+              <Pressable testID="pi-avatar" onPress={() => router.push("/(app)/clinical/profile")} style={pi.iconBtn}>
                 <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{initials}</Text>
               </Pressable>
             </View>
             <View style={pi.dayDeck}>
               <Ring value={dayProgress} size={84} stroke={7}>
-                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 22, lineHeight: 24, fontVariant: ["tabular-nums"] }}>{loading ? "–" : reviews.length}</Text>
-                <Text style={{ color: "rgba(255,255,255,0.70)", fontSize: 8, fontWeight: "700", letterSpacing: 1.4, marginTop: 2 }}>REVIEWS</Text>
+                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 22, lineHeight: 24, fontVariant: ["tabular-nums"] }}>
+                  {loading ? "–" : isSmo ? reviews.length : `${completedToday}/${visitsToday.length}`}
+                </Text>
+                <Text style={{ color: "rgba(255,255,255,0.70)", fontSize: 8, fontWeight: "700", letterSpacing: 1.4, marginTop: 2 }}>
+                  {isSmo ? "REVIEWS" : "VISITS"}
+                </Text>
               </Ring>
               <View style={{ flex: 1, minWidth: 0, marginLeft: 16 }}>
                 <Text style={pi.eyebrowLight}>{todayLabel.toUpperCase()}</Text>
-                <Text style={pi.heroSubtitle}>Your review queue</Text>
+                <Text style={pi.heroSubtitle}>{isSmo ? "Your network today" : "Your review queue"}</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <View style={pi.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : tasks.length} pending</Text></View>
+                  <View style={pi.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : (dashboard?.today.pending ?? tasks.length)} pending</Text></View>
                   <View style={[pi.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
-                    <AlertTriangle size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : overdueVisits.length} overdue</Text>
+                    <AlertTriangle size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : (dashboard?.today.overdue ?? overdueVisits.length)} overdue</Text>
                   </View>
                 </View>
               </View>
@@ -119,47 +190,81 @@ export default function PiDashboard() {
         </LinearGradient>
 
         <View style={{ marginTop: -40, paddingHorizontal: 16, paddingBottom: 24 }}>
+          {!!loadError && <DashboardError message={loadError} onRetry={loadDashboard} />}
           {/* Stat tiles */}
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <Stat icon={Users} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? "–" : patients.length} label="My Patients" />
-            <Stat icon={FileText} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? "–" : trials.length} label="Trials" />
-            <Stat icon={Stethoscope} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? "–" : sponsorCount} label="Sponsors" />
-          </View>
+          <DashboardReveal delay={40} style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+            <Stat compact icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
+            <Stat compact icon={Stethoscope} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? null : sponsorCount} label="Sponsors" />
+            <Stat compact icon={Users} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? null : patients.length} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} />
+            <Stat compact icon={Home} iconColor={C.success} iconBg="rgba(92,154,110,0.14)" glow="rgba(92,154,110,0.18)" value={loading ? null : siteTotal} label="Sites" />
+          </DashboardReveal>
 
           {/* Quick actions */}
           <Section label="QUICK ACTIONS" />
           <View style={{ flexDirection: "row", gap: 10 }}>
-            <QA icon={FilePlus2} bg={C.info} iconColor="#FFFFFF" label="New Trial" onPress={() => router.push("/(app)/sponsor/add-trial")} testID="qa-new-trial" />
-            <QA icon={UserPlus} gradient label="Add Patient" onPress={() => router.push("/(app)/clinical/add-patient")} testID="qa-add-patient" />
-            <QA icon={Send} bg={C.accent} iconColor={C.accentFg} label="Invite" onPress={() => router.push("/(app)/clinical/invite-patient")} testID="qa-invite" />
+            {(isSmo || loading || dashboard?.capabilities.can_create_trial) && <QA
+              icon={FilePlus2}
+              bg={C.info}
+              iconColor="#FFFFFF"
+              label="New Trial"
+              onPress={() => router.push(isSmo ? (user?.role === "site" ? "/(app)/org-admin/site" : "/(app)/org-admin/smo") : "/(app)/sponsor/add-trial")}
+              testID="qa-new-trial"
+            />}
+            {(isSmo || loading || dashboard?.capabilities.can_add_patient) && <QA icon={UserPlus} gradient label="Add Patient" onPress={() => router.push("/(app)/clinical/add-patient")} testID="qa-add-patient" />}
           </View>
 
           {/* Org-admin console entry — only for organization admins */}
           {user?.org_admin && <OrgAdminEntry />}
 
-          {/* My Patients */}
-          <Section label="MY PATIENTS" action={
-            <Pressable testID="see-all-patients" onPress={() => router.push("/(app)/clinical/patients")} style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text style={{ color: C.info, fontSize: 14, fontWeight: "700" }}>See all </Text>
-              <ChevronRight size={16} color={C.info} />
+          <Section label="THIS WEEK" action={
+            <Pressable onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "pi" } } as any)}>
+              <Text style={{ color: C.info, fontSize: 13, fontWeight: "700" }}>View week</Text>
             </Pressable>
+          } />
+          <WeekLoadChart days={weekLoad} />
+
+          {/* Upcoming visits */}
+          <Section label="UPCOMING VISITS" action={
+            <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>
+              {isSmo ? `${tasks.filter(task => task.type === "visit_today").length} TODAY` : `${completedToday}/${visitsToday.length} DONE`}
+            </Text>
           } />
           <View style={{ gap: 10 }}>
             {loading && <LoadingCard />}
-            {!loading && patients.length === 0 && <EmptyCard text="No patients assigned yet" />}
-            {!loading && patients.slice(0, 3).map(p => (
-              <Pressable key={p.id} testID={`patient-${p.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p.id } })}>
+            {!loading && (isSmo ? patients : upcomingVisits).length === 0 && <EmptyCard text="No upcoming visits this week" />}
+            {!loading && (isSmo ? patients : upcomingVisits).slice(0, 3).map((p: any) => (
+              <Pressable
+                key={p.id}
+                testID={`upcoming-visit-${p.id}`}
+                onPress={() => isSmo
+                  ? p.trial_id && router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: p.trial_id } })
+                  : router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p.patient_id } })}
+              >
                 <View style={pi.patientCard}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                     <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" }}>
-                      <Text style={{ color: C.primary, fontWeight: "700", fontSize: 13 }}>{p.avatar_initials}</Text>
+                      <Text style={{ color: C.primary, fontWeight: "700", fontSize: 13 }}>{isSmo ? p.avatar_initials : p.patient_initials}</Text>
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={{ color: C.fg, fontSize: 15, fontWeight: "700" }}>{p.full_name}</Text>
-                      <Text style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>{p.email}</Text>
+                      <Text style={{ color: C.fg, fontSize: 15, fontWeight: "700" }}>
+                        {isSmo ? p.subject_id : `${p.subject_label || "Subject"} · ${p.patient_initials || "P"}`}
+                      </Text>
+                      <Text style={{ color: C.muted, fontSize: 12, marginTop: 2 }}>
+                        {isSmo
+                          ? [p.site, p.pi_name].filter(Boolean).join(" · ")
+                          : [
+                              p.protocol_id,
+                              p.name,
+                              p.scheduled_date
+                                ? new Date(p.scheduled_date).toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit" })
+                                : "",
+                            ].filter(Boolean).join(" · ")}
+                      </Text>
                     </View>
-                    <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.18)" }}>
-                      <Text style={{ color: C.success, fontSize: 11, fontWeight: "700" }}>Active</Text>
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: p.status === "completed" ? "rgba(92,154,110,0.18)" : "rgba(123,107,184,0.12)" }}>
+                      <Text style={{ color: p.status === "completed" ? C.success : C.info, fontSize: 11, fontWeight: "700" }}>
+                        {p.status === "completed" ? "Done" : "Upcoming"}
+                      </Text>
                     </View>
                   </View>
                 </View>
@@ -208,7 +313,16 @@ export default function PiDashboard() {
                             </View>
                           </View>
                         </View>
-                        <Pressable testID={`review-${r.id}`} onPress={() => router.push("/(app)/clinical/schedule-review")}>
+                        <Pressable
+                          testID={`review-${r.id}`}
+                          onPress={() => router.push({
+                            pathname: "/(app)/clinical/schedule-review",
+                            params: {
+                              id: r.schedule_review_id || "",
+                              trialId: r.trial_id || "",
+                            },
+                          })}
+                        >
                           <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pi.actionBtn}>
                             <Text style={{ color: C.primaryFg, fontSize: 12, fontWeight: "700" }}>Review</Text>
                           </LinearGradient>
@@ -265,10 +379,46 @@ export default function PiDashboard() {
 
       <View style={pi.tabBar}>
         <Tab icon={Home} label="Dashboard" active />
-        <Tab icon={Users} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} testID="tab-patients" />
+        <Tab icon={FileText} label="My Trials" onPress={() => router.push("/(app)/clinical/my-trials")} testID="tab-trials" />
         <Tab icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "pi" } } as any)} testID="tab-calendar" />
+        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: isSmo ? "smo" : "pi" } } as any)} testID="tab-calendar" />
         <Tab icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
+      </View>
+    </View>
+  );
+}
+
+function WeekLoadChart({ days }: { days: { label: string; count: number; today: boolean }[] }) {
+  const max = Math.max(1, ...days.map((day) => day.count));
+  const total = days.reduce((sum, day) => sum + day.count, 0);
+  return (
+    <View style={pi.weekCard}>
+      <View style={pi.weekHeader}>
+        <View>
+          <Text style={pi.weekTitle}>{total} scheduled item{total === 1 ? "" : "s"}</Text>
+          <Text style={pi.weekSubtitle}>Network and visit workload</Text>
+        </View>
+        <CalIcon size={20} color={C.info} />
+      </View>
+      <View style={pi.weekBars}>
+        {days.map((day) => (
+          <View key={day.label} style={pi.weekDay}>
+            <Text style={[pi.weekCount, day.today && { color: C.primary }]}>{day.count}</Text>
+            <View style={pi.weekTrack}>
+              <LinearGradient
+                colors={DAWN as any}
+                start={{ x: 0, y: 1 }}
+                end={{ x: 0, y: 0 }}
+                style={[
+                  pi.weekFill,
+                  { height: `${Math.max(day.count ? 20 : 5, (day.count / max) * 100)}%` },
+                  !day.today && { opacity: 0.62 },
+                ]}
+              />
+            </View>
+            <Text style={[pi.weekLabel, day.today && pi.weekLabelToday]}>{day.label}</Text>
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -278,6 +428,21 @@ function LoadingCard() {
   return (
     <View style={[pi.reviewCard, { alignItems: "center", justifyContent: "center", paddingVertical: 28, marginBottom: 0 }]}>
       <ActivityIndicator color={C.primary} />
+    </View>
+  );
+}
+
+function DashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={pi.errorCard}>
+      <AlertTriangle size={18} color={C.destructive} />
+      <View style={{ flex: 1 }}>
+        <Text style={pi.errorTitle}>Dashboard couldn’t load</Text>
+        <Text style={pi.errorCopy}>{message}</Text>
+      </View>
+      <Pressable testID="pi-dashboard-retry" onPress={onRetry} style={pi.retryButton}>
+        <Text style={pi.retryText}>Retry</Text>
+      </Pressable>
     </View>
   );
 }
@@ -326,9 +491,9 @@ function Section({ label, action }: any) {
   );
 }
 
-function Stat({ icon: Icon, iconColor, iconBg, glow, value, label }: any) {
+function Stat({ icon: Icon, iconColor, iconBg, glow, value, label, compact, onPress }: any) {
   return (
-    <View style={pi.statTile}>
+    <Pressable disabled={!onPress} onPress={onPress} style={[pi.statTile, compact && { flexBasis: "47%", flexGrow: 1 }]}>
       <View style={{ position: "absolute", top: -24, right: -24, width: 64, height: 64, borderRadius: 32, backgroundColor: glow }} />
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: iconBg, alignItems: "center", justifyContent: "center" }}>
@@ -336,9 +501,11 @@ function Stat({ icon: Icon, iconColor, iconBg, glow, value, label }: any) {
         </View>
         <ArrowUpRight size={14} color="rgba(123,95,115,0.45)" />
       </View>
-      <Text style={{ fontSize: 30, fontWeight: "700", color: C.fg, marginTop: 8, lineHeight: 32, fontVariant: ["tabular-nums"] }}>{value}</Text>
+      {value == null
+        ? <Text style={{ fontSize: 30, fontWeight: "700", color: C.fg, marginTop: 8, lineHeight: 32 }}>–</Text>
+        : <AnimatedCount value={value} style={{ fontSize: 30, fontWeight: "700", color: C.fg, marginTop: 8, lineHeight: 32, fontVariant: ["tabular-nums"] }} />}
       <Text style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -364,13 +531,14 @@ function Tag({ bg, fg, label }: any) {
 }
 
 function Ring({ value, size, stroke, children }: any) {
+  const animatedValue = useAnimatedProgress(value);
   const r = (size - stroke) / 2;
   const cir = 2 * Math.PI * r;
   return (
     <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
       <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
         <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.20)" strokeWidth={stroke} />
-        <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.primaryFg} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${cir} ${cir}`} strokeDashoffset={cir * (1 - value)} />
+        <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.primaryFg} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${cir} ${cir}`} strokeDashoffset={cir * (1 - animatedValue)} />
       </Svg>
       <View style={{ alignItems: "center" }}>{children}</View>
     </View>
@@ -403,8 +571,24 @@ const pi = StyleSheet.create({
   quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   orgEntry: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   orgEntryIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+  weekCard: { padding: 15, borderRadius: 21, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  weekHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  weekTitle: { fontSize: 13, fontWeight: "700", color: C.fg },
+  weekSubtitle: { marginTop: 2, fontSize: 10, color: C.muted },
+  weekBars: { height: 112, marginTop: 15, flexDirection: "row", alignItems: "flex-end", gap: 7 },
+  weekDay: { flex: 1, height: "100%", alignItems: "center" },
+  weekCount: { height: 17, fontSize: 9, fontWeight: "700", color: C.muted },
+  weekTrack: { flex: 1, width: "100%", overflow: "hidden", justifyContent: "flex-end", borderRadius: 8, backgroundColor: C.surface },
+  weekFill: { width: "100%", borderRadius: 8 },
+  weekLabel: { marginTop: 6, fontSize: 9.5, fontWeight: "600", color: C.muted },
+  weekLabelToday: { color: C.primary, fontWeight: "800" },
   patientCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   reviewCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  errorCard: { marginBottom: 12, padding: 13, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(192,57,43,0.28)", backgroundColor: "rgba(192,57,43,0.08)" },
+  errorTitle: { color: C.destructive, fontSize: 13, fontWeight: "700" },
+  errorCopy: { marginTop: 2, color: C.muted, fontSize: 11 },
+  retryButton: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: C.destructive },
+  retryText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
   actionBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
   trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },

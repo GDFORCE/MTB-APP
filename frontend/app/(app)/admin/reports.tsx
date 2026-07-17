@@ -10,13 +10,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, TextInput,
-  ActivityIndicator, RefreshControl, Modal, Animated, Platform, Share,
+  ActivityIndicator, RefreshControl, Animated, Platform, Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  Menu, RefreshCcw, X, AlertTriangle, BarChart3, Users, Building2, ShieldCheck,
-  LogIn, FlaskConical, Download, FileText, Clock,
+  Menu, RefreshCcw, AlertTriangle, BarChart3, Users, Building2, ShieldCheck,
+  LogIn, FlaskConical, Download, FileText, Clock, FileSpreadsheet,
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
@@ -26,6 +26,7 @@ const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "
 const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
 
 type ReportType = "users" | "org-users" | "user-status" | "login-activity" | "trial-summary";
+type ReportFormat = "pdf" | "xlsx";
 type RecentReport = {
   id: string; type: string; name?: string; format?: string; size?: number; rows?: number;
   created_at?: string; created_by_name?: string; download_url?: string;
@@ -53,9 +54,27 @@ function fmtSize(bytes?: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let output = "";
+  let index = 0;
+  for (; index + 2 < bytes.length; index += 3) {
+    const value = (bytes[index] << 16) | (bytes[index + 1] << 8) | bytes[index + 2];
+    output += B64[(value >> 18) & 63] + B64[(value >> 12) & 63] + B64[(value >> 6) & 63] + B64[value & 63];
+  }
+  if (index < bytes.length) {
+    const value = (bytes[index] << 16) | (index + 1 < bytes.length ? bytes[index + 1] << 8 : 0);
+    output += B64[(value >> 18) & 63] + B64[(value >> 12) & 63]
+      + (index + 1 < bytes.length ? B64[(value >> 6) & 63] : "=") + "=";
+  }
+  return output;
+}
+
 export default function AdminReports() {
   const { open } = useAdminDrawer();
   const [selected, setSelected] = useState<ReportType>("users");
+  const [format, setFormat] = useState<ReportFormat>("pdf");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -90,7 +109,7 @@ export default function AdminReports() {
     if (!rangeValid) { setGenErr("Dates must be in YYYY-MM-DD format"); return; }
     setGenerating(true); setGenErr(null);
     try {
-      const body: Record<string, string> = { type: selected };
+      const body: Record<string, string> = { type: selected, format };
       if (usesRange && from) body.from = from;
       if (usesRange && to) body.to = to;
       const res = await api.post("/admin/reports/generate", body);
@@ -104,18 +123,23 @@ export default function AdminReports() {
   const download = async (rep: RecentReport) => {
     setDownloading(rep.id);
     try {
-      const res = await api.get(`/admin/reports/${rep.id}/download`, { responseType: "text" as any });
-      const csv: string = typeof res.data === "string" ? res.data : String(res.data ?? "");
-      const filename = rep.name || "report.csv";
+      const filename = rep.name || `report.${rep.format || "pdf"}`;
+      const mime = rep.format === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/pdf";
       if (Platform.OS === "web") {
+        const res = await api.get(`/admin/reports/${rep.id}/download`, { responseType: "blob" });
         const g: any = globalThis;
-        const blob = new g.Blob([csv], { type: "text/csv" });
+        const blob = res.data instanceof g.Blob ? res.data : new g.Blob([res.data], { type: mime });
         const url = g.URL.createObjectURL(blob);
         const a = g.document.createElement("a");
         a.href = url; a.download = filename; a.click();
         g.URL.revokeObjectURL(url);
       } else {
-        await Share.share({ message: csv, title: filename });
+        const res = await api.get(`/admin/reports/${rep.id}/download`, { responseType: "arraybuffer" });
+        const uri = `data:${mime};base64,${arrayBufferToBase64(res.data as ArrayBuffer)}`;
+        if (!await Linking.canOpenURL(uri)) throw new Error("No app can open this report format.");
+        await Linking.openURL(uri);
       }
       showToast(`Downloaded ${filename}`);
     } catch (e) {
@@ -156,6 +180,28 @@ export default function AdminReports() {
               })}
             </View>
 
+            <RNText style={[st.fieldLabel, { marginTop: 14 }]}>Format</RNText>
+            <View style={st.formatRow}>
+              {([
+                { key: "pdf", label: "PDF", icon: FileText },
+                { key: "xlsx", label: "Excel", icon: FileSpreadsheet },
+              ] as const).map((option) => {
+                const active = format === option.key;
+                const Icon = option.icon;
+                return (
+                  <Pressable
+                    key={option.key}
+                    testID={`report-format-${option.key}`}
+                    onPress={() => setFormat(option.key)}
+                    style={[st.formatButton, active && st.formatButtonActive]}
+                  >
+                    <Icon size={17} color={active ? C.primaryFg : C.primary} />
+                    <RNText style={[st.formatText, active && st.formatTextActive]}>{option.label}</RNText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
             <View style={[st.rangeWrap, { opacity: usesRange ? 1 : 0.45 }]}>
               <View style={{ flex: 1, gap: 6 }}>
                 <RNText style={st.fieldLabel}>From</RNText>
@@ -171,7 +217,7 @@ export default function AdminReports() {
 
             <Pressable testID="report-generate" onPress={generating ? undefined : generate} style={[st.generateBtn, generating && { opacity: 0.6 }]}>
               {generating ? <ActivityIndicator color={C.primaryFg} size="small" /> : (
-                <><BarChart3 size={16} color={C.primaryFg} /><RNText style={st.generateTxt}>Generate {TYPE_LABEL[selected]}</RNText></>
+                <><BarChart3 size={16} color={C.primaryFg} /><RNText style={st.generateTxt}>Generate {TYPE_LABEL[selected]} · {format === "pdf" ? "PDF" : "Excel"}</RNText></>
               )}
             </Pressable>
           </View>
@@ -225,7 +271,7 @@ function Hero({ onMenu, onRefresh }: { onMenu: () => void; onRefresh: () => void
           </View>
           <Pressable testID="reports-refresh" onPress={onRefresh} style={st.iconBtn} hitSlop={8}><RefreshCcw size={18} color={C.primaryFg} /></Pressable>
         </View>
-        <RNText style={st.heroSub}>Generate CSV exports and download recent files. Patient data is pseudonymized.</RNText>
+        <RNText style={st.heroSub}>Generate approved PDF or Excel reports. Patient data is pseudonymized.</RNText>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -294,6 +340,11 @@ const st = StyleSheet.create({
   rowMeta: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, flexShrink: 1 },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: C.border, alignItems: "center", justifyContent: "center" },
   radioDot: { width: 11, height: 11, borderRadius: 6, backgroundColor: C.primary },
+  formatRow: { flexDirection: "row", gap: 9, marginTop: 7 },
+  formatButton: { flex: 1, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  formatButtonActive: { borderColor: C.primary, backgroundColor: C.primary },
+  formatText: { fontFamily: fonts.bold, fontSize: 12.5, color: C.primary },
+  formatTextActive: { color: C.primaryFg },
 
   rangeWrap: { flexDirection: "row", gap: 10, marginTop: 14 },
   fieldLabel: { fontFamily: fonts.semibold, fontSize: 12, color: C.foreground },

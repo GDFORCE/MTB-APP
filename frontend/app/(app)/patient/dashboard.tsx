@@ -1,15 +1,29 @@
-import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle } from "react-native-svg";
 import {
-  Bell, MessageCircle, ChevronRight, Check, Activity, Clock, Home, FlaskConical, Calendar as CalIcon, User,
+  Activity, AlertTriangle, Bell, Check, ChevronRight, Clock,
+  MessageCircle, RefreshCw, WifiOff,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
+import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -18,8 +32,33 @@ const C = {
   dawnFrom: "#F5C57A", dawnMid: "#E07A4B", dawnTo: "#A6213F",
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
+type SourceKey = "visits" | "notifications" | "adherence" | "trial";
+type SourceState = Record<SourceKey, "loading" | "ready" | "error">;
+const INITIAL_SOURCES: SourceState = {
+  visits: "loading",
+  notifications: "loading",
+  adherence: "loading",
+  trial: "loading",
+};
 
-const TOTAL = 10;
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => { if (alive) setReduced(value); })
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReduced,
+    );
+    return () => {
+      alive = false;
+      subscription.remove();
+    };
+  }, []);
+  return reduced;
+}
 
 function timeAgo(iso?: string): string {
   if (!iso) return "";
@@ -45,43 +84,103 @@ export default function PatientDashboard() {
   const [adherence, setAdherence] = useState<any>(null);
   const [trial, setTrial] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { (async () => {
-    try {
-      const [v, n, a, t] = await Promise.all([
-        api.get("/visits/mine").catch(() => ({ data: [] })),
-        api.get("/notifications").catch(() => ({ data: [] })),
-        api.get("/adherence").catch(() => ({ data: null })),
-        api.get("/trials").catch(() => ({ data: [] })),
-      ]);
-      setVisits(v.data); setNotifs(n.data); setAdherence(a.data);
-      setTrial(Array.isArray(t.data) ? t.data[0] ?? null : null);
-    } finally {
-      setLoading(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [sources, setSources] = useState<SourceState>(INITIAL_SOURCES);
+  const reducedMotion = useReducedMotion();
+
+  const load = useCallback(async (refresh = false) => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
+    setError("");
+    const [visitResult, notificationResult, adherenceResult, trialResult] = await Promise.allSettled([
+      api.get("/visits/mine"),
+      api.get("/notifications"),
+      api.get("/adherence"),
+      api.get("/trials"),
+    ]);
+    const nextSources: SourceState = {
+      visits: visitResult.status === "fulfilled" ? "ready" : "error",
+      notifications: notificationResult.status === "fulfilled" ? "ready" : "error",
+      adherence: adherenceResult.status === "fulfilled" ? "ready" : "error",
+      trial: trialResult.status === "fulfilled" ? "ready" : "error",
+    };
+    const visitRows = visitResult.status === "fulfilled" && Array.isArray(visitResult.value.data)
+      ? visitResult.value.data : [];
+    const trialRows = trialResult.status === "fulfilled" && Array.isArray(trialResult.value.data)
+      ? trialResult.value.data : [];
+
+    if (visitResult.status === "fulfilled") setVisits(visitRows);
+    if (notificationResult.status === "fulfilled") {
+      setNotifs(Array.isArray(notificationResult.value.data) ? notificationResult.value.data : []);
     }
-  })(); }, []);
+    if (adherenceResult.status === "fulfilled") setAdherence(adherenceResult.value.data);
+    if (trialResult.status === "fulfilled") {
+      const enrolledId = visitRows.find((row: any) => row.trial_id)?.trial_id;
+      const enrolledTrial = enrolledId
+        ? trialRows.find((row: any) => row.id === enrolledId)
+        : trialRows.length === 1 ? trialRows[0] : null;
+      setTrial(enrolledTrial || null);
+    }
+    setSources(nextSources);
+    if (Object.values(nextSources).every((state) => state === "error")) {
+      const rejected = [visitResult, notificationResult, adherenceResult, trialResult]
+        .find((result) => result.status === "rejected") as PromiseRejectedResult | undefined;
+      setError(
+        rejected?.reason?.response?.data?.detail
+        || "We couldn't connect to your dashboard. Check your connection and retry.",
+      );
+    }
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const completed = visits.filter(v => v.status === "completed").length;
-  const total = visits.length || TOTAL;
-  const next = visits.find(v => v.status === "upcoming");
-  const pct = Math.round((completed / total) * 100);
-  const firstName = (user?.full_name || "Priya").split(" ")[0];
-  const initials = user?.avatar_initials || "PK";
-  const adherenceRate: number | null = adherence?.rate ?? null;
-  const trialLine = trial ? [trial.protocol_id, trial.condition].filter(Boolean).join(" · ") : "";
-  const daysToNext = next ? Math.max(0, Math.ceil((new Date(next.scheduled_date).getTime() - Date.now()) / 86400000)) : 0;
-  const nextDate = next ? new Date(next.scheduled_date) : new Date();
+  const total = visits.length;
+  const next = [...visits]
+    .filter((visit) => {
+      if (visit.status !== "upcoming" && visit.status !== "scheduled") return false;
+      const scheduled = visit.scheduled_date ? new Date(visit.scheduled_date) : null;
+      return Boolean(scheduled && !Number.isNaN(scheduled.getTime()));
+    })
+    .sort((a, b) => new Date(a.scheduled_date).getTime() - new Date(b.scheduled_date).getTime())[0];
+  const pct = total ? Math.round((completed / total) * 100) : 0;
+  const fullName = user?.full_name?.trim() || "";
+  const firstName = fullName.split(/\s+/)[0] || "there";
+  const initials = user?.avatar_initials
+    || fullName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase()
+    || "?";
+  const adherenceRate: number | null = sources.adherence === "ready"
+    ? adherence?.rate ?? null : null;
+  const trialLine = sources.trial === "ready" && trial
+    ? [trial.protocol_id, trial.condition].filter(Boolean).join(" · ") : "";
+  const validNextDate = next?.scheduled_date ? new Date(next.scheduled_date) : null;
+  const nextDate = validNextDate && !Number.isNaN(validNextDate.getTime()) ? validNextDate : null;
+  const daysToNext = nextDate ? Math.max(0, Math.ceil((nextDate.getTime() - Date.now()) / 86400000)) : null;
   const winStart = next?.window_start ? new Date(next.window_start) : nextDate;
   const winEnd = next?.window_end ? new Date(next.window_end) : nextDate;
-  const fmtDay = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-  const trialFooter = trial ? [trial.protocol_id, trial.phase, trial.condition].filter(Boolean).join(" · ") : "";
+  const fmtDay = (d: Date | null) => d && !Number.isNaN(d.getTime())
+    ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+    : "";
+  const trialFooter = sources.trial === "ready" && trial
+    ? [trial.protocol_id, trial.phase, trial.condition].filter(Boolean).join(" · ") : "";
 
   // Calendar mini (current month)
-  const calendarMonth = new Date(nextDate.getFullYear(), nextDate.getMonth(), 1);
+  const calendarAnchor = nextDate || new Date();
+  const calendarMonth = new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth(), 1);
   const monthVisits: Record<number, "completed" | "upcoming" | "scheduled"> = {};
   visits.forEach(v => {
+    if (!v.scheduled_date) return;
     const d = new Date(v.scheduled_date);
+    if (Number.isNaN(d.getTime())) return;
     if (d.getMonth() === calendarMonth.getMonth() && d.getFullYear() === calendarMonth.getFullYear()) {
-      monthVisits[d.getDate()] = v.status === "completed" ? "completed" : v.status === "upcoming" ? "upcoming" : "scheduled";
+      if (v.status === "completed" || v.status === "upcoming" || v.status === "scheduled") {
+        monthVisits[d.getDate()] = v.status;
+      }
     }
   });
   const today = new Date().getDate();
@@ -90,11 +189,32 @@ export default function PatientDashboard() {
   const cells: (number | null)[] = Array(startDay).fill(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   while (cells.length % 7 !== 0) cells.push(null);
+  const failedSources = useMemo(
+    () => Object.entries(sources)
+      .filter(([, state]) => state === "error")
+      .map(([key]) => key as SourceKey),
+    [sources],
+  );
+  const partial = !loading && !error && failedSources.length > 0;
+  const empty = !loading && !error && sources.visits === "ready"
+    && sources.trial === "ready" && visits.length === 0 && !trial;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={C.primaryDeep} />
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: PATIENT_NAV_CONTENT_BOTTOM }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={(
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void load(true)}
+            tintColor={C.primary}
+            colors={[C.primary]}
+          />
+        )}
+      >
         {/* ── Dawn hero (radial plum → deep plum) ── */}
         <View style={{ backgroundColor: C.primaryDeep, borderBottomLeftRadius: 28, borderBottomRightRadius: 28, overflow: "hidden", paddingHorizontal: 24, paddingTop: 8, paddingBottom: 28 }}>
           {/* Radial-ish plum-to-deep using stacked gradient */}
@@ -130,28 +250,69 @@ export default function PatientDashboard() {
 
             {/* Progress glass panel */}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 16, marginTop: 20, padding: 16, borderRadius: 24, backgroundColor: "rgba(255,255,255,0.10)", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)" }}>
-              <Ring pct={pct} size={72} stroke={7} />
+              {loading ? (
+                <View style={pst.ringLoading}><ActivityIndicator color={C.primaryFg} /></View>
+              ) : (
+                <Ring pct={pct} size={72} stroke={7} reducedMotion={reducedMotion} />
+              )}
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: "rgba(251,242,232,0.75)", fontSize: 11, fontWeight: "700", letterSpacing: 1.5 }}>YOUR PROGRESS</Text>
-                <Text style={{ color: C.primaryFg, fontSize: 17, fontWeight: "700", marginTop: 4 }}>Visit {completed} of {total} completed</Text>
+                <Text style={{ color: C.primaryFg, fontSize: 17, fontWeight: "700", marginTop: 4 }}>
+                  {loading
+                    ? "Loading your study progress…"
+                    : sources.visits === "error"
+                      ? "Progress is temporarily unavailable"
+                      : total
+                        ? `Visit ${completed} of ${total} completed`
+                        : "No visit schedule has been published"}
+                </Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                   {adherenceRate != null && (
                     <View style={pst.chip}><Activity size={11} color={C.primaryFg} /><Text style={pst.chipText}>{adherenceRate}% adherence</Text></View>
                   )}
-                  {next && <View style={pst.chip}><Text style={pst.chipText}>Next in {daysToNext} days</Text></View>}
+                  {sources.visits === "ready" && next && daysToNext != null && <View style={pst.chip}><Text style={pst.chipText}>Next in {daysToNext} days</Text></View>}
                 </View>
               </View>
             </View>
           </SafeAreaView>
         </View>
 
+        {error ? (
+          <StatePanel
+            icon={WifiOff}
+            title="Dashboard unavailable"
+            body={error}
+            action="Retry"
+            onAction={() => void load()}
+            destructive
+          />
+        ) : partial ? (
+          <StatePanel
+            icon={AlertTriangle}
+            title="Some information couldn't load"
+            body={`${failedSources.map(sourceLabel).join(", ")} ${failedSources.length === 1 ? "is" : "are"} temporarily unavailable. Available sections remain current.`}
+            action="Refresh"
+            onAction={() => void load(true)}
+          />
+        ) : empty ? (
+          <StatePanel
+            icon={Clock}
+            title="Your dashboard is being prepared"
+            body="No enrolled study or visit schedule is available yet. Refresh after your study team completes enrollment."
+            action="Refresh"
+            onAction={() => void load(true)}
+          />
+        ) : null}
+
         {/* ── 01 · Next visit ── */}
-        <View style={{ paddingHorizontal: 16, marginTop: 20 }}>
+        <DashboardReveal delay={40} reducedMotion={reducedMotion} style={{ paddingHorizontal: 16, marginTop: 20 }}>
           <SectionHead index="01" label="NEXT VISIT" />
           {loading ? (
             <View style={[pst.card, pst.loadingCard]}><ActivityIndicator color={C.primary} /></View>
-          ) : next ? (
-          <Pressable testID="next-visit-card" onPress={() => router.push("/(app)/patient/my-trial")}>
+          ) : sources.visits === "error" ? (
+            <SectionError label="visit schedule" onRetry={() => void load(true)} />
+          ) : next && nextDate ? (
+          <Pressable testID="next-visit-card" onPress={() => router.push({ pathname: "/(app)/patient/visit-detail", params: { id: next.id } })}>
             <View style={pst.card}>
               <View style={{ flexDirection: "row", gap: 16 }}>
                 <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pst.dateBlock}>
@@ -171,7 +332,11 @@ export default function PatientDashboard() {
                   )}
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
                     <Clock size={11} color={C.muted} />
-                    <Text style={{ color: C.muted, fontSize: 12 }}>Window {fmtDay(winStart)} – {fmtDay(winEnd)}</Text>
+                    <Text style={{ color: C.muted, fontSize: 12 }}>
+                      {fmtDay(winStart) && fmtDay(winEnd)
+                        ? `Window ${fmtDay(winStart)} – ${fmtDay(winEnd)}`
+                        : "Visit window pending"}
+                    </Text>
                   </View>
                 </View>
               </View>
@@ -187,19 +352,30 @@ export default function PatientDashboard() {
             </View>
           </Pressable>
           ) : (
-            <View style={pst.card}><Text style={{ color: C.muted, fontSize: 13 }}>No upcoming visits scheduled</Text></View>
+            <View style={pst.card}>
+              <Text style={{ color: C.fg, fontSize: 14, fontWeight: "700" }}>No upcoming visits</Text>
+              <Text style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>
+                {visits.length
+                  ? "Your remaining visits are completed or not yet scheduled."
+                  : "Your study team hasn't published a visit schedule yet."}
+              </Text>
+            </View>
           )}
-        </View>
+        </DashboardReveal>
 
         {/* ── 02 · Calendar mini ── */}
-        <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
+        <DashboardReveal delay={100} reducedMotion={reducedMotion} style={{ paddingHorizontal: 16, marginTop: 24 }}>
           <SectionHead index="02" label="CALENDAR" action={
             <Pressable testID="open-calendar" onPress={() => router.push("/(app)/patient/calendar")} style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={{ color: C.accent, fontSize: 14, fontWeight: "600" }}>Open calendar </Text>
               <ChevronRight size={16} color={C.accent} />
             </Pressable>
           } />
-          <Pressable testID="cal-mini" onPress={() => router.push("/(app)/patient/calendar")}>
+          {loading ? (
+            <View style={[pst.card, pst.loadingCard]}><ActivityIndicator color={C.primary} /></View>
+          ) : sources.visits === "error" ? (
+            <SectionError label="calendar visits" onRetry={() => void load(true)} />
+          ) : <Pressable testID="cal-mini" onPress={() => router.push("/(app)/patient/calendar")}>
             <View style={pst.card}>
               <Text style={{ textAlign: "center", color: C.fg, fontSize: 16, fontWeight: "700", marginBottom: 12 }}>
                 {calendarMonth.toLocaleString("en-US", { month: "long", year: "numeric" })}
@@ -234,11 +410,11 @@ export default function PatientDashboard() {
                 <Legend color={C.info} label="Scheduled" />
               </View>
             </View>
-          </Pressable>
-        </View>
+          </Pressable>}
+        </DashboardReveal>
 
         {/* ── 03 · Notifications ── */}
-        <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
+        <DashboardReveal delay={160} reducedMotion={reducedMotion} style={{ paddingHorizontal: 16, marginTop: 24 }}>
           <SectionHead index="03" label="NOTIFICATIONS" action={
             <Pressable testID="see-all-notifs" onPress={() => router.push("/(app)/notifications")}>
               <Text style={{ color: C.accent, fontSize: 14, fontWeight: "600" }}>See all</Text>
@@ -248,14 +424,17 @@ export default function PatientDashboard() {
             {loading && (
               <View style={[pst.card, pst.loadingCard]}><ActivityIndicator color={C.primary} /></View>
             )}
-            {!loading && notifs.length === 0 && (
+            {!loading && sources.notifications === "error" && (
+              <SectionError label="notifications" onRetry={() => void load(true)} />
+            )}
+            {!loading && sources.notifications === "ready" && notifs.length === 0 && (
               <View style={pst.card}><Text style={{ color: C.muted, fontSize: 13 }}>No notifications yet</Text></View>
             )}
-            {!loading && notifs.slice(0, 3).map(n => {
+            {!loading && sources.notifications === "ready" && notifs.slice(0, 3).map(n => {
               const Icon = n.kind === "message" ? MessageCircle : Bell;
               const tone = n.kind === "message" ? C.violet : C.accent;
               return (
-                <Pressable key={n.id} testID={`notif-${n.id}`} onPress={() => router.push(n.kind === "message" ? "/(app)/chat" : "/(app)/notifications")}>
+                <Pressable key={n.id} testID={`notif-${n.id}`} onPress={() => router.push(n.kind === "message" ? "/(app)/patient/messages" : "/(app)/notifications")}>
                   <View style={[pst.card, { flexDirection: "row", alignItems: "flex-start", gap: 12 }]}>
                     <View style={{ width: 44, height: 44, borderRadius: 16, backgroundColor: tone + "26", alignItems: "center", justifyContent: "center" }}>
                       <Icon size={20} color={tone} />
@@ -274,16 +453,19 @@ export default function PatientDashboard() {
               );
             })}
           </View>
-        </View>
+        </DashboardReveal>
 
         {/* ── 04 · Recent activity ── */}
-        <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
+        <DashboardReveal delay={220} reducedMotion={reducedMotion} style={{ paddingHorizontal: 16, marginTop: 24 }}>
           <SectionHead index="04" label="RECENT ACTIVITY" />
           <View style={[pst.card, { padding: 0 }]}>
             {loading && (
               <View style={pst.loadingCard}><ActivityIndicator color={C.primary} /></View>
             )}
-            {!loading && visits.filter(v => v.status === "completed").slice(-2).reverse().map((v, i) => (
+            {!loading && sources.visits === "error" && (
+              <SectionError label="recent activity" onRetry={() => void load(true)} embedded />
+            )}
+            {!loading && sources.visits === "ready" && visits.filter(v => v.status === "completed").slice(-2).reverse().map((v, i) => (
               <View key={v.id} style={[{ padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, i > 0 && { borderTopWidth: 1, borderTopColor: C.border }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                   <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(92,154,110,0.15)", alignItems: "center", justifyContent: "center" }}>
@@ -291,7 +473,9 @@ export default function PatientDashboard() {
                   </View>
                   <View>
                     <Text style={{ color: C.fg, fontSize: 14, fontWeight: "600" }}>Visit {v.visit_number}</Text>
-                    <Text style={{ color: C.muted, fontSize: 13 }}>{new Date(v.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</Text>
+                    <Text style={{ color: C.muted, fontSize: 13 }}>
+                      {formatVisitDate(v.scheduled_date) || "Completion date unavailable"}
+                    </Text>
                   </View>
                 </View>
                 <View style={{ paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
@@ -299,22 +483,134 @@ export default function PatientDashboard() {
                 </View>
               </View>
             ))}
-            {!loading && visits.filter(v => v.status === "completed").length === 0 && (
+            {!loading && sources.visits === "ready" && visits.filter(v => v.status === "completed").length === 0 && (
               <View style={{ padding: 16 }}><Text style={{ color: C.muted, fontSize: 13 }}>No completed visits yet</Text></View>
             )}
           </View>
-        </View>
+        </DashboardReveal>
       </ScrollView>
 
-      {/* Bottom nav */}
-      <View style={pst.tabBar}>
-        <Tab icon={Home} label="Dashboard" active />
-        <Tab icon={FlaskConical} label="My Trial" onPress={() => router.push("/(app)/patient/my-trial")} testID="tab-my-trial" />
-        <Tab icon={MessageCircle} label="Chat" onPress={() => router.push("/(app)/chat")} testID="tab-chat" />
-        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push("/(app)/patient/calendar")} testID="tab-calendar" />
-        <Tab icon={User} label="Me" onPress={() => router.push("/(app)/patient/profile")} testID="tab-me" />
-      </View>
+      <PatientBottomNav active="home" />
     </View>
+  );
+}
+
+function sourceLabel(source: SourceKey) {
+  return {
+    visits: "Visit schedule",
+    notifications: "Notifications",
+    adherence: "Medication adherence",
+    trial: "Study details",
+  }[source];
+}
+
+function formatVisitDate(value?: string) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function StatePanel({
+  icon: Icon,
+  title,
+  body,
+  action,
+  onAction,
+  destructive,
+}: {
+  icon: React.ComponentType<{ size?: number; color?: string }>;
+  title: string;
+  body: string;
+  action: string;
+  onAction: () => void;
+  destructive?: boolean;
+}) {
+  const tone = destructive ? "#C0392B" : C.warning;
+  return (
+    <View style={[pst.statePanel, { borderColor: `${tone}55` }]}>
+      <View style={[pst.stateIcon, { backgroundColor: `${tone}18` }]}>
+        <Icon size={19} color={tone} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={pst.stateTitle}>{title}</Text>
+        <Text style={pst.stateBody}>{body}</Text>
+      </View>
+      <Pressable onPress={onAction} style={pst.stateAction}>
+        <RefreshCw size={14} color={C.primary} />
+        <Text style={pst.stateActionText}>{action}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function SectionError({
+  label,
+  onRetry,
+  embedded,
+}: {
+  label: string;
+  onRetry: () => void;
+  embedded?: boolean;
+}) {
+  return (
+    <View style={[embedded ? pst.embeddedError : pst.card, pst.sectionError]}>
+      <AlertTriangle size={18} color={C.warning} />
+      <View style={{ flex: 1 }}>
+        <Text style={pst.sectionErrorTitle}>Couldn&apos;t load {label}</Text>
+        <Text style={pst.sectionErrorBody}>Other dashboard sections may still be available.</Text>
+      </View>
+      <Pressable onPress={onRetry} style={pst.retryButton}>
+        <Text style={pst.retryText}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function DashboardReveal({
+  children,
+  delay,
+  reducedMotion,
+  style,
+}: {
+  children: React.ReactNode;
+  delay: number;
+  reducedMotion: boolean;
+  style?: any;
+}) {
+  const progress = useRef(new Animated.Value(reducedMotion ? 1 : 0)).current;
+  useEffect(() => {
+    if (reducedMotion) {
+      progress.setValue(1);
+      return;
+    }
+    progress.setValue(0);
+    Animated.timing(progress, {
+      toValue: 1,
+      delay,
+      duration: 360,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [delay, progress, reducedMotion]);
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          opacity: progress,
+          transform: [{
+            translateY: progress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [12, 0],
+            }),
+          }],
+        },
+      ]}
+    >
+      {children}
+    </Animated.View>
   );
 }
 
@@ -329,16 +625,40 @@ function SectionHead({ index, label, action }: any) {
   );
 }
 
-function Ring({ pct, size, stroke }: any) {
+function Ring({ pct, size, stroke, reducedMotion }: {
+  pct: number;
+  size: number;
+  stroke: number;
+  reducedMotion: boolean;
+}) {
   const r = (size - stroke) / 2;
   const cir = 2 * Math.PI * r;
+  const value = useRef(new Animated.Value(reducedMotion ? pct : 0)).current;
+  const [display, setDisplay] = useState(reducedMotion ? pct : 0);
+  useEffect(() => {
+    const listener = value.addListener(({ value: current }) => setDisplay(current));
+    return () => value.removeListener(listener);
+  }, [value]);
+  useEffect(() => {
+    if (reducedMotion) {
+      value.setValue(pct);
+      setDisplay(pct);
+      return;
+    }
+    Animated.timing(value, {
+      toValue: pct,
+      duration: 620,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [pct, reducedMotion, value]);
   return (
     <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
       <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
         <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={stroke} />
-        <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.95)" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${cir} ${cir}`} strokeDashoffset={cir * (1 - pct / 100)} />
+        <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.95)" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${cir} ${cir}`} strokeDashoffset={cir * (1 - display / 100)} />
       </Svg>
-      <Text style={{ color: C.primaryFg, fontSize: 20, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{pct}%</Text>
+      <Text style={{ color: C.primaryFg, fontSize: 20, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{Math.round(display)}%</Text>
     </View>
   );
 }
@@ -352,16 +672,6 @@ function Legend({ color, label }: any) {
   );
 }
 
-function Tab({ icon: Icon, label, active, onPress, testID }: any) {
-  return (
-    <Pressable testID={testID} onPress={onPress} style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8 }}>
-      <Icon size={22} color={active ? C.primary : C.muted} />
-      <Text style={{ fontSize: 10, fontWeight: active ? "700" : "500", color: active ? C.primary : C.muted, marginTop: 4 }}>{label}</Text>
-      {active && <View style={{ position: "absolute", top: 0, height: 3, width: 32, backgroundColor: C.primary, borderRadius: 2 }} />}
-    </Pressable>
-  );
-}
-
 const pst = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
   bellBadge: { position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: "#C0392B", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.primary },
@@ -370,6 +680,55 @@ const pst = StyleSheet.create({
   chipText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
   card: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   loadingCard: { alignItems: "center", justifyContent: "center", paddingVertical: 28 },
+  ringLoading: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 7,
+    borderColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statePanel: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    backgroundColor: C.card,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stateIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stateTitle: { color: C.fg, fontSize: 14, fontWeight: "700" },
+  stateBody: { color: C.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  stateAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: `${C.primary}0D`,
+  },
+  stateActionText: { color: C.primary, fontSize: 12, fontWeight: "700" },
+  sectionError: { flexDirection: "row", alignItems: "center", gap: 10 },
+  embeddedError: { padding: 16 },
+  sectionErrorTitle: { color: C.fg, fontSize: 13, fontWeight: "700" },
+  sectionErrorBody: { color: C.muted, fontSize: 11, marginTop: 2 },
+  retryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: `${C.primary}12`,
+  },
+  retryText: { color: C.primary, fontSize: 12, fontWeight: "700" },
   dateBlock: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
 });

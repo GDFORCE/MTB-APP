@@ -15,6 +15,9 @@ const store = {
 };
 export const tokenStore = store;
 
+// Axios's default export is the documented factory object; the similarly named
+// type-level export makes the generic lint rule flag this valid usage.
+// eslint-disable-next-line import/no-named-as-default-member
 export const api = axios.create({ baseURL: API_BASE });
 api.interceptors.request.use(async (config) => {
   const t = await store.get('access_token');

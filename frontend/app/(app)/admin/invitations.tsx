@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Menu, RefreshCcw, Search, UserPlus, X, AlertTriangle, Mail, Phone, Building2, User,
-  Clock, CheckCircle2, XCircle, RefreshCw, Calendar, ChevronRight, Copy, Link2,
+  Clock, CheckCircle2, XCircle, RefreshCw, Calendar, ChevronRight, Link2,
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
@@ -31,6 +31,10 @@ type Invitation = {
   designation?: string; role?: string; entityType?: string; org?: string; site?: string;
   status?: string; created_at?: string; expires_at?: string; accepted_at?: string;
   last_sent_at?: string; cancelled_at?: string; resend_count?: number; trial_id?: string | null;
+};
+const EMPTY_INVITE_FORM = {
+  full_name: "", email: "", phone: "", designation: "", role: "site",
+  entityType: "site", organization: "", site: "",
 };
 
 const STATUS_FILTERS: { key: string; label: string }[] = [
@@ -329,12 +333,11 @@ function InviteDetailSheet({ invite, busy, onClose, onResend, onCancel }: {
 
 // ── Create sheet ─────────────────────────────────────────────────────────────
 function AddInviteSheet({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (msg: string) => void }) {
-  const empty = { full_name: "", email: "", phone: "", designation: "", role: "site", entityType: "site", organization: "", site: "" };
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(EMPTY_INVITE_FORM);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
-  useEffect(() => { if (open) { setForm(empty); setErr(null); setInviteLink(null); } }, [open]);
+  useEffect(() => { if (open) { setForm(EMPTY_INVITE_FORM); setErr(null); setInviteLink(null); } }, [open]);
 
   const emailOk = !form.email || /\S+@\S+\.\S+/.test(form.email);
   const valid = (form.email.trim().length > 0 || form.phone.trim().length > 0) && emailOk;

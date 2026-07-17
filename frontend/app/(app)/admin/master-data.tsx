@@ -25,8 +25,6 @@ import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, EmptyCard, Toast, Input, SheetActions, st } from "./users";
 
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
-
 type Submission = {
   id: string; fieldType?: string; value?: string; status?: string;
   submittedBy?: string; org?: string; dateSubmitted?: string;
@@ -295,7 +293,7 @@ function Hero({ onMenu, onRefresh }: { onMenu: () => void; onRefresh: () => void
           </View>
           <Pressable testID="master-data-refresh" onPress={onRefresh} style={st.iconBtn} hitSlop={8}><RefreshCcw size={18} color={C.primaryFg} /></Pressable>
         </View>
-        <RNText style={st.heroSub}>Review custom "Others: specify" values submitted across every module and curate the global dropdown library.</RNText>
+        <RNText style={st.heroSub}>Review custom “Others: specify” values submitted across every module and curate the global dropdown library.</RNText>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -363,7 +361,7 @@ function RejectSheet({ item, busy, onClose, onConfirm }: { item: Submission | nu
     <Sheet open={!!item} onClose={onClose} title="Reject submission">
       {item && (
         <View style={{ gap: 12 }}>
-          <RNText style={md.sheetHint}>Rejecting "{item.value}". The submitter keeps it as a private value.</RNText>
+          <RNText style={md.sheetHint}>Rejecting “{item.value}”. The submitter keeps it as a private value.</RNText>
           <View style={{ gap: 6 }}>
             <RNText style={st.fieldLabel}>Reason (permanently logged)</RNText>
             <Input value={reason} onChangeText={setReason} placeholder="Why is this value being rejected?" multiline />

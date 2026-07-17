@@ -9,7 +9,11 @@ import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
 import { api } from "@/src/api/client";
-import { takePendingVerificationDoc, uploadFile } from "@/src/lib/upload";
+import {
+  peekPendingVerificationDoc,
+  setPendingVerificationDoc,
+  uploadFile,
+} from "@/src/lib/upload";
 
 const RULES: { label: string; test: (p: string) => boolean }[] = [
   { label: "8+ characters", test: (p) => p.length >= 8 },
@@ -29,6 +33,7 @@ export default function SetPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [createdSession, setCreatedSession] = useState<any | null>(null);
 
   const metRules = RULES.filter((r) => r.test(password)).length;
   const strengthPct = (metRules / RULES.length) * 100;
@@ -38,28 +43,65 @@ export default function SetPassword() {
   const showMismatch = confirm.length > 0 && password !== confirm;
   const canContinue = metRules === RULES.length && passwordsMatch && !loading;
 
+  const finishRegistration = (data: any) => {
+    router.replace({
+      pathname: "/(auth)/register-success",
+      params: {
+        role: role || "patient",
+        session: JSON.stringify({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          user: data.user,
+        }),
+      },
+    });
+  };
+
+  const uploadVerificationDocument = async (session: any) => {
+    const pendingDoc = peekPendingVerificationDoc();
+    const documentRequired = (role || "patient") !== "patient";
+    if (!pendingDoc) {
+      if (documentRequired) {
+        throw new Error("A verification document is required. Go back and attach it before continuing.");
+      }
+      return;
+    }
+    if (!session?.access_token) {
+      throw new Error("Your account was created, but the document upload session is unavailable.");
+    }
+    await uploadFile(pendingDoc, {
+      scopeType: "user",
+      token: session.access_token,
+    });
+    setPendingVerificationDoc(null);
+  };
+
   // Strength bar fills itself as rules are met (design's animate-fill-bar).
   const fill = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fill, { toValue: strengthPct, duration: 350, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
-  }, [strengthPct]);
+  }, [fill, strengthPct]);
 
   const createAccount = async () => {
     if (!canContinue) return;
     setLoading(true); setErr("");
     try {
-      const { data } = await api.post("/auth/register/complete", { registration_id, password });
-      // Deferred verification-doc upload: registration is fully pre-auth, so a doc
-      // picked during register is uploaded here now that a token exists. Best-effort
-      // — a failed upload must not block the just-created account.
-      const pendingDoc = takePendingVerificationDoc();
-      if (pendingDoc && data?.access_token) {
-        try { await uploadFile(pendingDoc, { scopeType: "user", token: data.access_token }); } catch {}
+      const data = createdSession
+        || (await api.post("/auth/register/complete", { registration_id, password })).data;
+      if (!createdSession) setCreatedSession(data);
+      // Registration is pre-auth, so upload the selected document after account
+      // creation supplies a token. Keep both the session and document for retry.
+      try {
+        await uploadVerificationDocument(data);
+      } catch (uploadError: any) {
+        setErr(
+          uploadError?.response?.data?.detail
+          || uploadError?.message
+          || "Your account was created, but the verification document could not be uploaded. Please retry.",
+        );
+        return;
       }
-      router.replace({
-        pathname: "/(auth)/register-success",
-        params: { role: role || "patient", session: JSON.stringify({ access_token: data.access_token, refresh_token: data.refresh_token, user: data.user }) },
-      });
+      finishRegistration(data);
     } catch (e: any) {
       setErr(e?.response?.data?.detail || "Could not create your account. Please try again.");
     } finally {
@@ -140,7 +182,11 @@ export default function SetPassword() {
 
         <View style={s.footer}>
           <Springy onPress={createAccount} disabled={!canContinue} style={[s.cta, canContinue ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: canContinue ? colors.primaryFg : colors.mutedFg }}>{loading ? "Creating account…" : "Create Account"}</Text>
+            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: canContinue ? colors.primaryFg : colors.mutedFg }}>
+              {loading
+                ? createdSession ? "Uploading document…" : "Creating account…"
+                : createdSession ? "Retry document upload" : "Create Account"}
+            </Text>
           </Springy>
         </View>
       </KeyboardAvoidingView>

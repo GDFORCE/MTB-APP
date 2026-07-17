@@ -15,7 +15,7 @@ function StepProgress({ step, total = 5 }: { step: number; total?: number }) {
   const grow = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(grow, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
-  }, [step]);
+  }, [grow, step]);
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }} accessibilityLabel={`Step ${step} of ${total}`}>
       {Array.from({ length: total }).map((_, i) => {

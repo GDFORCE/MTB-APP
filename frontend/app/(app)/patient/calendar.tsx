@@ -9,6 +9,7 @@ import {
 } from "lucide-react-native";
 import { colors, spacing, radii, fonts, shadows, dawnGradient } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
+import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 
 // ── Date helpers ────────────────────────────────────────────────────────────
 // API dates are UTC ISO (midnight-anchored). We compare everything by a
@@ -159,7 +160,15 @@ export default function PatientCalendar() {
               <Text style={s.eyebrowLight}>MY SCHEDULE</Text>
               <Text style={s.appbarTitle}>Calendar</Text>
             </View>
-            <Pressable testID="cal-refresh" onPress={() => load(true)} disabled={refreshing} hitSlop={10} style={s.appbarBtn}>
+            <Pressable
+              testID="cal-refresh"
+              accessibilityRole="button"
+              accessibilityLabel="Refresh calendar"
+              onPress={() => load(true)}
+              disabled={refreshing}
+              hitSlop={10}
+              style={s.appbarBtn}
+            >
               {refreshing ? <ActivityIndicator size="small" color={colors.primaryFg} /> : <RotateCw size={20} color={colors.primaryFg} />}
             </Pressable>
             <Pressable testID="cal-settings" onPress={() => router.push("/(app)/clinical/calendar-settings" as any)} hitSlop={10} style={s.appbarBtn}>
@@ -169,7 +178,7 @@ export default function PatientCalendar() {
         </SafeAreaView>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: PATIENT_NAV_CONTENT_BOTTOM }} showsVerticalScrollIndicator={false}>
         {/* Period nav + segmented control */}
         <View style={s.controls}>
           <View style={s.periodRow}>
@@ -306,6 +315,7 @@ export default function PatientCalendar() {
           </>
         )}
       </ScrollView>
+      <PatientBottomNav active="calendar" />
     </View>
   );
 }
@@ -405,7 +415,11 @@ function VisitCard({ v, variant, router }: { v: Visit; variant: "full" | "week" 
         </View>
       )}
       {variant === "full" && (upcoming || v.status === "scheduled") && (
-        <Pressable testID="visit-details" onPress={() => router.push("/(app)/patient/my-trial")} style={s.cardFooter}>
+        <Pressable
+          testID={`visit-details-${v.id}`}
+          onPress={() => router.push({ pathname: "/(app)/patient/visit-detail", params: { id: v.id } })}
+          style={s.cardFooter}
+        >
           <Text style={[s.footerText, { color: colors.info }]}>View details →</Text>
         </Pressable>
       )}

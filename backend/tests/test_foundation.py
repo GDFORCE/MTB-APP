@@ -12,6 +12,7 @@ NOTE: Motor pins its io_loop on first use, so every coroutine here runs on the
 single module-level LOOP (never asyncio.run, which would create/close loops).
 """
 import asyncio
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -161,7 +162,7 @@ class TestOrganizations:
             assert len(matches) == 1
         run(flow())
 
-    def test_platform_contact_is_opt_in(self, pi):
+    def test_platform_contact_requires_exact_organization_endpoint(self, pi):
         async def flow():
             async with make_client() as cli:
                 plain = await cli.get('/api/organizations', params={'search': ORG_HOSPITAL})
@@ -169,14 +170,16 @@ class TestOrganizations:
                     'search': ORG_HOSPITAL,
                     'include_platform_contact': 'true',
                 })
+                org_id = plain.json()[0]['id']
+                exact = await cli.get(f'/api/organizations/{org_id}/platform-contact')
             assert plain.status_code == 200, plain.text
             assert detailed.status_code == 200, detailed.text
             assert 'platform_contact' not in plain.json()[0]
-            contact = detailed.json()[0]['platform_contact']
-            assert contact['name']
-            assert contact['email']
-            assert contact['phone']
-            assert contact['designation']
+            assert 'platform_contact' not in detailed.json()[0]
+            assert exact.status_code == 200, exact.text
+            # This fixture has ordinary site staff but no designated org admin,
+            # so the exact endpoint must not fall back to an arbitrary employee.
+            assert exact.json()['platform_contact'] is None
         run(flow())
 
 
@@ -268,6 +271,8 @@ class TestInvitationLifecycle:
             inv = await _invite(headers)
             # existing response contract intact
             assert inv['status'] == 'pending' and inv['token'] and inv['invite_link']
+            assert re.fullmatch(r'MTB-[A-F0-9]{4}-[A-F0-9]{4}', inv['token'])
+            assert inv['invite_link'].endswith(f"/invite/{inv['token']}")
             assert inv['invited_by'] == pi_user['id']
             assert inv.get('expires_at'), 'lifecycle needs an expiry'
             # own-org list
@@ -285,8 +290,9 @@ class TestInvitationLifecycle:
         pi_user, headers = pi
         async def flow():
             inv = await _invite(headers)
+            pasted_variant = inv['token'].replace('-', '').lower()
             async with make_client() as cli:   # public: no auth
-                r = await cli.get(f"/api/invitations/{inv['token']}")
+                r = await cli.get(f"/api/invitations/{pasted_variant}")
             assert r.status_code == 200, r.text
             j = r.json()
             assert set(j) >= {
@@ -308,18 +314,41 @@ class TestInvitationLifecycle:
             assert r.status_code == 404
         run(flow())
 
-    def test_accept_then_second_accept_rejected(self, pi):
+    def test_accept_reserves_until_registration_then_consumes_atomically(self, pi):
         _, headers = pi
         async def flow():
             inv = await _invite(headers)
-            async with make_client() as cli:   # public accept
+            async with make_client() as cli:
                 r = await cli.post(f"/api/invitations/{inv['token']}/accept")
                 assert r.status_code == 200, r.text
-                assert r.json()['status'] == 'accepted'
+                assert r.json()['status'] == 'pending'
                 r2 = await cli.get(f"/api/invitations/{inv['token']}")
-                assert r2.json()['status'] == 'accepted'
+                assert r2.json()['status'] == 'pending'
+
+            pending = {
+                'id': str(uuid.uuid4()),
+                'full_name': f'Atomic Invitee {RUN_ID}',
+                'role': inv['role'],
+                'email': inv['email'],
+                'phone': '',
+                'organization': ORG_HOSPITAL,
+                'hashed_password': server.pwd_ctx.hash(PASSWORD),
+                'profile': {'designation': 'Coordinator'},
+                'channels': [],
+                'invitation_id': inv['id'],
+                'invite_token': inv['token'],
+            }
+            await server.db.pending_registrations.insert_one(pending)
+            session = await server._complete_registration(pending)
+            assert session['user']['role'] == inv['role']
+            accepted = await server.db.invitations.find_one(
+                {'id': inv['id']}, {'_id': 0})
+            assert accepted['status'] == 'accepted'
+            assert accepted['accepted_user_id'] == session['user']['id']
+
+            async with make_client() as cli:
                 r3 = await cli.post(f"/api/invitations/{inv['token']}/accept")
-                assert r3.status_code == 400
+            assert r3.status_code == 400
             row = await server.db.audit_logs.find_one(
                 {'action': 'invitation.accept', 'target_id': inv['id']})
             assert row, 'accept not audited'

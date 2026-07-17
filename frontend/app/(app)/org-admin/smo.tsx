@@ -22,6 +22,7 @@ import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
   TransferOwnershipSheet, DelegationGate, Loading, ErrorCard, EmptyCard,
   Sheet, Field, KitInput, PrimaryButton, ConfirmDialog,
+  TrialAdminActions,
   errMsg, stripTitle, type OrgMember, type AuditEntry, type OrgTrial, type OrgSite, type ConfirmState,
 } from "@/src/components/org-admin-kit";
 
@@ -88,6 +89,7 @@ export default function SmoConsole() {
 
   const siteNames = useMemo(() => sites.map((s) => s.name), [sites]);
   const membersAt = useCallback((name: string) => members.filter((m) => m.site === name && m.status !== "rejected"), [members]);
+  const trialsAt = useCallback((name: string) => trials.filter((t) => t.sites?.includes(name)), [trials]);
 
   const pulse = useMemo(() => {
     const patients = trials.reduce((n, t) => n + (t.enrolled || 0), 0);
@@ -227,6 +229,7 @@ export default function SmoConsole() {
                         requested={requested.has(t.id)}
                         onOpen={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: t.id } })}
                         onRequest={() => requestAccess(t)}
+                        actions={orgId ? <TrialAdminActions trial={t} orgId={orgId} showToast={showToast} onChanged={loadAll} /> : null}
                       />
                     ))}
                   </View>
@@ -311,7 +314,7 @@ export default function SmoConsole() {
         </View>
       </ScrollView>
 
-      {/* Site drill-down: members at this hospital + remove */}
+      {/* Site drill-down: trials at this hospital, supporting team + remove */}
       <Sheet open={!!siteDetail} onClose={() => setSiteDetail(null)} title={siteDetail?.name || "Site"}>
         {siteDetail && (
           <View style={{ gap: 12 }}>
@@ -321,7 +324,32 @@ export default function SmoConsole() {
                 <RNText style={st.siteAddress}>{siteDetail.address}</RNText>
               </View>
             )}
-            <RNText style={st.eyebrow}>ASSIGNED TEAM</RNText>
+            <RNText style={st.eyebrow}>TRIALS AT THIS SITE</RNText>
+            {trialsAt(siteDetail.name).length === 0 ? (
+              <RNText style={st.emptyNote}>No trials are linked to this hospital yet.</RNText>
+            ) : (
+              <View style={{ gap: 8 }}>
+                {trialsAt(siteDetail.name).map((trial) => (
+                  <Pressable
+                    key={trial.id}
+                    onPress={() => {
+                      setSiteDetail(null);
+                      router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } });
+                    }}
+                    style={st.memberRow}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <RNText style={st.memberName} numberOfLines={1}>{trial.protocol_id || trial.title || "Clinical trial"}</RNText>
+                      <RNText style={st.memberSub} numberOfLines={1}>
+                        {[trial.phase, trial.condition, `${trial.enrolled || 0} patients`].filter(Boolean).join(" · ")}
+                      </RNText>
+                    </View>
+                    <ChevronRight size={17} color="rgba(123,95,115,0.4)" />
+                  </Pressable>
+                ))}
+              </View>
+            )}
+            <RNText style={[st.eyebrow, { marginTop: 4 }]}>ASSIGNED TEAM</RNText>
             {membersAt(siteDetail.name).length === 0 ? (
               <RNText style={st.emptyNote}>No members assigned to this hospital yet.</RNText>
             ) : (
@@ -386,8 +414,9 @@ function AddSiteSheet({ open, onClose, onSubmit }: { open: boolean; onClose: () 
   );
 }
 
-function TrialCard({ t, mine, requested, onOpen, onRequest }: {
+function TrialCard({ t, mine, requested, onOpen, onRequest, actions }: {
   t: OrgTrial; mine: boolean; requested: boolean; onOpen: () => void; onRequest: () => void;
+  actions?: React.ReactNode;
 }) {
   const full = t.accessLevel === "full";
   const tone = statusTone(t.status);
@@ -420,7 +449,9 @@ function TrialCard({ t, mine, requested, onOpen, onRequest }: {
         <>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
             <RNText style={st.metaLabel}>ENROLLED</RNText>
-            <RNText style={st.metaVal}>{t.enrolled || 0} subject{(t.enrolled || 0) === 1 ? "" : "s"}</RNText>
+            <RNText style={st.metaVal}>
+              {t.enrolled || 0}{typeof t.target === "number" ? ` / ${t.target}` : ""} subject{(t.enrolled || 0) === 1 ? "" : "s"}
+            </RNText>
           </View>
           {subjects.length > 0 ? (
             <View style={st.subjectBox}>
@@ -437,8 +468,9 @@ function TrialCard({ t, mine, requested, onOpen, onRequest }: {
           )}
           <Pressable onPress={onOpen} style={st.openBtn}>
             <FileText size={14} color={C.violet} />
-            <RNText style={[st.openBtnTxt, { color: C.violet }]}>Open trial</RNText>
+            <RNText style={[st.openBtnTxt, { color: C.violet }]}>Open trial · {t.documentCount || 0} docs</RNText>
           </Pressable>
+          {actions}
         </>
       ) : (
         <>

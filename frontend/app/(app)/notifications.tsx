@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import { Bell, MessageCircle, FileText } from "lucide-react-native";
+import { Bell, MessageCircle, FileText, ArrowRightLeft, KeyRound } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
@@ -24,7 +24,9 @@ export default function Notifications() {
   // "View Visit Details" routes by notification type (and role for visit screens).
   const viewDetails = (n: AppNotification) => {
     setSelected(null);
-    if (n.kind === "message") router.push("/(app)/chat");
+    if (n.kind === "trial_access_request") router.push("/(app)/org-admin/trial-access-requests");
+    else if (n.kind === "ownership_transfer") router.push("/(app)/ownership-transfer");
+    else if (n.kind === "message") router.push("/(app)/chat");
     else if (user?.role === "patient") router.push("/(app)/patient/my-visits");
     else router.push("/(app)/clinical/schedule-review");
   };
@@ -34,8 +36,8 @@ export default function Notifications() {
       <ScreenHeader eyebrow="Stay updated" title="Notifications" />
       <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
         {items.length === 0 ? <Card><Small>No notifications yet</Small></Card> : items.map(n => {
-          const Icon = n.kind === "message" ? MessageCircle : n.kind === "result" ? FileText : Bell;
-          const tone = n.kind === "message" ? colors.violet : n.kind === "result" ? colors.info : colors.accent;
+          const Icon = n.kind === "trial_access_request" ? KeyRound : n.kind === "ownership_transfer" ? ArrowRightLeft : n.kind === "message" ? MessageCircle : n.kind === "result" ? FileText : Bell;
+          const tone = n.kind === "trial_access_request" ? colors.warning : n.kind === "ownership_transfer" ? colors.primary : n.kind === "message" ? colors.violet : n.kind === "result" ? colors.info : colors.accent;
           return (
             <Pressable key={n.id} testID={`notif-${n.id}`} onPress={() => setSelected(n)}>
               <Card style={{ marginBottom: spacing.sm }}>

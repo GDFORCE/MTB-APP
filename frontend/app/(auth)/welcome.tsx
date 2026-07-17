@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle, Defs, LinearGradient as SvgGrad, Stop, Line } from "react-native-svg";
-import { colors, spacing, radii, dawnGradient, fonts } from "@/src/theme/tokens";
+import { colors, spacing, dawnGradient, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Small, Body, Button } from "@/src/components/ui";
 import { MtbLogo } from "@/src/components/MtbLogo";
 
@@ -17,7 +17,7 @@ function Rise({ delay = 0, style, children }: { delay?: number; style?: any; chi
   const t = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(t, { toValue: 1, duration: 520, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, []);
+  }, [delay, t]);
   return (
     <Animated.View style={[{ opacity: t, transform: [{ translateY: t.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }, style]}>
       {children}
@@ -43,7 +43,7 @@ export default function Welcome() {
         Animated.timing(drift, { toValue: 0, duration: 3600, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ]),
     ).start();
-  }, []);
+  }, [arc, drift, line, sun]);
   const sunStyle = {
     opacity: sun,
     transform: [

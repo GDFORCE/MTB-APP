@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
-import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle } from "lucide-react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users } from "lucide-react-native";
 import { api } from "@/src/api/client";
+import { useAuth } from "@/src/auth/AuthContext";
 
 const C = {
   surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -14,6 +15,7 @@ const C = {
 const OFFSETS = [0, 14, 21, 28, 35, 49, 63, 77, 91];
 
 type Trial = { id: string; title?: string; protocol_id?: string; condition?: string; phase?: string };
+type PiOption = { id: string; full_name?: string; email?: string; role?: string };
 
 function fmt(base: Date, off: number) {
   const d = new Date(base); d.setDate(d.getDate() + off);
@@ -37,6 +39,9 @@ function trialLabel(t: Trial) {
 
 export default function AddPatient() {
   const router = useRouter();
+  const { trialId: requestedTrialId } = useLocalSearchParams<{ trialId?: string }>();
+  const { user } = useAuth();
+  const needsPiSelection = user?.role === "smo" || user?.role === "site";
   const [subjectId, setSubjectId] = useState("");
   const [initials, setInitials] = useState("");
   const [fullName, setFullName] = useState("");
@@ -51,10 +56,50 @@ export default function AddPatient() {
   const [trialsLoading, setTrialsLoading] = useState(true);
   const [trialId, setTrialId] = useState<string | null>(null);
   const [trialOpen, setTrialOpen] = useState(false);
+  const [pis, setPis] = useState<PiOption[]>([]);
+  const [piId, setPiId] = useState<string | null>(null);
+  const [piOpen, setPiOpen] = useState(false);
+  const [piLoading, setPiLoading] = useState(needsPiSelection);
+  const [piLoadError, setPiLoadError] = useState<string | null>(null);
+  const [piPermissionDenied, setPiPermissionDenied] = useState(false);
   const [baseline, setBaseline] = useState("5 May 2025");
   const [showAll, setShowAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadPis = useCallback(async () => {
+    if (!needsPiSelection) {
+      setPiLoading(false);
+      return;
+    }
+    setPiLoading(true);
+    setPiLoadError(null);
+    setPiPermissionDenied(false);
+    try {
+      const response = await api.get("/team");
+      const availablePis = (Array.isArray(response.data) ? response.data : [])
+        .filter((member: PiOption) => member.role === "pi");
+      setPis(availablePis);
+      setPiId(current => (
+        current && availablePis.some((pi: PiOption) => pi.id === current)
+          ? current
+          : availablePis[0]?.id || null
+      ));
+    } catch (e: any) {
+      const status = e?.response?.status;
+      setPis([]);
+      setPiId(null);
+      setPiOpen(false);
+      if (status === 401 || status === 403) {
+        setPiPermissionDenied(true);
+        setPiLoadError("You don't have permission to view Principal Investigators for this organization.");
+      } else {
+        setPiLoadError("We couldn't load Principal Investigators. Check your connection and try again.");
+      }
+    } finally {
+      setPiLoading(false);
+    }
+  }, [needsPiSelection]);
 
   useEffect(() => {
     let alive = true;
@@ -63,18 +108,26 @@ export default function AddPatient() {
         const r = await api.get("/trials");
         if (!alive) return;
         setTrials(r.data);
-        if (r.data.length) setTrialId(r.data[0].id);
+        if (r.data.length) {
+          const requested = r.data.find((trial: Trial) => trial.id === requestedTrialId);
+          setTrialId(requested?.id || r.data[0].id);
+        }
       } catch { if (alive) setError("Couldn't load trials. Pull back and retry."); }
       finally { if (alive) setTrialsLoading(false); }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [requestedTrialId]);
+
+  useEffect(() => {
+    void loadPis();
+  }, [loadPis]);
 
   const selectedTrial = trials.find(t => t.id === trialId);
+  const selectedPi = pis.find(pi => pi.id === piId);
   const base = parseDate(baseline) || new Date();
   const visits = OFFSETS.map((o, i) => ({ num: i + 1, date: fmt(base, o) }));
   const visible = showAll ? visits : visits.slice(0, 5);
-  const canSubmit = !!fullName && !!trialId && !saving;
+  const canSubmit = !!fullName && !!trialId && (!needsPiSelection || !!piId) && !saving;
 
   const submit = async () => {
     if (!fullName || !trialId) return;
@@ -88,6 +141,7 @@ export default function AddPatient() {
         email: email || `${initials.toLowerCase() || "p"}@mtb.app`,
         phone: `+91${phone}`,
         trial_id: trialId,                                  // the SELECTED trial
+        pi_id: needsPiSelection ? piId : undefined,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
         dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
         gender: gender || undefined,
@@ -217,6 +271,73 @@ export default function AddPatient() {
             )}
           </Field>
 
+          {needsPiSelection && (
+            <Field label="Responsible PI *">
+              <Pressable
+                testID="pi-toggle"
+                disabled={piLoading || !!piLoadError || !pis.length}
+                onPress={() => setPiOpen(open => !open)}
+                style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}
+              >
+                {piLoading ? (
+                  <View testID="pi-loading" style={s.inlineState}>
+                    <ActivityIndicator size="small" color={C.primary} />
+                    <Text style={{ color: C.muted, fontSize: 14 }}>Loading Principal Investigators…</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={{ color: selectedPi ? C.fg : C.muted, fontSize: 14, flex: 1 }} numberOfLines={1}>
+                      {selectedPi?.full_name || selectedPi?.email || (piLoadError ? "Principal Investigators unavailable" : "No PI available in your organization")}
+                    </Text>
+                    <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
+                  </>
+                )}
+              </Pressable>
+              {piOpen && pis.length > 0 && (
+                <View style={s.dropdown}>
+                  {pis.map(pi => (
+                    <Pressable
+                      key={pi.id}
+                      testID={`pi-opt-${pi.id}`}
+                      onPress={() => { setPiId(pi.id); setPiOpen(false); }}
+                      style={s.dropdownRow}
+                    >
+                      <Text style={{ color: C.fg, fontSize: 14 }}>{pi.full_name || pi.email || "Principal Investigator"}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+              {!piLoading && piLoadError ? (
+                <View testID={piPermissionDenied ? "pi-permission-error" : "pi-load-error"} style={s.piStateCard}>
+                  <AlertTriangle size={18} color={C.destructive} />
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <Text style={s.piStateText}>{piLoadError}</Text>
+                    {!piPermissionDenied ? (
+                      <Pressable testID="pi-retry" onPress={() => void loadPis()} style={s.stateAction}>
+                        <RefreshCw size={14} color={C.primary} />
+                        <Text style={s.stateActionText}>Retry</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
+              {!piLoading && !piLoadError && !pis.length ? (
+                <View testID="pi-empty" style={s.piStateCard}>
+                  <Users size={18} color={C.primary} />
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <Text style={s.piStateText}>
+                      No Principal Investigator is available. Add one to your organization before enrolling a patient.
+                    </Text>
+                    <Pressable testID="pi-open-team" onPress={() => router.push("/(app)/clinical/team")} style={s.stateAction}>
+                      <Users size={14} color={C.primary} />
+                      <Text style={s.stateActionText}>Open Team</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+            </Field>
+          )}
+
           {/* Patient Access Note */}
           <View style={s.infoNote}>
             <Sparkles size={16} color={C.info} />
@@ -302,6 +423,11 @@ const s = StyleSheet.create({
   dupWarn: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.05)", borderWidth: 1, borderColor: "rgba(192,57,43,0.20)" },
   dropdown: { marginTop: 4, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, overflow: "hidden" },
   dropdownRow: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+  inlineState: { flexDirection: "row", alignItems: "center", gap: 8 },
+  piStateCard: { marginTop: 8, flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.border },
+  piStateText: { color: C.destructive, fontSize: 12, lineHeight: 17 },
+  stateAction: { alignSelf: "flex-start", minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: "rgba(166,33,63,0.08)" },
+  stateActionText: { color: C.primary, fontSize: 12, fontWeight: "700" },
   infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(123,107,184,0.05)", borderWidth: 1, borderColor: "rgba(123,107,184,0.20)" },
   autoCalc: { backgroundColor: "rgba(123,107,184,0.05)", borderRadius: 16, padding: 16 },
   submit: { paddingVertical: 16, borderRadius: 999, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },

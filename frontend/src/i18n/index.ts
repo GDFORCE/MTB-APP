@@ -1,8 +1,35 @@
 // i18n setup — English + Hindi to start. Add more languages by extending `resources`.
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+export const APP_LOCALES = [
+  { code: "en", label: "English" },
+  { code: "hi", label: "Hindi — हिंदी" },
+  { code: "ta", label: "Tamil — தமிழ்" },
+  { code: "te", label: "Telugu — తెలుగు" },
+  { code: "kn", label: "Kannada — ಕನ್ನಡ" },
+  { code: "mr", label: "Marathi — मराठी" },
+] as const;
+
+export type AppLocale = typeof APP_LOCALES[number]["code"];
+
+export function normalizeLocale(value?: string | null): AppLocale {
+  const clean = (value || "").trim().toLowerCase();
+  const exact = APP_LOCALES.find((locale) => locale.code === clean);
+  if (exact) return exact.code;
+  const byLabel = APP_LOCALES.find((locale) =>
+    locale.label.toLowerCase() === clean
+    || locale.label.toLowerCase().startsWith(`${clean} —`)
+    || clean.startsWith(locale.label.split(" —")[0].toLowerCase())
+  );
+  return byLabel?.code || "en";
+}
+
+export function localeLabel(value?: string | null): string {
+  const code = normalizeLocale(value);
+  return APP_LOCALES.find((locale) => locale.code === code)?.label || "English";
+}
 
 const en = {
   welcome: { title: "Your trial, one sunrise at a time.", subtitle: "One warm place for sponsors, sites and patients to follow a clinical trial.", create: "Create an account", signIn: "Sign in", forgot: "Forgot password?" },
@@ -22,8 +49,20 @@ const hi = {
   profile: { editProfile: "प्रोफ़ाइल एडिट करें", changePassword: "पासवर्ड बदलें", notifPrefs: "नोटिफ़िकेशन सेटिंग्स", termsConditions: "नियम और शर्तें", helpSupport: "मदद और सहायता", logout: "लॉग आउट" },
 };
 
+// i18next exposes its configured singleton through the default export; these
+// instance methods are intentional despite the generic named-export warning.
+// eslint-disable-next-line import/no-named-as-default-member
 i18n.use(initReactI18next).init({
-  resources: { en: { translation: en }, hi: { translation: hi } },
+  // Languages awaiting translated resource packs intentionally inherit English
+  // through fallbackLng, while retaining their canonical locale selection.
+  resources: {
+    en: { translation: en },
+    hi: { translation: hi },
+    ta: { translation: en },
+    te: { translation: en },
+    kn: { translation: en },
+    mr: { translation: en },
+  },
   lng: "en",
   fallbackLng: "en",
   interpolation: { escapeValue: false },
@@ -32,12 +71,19 @@ i18n.use(initReactI18next).init({
 
 // Restore saved language preference
 (async () => {
-  try { const saved = await AsyncStorage.getItem("app_lang"); if (saved) i18n.changeLanguage(saved); } catch {}
+  try {
+    const saved = await AsyncStorage.getItem("app_lang");
+    // eslint-disable-next-line import/no-named-as-default-member
+    if (saved) i18n.changeLanguage(normalizeLocale(saved));
+  } catch {}
 })();
 
-export async function setLanguage(lng: string) {
-  await i18n.changeLanguage(lng);
-  try { await AsyncStorage.setItem("app_lang", lng); } catch {}
+export async function setLanguage(lng: string): Promise<AppLocale> {
+  const canonical = normalizeLocale(lng);
+  // eslint-disable-next-line import/no-named-as-default-member
+  await i18n.changeLanguage(canonical);
+  try { await AsyncStorage.setItem("app_lang", canonical); } catch {}
+  return canonical;
 }
 
 export default i18n;

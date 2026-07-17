@@ -2,11 +2,12 @@ import React, { useEffect, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import { MapPin, User, Calendar as CalIcon, Clock, Building2, Phone, ChevronRight } from "lucide-react-native";
+import { MapPin, User, Calendar as CalIcon, Clock, Building2, ChevronRight } from "lucide-react-native";
 import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
+import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 
 const fmtTime = (d?: string) =>
   d ? new Date(d).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
@@ -17,12 +18,18 @@ export default function MyVisits() {
   const [visits, setVisits] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [trialId, setTrialId] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
         const [t, v] = await Promise.all([api.get("/trials"), api.get("/visits/mine")]);
-        setTrials(t.data); setVisits(v.data);
+        const visitRows = Array.isArray(v.data) ? v.data : [];
+        const enrolledIds = new Set(visitRows.map((row: any) => row.trial_id).filter(Boolean));
+        setTrials((Array.isArray(t.data) ? t.data : []).filter((row: any) => enrolledIds.has(row.id)));
+        setVisits(visitRows);
+      } catch (e: any) {
+        setError(e?.response?.data?.detail || "Couldn't load your visits.");
       } finally {
         setLoading(false);
       }
@@ -36,7 +43,6 @@ export default function MyVisits() {
   // site/PI are joined onto each visit instance by the backend (from the
   // patient's assigned PI). Derive per-trial values from that trial's visits.
   const siteFor = (id: string) => visits.find(v => v.trial_id === id)?.site || "";
-  const piFor = (id: string) => visits.find(v => v.trial_id === id)?.pi_name || "";
   const heroSite = tv[0]?.site || "";
   const heroPi = tv[0]?.pi_name || "";
 
@@ -44,11 +50,15 @@ export default function MyVisits() {
     return (
       <ScreenContainer>
         <ScreenHeader eyebrow="Your trials" title="My Visits" />
-        <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
+        <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: PATIENT_NAV_CONTENT_BOTTOM }}>
           {loading ? (
             <View style={{ paddingTop: spacing.xxl, alignItems: "center" }}>
               <ActivityIndicator color={colors.primary} />
             </View>
+          ) : error ? (
+            <Card style={{ alignItems: "center", paddingVertical: spacing.xl }}>
+              <Small color={colors.destructive} weight="700">{error}</Small>
+            </Card>
           ) : trials.length === 0 ? (
             <Card style={{ alignItems: "center", paddingVertical: spacing.xl }}>
               <Building2 size={28} color={colors.mutedFg} />
@@ -84,6 +94,7 @@ export default function MyVisits() {
           </>
           )}
         </ScrollView>
+        <PatientBottomNav active="visits" />
       </ScreenContainer>
     );
   }
@@ -91,7 +102,7 @@ export default function MyVisits() {
   return (
     <ScreenContainer>
       <ScreenHeader eyebrow={trial?.protocol_id || "Trial"} title="My Visits" onBack={() => setTrialId(null)} />
-      <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: PATIENT_NAV_CONTENT_BOTTOM }}>
         <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.hero}>
           <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
             <View style={st.heroChip}><Small color={colors.primaryFg} weight="700" style={{ fontFamily: "monospace" as any }}>{trial?.protocol_id}</Small></View>
@@ -112,6 +123,7 @@ export default function MyVisits() {
         </LinearGradient>
 
         <Eyebrow style={{ marginTop: spacing.md, marginBottom: spacing.sm }}>All visits</Eyebrow>
+        {tv.length === 0 && <Card><Small color={colors.mutedFg}>No visits have been scheduled for this trial yet.</Small></Card>}
         {tv.map(v => {
           const railColor = v.status === "completed" ? colors.success : v.status === "upcoming" ? colors.warning : v.status === "missed" ? colors.destructive : colors.info;
           return (
@@ -136,6 +148,7 @@ export default function MyVisits() {
           );
         })}
       </ScrollView>
+      <PatientBottomNav active="visits" />
     </ScreenContainer>
   );
 }

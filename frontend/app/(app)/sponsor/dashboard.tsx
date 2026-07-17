@@ -1,469 +1,948 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, ActivityIndicator, RefreshControl } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Animated,
+  Easing,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text as RNText,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
-import Svg, { Path, Circle } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import {
-  Bell, Sun, FlaskConical, Users, CheckCircle2, AlertTriangle, ArrowUpRight,
-  ChevronRight, FilePlus2, Share2, ClipboardCheck,
-  Home, MessageCircle, User, RefreshCcw, ShieldCheck,
+  AlertTriangle,
+  ArrowUpRight,
+  Bell,
+  Building2,
+  ChevronRight,
+  FileText,
+  FlaskConical,
+  Info,
+  MapPin,
+  RefreshCcw,
+  ShieldCheck,
+  Sun,
+  TrendingUp,
+  UserCheck,
+  Users,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
-import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
-import { colors as C, dawnGradient } from "@/src/theme/tokens";
-import { useOrgContext, consoleRouteForType } from "@/src/components/org-admin-kit";
+import { colors as C, dawnGradient, fonts } from "@/src/theme/tokens";
+import { consoleRouteForType, useOrgContext } from "@/src/components/org-admin-kit";
+import { getSponsorDashboard } from "@/src/features/sponsor/api";
+import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
+import type {
+  SponsorDashboard as SponsorDashboardData,
+  SponsorNotification as DashboardNotification,
+  SponsorSite as DashboardSite,
+  SponsorTrial as DashboardTrial,
+} from "@/src/features/sponsor/types";
 
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const DAWN = dawnGradient;
-// White overlays for the plum/gradient hero — same ladder the sibling dashboards use.
-const W = { w10: "rgba(255,255,255,0.10)", w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w25: "rgba(255,255,255,0.25)", w55: "rgba(255,255,255,0.55)", w65: "rgba(255,255,255,0.65)", w70: "rgba(255,255,255,0.70)", w80: "rgba(255,255,255,0.80)" };
-
-// GET /api/trials list item (extended in Task 4.2 with enrolled_count /
-// target_enrollment / optional schedule_status).
-type Trial = {
-  id: string;
-  protocol_id?: string;
-  title?: string;
-  phase?: string;
-  condition?: string;
-  status?: string;
-  sponsor_name?: string;
-  enrolled_count?: number;
-  target_enrollment?: number | null;
-  schedule_status?: "approved" | "flagged" | string;
+const W = {
+  w15: "rgba(255,255,255,0.15)",
+  w20: "rgba(255,255,255,0.20)",
+  w25: "rgba(255,255,255,0.25)",
+  w65: "rgba(255,255,255,0.65)",
+  w70: "rgba(255,255,255,0.70)",
+  w80: "rgba(255,255,255,0.80)",
 };
 
-// Trial lifecycle status → chip tone. Unknown states fall back to muted.
-function statusTone(status?: string): { bg: string; fg: string; label: string } {
-  const s = (status || "active").toLowerCase();
-  const label = s.charAt(0).toUpperCase() + s.slice(1);
-  if (s === "active") return { bg: "rgba(92,154,110,0.15)", fg: C.success, label };
-  if (s === "completed") return { bg: "rgba(123,107,184,0.15)", fg: C.info, label };
-  if (s === "terminated" || s === "closed") return { bg: "rgba(192,57,43,0.12)", fg: C.destructive, label };
-  return { bg: "rgba(123,95,115,0.12)", fg: C.mutedFg, label };
+const EMPTY: SponsorDashboardData = {
+  portfolio: {
+    healthScore: 0,
+    status: "No portfolio data",
+    activeTrials: 0,
+    alerts: 0,
+    enrolled: 0,
+    target: 0,
+    enrollmentPct: 0,
+    compliancePct: 0,
+    adherencePct: 0,
+    recruitment: {
+      screened: 0,
+      screen_fail: 0,
+      randomized: 0,
+      active: 0,
+      withdrawn: 0,
+      dropout: 0,
+      follow_up: 0,
+      completed: 0,
+    },
+  },
+  totals: { trials: 0, sites: 0, subjects: 0, pis: 0 },
+  trials: [],
+  sites: [],
+  recentNotifications: [],
+  capabilities: { canAddTrial: true, canAddSite: false, canShareSchedule: true },
+};
+
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => mounted && setReduced(value))
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReduced,
+    );
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+  return reduced;
 }
 
-// schedule_status → chip. Only 'approved' / 'flagged' render; anything else is
-// omitted so we never fabricate a review state the backend didn't store.
-function scheduleChip(status?: string): { bg: string; fg: string; label: string; icon: any } | null {
-  if (status === "approved") return { bg: "rgba(92,154,110,0.14)", fg: C.success, label: "Approved", icon: CheckCircle2 };
-  if (status === "flagged") return { bg: "rgba(192,57,43,0.12)", fg: C.destructive, label: "Flagged", icon: AlertTriangle };
-  return null;
+function healthLabel(score: number, status?: string) {
+  if (status) {
+    const normalized = status.replace(/_/g, " ").trim();
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+  if (score >= 80) return "On track";
+  if (score >= 60) return "Steady";
+  if (score > 0) return "Needs attention";
+  return "No portfolio data";
+}
+
+function timeLabel(value: unknown) {
+  if (typeof value !== "string" || !value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  const minutes = Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 60000));
+  if (minutes < 1) return "Now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h`;
+  if (minutes < 10080) return `${Math.floor(minutes / 1440)}d`;
+  return parsed.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 export default function SponsorDashboard() {
   const router = useRouter();
   const { user } = useAuth();
   const unread = useUnreadCount();
-  const [trials, setTrials] = useState<Trial[]>([]);
+  const reducedMotion = useReducedMotion();
+  const [dashboard, setDashboard] = useState<SponsorDashboardData>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showRecruitment, setShowRecruitment] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const r = await api.get("/trials");
-      setTrials(Array.isArray(r.data) ? r.data : []);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || "Couldn't load your portfolio. Pull to retry.");
+      setDashboard(await getSponsorDashboard());
+    } catch (requestError: any) {
+      setError(requestError?.response?.data?.detail || "We couldn't load your portfolio. Pull down or tap retry.");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
-  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  // ── Portfolio roll-ups (derived from live data — never hardcoded) ──
-  const totalTrials = trials.length;
-  const activeTrials = useMemo(() => trials.filter(t => (t.status || "active").toLowerCase() === "active").length, [trials]);
-  const totalEnrolled = useMemo(() => trials.reduce((n, t) => n + (t.enrolled_count || 0), 0), [trials]);
-  const flaggedCount = useMemo(() => trials.filter(t => t.schedule_status === "flagged").length, [trials]);
-  // Enrolment coverage only where a target actually exists — no invented denominators.
-  const withTarget = useMemo(() => trials.filter(t => typeof t.target_enrollment === "number" && (t.target_enrollment as number) > 0), [trials]);
-  const totalTarget = useMemo(() => withTarget.reduce((n, t) => n + (t.target_enrollment as number), 0), [withTarget]);
-  const enrolledOfTarget = useMemo(() => withTarget.reduce((n, t) => n + (t.enrolled_count || 0), 0), [withTarget]);
-  const hasTargets = withTarget.length > 0 && totalTarget > 0;
-  const enrollPct = hasTargets ? Math.min(100, Math.round((enrolledOfTarget / totalTarget) * 100)) : 0;
-  // Ring: enrolment coverage when targets exist; otherwise the share of active trials.
-  const ringValue = loading ? 0 : hasTargets ? enrollPct / 100 : totalTrials ? activeTrials / totalTrials : 0;
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
 
   const fullName = user?.full_name || "";
-  const firstName = fullName.split(" ")[0] || "";
-  const initials = user?.avatar_initials || fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase() || "?";
-  const org = user?.organization || "";
+  const firstName = fullName.trim().split(/\s+/)[0] || "";
+  const initials = user?.avatar_initials || fullName.split(/\s+/).filter(Boolean).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "?";
+  const roleLabel = user?.role === "cro" ? "CRO" : "Sponsor";
+  const organization = user?.organization || "";
+  const visibleTrials = useMemo(
+    () => dashboard.trials.filter((trial) => trial.status.toLowerCase() === "active"),
+    [dashboard.trials],
+  );
+
+  const openSites = () => router.push("/(app)/sponsor/sites");
+  const openAddSite = () => router.push({
+    pathname: "/(app)/sponsor/sites",
+    params: { add: "1" },
+  });
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.background }}>
+    <View style={styles.screen}>
       <StatusBar barStyle="light-content" backgroundColor={C.primaryDeep} />
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 110 }}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={C.primary} />}
       >
-        {/* ── Hero — dawn gradient + sunrise arcs + portfolio deck ── */}
-        <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.hero}>
+        <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
           <LinearGradient colors={[C.primaryDeep, "rgba(107,20,55,0.55)", "rgba(107,20,55,0)"] as any} style={StyleSheet.absoluteFill} />
-          <View style={{ position: "absolute", right: -48, top: -48, width: 240, height: 240, opacity: 0.85 }} pointerEvents="none">
-            <Svg viewBox="0 0 200 200" width={240} height={240}>
-              <Path d="M30 110 a70 70 0 0 1 140 0" stroke={W.w25} strokeWidth="1.5" fill="none" />
-              <Path d="M52 110 a48 48 0 0 1 96 0" stroke={W.w25} strokeWidth="1" fill="none" />
-              <Circle cx="100" cy="110" r="22" stroke={W.w15} strokeWidth="1" fill="none" />
-            </Svg>
-          </View>
+          <AmbientHeroArt reducedMotion={reducedMotion} />
 
           <SafeAreaView edges={["top"]}>
-            <View style={st.heroTop}>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={st.eyebrowLight} numberOfLines={1}>SPONSOR{org ? ` · ${org}` : ""}</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-                  <Text style={st.heroTitle}>{firstName ? `Hi, ${firstName}` : "Hello"}</Text>
-                  <Sun size={20} color={W.w80} />
+            <View style={styles.heroTop}>
+              <View style={styles.heroIdentity}>
+                <Text style={styles.heroEyebrow} numberOfLines={1}>
+                  {roleLabel.toUpperCase()}{organization ? ` · ${organization.toUpperCase()}` : ""}
+                </Text>
+                <View style={styles.greetingRow}>
+                  <Text style={styles.heroTitle}>{firstName ? `Hi, ${firstName}` : "Hello"}</Text>
+                  <Sun size={19} color={W.w80} />
                 </View>
               </View>
-              <Pressable testID="sponsor-bell" onPress={() => router.push("/(app)/notifications")} style={st.iconBtn}>
-                <Bell size={20} color={C.primaryFg} />
-                {unread != null && unread > 0 && (
-                  <View style={st.bellBadge}><Text style={st.bellBadgeText}>{unread > 9 ? "9+" : unread}</Text></View>
+              <Pressable testID="sponsor-bell" onPress={() => router.push("/(app)/sponsor/notifications")} style={styles.iconButton}>
+                <Bell size={19} color={C.primaryFg} />
+                {(unread ?? dashboard.recentNotifications.filter((item) => item.unread).length) > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{Math.min(9, unread ?? dashboard.recentNotifications.filter((item) => item.unread).length)}</Text>
+                  </View>
                 )}
               </Pressable>
-              <Pressable testID="sponsor-avatar" onPress={() => router.push("/(app)/clinical/profile")} style={st.iconBtn}>
-                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 13 }}>{initials}</Text>
+              <Pressable testID="sponsor-avatar" onPress={() => router.push("/(app)/sponsor/profile")} style={styles.iconButton}>
+                <Text style={styles.avatarText}>{initials}</Text>
               </Pressable>
             </View>
 
-            {/* Portfolio deck */}
-            <View style={st.dayDeck}>
-              <ProgressRing value={ringValue} size={84} stroke={7}>
-                <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 20, lineHeight: 22, fontVariant: ["tabular-nums"] }}>
-                  {loading ? "–" : hasTargets ? `${enrollPct}%` : activeTrials}
+            <View style={styles.portfolioDeck}>
+              <ProgressRing value={dashboard.portfolio.healthScore / 100} reducedMotion={reducedMotion}>
+                <Text style={styles.ringValue}>
+                  {loading ? "–" : <><CountUp value={dashboard.portfolio.healthScore} reducedMotion={reducedMotion} />%</>}
                 </Text>
-                <Text style={{ color: W.w70, fontSize: 8, fontWeight: "700", letterSpacing: 1.4, marginTop: 2 }}>
-                  {hasTargets ? "ENROLLED" : "ACTIVE"}
-                </Text>
+                <Text style={styles.ringLabel}>HEALTH</Text>
               </ProgressRing>
-              <View style={{ flex: 1, minWidth: 0, marginLeft: 16 }}>
-                <Text style={st.eyebrowLight}>PORTFOLIO</Text>
-                <Text style={st.heroSubtitle}>{totalTrials} {totalTrials === 1 ? "trial" : "trials"} in flight</Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <View style={st.heroChip}><FlaskConical size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : activeTrials} active</Text></View>
-                  <View style={st.heroChip}><Users size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : totalEnrolled} enrolled</Text></View>
-                  {!loading && flaggedCount > 0 && (
-                    <View style={[st.heroChip, { backgroundColor: "rgba(192,57,43,0.30)" }]}>
-                      <AlertTriangle size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{flaggedCount} flagged</Text>
-                    </View>
-                  )}
+              <View style={styles.portfolioCopy}>
+                <Text style={styles.heroEyebrow}>PORTFOLIO HEALTH</Text>
+                <Text style={styles.portfolioTitle}>{loading ? "Loading…" : healthLabel(dashboard.portfolio.healthScore, dashboard.portfolio.status)}</Text>
+                <View style={styles.heroChips}>
+                  <HeroChip icon={FlaskConical} label={`${loading ? "–" : dashboard.portfolio.activeTrials} active`} />
+                  <HeroChip
+                    icon={Users}
+                    label={loading
+                      ? "– enrolled"
+                      : dashboard.portfolio.target > 0
+                        ? `${dashboard.portfolio.enrolled}/${dashboard.portfolio.target} enrolled`
+                        : `${dashboard.portfolio.enrolled} enrolled`}
+                  />
+                  <HeroChip icon={Bell} label={`${loading ? "–" : dashboard.portfolio.alerts} alerts`} danger={dashboard.portfolio.alerts > 0} />
                 </View>
               </View>
             </View>
           </SafeAreaView>
         </LinearGradient>
 
-        {/* ── Body floats up into hero ── */}
-        <View style={{ marginTop: -40, paddingHorizontal: 16, paddingBottom: 24 }}>
-          {/* Portfolio summary tiles */}
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <StatTile icon={FlaskConical} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? "–" : totalTrials} label="Trials" />
-            <StatTile icon={CheckCircle2} iconColor={C.success} iconBg="rgba(92,154,110,0.14)" glow="rgba(92,154,110,0.20)" value={loading ? "–" : activeTrials} label="Active" />
-            <StatTile icon={Users} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? "–" : totalEnrolled} label="Enrolled" />
-            <StatTile icon={AlertTriangle} iconColor={flaggedCount > 0 ? C.destructive : C.accent} iconBg={flaggedCount > 0 ? "rgba(192,57,43,0.12)" : "rgba(230,155,92,0.14)"} glow="rgba(230,155,92,0.20)" value={loading ? "–" : flaggedCount} label="Flagged" />
-          </View>
+        <View style={styles.body}>
+          <MotionItem index={0} reducedMotion={reducedMotion}>
+            <View style={styles.statRow}>
+              <StatTile icon={FlaskConical} color={C.info} tint="rgba(123,107,184,0.12)" value={dashboard.totals.trials} label="Total Trials" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/trials")} />
+              <StatTile icon={MapPin} color={C.accent} tint="rgba(230,155,92,0.15)" value={dashboard.totals.sites} label="Total Sites" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
+              <StatTile icon={Users} color={C.violet} tint="rgba(142,91,180,0.12)" value={dashboard.totals.subjects} label="Total Patients" loading={loading} reducedMotion={reducedMotion} onPress={() => setShowRecruitment(true)} />
+              <StatTile icon={UserCheck} color={C.success} tint="rgba(92,154,110,0.12)" value={dashboard.totals.pis} label="Total PIs" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
+            </View>
+          </MotionItem>
 
-          {/* Quick actions — Add Trial routes to the FROZEN add-trial screen, untouched. */}
-          <SectionLabel label="QUICK ACTIONS" />
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <QuickAction icon={FilePlus2} bgGradient={false} bgColor={C.info} iconColor="#FFFFFF" label="Add Trial" onPress={() => router.push("/(app)/sponsor/add-trial")} testID="open-add-trial" />
-            <QuickAction icon={Share2} bgGradient bgColor={undefined} iconColor={C.primaryFg} label="Share Schedule" onPress={() => router.push("/(app)/sponsor/share-schedule")} testID="open-share-schedule" />
-            <QuickAction icon={ClipboardCheck} bgGradient={false} bgColor={C.accent} iconColor={C.accentFg} label="Review" onPress={() => router.push("/(app)/clinical/schedule-review")} testID="open-schedule-review" />
-          </View>
+          {error ? <ErrorCard text={error} onRetry={load} /> : null}
+          {user?.org_admin ? <OrgAdminEntry /> : null}
 
-          {/* Org-admin console entry — only for organization admins */}
-          {user?.org_admin && <OrgAdminEntry />}
+          <MotionItem index={1} reducedMotion={reducedMotion}>
+            <SectionLabel label="QUICK ACTIONS" />
+            <View style={styles.actionRow}>
+              <QuickAction icon={FlaskConical} color={C.info} label="Add Trial" disabled={!dashboard.capabilities.canAddTrial} onPress={() => router.push("/(app)/sponsor/add-trial")} />
+              {dashboard.capabilities.canAddSite ? (
+                <QuickAction icon={MapPin} gradient label="Add Site" onPress={openAddSite} />
+              ) : null}
+              <QuickAction icon={FileText} color={C.accent} iconColor={C.accentFg} label="Share Schedule" disabled={!dashboard.capabilities.canShareSchedule} onPress={() => router.push("/(app)/sponsor/share-schedule")} />
+            </View>
+          </MotionItem>
 
-          {/* Trials */}
-          <SectionLabel label="MY TRIALS" action={
-            <Pressable testID="see-all-trials" onPress={() => router.push("/(app)/clinical/my-trials")} style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text style={{ color: C.info, fontSize: 14, fontWeight: "700" }}>See all </Text>
-              <ChevronRight size={16} color={C.info} />
-            </Pressable>
-          } />
+          <SectionLabel
+            label="MY TRIALS"
+            actionLabel="See all"
+            onAction={() => router.push("/(app)/sponsor/trials")}
+          />
+          {loading ? (
+            <LoadingCard label="Loading trials…" />
+          ) : visibleTrials.length === 0 ? (
+            <EmptyCard icon={FlaskConical} title="No active trials" description="Your active studies will appear here." />
+          ) : (
+            <View style={styles.sectionStack}>
+              {visibleTrials.map((trial, index) => (
+                <MotionItem key={trial.id} index={index + 2} reducedMotion={reducedMotion}>
+                  <TrialCard
+                    trial={trial}
+                    reducedMotion={reducedMotion}
+                    onPress={() => router.push({ pathname: "/(app)/sponsor/trial-detail", params: { id: trial.id } })}
+                  />
+                </MotionItem>
+              ))}
+            </View>
+          )}
 
-          <View style={{ gap: 12 }}>
-            {loading && <LoadingCard />}
-            {!loading && error && <ErrorCard text={error} onRetry={load} />}
-            {!loading && !error && trials.length === 0 && (
-              <EmptyState onAdd={() => router.push("/(app)/sponsor/add-trial")} />
-            )}
-            {!loading && !error && trials.map(t => (
-              <TrialCard
-                key={t.id}
-                t={t}
-                onOpen={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: t.id } })}
-                onShare={() => router.push({ pathname: "/(app)/sponsor/share-schedule", params: { id: t.id } })}
-                onReview={() => router.push("/(app)/clinical/schedule-review")}
-              />
-            ))}
-          </View>
+          <SectionLabel label="SITE PERFORMANCE" actionLabel="View all" onAction={openSites} />
+          {loading ? (
+            <LoadingCard label="Loading sites…" />
+          ) : dashboard.sites.length === 0 ? (
+            <EmptyCard icon={Building2} title="No site data yet" description="Site performance appears after sites are assigned to a trial." />
+          ) : (
+            <View style={styles.performanceCard}>
+              {dashboard.sites.slice(0, 4).map((site, index) => (
+                <SitePerformance
+                  key={site.id}
+                  site={site}
+                  last={index === Math.min(4, dashboard.sites.length) - 1}
+                  reducedMotion={reducedMotion}
+                  onPress={() => router.push({
+                    pathname: "/(app)/sponsor/sites",
+                    params: { siteId: site.id },
+                  })}
+                />
+              ))}
+            </View>
+          )}
+
+          <SectionLabel
+            label="NOTIFICATIONS"
+            actionLabel="See all"
+            onAction={() => router.push("/(app)/sponsor/notifications")}
+          />
+          {loading ? (
+            <LoadingCard label="Loading updates…" />
+          ) : dashboard.recentNotifications.length === 0 ? (
+            <EmptyCard icon={Bell} title="You're all caught up" description="New portfolio updates will appear here." />
+          ) : (
+            <View style={styles.sectionStack}>
+              {dashboard.recentNotifications.slice(0, 2).map((notification) => (
+                <NotificationCard key={notification.id} item={notification} onPress={() => router.push("/(app)/sponsor/notifications")} />
+              ))}
+            </View>
+          )}
         </View>
       </ScrollView>
 
-      {/* Bottom nav */}
-      <View style={st.tabBar}>
-        <TabItem icon={Home} label="Dashboard" active />
-        <TabItem icon={FlaskConical} label="Trials" onPress={() => router.push("/(app)/clinical/my-trials")} testID="tab-trials" />
-        <TabItem icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <TabItem icon={Bell} label="Alerts" badge={unread ?? 0} onPress={() => router.push("/(app)/notifications")} testID="tab-alerts" />
-        <TabItem icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
-      </View>
+      <SponsorBottomNav active="dashboard" unread={unread ?? 0} />
+      <RecruitmentSheet
+        visible={showRecruitment}
+        dashboard={dashboard}
+        onClose={() => setShowRecruitment(false)}
+      />
     </View>
   );
 }
 
-// ── Sub-components ──────────────────────────────────────────────────────────
 function Text(props: any) {
-  return <RNText {...props} style={[{ color: C.foreground }, props.style]} />;
+  return <RNText {...props} style={[{ color: C.foreground, fontFamily: fonts.regular }, props.style]} />;
 }
 
-// Org-admin console shortcut — resolves the org type and routes to the matching
-// console (sponsor / site / smo). Rendered only when user.org_admin is true.
-function OrgAdminEntry() {
-  const router = useRouter();
-  const { orgType, orgName, loading, error } = useOrgContext();
-  if (error) return null;
-  const route = consoleRouteForType(orgType || undefined);
+function CountUp({ value, reducedMotion }: { value: number; reducedMotion: boolean }) {
+  const animated = useRef(new Animated.Value(reducedMotion ? value : 0)).current;
+  const [display, setDisplay] = useState(reducedMotion ? value : 0);
+
+  useEffect(() => {
+    const listener = animated.addListener(({ value: next }) => setDisplay(Math.round(next)));
+    if (reducedMotion) {
+      animated.setValue(value);
+      setDisplay(value);
+    } else {
+      animated.stopAnimation();
+      animated.setValue(0);
+      Animated.timing(animated, {
+        toValue: value,
+        duration: 720,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start();
+    }
+    return () => animated.removeListener(listener);
+  }, [animated, reducedMotion, value]);
+
+  return <RNText>{display}</RNText>;
+}
+
+function MotionItem({
+  children,
+  index,
+  reducedMotion,
+}: {
+  children: React.ReactNode;
+  index: number;
+  reducedMotion: boolean;
+}) {
+  const entrance = useRef(new Animated.Value(reducedMotion ? 1 : 0)).current;
+  useEffect(() => {
+    if (reducedMotion) {
+      entrance.setValue(1);
+      return;
+    }
+    entrance.setValue(0);
+    Animated.timing(entrance, {
+      toValue: 1,
+      duration: 430,
+      delay: Math.min(index, 10) * 55,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [entrance, index, reducedMotion]);
   return (
-    <>
-      <SectionLabel label="ORGANIZATION" />
-      <Pressable testID="org-admin-console" disabled={loading} onPress={() => router.push(route as any)} style={st.orgEntry}>
-        <View style={st.orgEntryIcon}><ShieldCheck size={22} color={C.primaryFg} /></View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ fontSize: 15, fontWeight: "700", color: C.foreground }}>Org admin console</Text>
-          <Text style={{ fontSize: 12, color: C.mutedFg, marginTop: 2 }} numberOfLines={1}>
-            {orgName ? `Manage ${orgName} — trials, team & audit` : "Manage trials, team & audit"}
-          </Text>
-        </View>
-        {loading ? <ActivityIndicator color={C.primary} /> : <ChevronRight size={20} color={C.mutedFg} />}
-      </Pressable>
-    </>
+    <Animated.View
+      style={{
+        opacity: entrance,
+        transform: [{
+          translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }),
+        }],
+      }}
+    >
+      {children}
+    </Animated.View>
   );
 }
 
-function LoadingCard() {
+function AmbientHeroArt({ reducedMotion }: { reducedMotion: boolean }) {
+  const drift = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (reducedMotion) {
+      drift.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(drift, {
+        toValue: 1,
+        duration: 4200,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+      Animated.timing(drift, {
+        toValue: 0,
+        duration: 4200,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [drift, reducedMotion]);
   return (
-    <View style={[st.card, { alignItems: "center", justifyContent: "center", paddingVertical: 32 }]}>
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.heroArt,
+        {
+          opacity: drift.interpolate({ inputRange: [0, 1], outputRange: [0.72, 0.96] }),
+          transform: [
+            { translateX: drift.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
+            { translateY: drift.interpolate({ inputRange: [0, 1], outputRange: [0, 6] }) },
+            { scale: drift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.035] }) },
+          ],
+        },
+      ]}
+    >
+      <Svg viewBox="0 0 200 200" width={240} height={240}>
+        <Path d="M30 110 a70 70 0 0 1 140 0" stroke={W.w25} strokeWidth="1.5" fill="none" />
+        <Path d="M52 110 a48 48 0 0 1 96 0" stroke={W.w25} strokeWidth="1" fill="none" />
+        <Circle cx="100" cy="110" r="22" stroke={W.w15} strokeWidth="1" fill="none" />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+function HeroChip({ icon: Icon, label, danger }: any) {
+  return (
+    <View style={[styles.heroChip, danger && styles.heroChipDanger]}>
+      <Icon size={12} color={C.primaryFg} />
+      <Text style={styles.heroChipText}>{label}</Text>
+    </View>
+  );
+}
+
+function ProgressRing({
+  value,
+  children,
+  reducedMotion,
+}: {
+  value: number;
+  children: React.ReactNode;
+  reducedMotion: boolean;
+}) {
+  const size = 76;
+  const stroke = 6;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const progress = Math.max(0, Math.min(1, value));
+  const draw = useRef(new Animated.Value(reducedMotion ? progress : 0)).current;
+  useEffect(() => {
+    if (reducedMotion) {
+      draw.setValue(progress);
+      return;
+    }
+    draw.setValue(0);
+    Animated.timing(draw, {
+      toValue: progress,
+      duration: 850,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [draw, progress, reducedMotion]);
+  const dashOffset = draw.interpolate({
+    inputRange: [0, 1],
+    outputRange: [circumference, 0],
+  });
+  return (
+    <View style={styles.ring}>
+      <Svg width={size} height={size} style={styles.ringSvg}>
+        <Circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={W.w20} strokeWidth={stroke} />
+        <AnimatedCircle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={C.primaryFg}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDashoffset={dashOffset as any}
+        />
+      </Svg>
+      <View style={styles.ringContent}>{children}</View>
+    </View>
+  );
+}
+
+function StatTile({ icon: Icon, color, tint, value, label, loading, onPress, disabled, reducedMotion }: any) {
+  return (
+    <Pressable disabled={disabled || !onPress} onPress={onPress} style={({ pressed }) => [styles.statTile, pressed && styles.pressed]}>
+      <View style={[styles.statIcon, { backgroundColor: tint }]}><Icon size={15} color={color} /></View>
+      <Text style={styles.statValue}>{loading ? "–" : <CountUp value={value} reducedMotion={reducedMotion} />}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function SectionLabel({ label, actionLabel, onAction, actionDisabled }: any) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionTitleRow}>
+        <LinearGradient colors={DAWN as any} style={styles.sectionMark} />
+        <Text style={styles.sectionTitle}>{label}</Text>
+      </View>
+      {actionLabel ? (
+        <Pressable disabled={actionDisabled} onPress={onAction} style={styles.sectionAction}>
+          <Text style={[styles.sectionActionText, actionDisabled && styles.disabledText]}>{actionLabel}</Text>
+          <ChevronRight size={15} color={actionDisabled ? C.border : C.info} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function QuickAction({ icon: Icon, color, iconColor = C.primaryFg, gradient, label, onPress, disabled }: any) {
+  return (
+    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.quickAction, disabled && styles.disabled, pressed && styles.pressed]}>
+      {gradient ? (
+        <LinearGradient colors={DAWN as any} style={styles.actionIcon}><Icon size={21} color={C.primaryFg} /></LinearGradient>
+      ) : (
+        <View style={[styles.actionIcon, { backgroundColor: color }]}><Icon size={21} color={iconColor} /></View>
+      )}
+      <Text style={styles.actionLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function TrialCard({
+  trial,
+  onPress,
+  reducedMotion,
+}: {
+  trial: DashboardTrial;
+  onPress: () => void;
+  reducedMotion: boolean;
+}) {
+  const numerator = trial.enrolled;
+  const percentage = trial.target > 0 ? Math.min(100, Math.round((numerator / trial.target) * 100)) : 0;
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.trialCard, pressed && styles.pressed]}>
+      <LinearGradient colors={DAWN as any} style={styles.trialStripe} />
+      <View style={styles.trialTop}>
+        <View style={styles.protocolPill}><Text style={styles.protocolText}>{trial.protocolId}</Text></View>
+        <View style={styles.trialStatusRow}>
+          <View style={styles.activePill}><View style={styles.activeDot} /><Text style={styles.activeText}>{trial.status}</Text></View>
+          <View style={styles.openIcon}><ArrowUpRight size={14} color={C.mutedFg} /></View>
+        </View>
+      </View>
+      <Text style={styles.trialTitle} numberOfLines={2}>{trial.title}</Text>
+      <View style={styles.tags}>
+        {[trial.phase, trial.condition, trial.drug, trial.sites ? `${trial.sites} sites` : ""].filter(Boolean).map((tag) => (
+          <View key={tag} style={styles.tag}><Text style={styles.tagText}>{tag}</Text></View>
+        ))}
+      </View>
+      <View style={styles.progressMeta}>
+        <Text style={styles.progressLabel}>Enrolled</Text>
+        <Text style={styles.progressValue}>{trial.target > 0 ? `${numerator}/${trial.target} · ${percentage}%` : `${numerator} enrolled`}</Text>
+      </View>
+      <View style={styles.progressTrack}>
+        {trial.target > 0 ? <AnimatedProgress value={percentage} reducedMotion={reducedMotion} style={styles.progressFill} /> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function SitePerformance({
+  site,
+  last,
+  onPress,
+  reducedMotion,
+}: {
+  site: DashboardSite;
+  last: boolean;
+  onPress: () => void;
+  reducedMotion: boolean;
+}) {
+  const score = site.performanceScore;
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.siteRow, !last && styles.siteDivider, pressed && styles.pressed]}>
+      <View style={styles.siteMeta}>
+        <View style={styles.siteTitleWrap}>
+          <Text style={styles.siteName} numberOfLines={1}>{site.name}</Text>
+          <Text style={styles.siteSubscore} numberOfLines={1}>
+            Enrollment {site.enrollmentPct}% · Compliance {site.visitCompliance ?? 0}% · Adherence {site.adherencePct ?? 0}%
+          </Text>
+        </View>
+        <View style={styles.siteScoreWrap}>
+          <Text style={styles.siteScore}>{score}%</Text>
+          <ChevronRight size={14} color={C.mutedFg} />
+        </View>
+      </View>
+      <View style={styles.siteTrack}>
+        <AnimatedProgress value={score} reducedMotion={reducedMotion} style={styles.siteFill} />
+      </View>
+    </Pressable>
+  );
+}
+
+function AnimatedProgress({
+  value,
+  reducedMotion,
+  style,
+}: {
+  value: number;
+  reducedMotion: boolean;
+  style: any;
+}) {
+  const progress = Math.max(0, Math.min(100, value));
+  const fill = useRef(new Animated.Value(reducedMotion ? progress : 0)).current;
+  useEffect(() => {
+    if (reducedMotion) {
+      fill.setValue(progress);
+      return;
+    }
+    fill.setValue(0);
+    Animated.timing(fill, {
+      toValue: progress,
+      duration: 760,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [fill, progress, reducedMotion]);
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          width: fill.interpolate({
+            inputRange: [0, 100],
+            outputRange: ["0%", "100%"],
+          }),
+        },
+      ]}
+    >
+      <LinearGradient
+        colors={DAWN as any}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
+  );
+}
+
+function RecruitmentSheet({
+  visible,
+  dashboard,
+  onClose,
+}: {
+  visible: boolean;
+  dashboard: SponsorDashboardData;
+  onClose: () => void;
+}) {
+  const rows = [
+    ["Screened", dashboard.portfolio.recruitment.screened],
+    ["Screen failures", dashboard.portfolio.recruitment.screen_fail],
+    ["Randomized", dashboard.portfolio.recruitment.randomized],
+    ["Active", dashboard.portfolio.recruitment.active],
+    ["Follow-up", dashboard.portfolio.recruitment.follow_up],
+    ["Completed", dashboard.portfolio.recruitment.completed],
+    ["Withdrawn", dashboard.portfolio.recruitment.withdrawn],
+    ["Dropout", dashboard.portfolio.recruitment.dropout],
+  ] as const;
+  return (
+    <Modal
+      transparent
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <Pressable
+          accessibilityLabel="Close recruitment status"
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+        />
+        <View style={styles.recruitmentSheet}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.sheetTop}>
+            <View>
+              <Text style={styles.sheetEyebrow}>PORTFOLIO RECRUITMENT</Text>
+              <Text style={styles.sheetTitle}>Patient status</Text>
+            </View>
+            <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetClose}>
+              <Text style={styles.sheetCloseText}>Done</Text>
+            </Pressable>
+          </View>
+          <View style={styles.recruitmentSummary}>
+            <View>
+              <Text style={styles.recruitmentSummaryValue}>{dashboard.portfolio.enrolled}</Text>
+              <Text style={styles.recruitmentSummaryLabel}>ENROLLED</Text>
+            </View>
+            <View style={styles.recruitmentSummaryDivider} />
+            <View>
+              <Text style={styles.recruitmentSummaryValue}>{dashboard.portfolio.target || "—"}</Text>
+              <Text style={styles.recruitmentSummaryLabel}>TARGET</Text>
+            </View>
+            <View style={styles.recruitmentSummaryDivider} />
+            <View>
+              <Text style={styles.recruitmentSummaryValue}>{dashboard.portfolio.enrollmentPct}%</Text>
+              <Text style={styles.recruitmentSummaryLabel}>PROGRESS</Text>
+            </View>
+          </View>
+          <View style={styles.recruitmentGrid}>
+            {rows.map(([label, value]) => (
+              <View key={label} style={styles.recruitmentMetric}>
+                <Text style={styles.recruitmentMetricValue}>{value}</Text>
+                <Text style={styles.recruitmentMetricLabel}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function notificationTone(type: string) {
+  const normalized = type.toLowerCase();
+  if (normalized.includes("milestone") || normalized.includes("recruit")) return { Icon: TrendingUp, bg: "rgba(92,154,110,0.14)", color: C.success };
+  if (normalized.includes("overdue") || normalized.includes("alert")) return { Icon: AlertTriangle, bg: "rgba(192,57,43,0.12)", color: C.destructive };
+  if (normalized.includes("site")) return { Icon: MapPin, bg: "rgba(230,155,92,0.14)", color: C.accent };
+  if (normalized.includes("trial")) return { Icon: FlaskConical, bg: "rgba(123,107,184,0.12)", color: C.info };
+  return { Icon: Info, bg: C.surface, color: C.mutedFg };
+}
+
+function NotificationCard({ item, onPress }: { item: DashboardNotification; onPress: () => void }) {
+  const tone = notificationTone(item.type || "system");
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.notificationCard, pressed && styles.pressed]}>
+      <View style={[styles.notificationIcon, { backgroundColor: tone.bg }]}><tone.Icon size={17} color={tone.color} /></View>
+      <View style={styles.notificationCopy}>
+        <Text style={styles.notificationTitle} numberOfLines={1}>{item.title}</Text>
+        {item.message ? <Text style={styles.notificationMessage} numberOfLines={1}>{item.message}</Text> : null}
+      </View>
+      {item.time ? <Text style={styles.notificationTime}>{timeLabel(item.time)}</Text> : null}
+      {item.unread ? <View style={styles.unreadDot} /> : null}
+    </Pressable>
+  );
+}
+
+function LoadingCard({ label }: { label: string }) {
+  return (
+    <View style={styles.loadingCard}>
       <ActivityIndicator color={C.primary} />
-      <Text style={{ color: C.mutedFg, fontSize: 12, marginTop: 10 }}>Loading portfolio…</Text>
+      <Text style={styles.loadingText}>{label}</Text>
+    </View>
+  );
+}
+
+function EmptyCard({ icon: Icon, title, description }: any) {
+  return (
+    <View style={styles.emptyCard}>
+      <View style={styles.emptyIcon}><Icon size={20} color={C.primary} /></View>
+      <View style={styles.emptyCopy}>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Text style={styles.emptyDescription}>{description}</Text>
+      </View>
     </View>
   );
 }
 
 function ErrorCard({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
-    <View style={[st.card, { borderColor: "rgba(192,57,43,0.30)" }]}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-        <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" }}>
-          <AlertTriangle size={20} color={C.destructive} />
-        </View>
-        <Text style={{ flex: 1, color: C.foreground, fontSize: 13, fontWeight: "600" }}>{text}</Text>
-      </View>
-      <Pressable testID="portfolio-retry" onPress={onRetry} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface }}>
-        <RefreshCcw size={15} color={C.primary} />
-        <Text style={{ color: C.primary, fontSize: 13, fontWeight: "700" }}>Retry</Text>
+    <View style={styles.errorCard}>
+      <AlertTriangle size={19} color={C.destructive} />
+      <Text style={styles.errorText}>{text}</Text>
+      <Pressable onPress={onRetry} style={styles.retryButton}>
+        <RefreshCcw size={14} color={C.primary} />
+        <Text style={styles.retryText}>Retry</Text>
       </Pressable>
     </View>
   );
 }
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
+function OrgAdminEntry() {
+  const router = useRouter();
+  const { orgType, orgName, loading, error } = useOrgContext();
+  if (error) return null;
+  const route = consoleRouteForType(orgType || undefined);
   return (
-    <View style={[st.card, { alignItems: "center", paddingVertical: 28 }]}>
-      <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" }}>
-        <FlaskConical size={24} color={C.primary} />
-      </View>
-      <Text style={{ fontSize: 15, fontWeight: "700", color: C.foreground, marginTop: 12 }}>No trials yet</Text>
-      <Text style={{ fontSize: 12, color: C.mutedFg, marginTop: 4, textAlign: "center" }}>Add your first protocol to start tracking enrolment.</Text>
-      <Pressable testID="empty-add-trial" onPress={onAdd} style={{ marginTop: 14 }}>
-        <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 }}>
-          <FilePlus2 size={16} color={C.primaryFg} />
-          <Text style={{ color: C.primaryFg, fontSize: 13, fontWeight: "700" }}>Add Trial</Text>
-        </LinearGradient>
-      </Pressable>
-    </View>
-  );
-}
-
-function SectionLabel({ label, action }: { label: string; action?: React.ReactNode }) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 24, marginBottom: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={{ width: 4, height: 14, borderRadius: 2 }} />
-        <Text style={{ color: C.mutedFg, fontSize: 11, fontWeight: "700", letterSpacing: 1.5 }}>{label}</Text>
-      </View>
-      {action}
-    </View>
-  );
-}
-
-function StatTile({ icon: Icon, iconColor, iconBg, glow, value, label }: any) {
-  return (
-    <View style={st.statTile}>
-      <View style={{ position: "absolute", top: -20, right: -20, width: 56, height: 56, borderRadius: 28, backgroundColor: glow }} />
-      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: iconBg, alignItems: "center", justifyContent: "center" }}>
-        <Icon size={16} color={iconColor} />
-      </View>
-      <Text style={{ fontSize: 24, fontWeight: "700", color: C.foreground, marginTop: 8, lineHeight: 26, fontVariant: ["tabular-nums"] }}>{value}</Text>
-      <Text style={{ fontSize: 10, color: C.mutedFg, marginTop: 1 }}>{label}</Text>
-    </View>
-  );
-}
-
-function QuickAction({ icon: Icon, bgGradient, bgColor, iconColor, label, onPress, testID }: any) {
-  return (
-    <Pressable testID={testID} onPress={onPress} style={st.quickAction}>
-      {bgGradient ? (
-        <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" }}>
-          <Icon size={22} color={iconColor} />
-        </LinearGradient>
-      ) : (
-        <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: bgColor, alignItems: "center", justifyContent: "center" }}>
-          <Icon size={22} color={iconColor} />
+    <Pressable disabled={loading} onPress={() => router.push(route as any)} style={styles.orgCard}>
+      <View style={styles.orgIcon}><ShieldCheck size={21} color={C.primaryFg} /></View>
+      <View style={styles.orgCopy}>
+        <View style={styles.orgTitleRow}>
+          <Text style={styles.orgTitle}>Organization oversight</Text>
+          <View style={styles.adminBadge}><Text style={styles.adminBadgeText}>ADMIN</Text></View>
         </View>
-      )}
-      <Text style={{ fontSize: 12, fontWeight: "500", color: C.foreground, marginTop: 8, textAlign: "center" }}>{label}</Text>
+        <Text style={styles.orgDescription} numberOfLines={2}>
+          {orgName ? `Manage trials, sites and investigators across ${orgName}.` : "Manage trials, sites and investigators."}
+        </Text>
+      </View>
+      {loading ? <ActivityIndicator color={C.primaryFg} /> : <ArrowUpRight size={18} color={W.w70} />}
     </Pressable>
   );
 }
 
-function TrialCard({ t, onOpen, onShare, onReview }: { t: Trial; onOpen: () => void; onShare: () => void; onReview: () => void }) {
-  const tone = statusTone(t.status);
-  const sched = scheduleChip(t.schedule_status);
-  const enrolled = t.enrolled_count || 0;
-  const target = typeof t.target_enrollment === "number" && t.target_enrollment > 0 ? t.target_enrollment : null;
-  const pct = target ? Math.min(100, Math.round((enrolled / target) * 100)) : null;
-
-  return (
-    <View style={st.trialPanel}>
-      <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6 }} />
-      <Pressable testID={`trial-${t.id}`} onPress={onOpen}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(240,215,220,0.55)" }}>
-            <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{t.protocol_id || t.id.slice(0, 8)}</Text>
-          </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            {sched && (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: sched.bg }}>
-                <sched.icon size={11} color={sched.fg} />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: sched.fg }}>{sched.label}</Text>
-              </View>
-            )}
-            <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: tone.bg }}>
-              <Text style={{ fontSize: 11, fontWeight: "700", color: tone.fg }}>{tone.label}</Text>
-            </View>
-            <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" }}>
-              <ArrowUpRight size={14} color="rgba(123,95,115,0.7)" />
-            </View>
-          </View>
-        </View>
-
-        <Text style={{ fontSize: 16, fontWeight: "700", color: C.foreground, marginBottom: 10 }} numberOfLines={2}>{t.title || "Untitled trial"}</Text>
-
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-          {t.phase ? <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={t.phase} /> : null}
-          {t.condition ? <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={t.condition} /> : null}
-        </View>
-
-        {/* Enrolment progress — bar only when a target exists; else an honest count. */}
-        <View style={{ marginBottom: 4 }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <Text style={{ fontSize: 11, fontWeight: "700", letterSpacing: 1, color: "rgba(123,95,115,0.75)" }}>ENROLMENT</Text>
-            {target ? (
-              <Text style={{ fontSize: 12, fontWeight: "700", color: C.foreground, fontVariant: ["tabular-nums"] }}>{enrolled}/{target} · {pct}%</Text>
-            ) : (
-              <Text style={{ fontSize: 12, fontWeight: "700", color: C.foreground, fontVariant: ["tabular-nums"] }}>{enrolled} enrolled · no target</Text>
-            )}
-          </View>
-          {target ? (
-            <View style={{ height: 8, borderRadius: 999, backgroundColor: "rgba(123,95,115,0.12)", overflow: "hidden" }}>
-              <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ height: "100%", width: `${pct ?? 0}%`, borderRadius: 999 }} />
-            </View>
-          ) : (
-            <View style={{ height: 8, borderRadius: 999, backgroundColor: "rgba(123,95,115,0.10)" }} />
-          )}
-        </View>
-      </Pressable>
-
-      {/* Share + review shortcuts */}
-      <View style={{ flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border }}>
-        <Pressable testID={`share-${t.id}`} onPress={onShare} style={st.cardBtn}>
-          <Share2 size={14} color={C.primary} />
-          <Text style={{ fontSize: 12, fontWeight: "700", color: C.primary }}>Share</Text>
-        </Pressable>
-        <Pressable testID={`review-${t.id}`} onPress={onReview} style={st.cardBtn}>
-          <ClipboardCheck size={14} color={C.info} />
-          <Text style={{ fontSize: 12, fontWeight: "700", color: C.info }}>Review</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function Tag({ bg, fg, label }: any) {
-  return <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: bg }}><Text style={{ fontSize: 11, fontWeight: "700", color: fg }}>{label}</Text></View>;
-}
-
-function ProgressRing({ value, size, stroke, children }: any) {
-  const r = (size - stroke) / 2;
-  const cir = 2 * Math.PI * r;
-  const v = Math.max(0, Math.min(1, value));
-  return (
-    <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
-      <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
-        <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={W.w20} strokeWidth={stroke} />
-        <Circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.primaryFg} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${cir} ${cir}`} strokeDashoffset={cir * (1 - v)} />
-      </Svg>
-      <View style={{ alignItems: "center" }}>{children}</View>
-    </View>
-  );
-}
-
-function TabItem({ icon: Icon, label, active, onPress, testID, badge }: any) {
-  return (
-    <Pressable testID={testID} onPress={onPress} style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8 }}>
-      <View>
-        <Icon size={22} color={active ? C.primary : C.mutedFg} />
-        {badge != null && badge > 0 && (
-          <View style={{ position: "absolute", top: -6, right: -10, minWidth: 16, height: 16, paddingHorizontal: 3, borderRadius: 8, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: C.destructiveFg, fontSize: 9, fontWeight: "700" }}>{badge > 9 ? "9+" : badge}</Text>
-          </View>
-        )}
-      </View>
-      <Text style={{ fontSize: 10, fontWeight: active ? "700" : "500", color: active ? C.primary : C.mutedFg, marginTop: 4 }}>{label}</Text>
-      {active && <View style={{ position: "absolute", top: 0, height: 3, width: 32, backgroundColor: C.primary, borderRadius: 2 }} />}
-    </Pressable>
-  );
-}
-
-const st = StyleSheet.create({
-  hero: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56, overflow: "hidden" },
-  heroTop: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8 },
-  eyebrowLight: { color: W.w65, fontSize: 11, fontWeight: "700", letterSpacing: 1.5 },
-  heroTitle: { color: C.primaryFg, fontSize: 28, fontWeight: "700", letterSpacing: -0.4 },
-  heroSubtitle: { color: C.primaryFg, fontSize: 22, fontWeight: "700", letterSpacing: -0.2, marginTop: 2 },
-  iconBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: W.w15, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: W.w20 },
-  bellBadge: { position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.primaryDeep },
-  bellBadgeText: { color: C.primaryFg, fontSize: 10, fontWeight: "700" },
-  dayDeck: { flexDirection: "row", alignItems: "center", marginTop: 20 },
-  heroChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: W.w15, borderWidth: 1, borderColor: W.w15 },
-  heroChipText: { color: C.primaryFg, fontSize: 12, fontWeight: "700" },
-  statTile: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 12, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
-  quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", position: "relative", shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  cardBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 9, borderRadius: 999, backgroundColor: C.surface },
-  orgEntry: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  orgEntryIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
-  tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: C.background },
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: 112 },
+  hero: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 58, overflow: "hidden" },
+  heroArt: { position: "absolute", right: -50, top: -54, width: 240, height: 240, opacity: 0.88 },
+  heroTop: { flexDirection: "row", alignItems: "center", gap: 9, marginTop: 6 },
+  heroIdentity: { flex: 1, minWidth: 0 },
+  heroEyebrow: { color: W.w65, fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.2 },
+  greetingRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 3 },
+  heroTitle: { color: C.primaryFg, fontFamily: fonts.display, fontSize: 23, letterSpacing: -0.5 },
+  iconButton: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: W.w15, borderWidth: 1, borderColor: W.w20 },
+  badge: { position: "absolute", top: -2, right: -2, minWidth: 17, height: 17, borderRadius: 9, paddingHorizontal: 3, alignItems: "center", justifyContent: "center", backgroundColor: C.destructive, borderWidth: 2, borderColor: C.primaryDeep },
+  badgeText: { color: C.destructiveFg, fontFamily: fonts.bold, fontSize: 8 },
+  avatarText: { color: C.primaryFg, fontFamily: fonts.bold, fontSize: 12 },
+  portfolioDeck: { flexDirection: "row", alignItems: "center", marginTop: 18 },
+  portfolioCopy: { flex: 1, minWidth: 0, marginLeft: 14 },
+  portfolioTitle: { color: C.primaryFg, fontFamily: fonts.heading, fontSize: 20, marginTop: 2 },
+  heroChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  heroChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, height: 24, borderRadius: 999, backgroundColor: W.w15, borderWidth: 1, borderColor: W.w15 },
+  heroChipDanger: { backgroundColor: "rgba(192,57,43,0.28)" },
+  heroChipText: { color: C.primaryFg, fontFamily: fonts.semibold, fontSize: 9 },
+  ring: { width: 76, height: 76, alignItems: "center", justifyContent: "center" },
+  ringSvg: { position: "absolute", transform: [{ rotate: "-90deg" }] },
+  ringContent: { alignItems: "center" },
+  ringValue: { color: C.primaryFg, fontFamily: fonts.heading, fontSize: 17, lineHeight: 19 },
+  ringLabel: { color: W.w70, fontFamily: fonts.bold, fontSize: 7, letterSpacing: 1.1, marginTop: 2 },
+  body: { marginTop: -39, paddingHorizontal: 14, paddingBottom: 20 },
+  statRow: { flexDirection: "row", gap: 7 },
+  statTile: { flex: 1, minHeight: 82, alignItems: "center", backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, paddingHorizontal: 5, paddingVertical: 9, shadowColor: C.foreground, shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  statIcon: { width: 29, height: 29, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  statValue: { fontFamily: fonts.heading, fontSize: 20, lineHeight: 22, marginTop: 5 },
+  statLabel: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 8, textAlign: "center", lineHeight: 10, marginTop: 1 },
+  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 21, marginBottom: 10 },
+  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  sectionMark: { width: 3, height: 13, borderRadius: 2 },
+  sectionTitle: { color: C.mutedFg, fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.25 },
+  sectionAction: { flexDirection: "row", alignItems: "center" },
+  sectionActionText: { color: C.info, fontFamily: fonts.semibold, fontSize: 11 },
+  actionRow: { flexDirection: "row", gap: 9 },
+  quickAction: { flex: 1, minHeight: 91, alignItems: "center", justifyContent: "center", backgroundColor: C.card, borderRadius: 20, borderWidth: 1, borderColor: C.border, padding: 10, shadowColor: C.foreground, shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  actionIcon: { width: 45, height: 45, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  actionLabel: { fontFamily: fonts.medium, fontSize: 10, textAlign: "center", marginTop: 7 },
+  sectionStack: { gap: 10 },
+  trialCard: { position: "relative", overflow: "hidden", backgroundColor: C.card, borderRadius: 20, borderWidth: 1, borderColor: C.border, padding: 14, paddingLeft: 17, shadowColor: C.foreground, shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  trialStripe: { position: "absolute", left: 0, top: 0, bottom: 0, width: 5 },
+  trialTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  protocolPill: { maxWidth: "56%", paddingHorizontal: 9, height: 24, borderRadius: 999, backgroundColor: "rgba(240,215,220,0.58)", justifyContent: "center" },
+  protocolText: { color: C.primary, fontFamily: fonts.mono, fontSize: 9 },
+  trialStatusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  activePill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 7, height: 22, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.14)" },
+  activeDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: C.success },
+  activeText: { color: C.success, fontFamily: fonts.semibold, fontSize: 9, textTransform: "capitalize" },
+  openIcon: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: C.surface },
+  trialTitle: { fontFamily: fonts.heading, fontSize: 14, lineHeight: 18, marginTop: 9 },
+  tags: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 8 },
+  tag: { paddingHorizontal: 8, height: 20, borderRadius: 999, justifyContent: "center", backgroundColor: C.surface },
+  tagText: { color: C.mutedFg, fontFamily: fonts.medium, fontSize: 8 },
+  progressMeta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 11, marginBottom: 5 },
+  progressLabel: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 9 },
+  progressValue: { fontFamily: fonts.mono, fontSize: 9 },
+  progressTrack: { height: 6, borderRadius: 999, backgroundColor: C.surface, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 999 },
+  performanceCard: { backgroundColor: C.card, borderRadius: 20, borderWidth: 1, borderColor: C.border, paddingHorizontal: 14, shadowColor: C.foreground, shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  siteRow: { paddingVertical: 12 },
+  siteDivider: { borderBottomWidth: 1, borderBottomColor: C.border },
+  siteMeta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 7 },
+  siteTitleWrap: { flex: 1, minWidth: 0 },
+  siteName: { fontFamily: fonts.medium, fontSize: 11 },
+  siteSubscore: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 7.5, lineHeight: 11, marginTop: 2 },
+  siteScoreWrap: { flexDirection: "row", alignItems: "center", gap: 2 },
+  siteScore: { fontFamily: fonts.mono, fontSize: 10 },
+  siteTrack: { height: 7, borderRadius: 999, backgroundColor: C.surface, overflow: "hidden" },
+  siteFill: { height: "100%", borderRadius: 999 },
+  notificationCard: { flexDirection: "row", alignItems: "flex-start", gap: 9, minHeight: 58, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 10 },
+  notificationIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  notificationCopy: { flex: 1, minWidth: 0, paddingTop: 1 },
+  notificationTitle: { fontFamily: fonts.medium, fontSize: 11, lineHeight: 14 },
+  notificationMessage: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 9, lineHeight: 12, marginTop: 2 },
+  notificationTime: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 8, marginTop: 2 },
+  unreadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.destructive, marginTop: 4 },
+  loadingCard: { minHeight: 82, alignItems: "center", justifyContent: "center", backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border },
+  loadingText: { color: C.mutedFg, fontSize: 10, marginTop: 7 },
+  emptyCard: { flexDirection: "row", alignItems: "center", gap: 11, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 13 },
+  emptyIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" },
+  emptyCopy: { flex: 1 },
+  emptyTitle: { fontFamily: fonts.semibold, fontSize: 12 },
+  emptyDescription: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 9, lineHeight: 13, marginTop: 2 },
+  errorCard: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: "rgba(192,57,43,0.30)", backgroundColor: "rgba(192,57,43,0.07)" },
+  errorText: { flex: 1, fontFamily: fonts.medium, fontSize: 10, lineHeight: 14 },
+  retryButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, height: 30, borderRadius: 999, backgroundColor: C.card },
+  retryText: { color: C.primary, fontFamily: fonts.semibold, fontSize: 9 },
+  orgCard: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 15, padding: 13, borderRadius: 19, backgroundColor: C.primaryDeep },
+  orgIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: W.w15, alignItems: "center", justifyContent: "center" },
+  orgCopy: { flex: 1, minWidth: 0 },
+  orgTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  orgTitle: { color: C.primaryFg, fontFamily: fonts.semibold, fontSize: 12 },
+  adminBadge: { paddingHorizontal: 5, height: 16, borderRadius: 999, justifyContent: "center", backgroundColor: W.w15, borderWidth: 1, borderColor: W.w20 },
+  adminBadgeText: { color: C.primaryFg, fontFamily: fonts.bold, fontSize: 6, letterSpacing: 0.6 },
+  orgDescription: { color: W.w70, fontFamily: fonts.regular, fontSize: 9, lineHeight: 12, marginTop: 2 },
+  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(35,18,30,0.48)" },
+  recruitmentSheet: { paddingHorizontal: 18, paddingTop: 9, paddingBottom: 30, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: C.background },
+  sheetHandle: { alignSelf: "center", width: 42, height: 4, borderRadius: 999, backgroundColor: C.border, marginBottom: 15 },
+  sheetTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  sheetEyebrow: { color: C.primary, fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 1.1 },
+  sheetTitle: { fontFamily: fonts.heading, fontSize: 20, marginTop: 2 },
+  sheetClose: { minWidth: 48, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: C.secondary },
+  sheetCloseText: { color: C.primary, fontFamily: fonts.semibold, fontSize: 10 },
+  recruitmentSummary: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", marginTop: 16, paddingVertical: 14, borderRadius: 18, backgroundColor: C.primaryDeep },
+  recruitmentSummaryValue: { color: C.primaryFg, fontFamily: fonts.heading, fontSize: 19, textAlign: "center" },
+  recruitmentSummaryLabel: { color: W.w65, fontFamily: fonts.bold, fontSize: 7, letterSpacing: 0.9, textAlign: "center", marginTop: 2 },
+  recruitmentSummaryDivider: { width: 1, height: 30, backgroundColor: W.w20 },
+  recruitmentGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  recruitmentMetric: { width: "48%", minHeight: 61, justifyContent: "center", paddingHorizontal: 13, borderRadius: 15, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  recruitmentMetricValue: { fontFamily: fonts.heading, fontSize: 17 },
+  recruitmentMetricLabel: { color: C.mutedFg, fontFamily: fonts.medium, fontSize: 9, marginTop: 2 },
+  pressed: { opacity: 0.8, transform: [{ scale: 0.985 }] },
+  disabled: { opacity: 0.45 },
+  disabledText: { color: C.border },
 });

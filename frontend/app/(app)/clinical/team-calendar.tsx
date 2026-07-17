@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, StatusBar, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -88,10 +88,11 @@ export default function TeamCalendar() {
   const anchorMonthStart = firstOfMonth(anchor);
   const anchorKey = anchorMonthStart.getTime();
 
-  async function load(isRefresh = false) {
+  const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
-    const from = firstOfMonth(addMonths(anchorMonthStart, -1));
-    const to = lastOfMonth(addMonths(anchorMonthStart, 1));
+    const anchorStart = new Date(anchorKey);
+    const from = firstOfMonth(addMonths(anchorStart, -1));
+    const to = lastOfMonth(addMonths(anchorStart, 1));
     try {
       const r = await api.get("/calendar/team", {
         params: { from: ymdLocal(from), to: ymdLocal(to) },
@@ -103,8 +104,8 @@ export default function TeamCalendar() {
       setLoading(false);
       setRefreshing(false);
     }
-  }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [anchorKey]);
+  }, [anchorKey]);
+  useEffect(() => { load(); }, [load]);
 
   // Group visits by day-key (UTC).
   const byDay = useMemo(() => {

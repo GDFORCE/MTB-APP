@@ -5,7 +5,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ChevronLeft, ChevronRight } from "lucide-react-native";
+import { ChevronLeft } from "lucide-react-native";
 import { colors, spacing, radii, fonts, shadows } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 
@@ -103,8 +103,6 @@ export default function CalendarSettings() {
   const router = useRouter();
   const [prefs, setPrefs] = useState<Prefs>(DEFAULTS);
   const [loading, setLoading] = useState(true);
-  // Device-calendar sync is local-only UI (external sync is out of scope).
-  const [syncOn, setSyncOn] = useState(true);
 
   // ── Toast ──
   const [toast, setToast] = useState<string>("");
@@ -236,34 +234,6 @@ export default function CalendarSettings() {
             )}
           </SectionCard>
 
-          {/* DEVICE CALENDAR (local-only UI; external sync out of scope) */}
-          <SectionCard title="DEVICE CALENDAR">
-            <View style={s.toggleRow}>
-              <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
-                <Text style={s.rowLabel}>Sync with device calendar</Text>
-                <Text style={s.rowSub}>Mirror visits to your phone's calendar</Text>
-              </View>
-              <Toggle testID="cs-sync" on={syncOn} onToggle={setSyncOn} />
-            </View>
-            {syncOn && (
-              <Pressable
-                testID="cs-sync-now"
-                onPress={() => showToast("Calendar sync is coming soon.")}
-                style={s.outlineBtn}
-              >
-                <Text style={s.outlineBtnText}>Sync now</Text>
-              </Pressable>
-            )}
-            <View style={s.divider} />
-            <Pressable
-              testID="cs-export"
-              onPress={() => showToast("Export is coming soon.")}
-              style={s.linkRow}
-            >
-              <Text style={s.rowLabel}>Export calendar as PDF</Text>
-              <ChevronRight size={18} color={colors.mutedFg} />
-            </Pressable>
-          </SectionCard>
         </ScrollView>
       )}
 
@@ -298,9 +268,7 @@ const s = StyleSheet.create({
   cardBody: { paddingHorizontal: spacing.md, paddingVertical: spacing.md, gap: 14 },
 
   rowLabel: { fontFamily: fonts.medium, fontSize: 15, color: colors.foreground },
-  rowSub: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedFg, marginTop: 2 },
   toggleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  linkRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
 
   divider: { height: 1, backgroundColor: colors.border },
 
@@ -309,9 +277,6 @@ const s = StyleSheet.create({
   radioOuterActive: { borderColor: colors.primary, backgroundColor: colors.primary },
   radioInner: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primaryFg },
   radioLabel: { fontFamily: fonts.regular, fontSize: 15, color: colors.foreground },
-
-  outlineBtn: { borderWidth: 2, borderColor: colors.info, borderRadius: radii.md, paddingVertical: 11, alignItems: "center" },
-  outlineBtnText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.info },
 
   toast: { position: "absolute", left: spacing.md, right: spacing.md, bottom: 32, backgroundColor: colors.foreground, borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: 12, ...shadows.md },
   toastText: { color: colors.primaryFg, fontFamily: fonts.medium, fontSize: 13, textAlign: "center" },

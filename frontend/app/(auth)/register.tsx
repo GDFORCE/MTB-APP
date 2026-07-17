@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -11,6 +11,11 @@ import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
+import {
+  RegistrationErrors,
+  RegistrationVariant,
+  validateRegistration,
+} from "@/src/features/auth/registration-validation";
 
 // ── Role → header label + which form variant to render ──────────────────────
 const labelMap: Record<string, string> = {
@@ -28,7 +33,7 @@ const departmentOptions = [
   "Oncology", "Dermatology", "Psychiatry", "Rheumatology", "Ophthalmology", "Physical Medicine & Rehabilitation",
   "Radiology", "Nuclear Medicine", "Pathology", "Anaesthesiology", "Pain Medicine", "Palliative Care", "Sleep Medicine",
 ];
-function variantFor(role?: string): "sponsor" | "site" | "smo" | "patient" {
+function variantFor(role?: string): RegistrationVariant {
   if (role === "smo") return "smo";
   if (role === "site" || role === "pi" || role === "crc") return "site";
   if (role === "patient") return "patient";
@@ -78,35 +83,24 @@ function adminInitials(name: string) {
   const parts = name.replace(/^(Dr\.|Mr\.|Ms\.|Mrs\.)\s+/i, "").trim().split(/\s+/);
   return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase();
 }
-function ageFromDob(dob: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob.trim());
-  if (!m) return "";
-  const b = new Date(+m[1], +m[2] - 1, +m[3]);
-  if (isNaN(b.getTime())) return "";
-  const now = new Date();
-  let a = now.getFullYear() - b.getFullYear();
-  const md = now.getMonth() - b.getMonth();
-  if (md < 0 || (md === 0 && now.getDate() < b.getDate())) a--;
-  return a >= 0 && a < 130 ? `${a} yrs` : "";
-}
-
 // ── Shared primitives ───────────────────────────────────────────────────────
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: React.ReactNode }) {
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={f.label}>{label}{required && <Text style={{ color: colors.accent }}> *</Text>}</Text>
       {children}
+      {!!error && <Small color={colors.destructive} style={f.fieldError}>{error}</Small>}
     </View>
   );
 }
 function Input(props: React.ComponentProps<typeof TextInput>) {
   return <TextInput placeholderTextColor={colors.mutedFg + "99"} {...props} style={[f.input, props.style]} />;
 }
-function PhoneInput({ value, onChangeText }: { value: string; onChangeText: (v: string) => void }) {
+function PhoneInput({ value, onChangeText, error }: { value: string; onChangeText: (v: string) => void; error?: boolean }) {
   return (
     <View style={{ flexDirection: "row", gap: 8 }}>
       <View style={f.prefix}><Text style={{ color: colors.mutedFg, fontFamily: fonts.semibold, fontSize: 15 }}>+91</Text></View>
-      <Input value={value} onChangeText={onChangeText} keyboardType="phone-pad" placeholder="98XXXXXXXX" style={{ flex: 1 }} />
+      <Input value={value} onChangeText={onChangeText} keyboardType="phone-pad" placeholder="98XXXXXXXX" style={[{ flex: 1 }, error && f.inputError]} />
     </View>
   );
 }
@@ -183,6 +177,7 @@ export default function Register() {
     fullName: fullNameParam,
     designation: designationParam,
     phone: phoneParam,
+    inviteToken,
   } = useLocalSearchParams<{
     role: string;
     org?: string;
@@ -190,6 +185,7 @@ export default function Register() {
     fullName?: string;
     designation?: string;
     phone?: string;
+    inviteToken?: string;
   }>();
   const variant = variantFor(role);
   const isPatient = variant === "patient";
@@ -206,7 +202,12 @@ export default function Register() {
     if (phoneParam) base.phone = String(phoneParam);
     return base;
   });
-  const up = (k: string) => (v: string) => setFld((s) => ({ ...s, [k]: v }));
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const up = (k: string) => (v: string) => {
+    setFld((s) => ({ ...s, [k]: v }));
+    setTouched((current) => ({ ...current, [k]: true }));
+  };
 
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
@@ -287,7 +288,16 @@ export default function Register() {
       .finally(() => setTermsLoading(false));
   }, [showTerms, termsBlocks, termsLoading]);
 
-  const canContinue = agreedToTerms && declarationAccepted;
+  const validation = useMemo(
+    () => validateRegistration(variant, {
+      ...fld,
+      verificationDoc: verificationDoc?.name || "",
+    }),
+    [fld, variant, verificationDoc],
+  );
+  const canContinue = agreedToTerms && declarationAccepted && validation.valid;
+  const fieldError = (key: keyof RegistrationErrors) =>
+    submitted || touched[key] ? validation.errors[key] : undefined;
   const matchedOrg = orgMatches.find((o) => o.name.trim().toLowerCase() === (fld.orgName || "").trim().toLowerCase()) || null;
   const declarationText = isPatient
     ? "I confirm that the information I have provided is true, accurate and complete, and I agree to comply with the platform's Terms of Use and Privacy Policy."
@@ -298,40 +308,33 @@ export default function Register() {
     if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 8) setTermsScrolled(true);
   };
 
-  // Validate, then route: patients go straight on; orgs hit the directory prompt first.
-  const validate = (): boolean => {
-    setErr("");
-    const email = (fld.email || "").trim().toLowerCase();
-    const phone = (fld.phone || "").trim();
-    if (!fld.fullName?.trim()) { setErr("Please enter your full name"); return false; }
-    if (isPatient) {
-      if (!phone) { setErr("Phone number is required"); return false; }
-    } else {
-      if (!email || !email.includes("@")) { setErr("A valid email is required"); return false; }
-      if (!phone) { setErr("Phone number is required"); return false; }
-      if (!fld.orgName?.trim()) { setErr("Organization name is required"); return false; }
-    }
-    return true;
-  };
-
   const proceed = () => {
     router.push({
       pathname: "/(auth)/security-questions",
-      params: { role: role || "patient", variant, payload: JSON.stringify({ ...fld, email: (fld.email || "").trim().toLowerCase(), phone: (fld.phone || "").trim() }) },
+      params: {
+        role: role || "patient",
+        variant,
+        payload: JSON.stringify({
+          ...validation.normalized,
+          inviteToken: inviteToken || "",
+        }),
+      },
     });
   };
 
   const handleContinue = async () => {
-    if (!canContinue || !validate() || checkingOrg) return;
+    setSubmitted(true);
+    setErr("");
+    if (!canContinue || checkingOrg) return;
     if (isPatient) { proceed(); return; }
     setShowOrgSuggestions(false);
     const q = (fld.orgName || "").trim();
 
-    // Continue performs an authoritative lookup because platform-contact details
-    // are intentionally excluded from the live typeahead response.
+    // Continue performs an authoritative directory lookup, then fetches the
+    // public admin contact only for the exact organization selected/entered.
     setCheckingOrg(true);
     try {
-      const params: Record<string, string> = { search: q, include_platform_contact: "true" };
+      const params: Record<string, string> = { search: q };
       const type = orgTypeFor(role);
       if (type) params.type = type;
       const res = await api.get("/organizations", { params });
@@ -339,8 +342,16 @@ export default function Register() {
       setOrgMatches(list);
       lastSearchedQuery.current = q;
       setOrgSearching(false);
-      const fresh = list.find((o) => o.name.trim().toLowerCase() === q.toLowerCase()) || null;
+      let fresh = list.find((o) => o.name.trim().toLowerCase() === q.toLowerCase()) || null;
       if (fresh) {
+        try {
+          const contactResponse = await api.get(`/organizations/${fresh.id}/platform-contact`);
+          fresh = { ...fresh, platform_contact: contactResponse.data?.platform_contact || undefined };
+          setOrgMatches(current => current.map(org => org.id === fresh?.id ? fresh : org));
+        } catch {
+          // The modal still identifies the organization and provides MTB support
+          // fallback copy when no public organization contact is available.
+        }
         setOrgCheck("exists");
       } else {
         proceed();
@@ -352,9 +363,14 @@ export default function Register() {
     }
   };
 
-  const onOrgNameChange = (v: string) => { setFld((s) => ({ ...s, orgName: v })); setShowOrgSuggestions(true); };
+  const onOrgNameChange = (v: string) => {
+    setFld((s) => ({ ...s, orgName: v }));
+    setTouched((current) => ({ ...current, orgName: true }));
+    setShowOrgSuggestions(true);
+  };
   const pickOrg = (o: Org) => {
     setFld((s) => ({ ...s, orgName: o.name, orgAddress: o.address || s.orgAddress }));
+    setTouched((current) => ({ ...current, orgName: true, orgAddress: true }));
     setShowOrgSuggestions(false);
   };
 
@@ -376,26 +392,26 @@ export default function Register() {
 
           <Rise delay={200}>
             {/* Common identity fields */}
-            <Field label="Full Name" required><Input value={fld.fullName} onChangeText={up("fullName")} /></Field>
-            {!isPatient && <Field label="Designation" required><Input value={fld.designation} onChangeText={up("designation")} /></Field>}
+            <Field label="Full Name" required error={fieldError("fullName")}><Input value={fld.fullName} onChangeText={up("fullName")} style={fieldError("fullName") && f.inputError} /></Field>
+            {!isPatient && <Field label="Designation" required error={fieldError("designation")}><Input value={fld.designation} onChangeText={up("designation")} style={fieldError("designation") && f.inputError} /></Field>}
 
             {isPatient ? (
               <>
-                <Field label="Phone Number" required><PhoneInput value={fld.phone} onChangeText={up("phone")} /></Field>
-                <Field label="Email ID" required><Input value={fld.email} onChangeText={up("email")} keyboardType="email-address" autoCapitalize="none" placeholder="patient@example.com" /></Field>
+                <Field label="Phone Number" required error={fieldError("phone")}><PhoneInput value={fld.phone} onChangeText={up("phone")} error={!!fieldError("phone")} /></Field>
+                <Field label="Email ID" required error={fieldError("email")}><Input value={fld.email} onChangeText={up("email")} keyboardType="email-address" autoCapitalize="none" placeholder="patient@example.com" style={fieldError("email") && f.inputError} /></Field>
                 <View style={{ flexDirection: "row", gap: 12 }}>
                   <View style={{ flex: 1 }}>
-                    <Field label="Date of Birth" required><Input value={fld.dob} onChangeText={up("dob")} placeholder="YYYY-MM-DD" /></Field>
+                    <Field label="Date of Birth" required error={fieldError("dob")}><Input value={fld.dob} onChangeText={up("dob")} keyboardType="numbers-and-punctuation" placeholder="YYYY-MM-DD" style={fieldError("dob") && f.inputError} /></Field>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Field label="Age">
                       <View style={[f.input, { justifyContent: "center", backgroundColor: colors.surface }]}>
-                        <Text style={{ color: colors.mutedFg, fontFamily: fonts.medium, fontSize: 15 }}>{ageFromDob(fld.dob) || "—"}</Text>
+                        <Text style={{ color: colors.mutedFg, fontFamily: fonts.medium, fontSize: 15 }}>{validation.age === null ? "—" : `${validation.age} yrs`}</Text>
                       </View>
                     </Field>
                   </View>
                 </View>
-                <Field label="Gender" required>
+                <Field label="Gender" required error={fieldError("gender")}>
                   <Select value={fld.gender} placeholder="Select gender" options={["Female", "Male", "Other", "Prefer not to say"]} onChange={up("gender")} />
                 </Field>
                 <Field label="Preferred Language">
@@ -404,12 +420,12 @@ export default function Register() {
               </>
             ) : (
               <>
-                <Field label="Email ID" required><Input value={fld.email} onChangeText={up("email")} keyboardType="email-address" autoCapitalize="none" /></Field>
-                <Field label="Phone Number" required><PhoneInput value={fld.phone} onChangeText={up("phone")} /></Field>
+                <Field label="Email ID" required error={fieldError("email")}><Input value={fld.email} onChangeText={up("email")} keyboardType="email-address" autoCapitalize="none" style={fieldError("email") && f.inputError} /></Field>
+                <Field label="Phone Number" required error={fieldError("phone")}><PhoneInput value={fld.phone} onChangeText={up("phone")} error={!!fieldError("phone")} /></Field>
 
                 <SectionRow title="Organization" />
-                <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required>
-                  <Input value={fld.orgName} onChangeText={onOrgNameChange} onFocus={() => setShowOrgSuggestions(true)} placeholder={`Search or type your ${orgNoun} name`} />
+                <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required error={fieldError("orgName")}>
+                  <Input value={fld.orgName} onChangeText={onOrgNameChange} onFocus={() => setShowOrgSuggestions(true)} placeholder={`Search or type your ${orgNoun} name`} style={fieldError("orgName") && f.inputError} />
                   {showOrgSuggestions && (fld.orgName || "").trim().length >= 2 && !matchedOrg && (orgSearching || orgMatches.length > 0) && (
                     <View style={f.suggestBox}>
                       {orgSearching && orgMatches.length === 0 ? (
@@ -431,19 +447,19 @@ export default function Register() {
                     </View>
                   )}
                 </Field>
-                <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required>
-                  <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={{ height: 64, textAlignVertical: "top" }} />
+                <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required error={fieldError("orgAddress")}>
+                  <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
                 </Field>
 
                 {variant === "site" && (
                   <>
-                    <Field label="Hospital Type" required><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
-                    <Field label="Role" required><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team"]} onChange={up("role")} /></Field>
+                    <Field label="Hospital Type" required error={fieldError("hospitalType")}><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
+                    <Field label="Role" required error={fieldError("role")}><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team"]} onChange={up("role")} /></Field>
                     {fld.role === "PI" && <Field label="Department"><Select value={fld.department} placeholder="Select department" options={departmentOptions} onChange={up("department")} /></Field>}
                   </>
                 )}
 
-                <Field label="Verification Document">
+                <Field label="Verification Document" required error={fieldError("verificationDoc")}>
                   {verificationDoc ? (
                     <View style={f.docChip}>
                       <View style={f.docIcon}><FileText size={16} color={colors.primary} /></View>
@@ -459,7 +475,7 @@ export default function Register() {
                       <Small color={colors.primary} weight="700">Attach self-attested document</Small>
                     </Pressable>
                   )}
-                  <Small color={colors.mutedFg} style={{ marginTop: 6, fontSize: 12 }}>Optional now — PDF, PNG, JPG or DOCX (max 10 MB).</Small>
+                  <Small color={colors.mutedFg} style={{ marginTop: 6, fontSize: 12 }}>Required for staff and organization registrations — PDF, PNG, JPG or DOCX (max 10 MB).</Small>
                   {docErr ? <Small color={colors.destructive} style={{ marginTop: 4 }}>{docErr}</Small> : null}
                 </Field>
               </>
@@ -621,6 +637,8 @@ const f = StyleSheet.create({
   entityLabel: { marginTop: 1, fontFamily: fonts.heading, fontSize: 17, color: colors.foreground },
   label: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, marginBottom: 6 },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },
+  inputError: { borderColor: colors.destructive, backgroundColor: colors.destructive + "08" },
+  fieldError: { marginTop: 5, lineHeight: 17 },
   prefix: { paddingHorizontal: 14, justifyContent: "center", borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   suggestBox: { marginTop: 6, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, overflow: "hidden" },
   suggestRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },

@@ -16,15 +16,14 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  Menu, RefreshCcw, X, Search, FlaskConical, Building2, Users, Calendar,
+  Menu, RefreshCcw, X, FlaskConical, Building2, Calendar,
   Activity, CheckCircle2, XCircle, Clock, ChevronRight, ShieldAlert,
 } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, EmptyCard, Toast, SearchBar, st } from "./users";
-
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 
 type Visits = { completed?: number; upcoming?: number; missed?: number };
 type Subject = { subject?: string; initials?: string; status?: string; enrolled_date?: string };
@@ -32,7 +31,10 @@ type Trial = {
   id: string; title?: string; protocol_id?: string; phase?: string; condition?: string;
   sponsor?: string; status?: string; patients?: number; targetEnrollment?: number | null;
   scheduleVersion?: number; schedule_status?: string; visits?: Visits;
-  lastModified?: string; modifiedBy?: string; subjects?: Subject[]; unmasked?: boolean;
+  sponsorOrCroName?: string; ownerType?: "Sponsor" | "CRO"; cro?: string;
+  lastModified?: string; modifiedBy?: string; modifiedByRole?: string;
+  changeSummary?: string; changedFields?: string[];
+  subjects?: Subject[]; unmasked?: boolean;
 };
 
 const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
@@ -91,6 +93,15 @@ export default function AdminTrials() {
   }, []);
   useEffect(() => { load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // Global-search deep link: /admin/trials?focus=<id> opens that exact record.
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const consumedFocus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focus || typeof focus !== "string" || focus === consumedFocus.current) return;
+    const hit = trials.find((t) => t.id === focus);
+    if (hit) { consumedFocus.current = focus; setSelected(hit); }
+  }, [focus, trials]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -287,7 +298,7 @@ function TrialSheet({ trial, onClose, onError }: { trial: Trial | null; onClose:
               <View style={tr.detailGrid}>
                 <Detail label="Phase" value={t.phase || "—"} />
                 <Detail label="Condition" value={t.condition || "—"} />
-                <Detail label="Sponsor" value={t.sponsor || "—"} />
+                <Detail label={t.ownerType || "Sponsor / CRO"} value={t.sponsorOrCroName || t.sponsor || "—"} />
                 <Detail label="Schedule" value={`v${t.scheduleVersion ?? 1}${t.schedule_status ? ` · ${t.schedule_status}` : ""}`} />
               </View>
 
@@ -328,6 +339,11 @@ function TrialSheet({ trial, onClose, onError }: { trial: Trial | null; onClose:
               <View style={{ gap: 2 }}>
                 <RNText style={tr.section}>PROVENANCE</RNText>
                 <View style={tr.provRow}><Calendar size={13} color={C.mutedFg} /><RNText style={tr.provTxt}>Last modified {fmtDate(t.lastModified)}{t.modifiedBy ? ` · ${t.modifiedBy}` : ""}</RNText></View>
+                <View style={tr.changeCard}>
+                  <RNText style={tr.changeLabel}>CHANGE SUMMARY</RNText>
+                  <RNText style={tr.changeText}>{t.changeSummary || "No recorded changes"}</RNText>
+                  {!!t.modifiedByRole && <RNText style={tr.changeActor}>Updated by {t.modifiedBy}{` · ${cap(t.modifiedByRole)}`}</RNText>}
+                </View>
               </View>
             </ScrollView>
           )}
@@ -376,6 +392,10 @@ const tr = StyleSheet.create({
   detailCell: { width: "47%", flexGrow: 1, backgroundColor: C.surface, borderRadius: 12, padding: 12 },
   detailLabel: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   detailValue: { fontFamily: fonts.medium, fontSize: 13, color: C.foreground, marginTop: 2 },
+  changeCard: { marginTop: 8, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, padding: 12 },
+  changeLabel: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 0.8, color: C.mutedFg },
+  changeText: { marginTop: 4, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18, color: C.foreground },
+  changeActor: { marginTop: 4, fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   section: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1, color: C.mutedFg, marginBottom: 6 },
   statRow: { flexDirection: "row", gap: 8 },
   stat: { flex: 1, backgroundColor: C.card, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingVertical: 12, alignItems: "center" },

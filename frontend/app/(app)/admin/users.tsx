@@ -5,7 +5,8 @@
 //   create ......... POST  /admin/users            {email, full_name, role, phone, organization, send_invite}
 //   status ......... PATCH /admin/users/{id}/status {status: Active|Suspended, reason?}
 //   unlock ......... POST  /admin/users/{id}/unlock {identity_checks[≥2], reason(≥10), force_password_reset}
-//   reset pw ....... POST  /admin/users/{id}/reset-password  → {temp_password}
+//   reset pw ....... POST  /admin/users/{id}/reset-password  → emails a single-use
+//                    reset link; returns only {reset_sent, email(masked), expires_at}
 //   force logout ... POST  /admin/users/{id}/force-logout
 //   export ......... GET   /admin/users/export     (text/csv)
 //
@@ -22,10 +23,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import {
   Menu, RefreshCcw, Search, UserPlus, Download, X, AlertTriangle, Mail, Phone,
   Building2, Calendar, Clock, KeyRound, ShieldOff, UserCheck, UserX, Lock,
-  ChevronRight, Copy,
+  ChevronRight,
 } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api/client";
-import { colors as C, dawnGradient, fonts } from "@/src/theme/tokens";
+import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 
 const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
@@ -36,6 +38,9 @@ type AdminUser = {
   organization?: string; status?: string; created_at?: string; avatar_initials?: string;
   is_online?: boolean; last_login_at?: string; last_login?: string; pseudonymized?: boolean;
   lock_info?: LockInfo;
+};
+const EMPTY_USER_FORM = {
+  full_name: "", email: "", phone: "", role: "site", organization: "", send_invite: true,
 };
 
 const ROLE_FILTERS: { key: string; label: string }[] = [
@@ -114,6 +119,15 @@ export default function AdminUsers() {
   useEffect(() => { load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
+  // Global-search deep link: /admin/users?focus=<id> opens that exact record.
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const consumedFocus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focus || typeof focus !== "string" || focus === consumedFocus.current) return;
+    const hit = users.find((u) => u.id === focus);
+    if (hit) { consumedFocus.current = focus; setSelected(hit); }
+  }, [focus, users]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
@@ -159,7 +173,8 @@ export default function AdminUsers() {
     setBusy(true);
     try {
       const res = await api.post(`/admin/users/${u.id}/reset-password`);
-      showToast(res.data?.temp_password ? `Temp password: ${res.data.temp_password}` : "Password reset");
+      const masked = res.data?.email;
+      showToast(masked ? `Password reset link sent to ${masked}` : "Password reset link sent");
     } catch (e) {
       showToast(errMsg(e, "Couldn't reset password"));
     } finally { setBusy(false); }
@@ -387,22 +402,25 @@ function UserDetailSheet({ user, busy, onClose, onSuspend, onActivate, onReset, 
 
 // ── Add user sheet ───────────────────────────────────────────────────────────
 function AddUserSheet({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (msg: string) => void }) {
-  const empty = { full_name: "", email: "", phone: "", role: "site", organization: "", send_invite: true };
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(EMPTY_USER_FORM);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (open) { setForm(empty); setErr(null); } }, [open]);
+  useEffect(() => { if (open) { setForm(EMPTY_USER_FORM); setErr(null); } }, [open]);
 
   const valid = form.full_name.trim().length > 0 && /\S+@\S+\.\S+/.test(form.email);
   const submit = async () => {
     if (!valid) { setErr("A valid name and email are required"); return; }
     setSaving(true); setErr(null);
     try {
-      await api.post("/admin/users", {
+      const res = await api.post("/admin/users", {
         email: form.email.trim(), full_name: form.full_name.trim(), role: form.role,
         phone: form.phone.trim(), organization: form.organization.trim(), send_invite: form.send_invite,
       });
-      onCreated(`${form.full_name.trim()} added${form.send_invite ? " · invite sent" : ""}`);
+      const maskedTo = res.data?.password_setup?.email;
+      onCreated(
+        `${form.full_name.trim()} added · password setup link sent${maskedTo ? ` to ${maskedTo}` : ""}` +
+        (form.send_invite ? " · invite sent" : ""),
+      );
       onClose();
     } catch (e) {
       setErr(errMsg(e, "Couldn't create user"));

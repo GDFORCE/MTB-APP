@@ -92,6 +92,19 @@ class ExtractedSchedule(BaseModel):
     visits: List[ExtractedVisit] = Field(default_factory=list)
 
 
+class ExtractedTrialDetails(BaseModel):
+    """Creation-form fields read from a protocol before a trial exists."""
+    ctri_number: str = ""
+    title: str = ""
+    phase: str = ""
+    indications: List[str] = Field(default_factory=list)
+    drug: str = ""
+    duration: str = ""
+    target_enrollment: Optional[int] = None
+    total_visits: Optional[int] = None
+    status: str = "active"
+
+
 class ExtractionError(Exception):
     """Extraction attempted but failed (bad response, upstream error)."""
 
@@ -222,7 +235,54 @@ class ClaudeProtocolExtractor:
             raise ExtractionError("model did not return a parseable schedule")
         return parsed
 
+    async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
+        """Extract the trial-level metadata needed by the pre-creation form."""
+        if not self._api_key:
+            raise ExtractionNotConfigured(
+                "ANTHROPIC_API_KEY is not set on the server")
+
+        import anthropic
+
+        client = anthropic.AsyncAnthropic(api_key=self._api_key)
+        b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
+        prompt = """Read the attached clinical-trial protocol and return only the
+trial-level metadata requested by the schema. Preserve the official study title,
+CTRI registration number, phase, disease/indications, investigational drug,
+planned duration, planned sample size/target enrollment, and the number of
+distinct protocol visits. Use empty strings/nulls when the document does not
+state a value; never invent one. Normalize status to active, completed, or
+terminated, defaulting to active when no status is stated."""
+        try:
+            resp = await client.messages.parse(
+                model=self._model,
+                max_tokens=2500,
+                system=prompt,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "document",
+                         "source": {"type": "base64",
+                                    "media_type": "application/pdf",
+                                    "data": b64}},
+                        {"type": "text",
+                         "text": "Extract the protocol's trial details."},
+                    ],
+                }],
+                output_format=ExtractedTrialDetails,
+            )
+        except anthropic.APIError as e:
+            raise ExtractionError(f"model request failed: {e}") from e
+        parsed = getattr(resp, "parsed_output", None)
+        if parsed is None:
+            raise ExtractionError("model did not return parseable trial details")
+        return parsed
+
 
 def get_extractor() -> ProtocolExtractor:
     """Factory — swap the returned implementation to change backends."""
+    return ClaudeProtocolExtractor()
+
+
+def get_details_extractor() -> ClaudeProtocolExtractor:
+    """Factory kept separate so focused tests/providers can replace it alone."""
     return ClaudeProtocolExtractor()

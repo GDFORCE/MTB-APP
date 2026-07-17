@@ -97,6 +97,20 @@ async def _enroll(staff_headers, trial_id, pi_id=None, crc_id=None, days_ago=5):
     return r.json()
 
 
+async def _accept_trial_invite(user, trial_id):
+    """Model the real sponsor/site invitation relationship before enrollment."""
+    await server.db.invitations.insert_one({
+        'id': str(uuid.uuid4()),
+        'email': user['email'],
+        'phone': user.get('phone', ''),
+        'trial_id': trial_id,
+        'role': user['role'],
+        'status': 'accepted',
+        'created_at': server.now(),
+        'accepted_at': server.now(),
+    })
+
+
 @pytest.fixture(scope='module', autouse=True)
 def _cleanup():
     yield
@@ -109,6 +123,8 @@ def _cleanup():
         await db.patients.delete_many({'email': {'$regex': f'test-{RUN_ID}-'}})
         await db.visit_instances.delete_many({'trial_id': {'$in': _trial_ids}})
         await db.notifications.delete_many({'trial_id': {'$in': _trial_ids}})
+        await db.invitations.delete_many({'trial_id': {'$in': _trial_ids}})
+        await db.org_trial_access.delete_many({'trial_id': {'$in': _trial_ids}})
         await db.audit_logs.delete_many({'user_name': {'$regex': RUN_ID}})
     run(clean())
     LOOP.close()
@@ -143,6 +159,8 @@ def world():
         # patients, so no patient carries a pi_id yet.
         trial_a_unclaimed = await _make_trial(sp_a_h, ORG_SPONSOR_A)
 
+        await _accept_trial_invite(pi_a, trial_a['id'])
+        await _accept_trial_invite(pi_b, trial_b['id'])
         patient_a = await _enroll(pi_a_h, trial_a['id'], pi_id=pi_a['id'], crc_id=crc_a['id'])
         patient_b = await _enroll(pi_b_h, trial_b['id'], pi_id=pi_b['id'], crc_id=crc_b['id'])
 
@@ -310,6 +328,64 @@ class TestSponsorScoping:
                 # and vice-versa
                 r2 = await cli.get(f'/api/patients/{pid_a}', headers=world['sp_b'][1])
                 assert r2.status_code == 403, r2.text
+        run(flow())
+
+
+class TestPatientEnrollmentScoping:
+    def test_pi_cannot_enroll_into_foreign_trial(self, world):
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/patients', headers=world['pi_a'][1], json={
+                    'full_name': f'Test Foreign Enrollment {RUN_ID}',
+                    'email': f'test-{RUN_ID}-foreign-enrollment@example.com',
+                    'trial_id': world['trial_b']['id'],
+                    'pi_id': world['pi_a'][0]['id'],
+                })
+                assert r.status_code == 403, r.text
+        run(flow())
+
+    def test_pi_id_is_derived_from_authenticated_caller(self, world):
+        async def flow():
+            async with make_client() as cli:
+                r = await cli.post('/api/patients', headers=world['pi_a'][1], json={
+                    'full_name': f'Test Forced PI {RUN_ID}',
+                    'email': f'test-{RUN_ID}-forced-pi@example.com',
+                    'trial_id': world['trial_a']['id'],
+                    'pi_id': world['pi_b'][0]['id'],
+                })
+                assert r.status_code == 200, r.text
+                assert r.json()['pi_id'] == world['pi_a'][0]['id']
+        run(flow())
+
+    def test_smo_org_admin_must_select_same_org_pi(self, world):
+        async def flow():
+            manager, manager_h = await _register('smo', org=ORG_SITE_A)
+            await server.db.users.update_one(
+                {'id': manager['id']}, {'$set': {'org_admin': True}})
+            org = await server.db.organizations.find_one(
+                {'name': ORG_SITE_A}, {'_id': 0, 'id': 1})
+            await server.db.org_trial_access.insert_one({
+                'id': str(uuid.uuid4()),
+                'org_id': org['id'],
+                'trial_id': world['trial_a']['id'],
+                'granted': True,
+                'created_at': server.now(),
+            })
+            async with make_client() as cli:
+                missing = await cli.post('/api/patients', headers=manager_h, json={
+                    'full_name': f'Test Managed Missing PI {RUN_ID}',
+                    'email': f'test-{RUN_ID}-managed-missing-pi@example.com',
+                    'trial_id': world['trial_a']['id'],
+                })
+                assert missing.status_code == 400, missing.text
+                created = await cli.post('/api/patients', headers=manager_h, json={
+                    'full_name': f'Test Managed Enrollment {RUN_ID}',
+                    'email': f'test-{RUN_ID}-managed-enrollment@example.com',
+                    'trial_id': world['trial_a']['id'],
+                    'pi_id': world['pi_a'][0]['id'],
+                })
+                assert created.status_code == 200, created.text
+                assert created.json()['pi_id'] == world['pi_a'][0]['id']
         run(flow())
 
     def test_sponsor_list_excludes_foreign_org_patients(self, world):

@@ -24,6 +24,7 @@ import {
   Globe, Users, FileText, ChevronRight, Merge, Ban, CheckCircle2, Pencil, ArrowRight,
   Check, Layers,
 } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
@@ -36,6 +37,9 @@ type Org = {
   id: string; name?: string; type?: OrgType; address?: string; contact?: string;
   email?: string; website?: string; status?: string; users?: number; trials?: number;
   created_at?: string; merged_into?: string;
+};
+const EMPTY_ORG_FORM = {
+  name: "", type: "site" as OrgType, address: "", contact: "", email: "", website: "",
 };
 type NameRequest = {
   id: string; org_id?: string; current_name?: string; requested_name?: string;
@@ -124,6 +128,15 @@ export default function AdminOrganizations() {
   }, []);
   useEffect(() => { load(); }, [load]);
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+
+  // Global-search deep link: /admin/organizations?focus=<id> opens that record.
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const consumedFocus = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focus || typeof focus !== "string" || focus === consumedFocus.current) return;
+    const hit = orgs.find((o) => o.id === focus);
+    if (hit) { consumedFocus.current = focus; setTab("orgs"); setSelected(hit); }
+  }, [focus, orgs]);
 
   const pendingRequests = useMemo(() => requests.filter((r) => (r.status || "pending") === "pending"), [requests]);
 
@@ -477,8 +490,7 @@ function OrgDetailSheet({ org, busy, onClose, onEdit, onMerge, onSuspend, onActi
 function OrgFormSheet({ open, org, onClose, onSaved }: {
   open: boolean; org: Org | null; onClose: () => void; onSaved: (msg: string) => void;
 }) {
-  const empty = { name: "", type: "site" as OrgType, address: "", contact: "", email: "", website: "" };
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(EMPTY_ORG_FORM);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -486,7 +498,7 @@ function OrgFormSheet({ open, org, onClose, onSaved }: {
       setForm(org ? {
         name: org.name || "", type: (org.type as OrgType) || "site", address: org.address || "",
         contact: org.contact || "", email: org.email || "", website: org.website || "",
-      } : empty);
+      } : EMPTY_ORG_FORM);
       setErr(null);
     }
   }, [open, org]);
@@ -578,11 +590,11 @@ function MergeSheet({ source, orgs, onClose, onDone }: {
             </View>
             <RNText style={st.dangerLine}>
               {source.users || 0} users and {source.trials || 0} trials will be re-linked to the target.
-              "{source.name}" will be archived as merged. This cannot be undone.
+              “{source.name}” will be archived as merged. This cannot be undone.
             </RNText>
           </View>
 
-          <RNText style={st.fieldLabel}>Merge "{source.name}" into</RNText>
+          <RNText style={st.fieldLabel}>Merge “{source.name}” into</RNText>
           {candidates.length === 0 ? (
             <RNText style={st.emptyText}>No other organizations available to merge into.</RNText>
           ) : (

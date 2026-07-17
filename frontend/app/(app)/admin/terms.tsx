@@ -33,6 +33,10 @@ type TermsVersion = {
   createdAt?: string; activatedAt?: string; acceptedBy?: number;
 };
 type Acceptance = { user_id: string; name?: string; email?: string; role?: string; accepted_at?: string };
+const EMPTY_TERMS_FORM = {
+  type: "ToS" as "ToS" | "Privacy", version: "", effectiveDate: "",
+  changeSummary: "", content: "", forceReacceptance: false,
+};
 
 const TYPE_LABEL: Record<string, string> = { ToS: "Terms of Service", Privacy: "Privacy Policy" };
 
@@ -298,11 +302,10 @@ function PublishSheet({ open, activeByType, onClose, onDone }: {
   open: boolean; activeByType: Record<string, TermsVersion | undefined>;
   onClose: () => void; onDone: (msg: string) => void;
 }) {
-  const empty = { type: "ToS" as "ToS" | "Privacy", version: "", effectiveDate: "", changeSummary: "", content: "", forceReacceptance: false };
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(EMPTY_TERMS_FORM);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (open) { setForm(empty); setErr(null); } }, [open]);
+  useEffect(() => { if (open) { setForm(EMPTY_TERMS_FORM); setErr(null); } }, [open]);
 
   const current = activeByType[form.type]?.version;
   const versionOk = /^\d+(\.\d+)*$/.test(form.version.trim()) && (!current || vGreater(form.version.trim(), current));

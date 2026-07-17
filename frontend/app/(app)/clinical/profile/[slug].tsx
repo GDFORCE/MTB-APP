@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import {
   View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal,
-  KeyboardAvoidingView, Platform, ActivityIndicator, StatusBar,
+  KeyboardAvoidingView, Platform, ActivityIndicator, StatusBar, Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft, ChevronRight, ChevronDown, Lock, AlertTriangle, Eye, EyeOff,
   Check, X, MessageCircle, Mail, Phone, Clock, Ticket, HelpCircle, BarChart2, Building2, FlaskConical,
+  Download, FileText as FileTextIcon, FileSpreadsheet,
 } from "lucide-react-native";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
@@ -178,7 +179,7 @@ function EditProfile() {
           {loadError ? (
             <View style={[p.warn, { marginBottom: spacing.md }]}>
               <AlertTriangle size={14} color={colors.warning} />
-              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your profile. Some details may be missing.</Small>
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load your profile. Some details may be missing.</Small>
             </View>
           ) : null}
           <Rise delay={40}>
@@ -321,7 +322,7 @@ function EntityChange() {
           {loadError ? (
             <View style={[p.warn, { marginBottom: spacing.md }]}>
               <AlertTriangle size={14} color={colors.warning} />
-              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your current entity details.</Small>
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load your current entity details.</Small>
             </View>
           ) : null}
           <Small style={{ marginBottom: spacing.md, lineHeight: 20 }}>Request a change to your registered entity details. Our team verifies each request before it takes effect.</Small>
@@ -394,7 +395,7 @@ function EntityChange() {
           <View style={p.dialog}>
             <View style={[p.iconCircle, { backgroundColor: colors.success + "26", marginBottom: 12 }]}><Check size={22} color={colors.success} /></View>
             <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.foreground, marginBottom: 6 }}>Request submitted</Text>
-            <Small style={{ marginBottom: 20, lineHeight: 20 }}>We'll verify your request and update your entity details within 24 hours.</Small>
+            <Small style={{ marginBottom: 20, lineHeight: 20 }}>We’ll verify your request and update your entity details within 24 hours.</Small>
             <Springy onPress={() => { setSubmitted(false); router.back(); }} style={[p.cta, { backgroundColor: colors.primaryDeep }]}><Text style={p.ctaText}>Done</Text></Springy>
           </View>
         </View>
@@ -555,7 +556,7 @@ function Notifications() {
         {loadError ? (
           <View style={[p.warn, { marginBottom: spacing.md }]}>
             <AlertTriangle size={14} color={colors.warning} />
-            <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your preferences. Showing defaults.</Small>
+            <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load your preferences. Showing defaults.</Small>
           </View>
         ) : null}
         {groups.map((g, gi) => (
@@ -581,35 +582,189 @@ function Notifications() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  REPORTS  — no dedicated backend endpoint yet; report types shown as a preview
+//  REPORTS  — role-scoped generation (POST /reports/generate) with audit-logged
+//  downloads. Data is limited to the caller's real trial relationships and
+//  Sponsor/CRO exports stay de-identified server-side.
 // ══════════════════════════════════════════════════════════════════════════════
+type RoleReportType = "enrolment-summary" | "visit-compliance" | "patient-status";
+type RoleReport = {
+  id: string; type: string; name?: string; format?: string; rows?: number;
+  created_at?: string; download_url?: string;
+};
+
+const REPORT_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function reportBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let output = "";
+  let i = 0;
+  for (; i + 2 < bytes.length; i += 3) {
+    const v = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    output += REPORT_B64[(v >> 18) & 63] + REPORT_B64[(v >> 12) & 63] + REPORT_B64[(v >> 6) & 63] + REPORT_B64[v & 63];
+  }
+  if (i < bytes.length) {
+    const v = (bytes[i] << 16) | (i + 1 < bytes.length ? bytes[i + 1] << 8 : 0);
+    output += REPORT_B64[(v >> 18) & 63] + REPORT_B64[(v >> 12) & 63]
+      + (i + 1 < bytes.length ? REPORT_B64[(v >> 6) & 63] : "=") + "=";
+  }
+  return output;
+}
+
 function Reports() {
-  const CARDS = [
-    { label: "Enrolment Summary", desc: "Screened, randomized & withdrawn", tint: colors.info },
-    { label: "Visit Compliance", desc: "On-time vs overdue visits", tint: colors.success },
-    { label: "Protocol Deviations", desc: "Logged deviations by trial", tint: colors.warning },
-    { label: "Patient Status", desc: "Active, completed & dropouts", tint: colors.violet },
+  const CARDS: { key: RoleReportType; label: string; desc: string; tint: string }[] = [
+    { key: "enrolment-summary", label: "Enrolment Summary", desc: "Enrolled vs target with per-status breakdown", tint: colors.info },
+    { key: "visit-compliance", label: "Visit Compliance", desc: "Completed, upcoming, overdue & missed visits", tint: colors.success },
+    { key: "patient-status", label: "Patient Status", desc: "Subjects by trial with current status", tint: colors.violet },
   ];
+  const [format, setFormat] = useState<"pdf" | "xlsx">("pdf");
+  const [generating, setGenerating] = useState<RoleReportType | null>(null);
+  const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [recent, setRecent] = useState<RoleReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  const loadRecent = async () => {
+    setLoadError(false);
+    try {
+      const res = await api.get("/reports/recent");
+      setRecent(Array.isArray(res.data) ? res.data : []);
+    } catch { setLoadError(true); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { loadRecent(); }, []);
+
+  const generate = async (type: RoleReportType) => {
+    setGenerating(type); setNotice(null);
+    try {
+      const res = await api.post("/reports/generate", { type, format });
+      setNotice({ kind: "ok", text: `Generated ${res.data?.name || "report"} · ${res.data?.rows ?? 0} rows` });
+      await loadRecent();
+    } catch (e: any) {
+      setNotice({ kind: "err", text: e?.response?.data?.detail || "Couldn't generate the report. Please try again." });
+    } finally { setGenerating(null); }
+  };
+
+  const download = async (rep: RoleReport) => {
+    setDownloading(rep.id); setNotice(null);
+    try {
+      const filename = rep.name || `report.${rep.format || "pdf"}`;
+      const mime = rep.format === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "application/pdf";
+      if (Platform.OS === "web") {
+        const res = await api.get(`/reports/${rep.id}/download`, { responseType: "blob" });
+        const g: any = globalThis;
+        const blob = res.data instanceof g.Blob ? res.data : new g.Blob([res.data], { type: mime });
+        const url = g.URL.createObjectURL(blob);
+        const a = g.document.createElement("a");
+        a.href = url; a.download = filename; a.click();
+        g.URL.revokeObjectURL(url);
+      } else {
+        const res = await api.get(`/reports/${rep.id}/download`, { responseType: "arraybuffer" });
+        const uri = `data:${mime};base64,${reportBufferToBase64(res.data as ArrayBuffer)}`;
+        if (!await Linking.canOpenURL(uri)) throw new Error("No app on this device can open this report format.");
+        await Linking.openURL(uri);
+      }
+      setNotice({ kind: "ok", text: `Downloaded ${filename}` });
+    } catch (e: any) {
+      setNotice({ kind: "err", text: e?.response?.data?.detail || e?.message || "Download failed." });
+    } finally { setDownloading(null); }
+  };
+
   return (
     <View style={p.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SubHeader eyebrow="Insights" title="Reports" />
       <ScrollView contentContainerStyle={p.body}>
+        {/* Format choice */}
+        <Rise delay={20}>
+          <View style={{ flexDirection: "row", gap: 8, marginBottom: spacing.md }}>
+            {(["pdf", "xlsx"] as const).map((f) => {
+              const on = format === f;
+              const Icon = f === "pdf" ? FileTextIcon : FileSpreadsheet;
+              return (
+                <Pressable
+                  key={f}
+                  testID={`report-format-${f}`}
+                  onPress={() => setFormat(f)}
+                  style={{
+                    flexDirection: "row", alignItems: "center", gap: 6,
+                    paddingHorizontal: 14, paddingVertical: 8, borderRadius: radii.pill,
+                    borderWidth: 1, borderColor: on ? colors.primary : colors.border,
+                    backgroundColor: on ? colors.primary + "14" : colors.card,
+                  }}
+                >
+                  <Icon size={14} color={on ? colors.primary : colors.mutedFg} />
+                  <Small weight="700" color={on ? colors.primary : colors.mutedFg}>{f === "pdf" ? "PDF" : "Excel"}</Small>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Rise>
+
         {CARDS.map((r, i) => (
-          <Rise key={r.label} delay={40 + i * 60}>
-            <View style={[p.card, { marginBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: 12 }]}>
+          <Rise key={r.key} delay={40 + i * 60}>
+            <Pressable
+              testID={`report-generate-${r.key}`}
+              onPress={generating ? undefined : () => generate(r.key)}
+              style={[p.card, { marginBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: 12, opacity: generating && generating !== r.key ? 0.55 : 1 }]}
+            >
               <View style={[p.iconTile, { backgroundColor: r.tint + "1A" }]}><BarChart2 size={20} color={r.tint} /></View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Body weight="600">{r.label}</Body>
                 <Small style={{ marginTop: 2 }}>{r.desc}</Small>
               </View>
-            </View>
+              {generating === r.key
+                ? <ActivityIndicator size="small" color={colors.primary} />
+                : <ChevronRight size={16} color={colors.mutedFg} />}
+            </Pressable>
           </Rise>
         ))}
-        <View style={[p.warn, { marginTop: spacing.sm }]}>
-          <Clock size={14} color={colors.warning} />
-          <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Downloadable report exports are coming soon.</Small>
-        </View>
+
+        {notice ? (
+          <View style={[p.warn, { marginTop: spacing.xs, borderColor: (notice.kind === "ok" ? colors.success : colors.destructive) + "44", backgroundColor: (notice.kind === "ok" ? colors.success : colors.destructive) + "0F" }]} accessibilityLiveRegion="polite">
+            {notice.kind === "ok" ? <Check size={14} color={colors.success} /> : <AlertTriangle size={14} color={colors.destructive} />}
+            <Small color={notice.kind === "ok" ? colors.success : colors.destructive} style={{ flex: 1, fontSize: 12 }}>{notice.text}</Small>
+          </View>
+        ) : null}
+
+        {/* Recent reports */}
+        <Eyebrow color={colors.mutedFg} style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>RECENT REPORTS</Eyebrow>
+        {loading ? (
+          <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.md }} />
+        ) : loadError ? (
+          <View style={p.warn}>
+            <AlertTriangle size={14} color={colors.warning} />
+            <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn&apos;t load your recent reports.</Small>
+            <Pressable onPress={() => { setLoading(true); loadRecent(); }} hitSlop={8}>
+              <Small weight="700" color={colors.primary}>Retry</Small>
+            </Pressable>
+          </View>
+        ) : recent.length === 0 ? (
+          <Small color={colors.mutedFg}>No reports generated yet. Generate one above to download it.</Small>
+        ) : (
+          recent.map((rep) => (
+            <View key={rep.id} style={[p.card, { marginBottom: spacing.xs, flexDirection: "row", alignItems: "center", gap: 12 }]}>
+              <View style={[p.iconTile, { backgroundColor: colors.primary + "12" }]}>
+                {rep.format === "xlsx" ? <FileSpreadsheet size={18} color={colors.primary} /> : <FileTextIcon size={18} color={colors.primary} />}
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Body weight="600" numberOfLines={1}>{rep.name || rep.type}</Body>
+                <Small style={{ marginTop: 2 }}>{`${(rep.format || "pdf").toUpperCase()} · ${rep.rows ?? 0} rows`}</Small>
+              </View>
+              <Pressable
+                testID={`report-download-${rep.id}`}
+                onPress={downloading ? undefined : () => download(rep)}
+                hitSlop={6}
+                style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }}
+              >
+                {downloading === rep.id
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <Download size={17} color={colors.primary} />}
+              </Pressable>
+            </View>
+          ))
+        )}
       </ScrollView>
     </View>
   );
@@ -661,7 +816,7 @@ function Tnc() {
         {error && !doc ? (
           <View style={[p.warn, { marginBottom: spacing.md }]}>
             <AlertTriangle size={14} color={colors.warning} />
-            <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load the latest version. Showing a saved copy.</Small>
+            <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load the latest version. Showing a saved copy.</Small>
           </View>
         ) : null}
         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.md }}>
@@ -751,7 +906,7 @@ function Help() {
           {loadError ? (
             <View style={[p.warn, { marginBottom: spacing.md }]}>
               <AlertTriangle size={14} color={colors.warning} />
-              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load the latest content. Showing saved help.</Small>
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load the latest content. Showing saved help.</Small>
             </View>
           ) : null}
           {faqs.map((f, i) => {
@@ -783,7 +938,7 @@ function Help() {
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
             <View style={p.successCircle}><Check size={32} color={colors.success} /></View>
             <Text style={{ fontFamily: fonts.heading, fontSize: 20, color: colors.foreground }}>Ticket Submitted!</Text>
-            <Small style={{ textAlign: "center" }}>We'll respond within 24 hours.</Small>
+            <Small style={{ textAlign: "center" }}>We’ll respond within 24 hours.</Small>
             <View style={p.ticketIdBox}><Eyebrow color={colors.mutedFg}>Ticket ID</Eyebrow><Text style={{ fontFamily: fonts.mono, color: colors.primaryDeep, marginTop: 2 }}>{lastTicketId}</Text></View>
             <Pressable onPress={() => setView("tickets")}><Small color={colors.info} weight="700">View my tickets →</Small></Pressable>
           </View>
@@ -834,11 +989,11 @@ function Help() {
           {loadError ? (
             <View style={[p.warn, { marginBottom: spacing.md }]}>
               <AlertTriangle size={14} color={colors.warning} />
-              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn't load your tickets. Pull back later to retry.</Small>
+              <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load your tickets. Pull back later to retry.</Small>
             </View>
           ) : null}
           {tickets.length === 0 ? (
-            <View style={[p.card, { alignItems: "center", paddingVertical: 32, gap: 8 }]}><Ticket size={32} color={colors.mutedFg + "66"} /><Small>You haven't raised any tickets yet.</Small></View>
+            <View style={[p.card, { alignItems: "center", paddingVertical: 32, gap: 8 }]}><Ticket size={32} color={colors.mutedFg + "66"} /><Small>You haven’t raised any tickets yet.</Small></View>
           ) : tickets.map((t, i) => (
             <Rise key={t.id || i} delay={40 + i * 60}>
               <View style={[p.card, { marginBottom: spacing.sm }]}>
@@ -903,7 +1058,7 @@ function NotFound() {
       <SubHeader eyebrow="Profile" title="Not found" />
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
         <FlaskConical size={28} color={colors.mutedFg} />
-        <Small style={{ textAlign: "center" }}>This section isn't available.</Small>
+        <Small style={{ textAlign: "center" }}>This section isn’t available.</Small>
         <Springy onPress={() => router.back()} style={[p.cta, { backgroundColor: colors.primaryDeep, paddingHorizontal: spacing.xl }]}><Text style={p.ctaText}>Go back</Text></Springy>
       </View>
     </View>

@@ -29,8 +29,6 @@ import { useAuth } from "@/src/auth/AuthContext";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, Toast, Input, SheetActions, st } from "./users";
 
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
-
 type Me = {
   id?: string; full_name?: string; email?: string; phone?: string; role?: string;
   organization?: string; avatar_initials?: string; created_at?: string;

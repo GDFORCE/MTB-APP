@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, ScrollView, StyleSheet, Pressable, RefreshControl } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { Bell, MessageCircle, Calendar, FlaskConical, Users, LogOut, ChevronRight, Activity, Clock, CheckCircle2, User2 } from "lucide-react-native";
-import { colors, spacing, radii, dawnGradient, shadows } from "@/src/theme/tokens";
-import { Eyebrow, H1, Body, Small, Card, SectionHeader, Button } from "@/src/components/ui";
+import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
+import { Eyebrow, H1, Body, Small, Card, SectionHeader } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
@@ -24,8 +24,10 @@ export default function Dashboard() {
   const [patients, setPatients] = useState<any[]>([]);
   const [notifs, setNotifs] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    setLoadError("");
     try {
       const reqs: any[] = [api.get("/trials"), api.get("/notifications")];
       if (user?.role === "patient") reqs.push(api.get("/visits/mine"));
@@ -33,17 +35,19 @@ export default function Dashboard() {
       const [t, n, x] = await Promise.all(reqs);
       setTrials(t.data); setNotifs(n.data);
       if (user?.role === "patient") setVisits(x.data); else setPatients(x.data);
-    } catch (e) { console.log("load err", e); }
-  };
-  useEffect(() => { load(); }, [user?.id]);
+    } catch {
+      setLoadError("Couldn't refresh the dashboard. Pull down to try again.");
+    }
+  }, [user?.role]);
+  useEffect(() => { load(); }, [load]);
 
   if (!user) return null;
   const role = user.role;
   const isPatient = role === "patient";
   const upcoming = visits.filter(v => v.status === "upcoming").sort((a, b) => a.scheduled_date.localeCompare(b.scheduled_date))[0];
   const completed = visits.filter(v => v.status === "completed").length;
-  const total = visits.length || 10;
-  const pct = Math.round((completed / total) * 100);
+  const total = visits.length;
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
@@ -72,7 +76,7 @@ export default function Dashboard() {
                 <Eyebrow color={colors.overlay25}>Your progress</Eyebrow>
                 <Body weight="700" color={colors.primaryFg} style={{ marginTop: 2 }}>Visit {completed} of {total} completed</Body>
                 <View style={{ flexDirection: "row", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                  <View style={s.chip}><Activity size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} style={{ fontWeight: "700" as any, fontSize: 11 }}>93% adherence</Small></View>
+                  <View style={s.chip}><Activity size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} style={{ fontWeight: "700" as any, fontSize: 11 }}>{pct}% visits complete</Small></View>
                   {upcoming && <View style={s.chip}><Clock size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} style={{ fontWeight: "700" as any, fontSize: 11 }}>Next in {Math.max(0, Math.ceil((new Date(upcoming.scheduled_date).getTime() - Date.now()) / 86400000))}d</Small></View>}
                 </View>
               </View>
@@ -91,6 +95,11 @@ export default function Dashboard() {
 
         {/* Next visit / Today's actions */}
         <View style={{ paddingHorizontal: spacing.md, marginTop: spacing.lg }}>
+          {!!loadError && (
+            <Card style={{ marginBottom: spacing.md, borderColor: colors.destructive + "55" }}>
+              <Small color={colors.destructive}>{loadError}</Small>
+            </Card>
+          )}
           {isPatient ? (
             upcoming ? (
               <>
@@ -105,8 +114,16 @@ export default function Dashboard() {
                       <View style={{ flex: 1 }}>
                         <Eyebrow color={colors.accent}>In {Math.max(0, Math.ceil((new Date(upcoming.scheduled_date).getTime() - Date.now()) / 86400000))} days</Eyebrow>
                         <Body weight="700" style={{ marginTop: 4 }}>Visit {upcoming.visit_number} · {upcoming.name}</Body>
-                        <Small style={{ marginTop: 4 }}>Protocol-001 · AIIMS Delhi</Small>
-                        <Small style={{ marginTop: 4 }}>Activities: {upcoming.activities.slice(0, 2).join(", ")}…</Small>
+                        {!!(upcoming.protocol_id || upcoming.site) && (
+                          <Small style={{ marginTop: 4 }}>
+                            {[upcoming.protocol_id, upcoming.site].filter(Boolean).join(" · ")}
+                          </Small>
+                        )}
+                        {!!upcoming.activities?.length && (
+                          <Small style={{ marginTop: 4 }}>
+                            Activities: {upcoming.activities.slice(0, 2).join(", ")}
+                          </Small>
+                        )}
                       </View>
                     </View>
                   </Card>
@@ -220,7 +237,14 @@ export default function Dashboard() {
         {isPatient && <TabBtn icon={<FlaskConical size={20} color={colors.mutedFg} />} label="My Trial" testID="tab-my-trial" onPress={() => router.push("/(app)/patient/my-trial")} />}
         {!isPatient && <TabBtn icon={<FlaskConical size={20} color={colors.mutedFg} />} label="Trials" testID="tab-trials" onPress={() => router.push("/(app)/clinical/my-trials")} />}
         {!isPatient && <TabBtn icon={<Users size={20} color={colors.mutedFg} />} label={role === "sponsor" || role === "cro" ? "Patients" : "People"} testID="tab-people" onPress={() => router.push(role === "crc" ? "/(app)/clinical/schedule-review" : "/(app)/clinical/patients")} />}
-        <TabBtn icon={<Calendar size={20} color={colors.mutedFg} />} label="Calendar" testID="tab-calendar" onPress={() => isPatient && router.push("/(app)/patient/calendar")} />
+        <TabBtn
+          icon={<Calendar size={20} color={colors.mutedFg} />}
+          label="Calendar"
+          testID="tab-calendar"
+          onPress={() => isPatient
+            ? router.push("/(app)/patient/calendar")
+            : router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: role === "crc" ? "crc" : "pi" } })}
+        />
         <TabBtn icon={<MessageCircle size={20} color={colors.mutedFg} />} label="Chat" onPress={() => router.push("/(app)/chat")} testID="tab-chat" />
         {!isPatient && <TabBtn icon={<Users size={20} color={colors.mutedFg} />} label="Team" testID="tab-team" onPress={() => router.push("/(app)/clinical/team")} />}
         <TabBtn icon={

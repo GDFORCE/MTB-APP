@@ -15,6 +15,7 @@ admin actors are inserted directly into the users collection and then logged
 in through the real /api/auth/login endpoint.
 """
 import asyncio
+import io
 import sys
 import uuid
 from datetime import timedelta
@@ -91,6 +92,7 @@ def _cleanup():
     async def clean():
         db = server.db
         await db.users.delete_many({'email': {'$regex': f'{RUN_ID}'}})
+        await db.password_reset_tokens.delete_many({'email': {'$regex': RUN_ID}})
         await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
         await db.invitations.delete_many({'email': {'$regex': RUN_ID}})
         await db.org_name_requests.delete_many({'id': {'$in': _extra_cleanup_ids['name_requests']}})
@@ -102,6 +104,7 @@ def _cleanup():
         await db.notification_deliveries.delete_many({'run_id': RUN_ID})
         await db.notification_deliveries.delete_many({'message': {'$regex': RUN_ID}})
         await db.admin_delegations.delete_many({'reason': {'$regex': RUN_ID}})
+        await db.org_delegation_requests.delete_many({'org_name': {'$regex': RUN_ID}})
         await db.emergency_requests.delete_many({'reason_text': {'$regex': RUN_ID}})
         await db.emergency_sessions.delete_many({'id': {'$in': _extra_cleanup_ids['sessions']}})
         await db.broadcast_messages.delete_many({'subject': {'$regex': RUN_ID}})
@@ -175,8 +178,10 @@ GUARDED_GET_PATHS = [
     '/api/admin/terms/acceptances',
     '/api/admin/reports/recent',
     '/api/admin/delegations',
+    '/api/admin/org-delegation-requests',
     '/api/admin/messages',
     '/api/admin/messages/recipient-count',
+    '/api/admin/emergency/requests',
 ]
 
 
@@ -225,7 +230,14 @@ class TestAdminUsers:
                 assert patient['full_name'] not in str(masked)
         run(flow())
 
-    def test_create_user_with_invite(self, actors):
+    def test_create_user_with_invite(self, actors, monkeypatch):
+        """Admin user creation NEVER returns a credential — it emails a
+        single-use setup link and reports only masked delivery metadata."""
+        import otp_service
+        sent = []
+        monkeypatch.setattr(
+            otp_service, 'send_password_reset_email',
+            lambda email, link, ttl: sent.append((email, link, ttl)))
         async def flow():
             async with make_client() as cli:
                 email = f'adm-{RUN_ID}-created@example.com'
@@ -236,10 +248,40 @@ class TestAdminUsers:
                 j = r.json()
                 assert j['user']['status'] == 'Pending Verification'
                 assert j['invitation'] and j['invitation']['invite_link']
-                assert j['temp_password']
+                # No plaintext credential anywhere in the response.
+                assert 'temp_password' not in r.text
+                setup = j['password_setup']
+                assert setup['reset_sent'] is True
+                assert setup['delivery_channel'] == 'email'
+                assert setup['email'] != email and '*' in setup['email']
+                assert setup['expires_at']
+                # The raw link went only to the mocked mailer, never the admin.
+                assert len(sent) == 1 and sent[0][0] == email
+                assert 'token=' in sent[0][1]
+                assert sent[0][1].split('token=')[1] not in r.text
                 audit = await server.db.audit_logs.find_one(
                     {'action': 'admin.user_create', 'target_id': j['user']['id']})
                 assert audit, 'user creation must be audited'
+                assert sent[0][1].split('token=')[1] not in str(audit)
+        run(flow())
+
+    def test_create_user_rolls_back_on_delivery_failure(self, actors, monkeypatch):
+        """If the setup email cannot be delivered, no orphan user, invitation,
+        or reset token may remain."""
+        import otp_service
+        def boom(email, link, ttl):
+            raise otp_service.OTPDeliveryError('smtp down')
+        monkeypatch.setattr(otp_service, 'send_password_reset_email', boom)
+        async def flow():
+            async with make_client() as cli:
+                email = f'adm-{RUN_ID}-rollback@example.com'
+                r = await cli.post('/api/admin/users', headers=actors['admin1'][1], json={
+                    'email': email, 'full_name': f'Rollback User {RUN_ID}',
+                    'role': 'crc', 'organization': f'ADMORG-{RUN_ID} Hospital'})
+                assert r.status_code == 502, r.text
+                assert await server.db.users.find_one({'email': email}) is None
+                assert await server.db.invitations.find_one({'email': email}) is None
+                assert await server.db.password_reset_tokens.find_one({'email': email}) is None
         run(flow())
 
     def test_suspend_blocks_session_and_login_then_activate(self, actors):
@@ -303,25 +345,82 @@ class TestAdminUsers:
                 assert audit and audit.get('identity_checks') == ['email', 'phone']
         run(flow())
 
-    def test_reset_password_and_force_logout(self, actors):
+    def test_reset_password_link_lifecycle_and_force_logout(self, actors, monkeypatch):
+        """Admin reset emails a single-use link (no credential in the response),
+        the link sets the new password exactly once, and replayed / expired /
+        revoked tokens all fail."""
+        import hashlib
+        import otp_service
+        sent = []
+        monkeypatch.setattr(
+            otp_service, 'send_password_reset_email',
+            lambda email, link, ttl: sent.append((email, link, ttl)))
+        NEW_PW = f'NewPassw0rd!{RUN_ID}'
+        def token_of(link):
+            return link.split('token=')[1]
         async def flow():
             async with make_client() as cli:
                 victim, victim_h = await _register('crc', org=f'ADMORG-{RUN_ID} Hospital')
                 h = actors['admin1'][1]
                 r = await cli.post(f"/api/admin/users/{victim['id']}/reset-password", headers=h)
                 assert r.status_code == 200, r.text
-                temp = r.json()['temp_password']
-                # old password no longer works; temp password does
+                j = r.json()
+                assert 'temp_password' not in r.text
+                assert j['reset_sent'] is True and '*' in j['email']
+                assert len(sent) == 1 and sent[0][0] == victim['email']
+                token1 = token_of(sent[0][1])
+                # existing victim session was force-logged-out by the reset
+                dead0 = await cli.get('/api/auth/me', headers=victim_h)
+                assert dead0.status_code == 401, dead0.text
+                # weak password is refused without consuming the token
+                weak = await cli.post('/api/auth/password-reset-link',
+                                      json={'token': token1, 'new_password': 'weakpassword'})
+                assert weak.status_code == 400, weak.text
+                # consume the link with a strong password
+                ok = await cli.post('/api/auth/password-reset-link',
+                                    json={'token': token1, 'new_password': NEW_PW})
+                assert ok.status_code == 200, ok.text
+                # old password dead, new password works
                 bad = await cli.post('/api/auth/login', json={
                     'email': victim['email'], 'password': PASSWORD})
                 assert bad.status_code == 401, bad.text
                 good = await cli.post('/api/auth/login', json={
-                    'email': victim['email'], 'password': temp})
+                    'email': victim['email'], 'password': NEW_PW})
                 assert good.status_code == 200, good.text
-                fresh_h = {'Authorization': f"Bearer {good.json()['access_token']}"}
-                # force-logout invalidates the fresh session token
-                r2 = await cli.post(f"/api/admin/users/{victim['id']}/force-logout", headers=h)
+                # replay of the consumed token is refused
+                replay = await cli.post('/api/auth/password-reset-link',
+                                        json={'token': token1, 'new_password': NEW_PW + 'x'})
+                assert replay.status_code == 400, replay.text
+                # expired token is refused
+                r2 = await cli.post(f"/api/admin/users/{victim['id']}/reset-password", headers=h)
                 assert r2.status_code == 200, r2.text
+                token2 = token_of(sent[1][1])
+                await server.db.password_reset_tokens.update_one(
+                    {'token_hash': hashlib.sha256(token2.encode()).hexdigest()},
+                    {'$set': {'expires_at': server.now() - timedelta(minutes=1)}})
+                expired = await cli.post('/api/auth/password-reset-link',
+                                         json={'token': token2, 'new_password': NEW_PW})
+                assert expired.status_code == 400, expired.text
+                # issuing a newer link revokes the older unused one
+                r3 = await cli.post(f"/api/admin/users/{victim['id']}/reset-password", headers=h)
+                assert r3.status_code == 200, r3.text
+                token3 = token_of(sent[2][1])
+                r4 = await cli.post(f"/api/admin/users/{victim['id']}/reset-password", headers=h)
+                assert r4.status_code == 200, r4.text
+                token4 = token_of(sent[3][1])
+                revoked = await cli.post('/api/auth/password-reset-link',
+                                         json={'token': token3, 'new_password': NEW_PW})
+                assert revoked.status_code == 400, revoked.text
+                latest = await cli.post('/api/auth/password-reset-link',
+                                        json={'token': token4, 'new_password': NEW_PW})
+                assert latest.status_code == 200, latest.text
+                # force-logout still invalidates a fresh session token
+                good2 = await cli.post('/api/auth/login', json={
+                    'email': victim['email'], 'password': NEW_PW})
+                assert good2.status_code == 200, good2.text
+                fresh_h = {'Authorization': f"Bearer {good2.json()['access_token']}"}
+                r5 = await cli.post(f"/api/admin/users/{victim['id']}/force-logout", headers=h)
+                assert r5.status_code == 200, r5.text
                 dead = await cli.get('/api/auth/me', headers=fresh_h)
                 assert dead.status_code == 401, dead.text
         run(flow())
@@ -686,30 +785,46 @@ def trial_world(actors):
                 'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
                 'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
             assert rv.status_code == 200, rv.text
-        pi, pi_h = await _register('pi', org=f'ADMORG-{RUN_ID} TrialSite')
-        async with make_client() as cli:
-            rp = await cli.post('/api/patients', headers=pi_h, json={
-                'full_name': f'Secret Patient {RUN_ID}',
-                'email': f'adm-{RUN_ID}-subject@example.com',
-                'trial_id': trial['id'], 'pi_id': pi['id'],
-                'enrolled_date': (server.now() - timedelta(days=3)).date().isoformat()})
-            assert rp.status_code == 200, rp.text
-            patient = rp.json()
-        return {'trial': trial, 'patient': patient}
+            pi, pi_h = await _register('pi', org=f'ADMORG-{RUN_ID} TrialSite')
+            await server.db.invitations.insert_one({
+                'id': str(uuid.uuid4()), 'code': f'ADM-TRIAL-{RUN_ID}',
+                'email': pi['email'], 'phone': pi.get('phone', ''),
+                'role': 'pi', 'trial_id': trial['id'],
+                'status': 'accepted', 'created_at': server.now(),
+            })
+            async with make_client() as cli:
+                rp = await cli.post('/api/patients', headers=pi_h, json={
+                    'full_name': f'Secret Patient {RUN_ID}',
+                    'email': f'adm-{RUN_ID}-subject@example.com',
+                    'trial_id': trial['id'], 'pi_id': pi['id'],
+                    'enrolled_date': (server.now() - timedelta(days=3)).date().isoformat()})
+                assert rp.status_code == 200, rp.text
+                patient = rp.json()
+        return {'trial': trial, 'patient': patient, 'sponsor_h': sponsor_h}
     return run(build())
 
 
 class TestAdminTrials:
     def test_list_and_detail_are_masked(self, actors, trial_world):
         h = actors['admin1'][1]
+        sponsor_h = trial_world['sponsor_h']
         trial = trial_world['trial']
         patient = trial_world['patient']
         async def flow():
             async with make_client() as cli:
+                changed = await cli.patch(
+                    f"/api/trials/{trial['id']}", headers=sponsor_h,
+                    json={'target_enrollment': 25})
+                assert changed.status_code == 200, changed.text
                 lst = await cli.get('/api/admin/trials', headers=h)
                 assert lst.status_code == 200, lst.text
                 mine = [t for t in lst.json() if t['id'] == trial['id']]
                 assert mine and mine[0]['patients'] == 1
+                assert mine[0]['sponsorOrCroName'] == f'ADMORG-{RUN_ID} Pharma'
+                assert mine[0]['ownerType'] == 'Sponsor'
+                assert mine[0]['modifiedBy']
+                assert mine[0]['changeSummary'] == 'Updated target enrollment'
+                assert mine[0]['changedFields'] == ['target_enrollment']
                 assert f'Secret Patient {RUN_ID}' not in lst.text, 'list must carry no PII'
                 det = await cli.get(f"/api/admin/trials/{trial['id']}", headers=h)
                 assert det.status_code == 200, det.text
@@ -810,7 +925,7 @@ class TestAdminReports:
         async def flow():
             async with make_client() as cli:
                 r = await cli.post('/api/admin/reports/generate', headers=h,
-                                   json={'type': 'user-status'})
+                                   json={'type': 'user-status', 'format': 'pdf'})
                 assert r.status_code == 200, r.text
                 rep = r.json()
                 _extra_cleanup_ids['reports'].append((rep['id'], rep['key']))
@@ -819,17 +934,26 @@ class TestAdminReports:
                 assert any(x['id'] == rep['id'] for x in recent.json())
                 dl = await cli.get(f"/api/admin/reports/{rep['id']}/download", headers=h)
                 assert dl.status_code == 200, dl.text
-                assert 'text/csv' in dl.headers['content-type']
-                assert dl.text.splitlines()[0] == 'status,count'
+                assert 'application/pdf' in dl.headers['content-type']
+                assert dl.content.startswith(b'%PDF')
                 # patient PII never appears in a users report
                 r2 = await cli.post('/api/admin/reports/generate', headers=h,
-                                    json={'type': 'users'})
+                                    json={'type': 'users', 'format': 'xlsx'})
                 rep2 = r2.json()
                 _extra_cleanup_ids['reports'].append((rep2['id'], rep2['key']))
                 dl2 = await cli.get(f"/api/admin/reports/{rep2['id']}/download", headers=h)
+                assert 'spreadsheetml' in dl2.headers['content-type']
+                assert dl2.content.startswith(b'PK')
+                from openpyxl import load_workbook
+                workbook = load_workbook(io.BytesIO(dl2.content), read_only=True)
+                values = '\n'.join(
+                    str(value or '')
+                    for row in workbook.active.iter_rows(values_only=True)
+                    for value in row
+                )
                 patient = actors['patient'][0]
-                assert patient['full_name'] not in dl2.text
-                assert patient['email'] not in dl2.text
+                assert patient['full_name'] not in values
+                assert patient['email'] not in values
                 # unknown report type is rejected by the schema
                 bad = await cli.post('/api/admin/reports/generate', headers=h,
                                      json={'type': 'everything'})
@@ -889,6 +1013,83 @@ class TestAdminDelegations:
                     assert audit, f'{action} must be audited'
         run(flow())
 
+    def test_org_trial_creation_request_approve_and_reject(self, actors):
+        h = actors['admin1'][1]
+        requester = actors['pi'][0]
+
+        async def flow():
+            async with make_client() as cli:
+                approved_org = {
+                    'id': str(uuid.uuid4()),
+                    'name': f'ADM-DELEGATE-SITE-{RUN_ID}',
+                    'type': 'site',
+                    'trial_creation_delegated': False,
+                    'created_at': server.now(),
+                }
+                rejected_org = {
+                    'id': str(uuid.uuid4()),
+                    'name': f'ADM-DELEGATE-SMO-{RUN_ID}',
+                    'type': 'smo',
+                    'trial_creation_delegated': False,
+                    'created_at': server.now(),
+                }
+                await server.db.organizations.insert_many([approved_org, rejected_org])
+                requests = [{
+                    'id': str(uuid.uuid4()), 'org_id': approved_org['id'],
+                    'org_name': approved_org['name'], 'requested_by': requester['id'],
+                    'requester_name': requester['full_name'],
+                    'reason': f'Site needs delegated trial creation {RUN_ID}',
+                    'status': 'pending', 'created_at': server.now(),
+                }, {
+                    'id': str(uuid.uuid4()), 'org_id': rejected_org['id'],
+                    'org_name': rejected_org['name'], 'requested_by': requester['id'],
+                    'requester_name': requester['full_name'],
+                    'reason': f'SMO request for review {RUN_ID}',
+                    'status': 'pending', 'created_at': server.now(),
+                }]
+                await server.db.org_delegation_requests.insert_many(requests)
+
+                listed = await cli.get(
+                    '/api/admin/org-delegation-requests?status=pending', headers=h)
+                assert listed.status_code == 200, listed.text
+                ids = {row['id'] for row in listed.json()}
+                assert requests[0]['id'] in ids and requests[1]['id'] in ids
+
+                approved = await cli.post(
+                    f"/api/admin/org-delegation-requests/{requests[0]['id']}/approve",
+                    headers=h, json={'reason': 'Verified operating controls'})
+                assert approved.status_code == 200, approved.text
+                assert approved.json()['status'] == 'approved'
+                approved_fresh = await server.db.organizations.find_one(
+                    {'id': approved_org['id']}, {'_id': 0})
+                assert approved_fresh['trial_creation_delegated'] is True
+
+                duplicate = await cli.post(
+                    f"/api/admin/org-delegation-requests/{requests[0]['id']}/reject",
+                    headers=h, json={'reason': 'Too late'})
+                assert duplicate.status_code == 400, duplicate.text
+
+                rejected = await cli.post(
+                    f"/api/admin/org-delegation-requests/{requests[1]['id']}/reject",
+                    headers=h, json={'reason': 'Required controls are incomplete'})
+                assert rejected.status_code == 200, rejected.text
+                rejected_fresh = await server.db.organizations.find_one(
+                    {'id': rejected_org['id']}, {'_id': 0})
+                assert rejected_fresh['trial_creation_delegated'] is False
+
+                for action, request in (
+                    ('admin.org_delegation_approved', requests[0]),
+                    ('admin.org_delegation_rejected', requests[1]),
+                ):
+                    audit = await server.db.audit_logs.find_one({
+                        'action': action, 'target_id': request['id']})
+                    assert audit, f'{action} must be audited'
+                note = await server.db.notifications.find_one({
+                    'user_id': requester['id'],
+                    'title': {'$regex': 'Trial creation request'}})
+                assert note, 'requester must be notified of the decision'
+        run(flow())
+
 
 # ── Emergency access (break-the-glass) ───────────────────────────────────────
 class TestEmergencyAccess:
@@ -912,6 +1113,15 @@ class TestEmergencyAccess:
                     'trial_id': trial['id']})
                 assert r.status_code == 200, r.text
                 req = r.json()
+                inbox = await cli.get(
+                    '/api/admin/emergency/requests?status=pending', headers=h2)
+                assert inbox.status_code == 200, inbox.text
+                listed = [row for row in inbox.json() if row['id'] == req['id']]
+                assert listed and listed[0]['can_action'] is True
+                own_inbox = await cli.get(
+                    '/api/admin/emergency/requests?status=pending', headers=h1)
+                own = [row for row in own_inbox.json() if row['id'] == req['id']]
+                assert own and own[0]['can_action'] is False
                 # requester cannot self-approve (two-person rule)
                 self_ok = await cli.post(
                     f"/api/admin/emergency/requests/{req['id']}/approve", headers=h1)
@@ -1069,6 +1279,62 @@ class TestAdminMessages:
                 assert b['status'] == 'scheduled'
                 fanned = await server.db.notifications.find_one({'broadcast_id': b['id']})
                 assert fanned is None, 'a scheduled broadcast must not fan out yet'
+        run(flow())
+
+    def test_scheduled_broadcast_worker_delivers_exactly_once(self, actors):
+        """The background worker claims a due broadcast atomically, fans out
+        idempotently, survives a crash mid-fan-out, and never double-sends."""
+        import admin_routes
+        h = actors['admin1'][1]
+        patient = actors['patient'][0]
+        async def flow():
+            db = server.db
+            async with make_client() as cli:
+                r = await cli.post('/api/admin/messages', headers=h, json={
+                    'subject': f'Worker window {RUN_ID}',
+                    'body': 'Scheduled maintenance tonight.',
+                    'target': f"user:{patient['id']}",
+                    'scheduleAt': (server.now() + timedelta(hours=6)).isoformat()})
+                assert r.status_code == 200, r.text
+                b = r.json()
+                assert b['status'] == 'scheduled'
+            # Simulate the schedule coming due.
+            await db.broadcast_messages.update_one(
+                {'id': b['id']},
+                {'$set': {'scheduleAt': server.now() - timedelta(minutes=1)}})
+            delivered = await admin_routes.deliver_due_broadcasts(only_id=b["id"])
+            assert delivered >= 1
+            fresh = await db.broadcast_messages.find_one({'id': b['id']}, {'_id': 0})
+            assert fresh['status'] == 'sent' and fresh['sent_at']
+            assert await db.notifications.count_documents(
+                {'broadcast_id': b['id']}) == 1
+            assert await db.notification_deliveries.count_documents(
+                {'broadcast_id': b['id']}) == 1
+            audit = await db.audit_logs.find_one(
+                {'action': 'admin.broadcast_send', 'target_id': b['id']})
+            assert audit and audit.get('scheduled') is True
+            # Exactly-once: a second worker pass must not double-deliver.
+            again = await admin_routes.deliver_due_broadcasts(only_id=b["id"])
+            assert again == 0
+            assert await db.notifications.count_documents(
+                {'broadcast_id': b['id']}) == 1
+            # Crash recovery: a stale 'sending' claim with partial fan-out rows
+            # is re-claimed and re-delivered without duplicates.
+            await db.broadcast_messages.update_one({'id': b['id']}, {'$set': {
+                'status': 'sending',
+                'claimed_at': server.now() - timedelta(
+                    seconds=admin_routes.BROADCAST_CLAIM_STALE_SEC + 60)}})
+            await db.notifications.insert_one({
+                'id': str(uuid.uuid4()), 'user_id': patient['id'],
+                'title': f'Worker window {RUN_ID}', 'body': 'partial row',
+                'kind': 'broadcast', 'broadcast_id': b['id'],
+                'read': False, 'created_at': server.now()})
+            recovered = await admin_routes.deliver_due_broadcasts(only_id=b["id"])
+            assert recovered == 1
+            fresh2 = await db.broadcast_messages.find_one({'id': b['id']}, {'_id': 0})
+            assert fresh2['status'] == 'sent'
+            assert await db.notifications.count_documents(
+                {'broadcast_id': b['id']}) == 1, 'partial rows must be replaced, not duplicated'
         run(flow())
 
     def test_replies_respond_and_resolve(self, actors):

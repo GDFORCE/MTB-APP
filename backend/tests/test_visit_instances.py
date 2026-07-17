@@ -79,8 +79,36 @@ async def _make_trial(sponsor_headers, templates=((0, 'Screening'), (7, 'Baselin
     return trial, tpls
 
 
+async def _grant_trial_access(staff_headers, trial_id):
+    """Give the calling staff member a REAL accepted trial invitation — the
+    same relationship the fail-closed enrollment/access rule requires in
+    production (`_has_accepted_trial_invitation` matches on email/phone)."""
+    async with make_client() as cli:
+        me = await cli.get('/api/auth/me', headers=staff_headers)
+    if me.status_code != 200:
+        return
+    u = me.json()
+    email = (u.get('email') or '').strip().lower()
+    existing = await server.db.invitations.find_one({
+        'trial_id': trial_id, 'status': 'accepted', 'email': email})
+    if existing:
+        return
+    await server.db.invitations.insert_one({
+        'id': str(uuid.uuid4()), 'token': uuid.uuid4().hex,
+        'email': email, 'phone': u.get('phone', ''),
+        'full_name': u.get('full_name', ''),
+        'org': u.get('organization', ''), 'site': '',
+        'trial_id': trial_id, 'role': u.get('role'),
+        'status': 'accepted', 'created_at': server.now(),
+        'accepted_at': server.now(),
+    })
+
+
 async def _enroll(staff_headers, trial_id, pi_id=None, crc_id=None, days_ago=5):
-    """Enroll a fresh patient via POST /api/patients; returns the patient doc."""
+    """Enroll a fresh patient via POST /api/patients; returns the patient doc.
+    Grants the caller the accepted-invitation trial relationship first (the
+    backend enrollment rule is fail-closed)."""
+    await _grant_trial_access(staff_headers, trial_id)
     enrolled = (server.now() - timedelta(days=days_ago)).date().isoformat()
     async with make_client() as cli:
         r = await cli.post('/api/patients', headers=staff_headers, json={
@@ -99,6 +127,7 @@ def _cleanup():
     async def clean():
         db = server.db
         await db.users.delete_many({'email': {'$regex': f'^test-{RUN_ID}-'}})
+        await db.invitations.delete_many({'email': {'$regex': f'^test-{RUN_ID}-'}})
         await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
         await db.trials.delete_many({'id': {'$in': _trial_ids}})
         await db.visits.delete_many({'trial_id': {'$in': _trial_ids}})
@@ -205,13 +234,24 @@ class TestEnrollmentMaterialization:
             assert r.status_code == 200 and r.json() == []
         run(flow())
 
-    def test_unknown_trial_yields_zero_instances(self, pi):
+    def test_unknown_trial_enrollment_is_rejected(self, pi):
+        """Fail-closed: enrolling into a trial that does not exist is refused
+        outright (it used to silently create a patient with zero instances)."""
         _, pi_headers = pi
         async def flow():
-            patient = await _enroll(pi_headers, 'nonexistent-' + RUN_ID)
+            trial_id = 'nonexistent-' + RUN_ID
+            await _grant_trial_access(pi_headers, trial_id)
             async with make_client() as cli:
-                r = await cli.get(f"/api/patients/{patient['id']}/visits", headers=pi_headers)
-            assert r.status_code == 200 and r.json() == []
+                r = await cli.post('/api/patients', headers=pi_headers, json={
+                    'full_name': f'Test PATIENT {RUN_ID}',
+                    'email': f'test-{RUN_ID}-ghost@example.com',
+                    'trial_id': trial_id,
+                    'enrolled_date': server.now().date().isoformat(),
+                })
+            assert r.status_code == 404, r.text
+            ghost = await server.db.patients.find_one(
+                {'email': f'test-{RUN_ID}-ghost@example.com'})
+            assert ghost is None, 'no patient record may be created for an unknown trial'
         run(flow())
 
     def test_materialization_is_idempotent_per_patient(self, pi, trial):
@@ -295,6 +335,136 @@ class TestVisitInstancePatch:
         run(flow())
 
 
+# ── Per-instance task snapshots and attributed comments ──────────────────────
+class TestVisitInstanceWorkflow:
+    def test_task_snapshot_completion_reopen_and_patient_isolation(self, pi, crc):
+        async def flow():
+            trial_doc, templates = await _make_trial(
+                pi[1], templates=((7, f'Workflow {RUN_ID}'),))
+            template = templates[0]
+            await server.db.visits.update_one(
+                {'id': template['id']},
+                {'$set': {
+                    'clinical_tasks': ['Record vitals', 'Review adverse events'],
+                    'admin_tasks': ['Confirm source documents'],
+                }},
+            )
+            patient_a = await _enroll(pi[1], trial_doc['id'], pi_id=pi[0]['id'], crc_id=crc[0]['id'])
+            patient_b = await _enroll(pi[1], trial_doc['id'], pi_id=pi[0]['id'], crc_id=crc[0]['id'])
+            instance_a = await server.db.visit_instances.find_one(
+                {'patient_id': patient_a['id']}, {'_id': 0})
+            instance_b = await server.db.visit_instances.find_one(
+                {'patient_id': patient_b['id']}, {'_id': 0})
+            task = instance_a['clinical_tasks'][0]
+            assert task['id'] == instance_b['clinical_tasks'][0]['id']
+            assert task['completed'] is False
+
+            async with make_client() as cli:
+                completed = await cli.patch(
+                    f"/api/visit-instances/{instance_a['id']}/tasks/{task['id']}",
+                    headers=crc[1], json={'completed': True})
+                reopened = await cli.patch(
+                    f"/api/visit-instances/{instance_a['id']}/tasks/{task['id']}",
+                    headers=crc[1], json={'completed': False})
+            assert completed.status_code == 200, completed.text
+            done_task = completed.json()['clinical_tasks'][0]
+            assert done_task['completed'] is True
+            assert done_task['completed_by'] == crc[0]['id']
+            assert done_task['completed_by_name'] == crc[0]['full_name']
+            assert done_task['completed_at']
+            assert reopened.status_code == 200, reopened.text
+            reopened_task = reopened.json()['clinical_tasks'][0]
+            assert reopened_task['completed'] is False
+            assert reopened_task['completed_by'] is None
+            untouched = await server.db.visit_instances.find_one(
+                {'id': instance_b['id']}, {'_id': 0})
+            assert untouched['clinical_tasks'][0]['completed'] is False
+            actions = await server.db.audit_logs.distinct(
+                'action', {'target_id': instance_a['id'], 'task_id': task['id']})
+            assert 'visit_instance.task_complete' in actions
+            assert 'visit_instance.task_reopen' in actions
+        run(flow())
+
+    def test_comment_persists_with_attribution_and_audit(self, pi):
+        async def flow():
+            trial_doc, _ = await _make_trial(pi[1], templates=((7, 'Comment visit'),))
+            patient = await _enroll(pi[1], trial_doc['id'], pi_id=pi[0]['id'])
+            instance = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id']}, {'_id': 0})
+            async with make_client() as cli:
+                response = await cli.post(
+                    f"/api/visit-instances/{instance['id']}/comments",
+                    headers=pi[1], json={'text': '  Patient tolerated procedures well.  '})
+            assert response.status_code == 200, response.text
+            comments = response.json()['comments']
+            assert len(comments) == 1
+            assert comments[0]['text'] == 'Patient tolerated procedures well.'
+            assert comments[0]['created_by'] == pi[0]['id']
+            assert comments[0]['created_by_name'] == pi[0]['full_name']
+            stored = await server.db.visit_instances.find_one(
+                {'id': instance['id']}, {'_id': 0})
+            assert stored['comments'][0]['id'] == comments[0]['id']
+            audit = await server.db.audit_logs.find_one({
+                'action': 'visit_instance.comment_add',
+                'target_id': instance['id'],
+                'comment_id': comments[0]['id'],
+            })
+            assert audit and audit['user_id'] == pi[0]['id']
+        run(flow())
+
+    def test_task_and_comment_endpoints_are_patient_scoped(self, pi):
+        async def flow():
+            trial_doc, templates = await _make_trial(pi[1], templates=((7, 'Scoped workflow'),))
+            await server.db.visits.update_one(
+                {'id': templates[0]['id']},
+                {'$set': {'clinical_tasks': ['Local-only task']}},
+            )
+            patient = await _enroll(pi[1], trial_doc['id'], pi_id=pi[0]['id'])
+            instance = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id']}, {'_id': 0})
+            foreign_pi, foreign_headers = await _register('pi', org=f'FOREIGN-{RUN_ID}')
+            task_id = instance['clinical_tasks'][0]['id']
+            async with make_client() as cli:
+                task_response = await cli.patch(
+                    f"/api/visit-instances/{instance['id']}/tasks/{task_id}",
+                    headers=foreign_headers, json={'completed': True})
+                comment_response = await cli.post(
+                    f"/api/visit-instances/{instance['id']}/comments",
+                    headers=foreign_headers, json={'text': 'Foreign write'})
+            assert foreign_pi['id']
+            assert task_response.status_code == 403
+            assert comment_response.status_code == 403
+            stored = await server.db.visit_instances.find_one(
+                {'id': instance['id']}, {'_id': 0})
+            assert stored['clinical_tasks'][0]['completed'] is False
+            assert stored['comments'] == []
+        run(flow())
+
+    def test_pending_past_window_is_returned_as_overdue(self, pi):
+        async def flow():
+            trial_doc, _ = await _make_trial(pi[1], templates=((7, 'Overdue policy'),))
+            patient = await _enroll(pi[1], trial_doc['id'], pi_id=pi[0]['id'])
+            instance = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id']}, {'_id': 0})
+            past = (server.now() - timedelta(days=10)).date().isoformat()
+            async with make_client() as cli:
+                response = await cli.patch(
+                    f"/api/visit-instances/{instance['id']}",
+                    headers=pi[1],
+                    json={'status': 'scheduled', 'scheduled_date': past},
+                )
+                screening = await cli.patch(
+                    f"/api/visit-instances/{instance['id']}",
+                    headers=pi[1],
+                    json={'status': 'screen_fail'},
+                )
+            assert response.status_code == 200, response.text
+            assert response.json()['status'] == 'overdue'
+            assert screening.status_code == 200, screening.text
+            assert screening.json()['status'] == 'screen_fail'
+        run(flow())
+
+
 # ── GET /visits/mine reads instances (with template fallback) ────────────────
 class TestVisitsMine:
     def test_reads_instances_for_logged_in_patient(self, pi, trial):
@@ -375,6 +545,87 @@ class TestVisitsMine:
             for v in visits:
                 assert v['scheduled_date'] and v['status'] in (
                     'upcoming', 'completed', 'missed', 'scheduled')
+        run(flow())
+
+    def test_exact_detail_is_scoped_and_returns_approved_fields(self, pi, crc):
+        pi_user, pi_headers = pi
+        crc_user, _ = crc
+
+        async def flow():
+            trial_doc, templates = await _make_trial(
+                pi_headers, templates=((2, 'Detailed visit'),))
+            template = templates[0]
+            await server.db.visits.update_one(
+                {'id': template['id']},
+                {'$set': {
+                    'visit_type': 'On-site',
+                    'location': ORG_SITE,
+                    'activities': [
+                        {'id': 'vitals', 'label': 'Vital signs',
+                         'description': 'Blood pressure and pulse'},
+                    ],
+                    'checklist': ['Bring your patient ID card'],
+                }},
+            )
+            patient_user, patient_headers = await _register('patient')
+            patient = await _enroll(
+                pi_headers, trial_doc['id'], pi_id=pi_user['id'],
+                crc_id=crc_user['id'])
+            await server.db.patients.update_one(
+                {'id': patient['id']}, {'$set': {'user_id': patient_user['id']}})
+            instance = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id']}, {'_id': 0})
+            completed_at = server.now()
+            await server.db.visit_instances.update_one(
+                {'id': instance['id']},
+                {'$set': {
+                    'status': 'completed',
+                    'completed_at': completed_at,
+                    'completed_by': pi_user['id'],
+                    'completed_by_name': pi_user['full_name'],
+                }},
+            )
+
+            foreign_user, foreign_headers = await _register('patient')
+            foreign_patient = await _enroll(pi_headers, trial_doc['id'])
+            await server.db.patients.update_one(
+                {'id': foreign_patient['id']},
+                {'$set': {'user_id': foreign_user['id']}})
+
+            async with make_client() as cli:
+                own = await cli.get(
+                    f"/api/visits/mine/{instance['id']}", headers=patient_headers)
+                foreign = await cli.get(
+                    f"/api/visits/mine/{instance['id']}", headers=foreign_headers)
+                missing = await cli.get(
+                    f"/api/visits/mine/missing-{RUN_ID}", headers=patient_headers)
+                staff = await cli.get(
+                    f"/api/visits/mine/{instance['id']}", headers=pi_headers)
+
+            assert own.status_code == 200, own.text
+            detail = own.json()
+            for key in (
+                'window_start', 'window_end', 'window_days', 'visit_type',
+                'location', 'completion_timestamp', 'clinician_id',
+                'clinician_name', 'procedures', 'preparation', 'pi_id',
+                'crc_id', 'assigned_contact_id', 'protocol_id', 'phase',
+                'indication',
+            ):
+                assert key in detail, f'missing detail field {key}'
+            assert detail['visit_type'] == 'On-site'
+            assert detail['location'] == ORG_SITE
+            assert detail['completion_timestamp']
+            assert detail['clinician_id'] == pi_user['id']
+            assert detail['assigned_contact_id'] == crc_user['id']
+            assert detail['procedures'] == [{
+                'id': 'vitals', 'label': 'Vital signs',
+                'description': 'Blood pressure and pulse',
+            }]
+            assert detail['preparation'] == ['Bring your patient ID card']
+            assert foreign.status_code == 403
+            assert missing.status_code == 404
+            assert staff.status_code == 403
+
         run(flow())
 
 

@@ -20,19 +20,19 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Menu, RefreshCcw, AlertTriangle, Clock, Shield, FileText, Check, XCircle,
+  CheckCircle2,
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
 import { Toast, Input, st } from "./users";
 
-const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
-
 type Session = { id: string; status?: string; started_at?: string; expires_at?: string; approver_name?: string };
 type EmergencyRequest = {
   id: string; status?: string; reason_category?: string; reason_text?: string;
   created_at?: string; requester_name?: string; deny_reason?: string;
   approved_at?: string; session?: Session | null; session_id?: string | null;
+  can_action?: boolean; is_own_request?: boolean; trial_id?: string;
 };
 type LogRow = { id?: string; action?: string; detail?: string; created_at?: string; user_name?: string };
 
@@ -67,6 +67,7 @@ function countdown(sec: number): string {
 
 export default function AdminEmergencyAccess() {
   const { open } = useAdminDrawer();
+  const [mode, setMode] = useState<"request" | "inbox">("request");
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [category, setCategory] = useState("");
   const [reasonText, setReasonText] = useState("");
@@ -76,6 +77,10 @@ export default function AdminEmergencyAccess() {
   const [session, setSession] = useState<Session | null>(null);
   const [remaining, setRemaining] = useState(0);
   const [log, setLog] = useState<LogRow[]>([]);
+  const [inbox, setInbox] = useState<EmergencyRequest[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  const [inboxBusy, setInboxBusy] = useState<string | null>(null);
 
   const [toast, setToast] = useState("");
   const toastAnim = useRef(new Animated.Value(0)).current;
@@ -91,6 +96,45 @@ export default function AdminEmergencyAccess() {
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   const canSubmit = !!category && reasonText.trim().length >= 10;
+
+  const loadInbox = useCallback(async () => {
+    setInboxLoading(true);
+    setInboxError(null);
+    try {
+      const response = await api.get("/admin/emergency/requests", {
+        params: { status: "pending" },
+      });
+      setInbox(Array.isArray(response.data) ? response.data : []);
+    } catch (e) {
+      setInboxError(errMsg(e, "Couldn't load pending emergency requests."));
+    } finally {
+      setInboxLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === "inbox") void loadInbox();
+  }, [loadInbox, mode]);
+
+  const decideInboxRequest = async (
+    item: EmergencyRequest,
+    decision: "approve" | "deny",
+    reason: string,
+  ) => {
+    setInboxBusy(item.id);
+    try {
+      await api.post(
+        `/admin/emergency/requests/${item.id}/${decision}`,
+        decision === "deny" ? { reason } : undefined,
+      );
+      showToast(decision === "approve" ? "Emergency access approved" : "Emergency access denied");
+      await loadInbox();
+    } catch (e) {
+      showToast(errMsg(e, `Couldn't ${decision} this request`));
+    } finally {
+      setInboxBusy(null);
+    }
+  };
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -191,9 +235,21 @@ export default function AdminEmergencyAccess() {
             </View>
           </View>
 
-          <Stepper step={step} />
+          <View style={em.modeSwitch}>
+            <Pressable testID="emergency-mode-request" onPress={() => setMode("request")} style={[em.modeButton, mode === "request" && em.modeButtonActive]}>
+              <RNText style={[em.modeText, mode === "request" && em.modeTextActive]}>Request access</RNText>
+            </Pressable>
+            <Pressable testID="emergency-mode-inbox" onPress={() => setMode("inbox")} style={[em.modeButton, mode === "inbox" && em.modeButtonActive]}>
+              <RNText style={[em.modeText, mode === "inbox" && em.modeTextActive]}>Approval inbox</RNText>
+              {inbox.length > 0 ? <View style={em.modeCount}><RNText style={em.modeCountText}>{inbox.length}</RNText></View> : null}
+            </Pressable>
+          </View>
 
-          {step === 1 && (
+          {mode === "request" ? (
+            <>
+              <Stepper step={step} />
+
+              {step === 1 && (
             <View style={st.card}>
               <RNText style={em.stepTitle}>Step 1 · Request justification</RNText>
               <View style={{ gap: 6, marginTop: 12 }}>
@@ -215,9 +271,9 @@ export default function AdminEmergencyAccess() {
                 {busy ? <ActivityIndicator color={C.white} size="small" /> : (<><Shield size={16} color={C.white} /><RNText style={em.dangerBtnTxt}>Request approval</RNText></>)}
               </Pressable>
             </View>
-          )}
+              )}
 
-          {step === 2 && request && (
+              {step === 2 && request && (
             <View style={st.card}>
               {request.status === "denied" ? (
                 <View style={{ alignItems: "center" }}>
@@ -235,7 +291,7 @@ export default function AdminEmergencyAccess() {
                 <View style={{ alignItems: "center" }}>
                   <View style={[em.statusIcon, { backgroundColor: "rgba(216,154,60,0.15)" }]}><Clock size={30} color={C.warning} /></View>
                   <RNText style={em.stepTitleCenter}>Awaiting senior approval</RNText>
-                  <RNText style={em.awaitingBody}>Submitted and pending a second administrator's approval (two-person rule — you cannot approve your own request).</RNText>
+                  <RNText style={em.awaitingBody}>Submitted and pending a second administrator’s approval (two-person rule — you cannot approve your own request).</RNText>
                   <View style={em.infoBox}>
                     <RNText style={em.infoBoxKey}>Request ID</RNText>
                     <RNText style={em.infoBoxMono}>{request.id}</RNText>
@@ -261,9 +317,9 @@ export default function AdminEmergencyAccess() {
                 </View>
               )}
             </View>
-          )}
+              )}
 
-          {step === 3 && session && (
+              {step === 3 && session && (
             <View style={{ gap: 14 }}>
               <View style={[st.card, { alignItems: "center" }]}>
                 <View style={[em.statusIcon, { backgroundColor: "rgba(92,154,110,0.15)" }]}><Shield size={30} color={C.success} /></View>
@@ -307,6 +363,17 @@ export default function AdminEmergencyAccess() {
                 </View>
               </View>
             </View>
+              )}
+            </>
+          ) : (
+            <ApprovalInbox
+              rows={inbox}
+              loading={inboxLoading}
+              error={inboxError}
+              busyId={inboxBusy}
+              onRetry={loadInbox}
+              onDecision={decideInboxRequest}
+            />
           )}
 
           <RNText style={em.footerNote}>All actions during emergency access are fully logged and subject to audit.</RNText>
@@ -314,6 +381,143 @@ export default function AdminEmergencyAccess() {
       </ScrollView>
 
       <Toast text={toast} anim={toastAnim} />
+    </View>
+  );
+}
+
+function ApprovalInbox({ rows, loading, error, busyId, onRetry, onDecision }: {
+  rows: EmergencyRequest[];
+  loading: boolean;
+  error: string | null;
+  busyId: string | null;
+  onRetry: () => Promise<void>;
+  onDecision: (item: EmergencyRequest, decision: "approve" | "deny", reason: string) => Promise<void>;
+}) {
+  const [denyFor, setDenyFor] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+
+  if (loading) {
+    return (
+      <View testID="emergency-inbox-loading" style={st.card}>
+        <ActivityIndicator color={C.primary} />
+        <RNText style={em.inboxCenter}>Loading pending requests…</RNText>
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View testID="emergency-inbox-error" style={st.card}>
+        <AlertTriangle size={24} color={C.destructive} style={{ alignSelf: "center" }} />
+        <RNText style={em.inboxTitleCenter}>Approval inbox unavailable</RNText>
+        <RNText style={em.inboxCenter}>{error}</RNText>
+        <Pressable testID="emergency-inbox-retry" onPress={() => void onRetry()} style={em.ghostBtn}>
+          <RefreshCcw size={14} color={C.primary} />
+          <RNText style={[em.ghostBtnTxt, { color: C.primary }]}>Retry</RNText>
+        </Pressable>
+      </View>
+    );
+  }
+  if (rows.length === 0) {
+    return (
+      <View testID="emergency-inbox-empty" style={st.card}>
+        <View style={[em.statusIcon, { alignSelf: "center", backgroundColor: "rgba(92,154,110,0.14)" }]}>
+          <CheckCircle2 size={28} color={C.success} />
+        </View>
+        <RNText style={em.inboxTitleCenter}>No pending approvals</RNText>
+        <RNText style={em.inboxCenter}>New break-the-glass requests from other administrators will appear here.</RNText>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={em.inboxIntro}>
+        <Shield size={17} color={C.info} />
+        <RNText style={em.inboxIntroText}>
+          Review the justification before approving. You cannot action your own request.
+        </RNText>
+      </View>
+      {rows.map((item) => {
+        const denying = denyFor === item.id;
+        const busy = busyId === item.id;
+        return (
+          <View key={item.id} testID={`emergency-inbox-${item.id}`} style={st.card}>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 11 }}>
+              <View style={[em.inboxAvatar, item.is_own_request && { backgroundColor: C.surface }]}>
+                <Shield size={18} color={item.is_own_request ? C.mutedFg : C.destructive} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <RNText style={em.inboxName} numberOfLines={1}>{item.requester_name || "Platform administrator"}</RNText>
+                <RNText style={em.inboxMeta}>{reasonLabel(item.reason_category)} · {fmtDateTime(item.created_at)}</RNText>
+              </View>
+              {item.is_own_request ? (
+                <View style={em.ownBadge}><RNText style={em.ownBadgeText}>Your request</RNText></View>
+              ) : null}
+            </View>
+            <View style={em.detailBox}>
+              <RNText style={em.detailKey}>Justification</RNText>
+              <RNText style={em.detailVal}>{item.reason_text || "No justification supplied."}</RNText>
+              {item.trial_id ? (
+                <>
+                  <RNText style={[em.detailKey, { marginTop: 8 }]}>Trial</RNText>
+                  <RNText style={em.infoBoxMono}>{item.trial_id}</RNText>
+                </>
+              ) : null}
+            </View>
+
+            {item.can_action ? (
+              denying ? (
+                <View style={{ gap: 9, marginTop: 12 }}>
+                  <Input
+                    testID={`emergency-deny-reason-${item.id}`}
+                    value={reason}
+                    onChangeText={setReason}
+                    placeholder="Reason for denial"
+                    multiline
+                  />
+                  <View style={em.inboxActions}>
+                    <Pressable onPress={() => { setDenyFor(null); setReason(""); }} disabled={busy} style={em.inboxSecondary}>
+                      <RNText style={em.inboxSecondaryText}>Cancel</RNText>
+                    </Pressable>
+                    <Pressable
+                      testID={`emergency-confirm-deny-${item.id}`}
+                      onPress={() => void onDecision(item, "deny", reason.trim())}
+                      disabled={busy || reason.trim().length < 5}
+                      style={[em.inboxDeny, (busy || reason.trim().length < 5) && { opacity: 0.45 }]}
+                    >
+                      {busy ? <ActivityIndicator size="small" color={C.white} /> : <XCircle size={15} color={C.white} />}
+                      <RNText style={em.inboxActionText}>Confirm deny</RNText>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={em.inboxActions}>
+                  <Pressable
+                    testID={`emergency-deny-${item.id}`}
+                    onPress={() => { setDenyFor(item.id); setReason(""); }}
+                    disabled={busy}
+                    style={em.inboxSecondary}
+                  >
+                    <XCircle size={15} color={C.destructive} />
+                    <RNText style={[em.inboxSecondaryText, { color: C.destructive }]}>Deny</RNText>
+                  </Pressable>
+                  <Pressable
+                    testID={`emergency-approve-${item.id}`}
+                    onPress={() => void onDecision(item, "approve", "")}
+                    disabled={busy}
+                    style={[em.inboxApprove, busy && { opacity: 0.5 }]}
+                  >
+                    {busy ? <ActivityIndicator size="small" color={C.white} /> : <Check size={15} color={C.white} />}
+                    <RNText style={em.inboxActionText}>Approve for 2 hours</RNText>
+                  </Pressable>
+                </View>
+              )
+            ) : (
+              <RNText style={em.ownNote}>A different administrator must action this request.</RNText>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -372,6 +576,13 @@ const em = StyleSheet.create({
   warnBanner: { flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: "rgba(192,57,43,0.06)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(192,57,43,0.22)", padding: 14 },
   warnTitle: { fontFamily: fonts.bold, fontSize: 14, color: C.destructive },
   warnBody: { fontFamily: fonts.regular, fontSize: 12, color: C.destructive, marginTop: 2, lineHeight: 17 },
+  modeSwitch: { flexDirection: "row", gap: 4, padding: 4, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface },
+  modeButton: { flex: 1, minHeight: 39, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 11 },
+  modeButtonActive: { backgroundColor: C.card },
+  modeText: { fontFamily: fonts.semibold, fontSize: 12, color: C.mutedFg },
+  modeTextActive: { color: C.primary },
+  modeCount: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.destructive },
+  modeCountText: { fontFamily: fonts.bold, fontSize: 10, color: C.white },
 
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 4 },
   stepDot: { width: 30, height: 30, borderRadius: 15, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" },
@@ -407,6 +618,22 @@ const em = StyleSheet.create({
   detailKey: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   detailVal: { fontFamily: fonts.medium, fontSize: 13, color: C.foreground, marginTop: 1, lineHeight: 18 },
   polling: { fontFamily: fonts.medium, fontSize: 12, color: C.warning },
+  inboxCenter: { fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 18, color: C.mutedFg, textAlign: "center", marginTop: 8 },
+  inboxTitleCenter: { fontFamily: fonts.heading, fontSize: 17, color: C.foreground, textAlign: "center", marginTop: 10 },
+  inboxIntro: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(123,107,184,0.08)" },
+  inboxIntroText: { flex: 1, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, color: C.info },
+  inboxAvatar: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(192,57,43,0.10)" },
+  inboxName: { fontFamily: fonts.semibold, fontSize: 14, color: C.foreground },
+  inboxMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
+  ownBadge: { paddingHorizontal: 8, height: 22, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: C.surface },
+  ownBadgeText: { fontFamily: fonts.bold, fontSize: 9.5, color: C.mutedFg },
+  inboxActions: { flexDirection: "row", gap: 9, marginTop: 12 },
+  inboxSecondary: { flex: 1, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  inboxSecondaryText: { fontFamily: fonts.bold, fontSize: 12, color: C.mutedFg },
+  inboxApprove: { flex: 1.4, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 12, backgroundColor: C.success },
+  inboxDeny: { flex: 1.4, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 12, backgroundColor: C.destructive },
+  inboxActionText: { fontFamily: fonts.bold, fontSize: 12, color: C.white },
+  ownNote: { marginTop: 12, padding: 10, borderRadius: 12, backgroundColor: C.surface, fontFamily: fonts.medium, fontSize: 11.5, color: C.mutedFg, textAlign: "center" },
 
   countdownBox: { alignSelf: "stretch", backgroundColor: "rgba(192,57,43,0.06)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(192,57,43,0.22)", padding: 16, marginTop: 14, alignItems: "center" },
   countdownLabel: { fontFamily: fonts.regular, fontSize: 12, color: C.destructive },
