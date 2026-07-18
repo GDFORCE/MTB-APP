@@ -90,3 +90,6 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# Git worktrees (used for isolated feature work)
+.worktrees/
