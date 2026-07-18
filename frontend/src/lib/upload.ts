@@ -9,7 +9,7 @@ import { api } from "@/src/api/client";
 export type PickedAsset = { uri: string; name: string; mimeType?: string; file?: any };
 export type UploadedFile = { id: string; name: string; size: number; content_type: string; url: string };
 export type UploadScope = {
-  scopeType?: "user" | "trial" | "ticket";
+  scopeType?: "user" | "trial" | "ticket" | "conversation";
   scopeId?: string;
   // Explicit bearer token — used when uploading right after account creation,
   // before the session is persisted to the token store (deferred register doc).
