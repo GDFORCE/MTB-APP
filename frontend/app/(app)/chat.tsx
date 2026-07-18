@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon } from "lucide-react-native";
+import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { colors, spacing, radii } from "@/src/theme/tokens";
@@ -23,10 +23,29 @@ import { useAuth } from "@/src/auth/AuthContext";
 import { api, tokenStore, wsUrl } from "@/src/api/client";
 import { animateNextLayout } from "@/src/lib/motion";
 import { uploadFile, downloadFile, PickedAsset } from "@/src/lib/upload";
+import { useAudioRecorder, useAudioRecorderState, RecordingPresets, AudioModule, useAudioPlayer } from "expo-audio";
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
 
 type Connection = "connecting" | "online" | "offline";
+
+function VoiceBubble({ fileId, duration, mine }: { fileId: string; duration?: number; mine: boolean }) {
+  const [uri, setUri] = useState<string | null>(null);
+  const player = useAudioPlayer(uri || undefined);
+  const load = async () => {
+    if (uri) { player.seekTo(0); player.play(); return; }
+    const { fetchFileUri } = await import("@/src/lib/upload");
+    const u = await fetchFileUri(fileId);
+    setUri(u);
+  };
+  useEffect(() => { if (uri) player.play(); }, [uri]);
+  return (
+    <Pressable testID={`voice-${fileId}`} onPress={load} style={{ flexDirection: "row", alignItems: "center", minWidth: 120 }}>
+      <Send size={16} color={mine ? colors.primaryFg : colors.primary} style={{ transform: [{ rotate: "0deg" }] }} />
+      <Small color={mine ? colors.primaryFg : colors.foreground} style={{ marginLeft: 8 }}>{duration ? `${duration}s voice message` : "Voice message"}</Small>
+    </Pressable>
+  );
+}
 
 export default function Chat() {
   const router = useRouter();
@@ -54,6 +73,10 @@ export default function Chat() {
   const [composeQuery, setComposeQuery] = useState("");
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [emojiRowOpen, setEmojiRowOpen] = useState(false);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(audioRecorder);
+  const [recording, setRecording] = useState(false);
+  const recordStartRef = useRef<number>(0);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
@@ -275,6 +298,45 @@ export default function Chat() {
     if (result.canceled || !result.assets?.length) return;
     const a = result.assets[0];
     await sendAttachment({ uri: a.uri, name: a.name || "document", mimeType: a.mimeType, file: (a as any).file }, "document");
+  };
+
+  const startRecording = async () => {
+    const status = await AudioModule.requestRecordingPermissionsAsync();
+    if (!status.granted) { Alert.alert("Permission needed", "Microphone access is required to record a voice message."); return; }
+    setAttachMenuOpen(false); setEmojiRowOpen(false);
+    recordStartRef.current = Date.now();
+    await audioRecorder.prepareToRecordAsync();
+    audioRecorder.record();
+    setRecording(true);
+  };
+
+  const stopAndSendRecording = async () => {
+    setRecording(false);
+    await audioRecorder.stop();
+    const uri = audioRecorder.uri;
+    if (!uri || !active) return;
+    const durationSec = Math.round((Date.now() - recordStartRef.current) / 1000);
+    if (durationSec < 1) return;
+    setSending(true);
+    try {
+      const uploaded = await uploadFile({ uri, name: `voice-${Date.now()}.m4a`, mimeType: "audio/m4a" }, { scopeType: "conversation", scopeId: active.id });
+      const response = await api.post(`/conversations/${active.id}/messages`, {
+        content: "", type: "voice",
+        attachment: { file_id: uploaded.id, name: uploaded.name, size: uploaded.size, content_type: uploaded.content_type, duration: durationSec },
+      });
+      setMessages(prev => [...prev, response.data]);
+      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: response.data.content } : c));
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } catch {
+      Alert.alert("Couldn't send voice message", "Try again in a moment.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const cancelRecording = async () => {
+    setRecording(false);
+    await audioRecorder.stop().catch(() => {});
   };
 
   const send = async () => {
@@ -641,14 +703,18 @@ export default function Chat() {
               <View style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther, item.failed && s.bubbleFailed]}>
                 {senderName ? <Small weight="700" color={colors.primary} style={{ marginBottom: 2 }}>{senderName}</Small> : null}
                 {item.attachment ? (
-                  <Pressable
-                    testID={`attachment-${item.id}`}
-                    onPress={() => downloadFile({ id: item.attachment.file_id, name: item.attachment.name, content_type: item.attachment.content_type }).catch(() => Alert.alert("Couldn't open file", "Try again in a moment."))}
-                    style={s.attachmentRow}
-                  >
-                    {item.type === "image" ? <ImageIcon size={18} color={mine ? colors.primaryFg : colors.primary} /> : <FileText size={18} color={mine ? colors.primaryFg : colors.primary} />}
-                    <Body color={mine ? colors.primaryFg : colors.foreground} numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>{item.attachment.name}</Body>
-                  </Pressable>
+                  item.type === "voice" ? (
+                    <VoiceBubble fileId={item.attachment.file_id} duration={item.attachment.duration} mine={mine} />
+                  ) : (
+                    <Pressable
+                      testID={`attachment-${item.id}`}
+                      onPress={() => downloadFile({ id: item.attachment.file_id, name: item.attachment.name, content_type: item.attachment.content_type }).catch(() => Alert.alert("Couldn't open file", "Try again in a moment."))}
+                      style={s.attachmentRow}
+                    >
+                      {item.type === "image" ? <ImageIcon size={18} color={mine ? colors.primaryFg : colors.primary} /> : <FileText size={18} color={mine ? colors.primaryFg : colors.primary} />}
+                      <Body color={mine ? colors.primaryFg : colors.foreground} numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>{item.attachment.name}</Body>
+                    </Pressable>
+                  )
                 ) : (
                   <Body color={mine ? colors.primaryFg : colors.foreground}>{item.content}</Body>
                 )}
@@ -710,9 +776,22 @@ export default function Chat() {
             <Paperclip size={20} color={colors.mutedFg} />
           </Pressable>
           <TextInput testID="chat-input" placeholder="Type a message…" value={text} onChangeText={onType} style={s.textInput} multiline />
-          <Pressable testID="chat-send" onPress={send} disabled={sending || !text.trim()} style={[s.sendBtn, (sending || !text.trim()) && { opacity: 0.5 }]}>
-            {sending ? <ActivityIndicator size="small" color={colors.primaryFg} /> : <Send size={20} color={colors.primaryFg} />}
-          </Pressable>
+          {text.trim() ? (
+            <Pressable testID="chat-send" onPress={send} disabled={sending} style={[s.sendBtn, sending && { opacity: 0.5 }]}>
+              {sending ? <ActivityIndicator size="small" color={colors.primaryFg} /> : <Send size={20} color={colors.primaryFg} />}
+            </Pressable>
+          ) : (
+            <Pressable
+              testID="chat-mic"
+              onPressIn={startRecording}
+              onPressOut={stopAndSendRecording}
+              onLongPress={cancelRecording}
+              disabled={sending}
+              style={[s.sendBtn, recording && { backgroundColor: colors.destructive }, sending && { opacity: 0.5 }]}
+            >
+              <Mic size={20} color={colors.primaryFg} />
+            </Pressable>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
