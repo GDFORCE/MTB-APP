@@ -535,16 +535,23 @@ export default function Chat() {
 
   // ── Active conversation view ──
   const other = active.other_participant;
+  const memberCount = (active.participants || []).length;
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <View style={s.header}>
           <Pressable onPress={() => setActive(null)} hitSlop={12}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
-          <View style={[s.avatar, { marginLeft: 12 }]}><Body weight="700" color={colors.primary}>{other?.avatar_initials || "?"}</Body></View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Body weight="700">{other?.full_name || active.title}</Body>
-            <Small>{connection === "offline" ? "reconnecting…" : typing ? "typing…" : other?.is_online ? "online" : "offline"}</Small>
-          </View>
+          <Pressable testID="chat-header-info" onPress={() => router.push({ pathname: "/(app)/conversation/[id]", params: { id: active.id } })} style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            <View style={[s.avatar, { marginLeft: 12 }]}>
+              {active.is_group ? <Users size={18} color={colors.primary} /> : <Body weight="700" color={colors.primary}>{other?.avatar_initials || "?"}</Body>}
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Body weight="700">{active.title || other?.full_name || "Conversation"}</Body>
+              <Small>
+                {connection === "offline" ? "reconnecting…" : typing ? "typing…" : active.is_group ? `${memberCount} members` : other?.is_online ? "online" : "offline"}
+              </Small>
+            </View>
+          </Pressable>
         </View>
         {connectionBanner}
 
@@ -580,8 +587,12 @@ export default function Chat() {
           }
           renderItem={({ item }) => {
             const mine = item.sender_id === user?.id;
+            const senderName = active.is_group && !mine
+              ? (active.participants || []).find((p: any) => p.id === item.sender_id)?.full_name
+              : null;
             const bubble = (
               <View style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther, item.failed && s.bubbleFailed]}>
+                {senderName ? <Small weight="700" color={colors.primary} style={{ marginBottom: 2 }}>{senderName}</Small> : null}
                 <Body color={mine ? colors.primaryFg : colors.foreground}>{item.content}</Body>
                 <Small color={mine ? colors.overlay25 : colors.mutedFg} style={{ marginTop: 4, fontSize: 10 }}>
                   {item.pending
