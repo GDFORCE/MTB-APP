@@ -27,6 +27,26 @@ import { useAudioRecorder, useAudioRecorderState, RecordingPresets, AudioModule,
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
 
+const AVATAR_TINTS = [colors.secondary, colors.info + "26", colors.accent + "33"];
+function avatarTint(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return AVATAR_TINTS[hash % AVATAR_TINTS.length];
+}
+
+function formatRowTimestamp(iso?: string): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86400000);
+  if (dayDiff <= 0) return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (dayDiff === 1) return "Yesterday";
+  if (dayDiff < 7) return `${dayDiff}d ago`;
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
 function formatSize(bytes?: number): string {
   if (!bytes) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -474,11 +494,13 @@ export default function Chat() {
             const name = c.title || other?.full_name || "Conversation";
             const isSupport = !c.is_group && other?.role === "admin";
             const showReadReceipt = (c.unread_count || 0) === 0 && !!c.last_message;
+            const isUnread = (c.unread_count || 0) > 0;
+            const timestamp = formatRowTimestamp(c.updated_at);
             return (
               <Pressable key={c.id} testID={`conv-${c.id}`} onPress={() => openConv(c)} onLongPress={() => setDetails(c)}>
                 <Card style={{ marginBottom: spacing.sm }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <View style={[s.avatar, isSupport && s.avatarSupport]}>
+                    <View style={[s.avatar, !c.is_group && !isSupport && { backgroundColor: avatarTint(c.id) }, isSupport && s.avatarSupport]}>
                       {c.is_group
                         ? <Users size={18} color={colors.primary} />
                         : isSupport
@@ -487,19 +509,19 @@ export default function Chat() {
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Body weight="700" style={{ flexShrink: 1 }} numberOfLines={1}>{name}</Body>
+                        <Body weight="700" style={{ flexShrink: 1, flex: 1 }} numberOfLines={1}>{name}</Body>
                         {c.pinned ? <Pin size={12} color={colors.accent} /> : null}
                         {c.muted ? <BellOff size={12} color={colors.mutedFg} /> : null}
-                        <View style={{ flex: 1 }} />
+                        {timestamp ? <Small color={isUnread ? colors.primary : colors.mutedFg} style={{ fontSize: 11 }}>{timestamp}</Small> : null}
+                      </View>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                        {showReadReceipt && <CheckCheck size={12} color={colors.mutedFg} />}
+                        <Small numberOfLines={1} style={{ flexShrink: 1, flex: 1 }}>{c.last_message || "Start chatting"}</Small>
                         {c.unread_count > 0 && (
                           <View style={[s.badge, c.muted && { backgroundColor: colors.mutedFg }]}>
                             <Small color={colors.primaryFg} style={{ fontSize: 10, fontWeight: "700" as any }}>{c.unread_count}</Small>
                           </View>
                         )}
-                      </View>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-                        {showReadReceipt && <CheckCheck size={12} color={colors.mutedFg} />}
-                        <Small numberOfLines={1} style={{ flexShrink: 1 }}>{c.last_message || "Start chatting"}</Small>
                       </View>
                     </View>
                   </View>
