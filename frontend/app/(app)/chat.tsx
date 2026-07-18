@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic } from "lucide-react-native";
+import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { colors, spacing, radii } from "@/src/theme/tokens";
@@ -73,6 +73,10 @@ export default function Chat() {
   const [composeQuery, setComposeQuery] = useState("");
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [emojiRowOpen, setEmojiRowOpen] = useState(false);
+  const [groupMode, setGroupMode] = useState(false);
+  const [groupSelectedIds, setGroupSelectedIds] = useState<string[]>([]);
+  const [groupTitle, setGroupTitle] = useState("");
+  const [creatingGroup, setCreatingGroup] = useState(false);
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder);
   const [recording, setRecording] = useState(false);
@@ -583,14 +587,22 @@ export default function Chat() {
           </View>
         </Modal>
 
-        {/* Compose: searchable authorized-recipient picker */}
+        {/* Compose: searchable authorized-recipient picker, with a group-creation mode */}
         <Modal visible={composeOpen} transparent animationType="slide" onRequestClose={() => setComposeOpen(false)}>
           <View style={s.modalOverlay}>
             <Pressable style={{ flex: 1 }} onPress={() => setComposeOpen(false)} />
             <View style={s.modalSheet}>
               <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
-                <Body weight="700" style={{ flex: 1 }}>New message</Body>
-                <Pressable onPress={() => setComposeOpen(false)} hitSlop={10}><X size={18} color={colors.mutedFg} /></Pressable>
+                <Body weight="700" style={{ flex: 1 }}>{groupMode ? "New group" : "New message"}</Body>
+                <Pressable
+                  testID="compose-group-toggle"
+                  onPress={() => { setGroupMode(v => !v); setGroupSelectedIds([]); setGroupTitle(""); }}
+                  style={[s.groupToggle, groupMode && s.groupToggleOn]}
+                >
+                  <Users size={14} color={groupMode ? colors.primaryFg : colors.primary} />
+                  <Small weight="700" color={groupMode ? colors.primaryFg : colors.primary}>Group</Small>
+                </Pressable>
+                <Pressable onPress={() => setComposeOpen(false)} hitSlop={10} style={{ marginLeft: 10 }}><X size={18} color={colors.mutedFg} /></Pressable>
               </View>
               <View style={s.composeSearch}>
                 <Search size={15} color={colors.mutedFg} />
@@ -610,31 +622,75 @@ export default function Chat() {
                     if (!q) return true;
                     return [u.full_name, u.role, u.organization, u.email].some(v => String(v || "").toLowerCase().includes(q));
                   })
-                  .map(u => (
-                    <Pressable
-                      key={u.id}
-                      testID={`compose-user-${u.id}`}
-                      disabled={!!starting}
-                      onPress={() => {
-                        setComposeOpen(false);
-                        startWith(u.id).catch((e: any) => setError(e?.response?.data?.detail || "Couldn't start this conversation."));
-                      }}
-                      style={{ flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 }}
-                    >
-                      <View style={[s.avatar, { width: 36, height: 36, borderRadius: 18 }]}><Small weight="700" color={colors.primary}>{u.avatar_initials}</Small></View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Body weight="600" numberOfLines={1}>{u.full_name}</Body>
-                        <Small numberOfLines={1}>{u.role.toUpperCase()} · {u.organization || u.email}</Small>
-                      </View>
-                      {u.is_online && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success }} />}
-                    </Pressable>
-                  ))}
+                  .map(u => {
+                    const checked = groupSelectedIds.includes(u.id);
+                    return (
+                      <Pressable
+                        key={u.id}
+                        testID={`compose-user-${u.id}`}
+                        disabled={!!starting}
+                        onPress={() => {
+                          if (groupMode) {
+                            setGroupSelectedIds(prev => checked ? prev.filter(id => id !== u.id) : [...prev, u.id]);
+                            return;
+                          }
+                          setComposeOpen(false);
+                          startWith(u.id).catch((e: any) => setError(e?.response?.data?.detail || "Couldn't start this conversation."));
+                        }}
+                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 }}
+                      >
+                        <View style={[s.avatar, { width: 36, height: 36, borderRadius: 18 }]}><Small weight="700" color={colors.primary}>{u.avatar_initials}</Small></View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Body weight="600" numberOfLines={1}>{u.full_name}</Body>
+                          <Small numberOfLines={1}>{u.role.toUpperCase()} · {u.organization || u.email}</Small>
+                        </View>
+                        {groupMode
+                          ? <View style={[s.checkbox, checked && s.checkboxOn]}>{checked && <Check size={13} color={colors.primaryFg} />}</View>
+                          : (u.is_online && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success }} />)}
+                      </Pressable>
+                    );
+                  })}
                 {users.length === 0 && (
                   <Small color={colors.mutedFg} style={{ paddingVertical: spacing.md, textAlign: "center" }}>
                     No authorized contacts are available for your account.
                   </Small>
                 )}
               </ScrollView>
+              {groupMode && groupSelectedIds.length > 0 && (
+                <View style={{ marginTop: spacing.sm }}>
+                  <TextInput
+                    testID="compose-group-title"
+                    value={groupTitle}
+                    onChangeText={setGroupTitle}
+                    placeholder="Channel name (e.g. Apollo Mumbai — Site Team)"
+                    placeholderTextColor={colors.mutedFg + "99"}
+                    style={s.composeSearch}
+                  />
+                  <Pressable
+                    testID="compose-create-group"
+                    disabled={creatingGroup || !groupTitle.trim()}
+                    onPress={async () => {
+                      setCreatingGroup(true);
+                      try {
+                        const r = await api.post("/conversations", { participant_ids: groupSelectedIds, is_group: true, title: groupTitle.trim() });
+                        setComposeOpen(false);
+                        setGroupMode(false); setGroupSelectedIds([]); setGroupTitle("");
+                        const refresh = await api.get("/conversations");
+                        setConvs(refresh.data);
+                        const enriched = refresh.data.find((x: any) => x.id === r.data.id) || r.data;
+                        await openConv(enriched);
+                      } catch (e: any) {
+                        setError(e?.response?.data?.detail || "Couldn't create this group.");
+                      } finally {
+                        setCreatingGroup(false);
+                      }
+                    }}
+                    style={[s.flagBtn, { marginTop: 10 }, (creatingGroup || !groupTitle.trim()) && { opacity: 0.5 }]}
+                  >
+                    {creatingGroup ? <ActivityIndicator size="small" color={colors.primary} /> : <Small weight="700" color={colors.primary}>Create group ({groupSelectedIds.length} member{groupSelectedIds.length === 1 ? "" : "s"})</Small>}
+                  </Pressable>
+                </View>
+              )}
             </View>
           </View>
         </Modal>
@@ -827,4 +883,8 @@ const s = StyleSheet.create({
   emojiRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 8, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   attachRow: { flexDirection: "row", gap: 10, paddingHorizontal: spacing.md, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   attachOption: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 10, borderRadius: radii.md, backgroundColor: colors.primary + "0D" },
+  groupToggle: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, height: 28, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
+  groupToggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: colors.primary + "66", alignItems: "center", justifyContent: "center" },
+  checkboxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
 });
