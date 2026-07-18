@@ -303,13 +303,35 @@ class MessageIn(BaseModel):
     conversation_id: str
     content: str
 
+class ChatAttachmentIn(BaseModel):
+    file_id: str
+    name: str
+    size: int
+    content_type: Optional[str] = None
+    duration: Optional[int] = None   # seconds, voice notes only
+
 class ChatMessageIn(BaseModel):
-    content: str = Field(min_length=1, max_length=5000)
+    content: str = Field(default='', max_length=5000)
+    type: Literal['text', 'image', 'document', 'voice'] = 'text'
+    attachment: Optional[ChatAttachmentIn] = None
 
 class ConversationIn(BaseModel):
     participant_ids: List[str]
     title: Optional[str] = None
     is_group: bool = False
+    description: Optional[str] = None
+    trial_id: Optional[str] = None
+
+class ConversationSettingsIn(BaseModel):
+    auto_delete_days: Optional[int] = Field(default=None, ge=0, le=365)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=280)
+
+class ConversationMembersIn(BaseModel):
+    user_ids: List[str] = Field(min_length=1)
+
+class ConversationReportIn(BaseModel):
+    reason: Optional[str] = None
 
 class TeamMemberPatchIn(BaseModel):
     full_name: Optional[str] = Field(default=None, min_length=2, max_length=120)
@@ -3570,23 +3592,62 @@ async def _can_chat_with(user: dict, other: dict) -> bool:
     return bool(await _chat_trial_ids(user) & await _chat_trial_ids(other))
 
 
+def _cleared_at(conv: dict, uid: str):
+    return (conv.get('cleared_at') or {}).get(uid)
+
+
+def _visible_messages_filter(cid: str, conv: dict, uid: str) -> dict:
+    """Message query filter honoring this caller's per-user 'clear messages'
+    boundary — messages sent before their last clear stay hidden for them
+    only; everyone else's history is untouched."""
+    flt: dict = {'conversation_id': cid}
+    cleared = _cleared_at(conv, uid)
+    if cleared:
+        flt['created_at'] = {'$gt': cleared}
+    return flt
+
+
 async def _create_chat_message(cid: str, content: str, sender_id: str,
-                               conv: Optional[dict] = None) -> dict:
+                               conv: Optional[dict] = None,
+                               msg_type: str = 'text',
+                               attachment: Optional[dict] = None) -> dict:
     conv = conv or await _require_conversation_member(cid, sender_id)
     clean_content = content.strip()
-    if not clean_content:
+    if not clean_content and not attachment:
         raise HTTPException(422, 'Message content cannot be blank')
     created_at = now()
     msg = {
         'id': str(uuid.uuid4()), 'conversation_id': cid,
         'sender_id': sender_id, 'content': clean_content,
+        'type': msg_type, 'attachment': attachment,
         'created_at': created_at, 'read_by': {sender_id: created_at},
     }
     await db.messages.insert_one(msg)
+    preview = clean_content or {
+        'image': '📷 Photo', 'document': f"📄 {(attachment or {}).get('name', 'Document')}",
+        'voice': '🎤 Voice message',
+    }.get(msg_type, clean_content)
     await db.conversations.update_one(
         {'id': cid},
-        {'$set': {'last_message': clean_content, 'updated_at': created_at}})
+        {'$set': {'last_message': preview, 'updated_at': created_at}})
     return msg
+
+
+async def _conversation_media_count(cid: str) -> int:
+    return await db.messages.count_documents(
+        {'conversation_id': cid, 'attachment': {'$ne': None}})
+
+
+async def _hydrate_conversation_trial(conv: dict) -> dict:
+    """Attach {protocol_id, title} for a conversation's linked trial, if any."""
+    trial_id = conv.get('trial_id')
+    if not trial_id:
+        return {}
+    trial = await db.trials.find_one(
+        {'id': trial_id}, {'_id': 0, 'protocol_id': 1, 'title': 1})
+    if not trial:
+        return {}
+    return {'protocol_id': trial.get('protocol_id'), 'trial_title': trial.get('title')}
 
 
 @api.get('/conversations')
@@ -3595,7 +3656,10 @@ async def list_conversations(user=Depends(current_user)):
     # enrich with other participant info + unread count + caller pin/mute flags
     out = []
     for c in convs:
-        unread = await db.messages.count_documents({'conversation_id': c['id'], 'sender_id': {'$ne': user['id']}, f'read_by.{user["id"]}': {'$exists': False}})
+        unread = await db.messages.count_documents({
+            **_visible_messages_filter(c['id'], c, user['id']),
+            'sender_id': {'$ne': user['id']}, f'read_by.{user["id"]}': {'$exists': False},
+        })
         # other participant for 1-1
         other = None
         participants = None
@@ -3615,6 +3679,8 @@ async def list_conversations(user=Depends(current_user)):
             'participants': participants,
             'pinned': user['id'] in (c.get('pinned_by') or []),
             'muted': user['id'] in (c.get('muted_by') or []),
+            'archived': user['id'] in (c.get('archived_by') or []),
+            'is_admin': c.get('created_by') == user['id'],
         })
     return out
 
@@ -3622,16 +3688,17 @@ async def list_conversations(user=Depends(current_user)):
 class ConversationFlagsIn(BaseModel):
     pinned: Optional[bool] = None
     muted: Optional[bool] = None
+    archived: Optional[bool] = None
 
 
 @api.post('/conversations/{cid}/flags')
 async def set_conversation_flags(cid: str, body: ConversationFlagsIn,
                                  user=Depends(current_user)):
-    """Per-user pin/mute stored on the conversation (member-gated)."""
+    """Per-user pin/mute/archive stored on the conversation (member-gated)."""
     await _require_conversation_member(cid, user['id'])
-    if body.pinned is None and body.muted is None:
-        raise HTTPException(400, 'Provide pinned and/or muted')
-    for field, value in (('pinned_by', body.pinned), ('muted_by', body.muted)):
+    if body.pinned is None and body.muted is None and body.archived is None:
+        raise HTTPException(400, 'Provide pinned, muted and/or archived')
+    for field, value in (('pinned_by', body.pinned), ('muted_by', body.muted), ('archived_by', body.archived)):
         if value is None:
             continue
         op = {'$addToSet' if value else '$pull': {field: user['id']}}
@@ -3639,7 +3706,8 @@ async def set_conversation_flags(cid: str, body: ConversationFlagsIn,
     fresh = await db.conversations.find_one({'id': cid}, {'_id': 0})
     return {'ok': True,
             'pinned': user['id'] in (fresh.get('pinned_by') or []),
-            'muted': user['id'] in (fresh.get('muted_by') or [])}
+            'muted': user['id'] in (fresh.get('muted_by') or []),
+            'archived': user['id'] in (fresh.get('archived_by') or [])}
 
 @api.post('/conversations')
 async def create_conversation(body: ConversationIn, user=Depends(current_user)):
@@ -3664,6 +3732,8 @@ async def create_conversation(body: ConversationIn, user=Depends(current_user)):
         if existing: return existing
     cid = str(uuid.uuid4())
     doc = {'id': cid, 'participant_ids': pids, 'title': body.title or '', 'is_group': body.is_group,
+           'description': body.description or '', 'trial_id': body.trial_id,
+           'created_by': user['id'],
            'last_message': '', 'created_at': now(), 'updated_at': now()}
     await db.conversations.insert_one(doc)
     return serialize(doc)
@@ -3683,10 +3753,198 @@ async def list_messaging_recipients(user=Depends(current_user)):
     ]
 
 
+@api.get('/messaging/unread-count')
+async def messaging_unread_count(user=Depends(current_user)):
+    """Total unread messages across every non-archived conversation the caller
+    is a member of — powers the Messages tab badge."""
+    convs = await db.conversations.find(
+        {'participant_ids': user['id']}, {'_id': 0}).to_list(200)
+    total = 0
+    for c in convs:
+        if user['id'] in (c.get('archived_by') or []):
+            continue
+        total += await db.messages.count_documents({
+            **_visible_messages_filter(c['id'], c, user['id']),
+            'sender_id': {'$ne': user['id']}, f'read_by.{user["id"]}': {'$exists': False},
+        })
+    return {'count': total}
+
+
+@api.get('/conversations/{cid}')
+async def get_conversation_detail(cid: str, user=Depends(current_user)):
+    """Full dossier for the channel-info screen: roster with role/org/online/
+    admin flag, description, linked trial, shared-media count, and this
+    caller's notification/archive state."""
+    conv = await _require_conversation_member(cid, user['id'])
+    rows = await db.users.find(
+        {'id': {'$in': conv.get('participant_ids', [])}},
+        {'_id': 0, 'id': 1, 'full_name': 1, 'role': 1,
+         'organization': 1, 'avatar_initials': 1, 'is_online': 1},
+    ).to_list(100)
+    for row in rows:
+        row['admin'] = row['id'] == conv.get('created_by')
+    trial_info = await _hydrate_conversation_trial(conv)
+    return {
+        **conv, 'participants': rows,
+        'media_count': await _conversation_media_count(cid),
+        'pinned': user['id'] in (conv.get('pinned_by') or []),
+        'muted': user['id'] in (conv.get('muted_by') or []),
+        'archived': user['id'] in (conv.get('archived_by') or []),
+        'is_admin': conv.get('created_by') == user['id'],
+        **trial_info,
+    }
+
+
+@api.post('/conversations/{cid}/members')
+async def add_conversation_members(cid: str, body: ConversationMembersIn,
+                                   user=Depends(current_user)):
+    """Add members to a group conversation (any current member may invite)."""
+    conv = await _require_conversation_member(cid, user['id'])
+    if not conv.get('is_group'):
+        raise HTTPException(400, 'Only group conversations have members to add')
+    new_ids = [uid for uid in set(body.user_ids) if uid not in conv.get('participant_ids', [])]
+    if not new_ids:
+        return serialize(await db.conversations.find_one({'id': cid}, {'_id': 0}))
+    candidates = await db.users.find(
+        {'id': {'$in': new_ids}}, {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0}
+    ).to_list(len(new_ids))
+    if len(candidates) != len(new_ids):
+        raise HTTPException(404, 'One or more users were not found')
+    for candidate in candidates:
+        if not await _can_chat_with(user, candidate):
+            raise HTTPException(403, f"You can't add {candidate.get('full_name', 'this user')} to this channel")
+    await db.conversations.update_one(
+        {'id': cid}, {'$addToSet': {'participant_ids': {'$each': new_ids}}, '$set': {'updated_at': now()}})
+    fresh = await db.conversations.find_one({'id': cid}, {'_id': 0})
+    for pid in fresh['participant_ids']:
+        await manager.send(pid, {'type': 'conversations:changed', 'conversation_id': cid})
+    await write_audit(user, 'conversation.add_members', f"Added {len(new_ids)} member(s) to {fresh.get('title') or cid}", target_id=cid)
+    return serialize(fresh)
+
+
+@api.delete('/conversations/{cid}/members/{uid}')
+async def remove_conversation_member(cid: str, uid: str, user=Depends(current_user)):
+    """Remove a member (self-removal = Leave group; removing someone else
+    requires being the channel admin/creator)."""
+    conv = await _require_conversation_member(cid, user['id'])
+    if not conv.get('is_group'):
+        raise HTTPException(400, 'Only group conversations have members to remove')
+    if uid != user['id'] and conv.get('created_by') != user['id']:
+        raise HTTPException(403, 'Only the channel admin can remove other members')
+    if uid not in conv.get('participant_ids', []):
+        raise HTTPException(404, 'That person is not in this channel')
+    await db.conversations.update_one({'id': cid}, {'$pull': {'participant_ids': uid}, '$set': {'updated_at': now()}})
+    fresh = await db.conversations.find_one({'id': cid}, {'_id': 0})
+    for pid in fresh.get('participant_ids', []):
+        await manager.send(pid, {'type': 'conversations:changed', 'conversation_id': cid})
+    action = 'conversation.leave' if uid == user['id'] else 'conversation.remove_member'
+    await write_audit(user, action, f"{'Left' if uid == user['id'] else 'Removed a member from'} {fresh.get('title') or cid}", target_id=cid)
+    return {'ok': True}
+
+
+@api.get('/conversations/{cid}/invite-link')
+async def get_conversation_invite_link(cid: str, user=Depends(current_user)):
+    """Generate (once) and return this group's invite code."""
+    conv = await _require_conversation_member(cid, user['id'])
+    if not conv.get('is_group'):
+        raise HTTPException(400, 'Only group conversations have invite links')
+    token = conv.get('invite_token')
+    if not token:
+        token = uuid.uuid4().hex[:10]
+        await db.conversations.update_one({'id': cid}, {'$set': {'invite_token': token}})
+    return {'token': token}
+
+
+@api.post('/conversations/join/{token}')
+async def join_conversation_by_invite(token: str, user=Depends(current_user)):
+    conv = await db.conversations.find_one({'invite_token': token, 'is_group': True}, {'_id': 0})
+    if not conv:
+        raise HTTPException(404, 'This invite link is invalid or has expired')
+    if user['id'] not in conv.get('participant_ids', []):
+        await db.conversations.update_one(
+            {'id': conv['id']}, {'$addToSet': {'participant_ids': user['id']}, '$set': {'updated_at': now()}})
+        fresh = await db.conversations.find_one({'id': conv['id']}, {'_id': 0})
+        for pid in fresh.get('participant_ids', []):
+            await manager.send(pid, {'type': 'conversations:changed', 'conversation_id': conv['id']})
+        conv = fresh
+    return serialize(conv)
+
+
+@api.get('/conversations/{cid}/files')
+async def list_conversation_files(cid: str, user=Depends(current_user)):
+    """Shared files & media filmstrip — every attachment ever posted in this
+    conversation, newest first."""
+    await _require_conversation_member(cid, user['id'])
+    rows = await db.messages.find(
+        {'conversation_id': cid, 'attachment': {'$ne': None}},
+        {'_id': 0, 'id': 1, 'sender_id': 1, 'created_at': 1, 'type': 1, 'attachment': 1},
+    ).sort('created_at', -1).to_list(200)
+    out = []
+    for row in rows:
+        att = row.get('attachment') or {}
+        out.append({
+            'message_id': row['id'], 'sender_id': row['sender_id'], 'created_at': row['created_at'],
+            'type': row.get('type'), 'file_id': att.get('file_id'), 'name': att.get('name'),
+            'size': att.get('size'), 'content_type': att.get('content_type'),
+            'url': f"/api/files/{att.get('file_id')}" if att.get('file_id') else None,
+        })
+    return serialize(out)
+
+
+@api.post('/conversations/{cid}/clear')
+async def clear_conversation_messages(cid: str, user=Depends(current_user)):
+    """'Clear messages' — hides this caller's history up to now; everyone
+    else's copy of the conversation is untouched."""
+    await _require_conversation_member(cid, user['id'])
+    at = now()
+    await db.conversations.update_one({'id': cid}, {'$set': {f'cleared_at.{user["id"]}': at}})
+    return {'ok': True, 'cleared_at': iso(at)}
+
+
+@api.post('/conversations/{cid}/report')
+async def report_conversation(cid: str, body: ConversationReportIn, user=Depends(current_user)):
+    """Report group — files a support ticket platform admins can triage."""
+    conv = await _require_conversation_member(cid, user['id'])
+    n = now()
+    ticket_id = f"#TKT-{n.strftime('%Y%m%d')}-{str(uuid.uuid4().int)[:4]}"
+    doc = {
+        'id': str(uuid.uuid4()), 'ticket_id': ticket_id, 'user_id': user['id'],
+        'category': 'conversation_report',
+        'subject': f"Reported: {conv.get('title') or 'Conversation'}",
+        'description': (body.reason or '').strip() or 'No reason provided.',
+        'status': 'Open', 'created_at': n, 'conversation_id': cid,
+    }
+    await db.support_tickets.insert_one(doc)
+    await write_audit(user, 'conversation.report', f"Reported {conv.get('title') or cid}", target_id=cid)
+    return {'ok': True, 'ticket_id': ticket_id}
+
+
+@api.patch('/conversations/{cid}/settings')
+async def update_conversation_settings(cid: str, body: ConversationSettingsIn, user=Depends(current_user)):
+    """Channel-wide settings: auto-delete timer, and (group only) rename/
+    description edits. Admin/creator only."""
+    conv = await _require_conversation_member(cid, user['id'])
+    if conv.get('created_by') != user['id']:
+        raise HTTPException(403, 'Only the channel admin can change these settings')
+    update: dict = {'auto_delete_days': body.auto_delete_days, 'updated_at': now()}
+    if body.title is not None:
+        if not conv.get('is_group'):
+            raise HTTPException(400, 'Only group conversations can be renamed')
+        update['title'] = body.title.strip()
+    if body.description is not None:
+        if not conv.get('is_group'):
+            raise HTTPException(400, 'Only group conversations have a description')
+        update['description'] = body.description.strip()
+    await db.conversations.update_one({'id': cid}, {'$set': update})
+    return {'ok': True, **update, 'updated_at': iso(update['updated_at'])}
+
+
 @api.get('/conversations/{cid}/messages')
 async def get_messages(cid: str, user=Depends(current_user)):
-    await _require_conversation_member(cid, user['id'])
-    msgs = await db.messages.find({'conversation_id': cid}, {'_id': 0}).sort('created_at', 1).to_list(500)
+    conv = await _require_conversation_member(cid, user['id'])
+    msgs = await db.messages.find(
+        _visible_messages_filter(cid, conv, user['id']), {'_id': 0}
+    ).sort('created_at', 1).to_list(500)
     # mark all as read
     await db.messages.update_many(
         {'conversation_id': cid, 'sender_id': {'$ne': user['id']}},
@@ -3699,7 +3957,9 @@ async def get_messages(cid: str, user=Depends(current_user)):
 async def post_message(cid: str, body: ChatMessageIn,
                        user=Depends(current_user)):
     conv = await _require_conversation_member(cid, user['id'])
-    msg = await _create_chat_message(cid, body.content, user['id'], conv)
+    attachment = body.attachment.model_dump() if body.attachment else None
+    msg = await _create_chat_message(cid, body.content, user['id'], conv,
+                                     msg_type=body.type, attachment=attachment)
     out = {**serialize(msg), 'type': 'message'}
     for pid in conv['participant_ids']:
         await manager.send(pid, out)
@@ -6215,8 +6475,12 @@ _ALLOWED_UPLOADS = {
     'jpeg': ({'image/jpeg', 'application/octet-stream'}, (b'\xff\xd8\xff',)),
     'docx': ({'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
               'application/zip', 'application/octet-stream'}, (b'PK\x03\x04',)),
+    # Voice-message recordings (Expo Audio records to .m4a on iOS/Android). ISO-BMFF
+    # containers put their 'ftyp' box at offset 4, not offset 0, so this is checked
+    # separately below rather than via the generic startswith(magics) scan.
+    'm4a':  ({'audio/m4a', 'audio/mp4', 'audio/x-m4a', 'application/octet-stream'}, ()),
 }
-_FILE_SCOPE_TYPES = ('user', 'trial', 'ticket')
+_FILE_SCOPE_TYPES = ('user', 'trial', 'ticket', 'conversation')
 
 
 async def _caller_in_trial(user: dict, trial_id: Optional[str]) -> bool:
@@ -6259,6 +6523,9 @@ async def _file_access_allowed(user: dict, doc: dict) -> bool:
         return await _caller_in_trial(user, sid)
     if stype == 'ticket':
         return False   # only owner/admin (handled above); no broad ticket access
+    if stype == 'conversation':
+        conv = await db.conversations.find_one({'id': sid}, {'_id': 0, 'participant_ids': 1})
+        return bool(conv) and user['id'] in (conv.get('participant_ids') or [])
     return False
 
 
@@ -6277,7 +6544,7 @@ async def upload_file(file: UploadFile = File(...),
     ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
     spec = _ALLOWED_UPLOADS.get(ext)
     if not spec:
-        raise HTTPException(400, 'Unsupported file type (allowed: pdf, png, jpg, docx)')
+        raise HTTPException(400, 'Unsupported file type (allowed: pdf, png, jpg, docx, m4a)')
     allowed_cts, magics = spec
     ctype = (file.content_type or '').lower().split(';')[0].strip()
     if ctype and ctype not in allowed_cts:
@@ -6286,14 +6553,15 @@ async def upload_file(file: UploadFile = File(...),
     data = await _read_upload_capped(file, FILE_MAX_BYTES, 'File is too large (max 10 MB)')
     if not data:
         raise HTTPException(400, 'The uploaded file is empty')
-    if not any(data.startswith(m) for m in magics):
+    magic_ok = (len(data) > 8 and data[4:8] == b'ftyp') if ext == 'm4a' else any(data.startswith(m) for m in magics)
+    if not magic_ok:
         raise HTTPException(400, 'File contents do not match the declared type')
 
     stype = (scope_type or 'user').strip().lower()
     if stype not in _FILE_SCOPE_TYPES:
         raise HTTPException(400, 'Invalid scope type')
     # Default scope is {type:'user', id: caller}; a scope id is required for
-    # trial/ticket scopes and defaults to the caller for a user scope.
+    # trial/ticket/conversation scopes and defaults to the caller for a user scope.
     sid = (scope_id or '').strip() or user['id']
     scope = {'type': stype, 'id': sid}
     if stype == 'trial':
@@ -6302,6 +6570,8 @@ async def upload_file(file: UploadFile = File(...),
             raise HTTPException(404, 'Trial not found')
         if user['role'] != 'admin' and not await _caller_in_trial(user, sid):
             raise HTTPException(403, 'You do not have access to upload files to this trial')
+    elif stype == 'conversation':
+        await _require_conversation_member(sid, user['id'])
     elif stype == 'user' and sid != user['id'] and user['role'] != 'admin':
         raise HTTPException(403, 'You cannot upload files for another user')
 

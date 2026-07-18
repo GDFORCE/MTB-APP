@@ -272,7 +272,7 @@ def test_conversation_flags_pin_mute_are_member_scoped(world):
                                      headers=world["pi_a_h"],
                                      json={"pinned": True, "muted": True})
             assert flagged.status_code == 200, flagged.text
-            assert flagged.json() == {"ok": True, "pinned": True, "muted": True}
+            assert flagged.json() == {"ok": True, "pinned": True, "muted": True, "archived": False}
             mine = await cli.get("/api/conversations", headers=world["pi_a_h"])
             row = next(r for r in mine.json() if r["id"] == cid)
             assert row["pinned"] is True and row["muted"] is True
@@ -291,4 +291,44 @@ def test_conversation_flags_pin_mute_are_member_scoped(world):
                                       headers=world["pi_b_h"],
                                       json={"pinned": True})
             assert outsider.status_code in (403, 404), outsider.text
+    run(flow())
+
+
+def test_group_settings_rename_is_admin_gated(world):
+    """Only the creator (admin) of a group conversation may rename it or
+    edit its description via PATCH /conversations/{cid}/settings."""
+    async def flow():
+        async with client() as cli:
+            created = await cli.post(
+                "/api/conversations", headers=world["pi_a_h"],
+                json={
+                    "participant_ids": [world["crc_a"]["id"]],
+                    "is_group": True,
+                    "title": "Original Title",
+                },
+            )
+            assert created.status_code == 200, created.text
+            cid = created.json()["id"]
+            CONVERSATION_IDS.append(cid)
+
+            renamed = await cli.patch(
+                f"/api/conversations/{cid}/settings",
+                headers=world["pi_a_h"],
+                json={"title": "Apollo Mumbai — Site Team", "description": "Coordination channel."},
+            )
+            assert renamed.status_code == 200, renamed.text
+            assert renamed.json()["title"] == "Apollo Mumbai — Site Team"
+            assert renamed.json()["description"] == "Coordination channel."
+
+            fetched = await cli.get(f"/api/conversations/{cid}", headers=world["pi_a_h"])
+            assert fetched.json()["title"] == "Apollo Mumbai — Site Team"
+            assert fetched.json()["description"] == "Coordination channel."
+
+            forbidden = await cli.patch(
+                f"/api/conversations/{cid}/settings",
+                headers=world["crc_a_h"],
+                json={"title": "Hijacked"},
+            )
+            assert forbidden.status_code == 403, forbidden.text
+
     run(flow())
