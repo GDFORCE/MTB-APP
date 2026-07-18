@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, TextInput, Alert, Share, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, ScrollView, Pressable, TextInput, Alert, Share, ActivityIndicator, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
-  X, Pencil, Check, UserPlus, Link2, Search, Users, Bell, BellOff, Clock,
-  ShieldCheck, Copy, Trash2, LogOut, Flag, ChevronRight, AlertTriangle, RefreshCcw,
+  X, Pencil, Check, UserPlus, Link2, Search, Users, Bell, Timer, Lock,
+  ShieldCheck, Copy, Trash2, LogOut, ThumbsDown, ChevronRight, AlertTriangle, RefreshCcw,
   FileText, Image as ImageIcon, Mic,
 } from "lucide-react-native";
-import { colors, spacing, radii, fonts, heroGradient } from "@/src/theme/tokens";
+import { colors, spacing, radii, fonts, shadows, heroGradient } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -26,6 +26,22 @@ function iconFor(type?: string) {
   if (type === "image") return ImageIcon;
   if (type === "voice") return Mic;
   return FileText;
+}
+
+function tintFor(type?: string) {
+  if (type === "image") return { bg: colors.info + "1F", fg: colors.info };
+  if (type === "voice") return { bg: colors.violet + "1F", fg: colors.violet };
+  return { bg: colors.destructive + "1A", fg: colors.destructive };
+}
+
+function roleTone(role: string) {
+  const r = role.toLowerCase();
+  if (r.includes("investigator") || /\bpi\b/.test(r)) return { bg: colors.accent + "1F", fg: colors.accent, ring: colors.accent + "4D", dot: colors.accent };
+  if (r.includes("coordinator") || r.includes("crc") || r.includes("research")) return { bg: colors.info + "1F", fg: colors.info, ring: colors.info + "4D", dot: colors.info };
+  if (r.includes("sponsor") || r.includes("cro")) return { bg: colors.violet + "1F", fg: colors.violet, ring: colors.violet + "4D", dot: colors.violet };
+  if (r.includes("nurse") || r.includes("pharmac")) return { bg: colors.success + "1F", fg: colors.success, ring: colors.success + "4D", dot: colors.success };
+  if (r.includes("patient")) return { bg: colors.primary + "1A", fg: colors.primary, ring: colors.primary + "40", dot: colors.primary };
+  return { bg: colors.mutedFg + "1A", fg: colors.mutedFg, ring: colors.border, dot: colors.mutedFg + "80" };
 }
 
 const AUTO_DELETE_OPTIONS: { label: string; days: number | null }[] = [
@@ -225,7 +241,7 @@ export default function ConversationInfo() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
-      <LinearGradient colors={heroGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+      <LinearGradient colors={heroGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderBottomLeftRadius: 32, borderBottomRightRadius: 32, overflow: "hidden" }}>
         <View style={s.header}>
           <Pressable testID="conv-info-close" onPress={() => router.back()} hitSlop={12}><X size={22} color={colors.primaryFg} /></Pressable>
           <Eyebrow style={{ flex: 1, textAlign: "center" }} color={colors.primaryFg + "CC"}>Team channel</Eyebrow>
@@ -240,7 +256,7 @@ export default function ConversationInfo() {
           ) : <View style={{ width: 22 }} />}
         </View>
 
-        <View style={{ alignItems: "center", paddingVertical: spacing.md, paddingHorizontal: spacing.lg }}>
+        <View style={{ alignItems: "center", paddingTop: spacing.md, paddingBottom: 56, paddingHorizontal: spacing.lg }}>
           <View style={s.bigAvatar}><Users size={30} color={colors.primaryFg} /></View>
           {editing ? (
             <>
@@ -251,38 +267,56 @@ export default function ConversationInfo() {
             <>
               <H1 style={{ marginTop: 10, textAlign: "center" }} color={colors.primaryFg}>{conv.title || "Conversation"}</H1>
               {conv.protocol_id ? (
-                <View style={s.protocolTag}><Small weight="700" color={colors.primaryFg}>{conv.protocol_id} · {conv.trial_title || "Site coordination"}</Small></View>
+                <View style={s.protocolTag}>
+                  <FileText size={12} color={colors.primaryFg} />
+                  <Small color={colors.primaryFg} style={{ fontFamily: fonts.mono, fontSize: 11 }}>{conv.protocol_id} · {conv.trial_title || "Site coordination"}</Small>
+                </View>
               ) : null}
-              {conv.description ? <Small style={{ marginTop: 8, textAlign: "center" }} color={colors.primaryFg + "CC"}>{conv.description}</Small> : null}
+              {conv.description ? <Small style={{ marginTop: 8, textAlign: "center", maxWidth: 280 }} color={colors.primaryFg + "CC"}>{conv.description}</Small> : null}
             </>
           )}
           {participants.length > 0 && (
-            <View style={{ flexDirection: "row", marginTop: 12 }}>
-              {participants.slice(0, 3).map((p, i) => (
-                <View key={p.id} style={[s.stackAvatar, i > 0 && { marginLeft: -10 }]}>
-                  <Small color={colors.primaryFg} style={{ fontSize: 10, fontFamily: fonts.semibold }}>{p.avatar_initials || "?"}</Small>
-                </View>
-              ))}
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 14, gap: 10 }}>
+              <View style={{ flexDirection: "row" }}>
+                {participants.slice(0, 4).map((p, i) => (
+                  <View key={p.id} style={[s.stackAvatar, i > 0 && { marginLeft: -10 }]}>
+                    <Small color={colors.primaryFg} style={{ fontSize: 10, fontFamily: fonts.semibold }}>{p.avatar_initials || "?"}</Small>
+                  </View>
+                ))}
+                {participants.length > 4 && (
+                  <View style={[s.stackAvatar, { marginLeft: -10, backgroundColor: colors.overlay10 }]}>
+                    <Small color={colors.primaryFg} style={{ fontSize: 9, fontFamily: fonts.semibold }}>+{participants.length - 4}</Small>
+                  </View>
+                )}
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Small color={colors.primaryFg + "CC"} style={{ fontSize: 12 }}>{participants.length} members</Small>
+                {onlineCount > 0 && (
+                  <>
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
+                    <Small color={colors.primaryFg + "CC"} style={{ fontSize: 12 }}>{onlineCount} online</Small>
+                  </>
+                )}
+              </View>
             </View>
           )}
-          <Small style={{ marginTop: 8 }} color={colors.primaryFg + "CC"}>{participants.length} members · {onlineCount} online</Small>
         </View>
       </LinearGradient>
 
-      <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.sm }}>
+      <ScrollView contentContainerStyle={{ padding: spacing.md, paddingTop: 0, paddingBottom: spacing.xxl, gap: spacing.sm }}>
         {conv.is_group && (
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <Pressable testID="conv-info-add-member" style={s.actionBtn} onPress={() => { setAddMemberAutoFocus(false); setAddMemberOpen(true); }}>
-              <UserPlus size={18} color={colors.primary} />
-              <Small weight="700" color={colors.primary}>Add member</Small>
+          <View style={s.actionsCard}>
+            <Pressable testID="conv-info-add-member" style={s.heroAction} onPress={() => { setAddMemberAutoFocus(false); setAddMemberOpen(true); }}>
+              <View style={[s.actionIcon, { backgroundColor: colors.primary + "1A" }]}><UserPlus size={18} color={colors.primary} /></View>
+              <Small color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold }}>Add member</Small>
             </Pressable>
-            <Pressable testID="conv-info-invite-link" style={s.actionBtn} onPress={shareInviteLink} disabled={busy}>
-              <Link2 size={18} color={colors.primary} />
-              <Small weight="700" color={colors.primary}>Invite link</Small>
+            <Pressable testID="conv-info-invite-link" style={s.heroAction} onPress={shareInviteLink} disabled={busy}>
+              <View style={[s.actionIcon, { backgroundColor: colors.violet + "1F" }]}><Link2 size={18} color={colors.violet} /></View>
+              <Small color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold }}>Invite link</Small>
             </Pressable>
-            <Pressable testID="conv-info-find-member" style={s.actionBtn} onPress={() => { setAddMemberAutoFocus(true); setAddMemberOpen(true); }}>
-              <Search size={18} color={colors.primary} />
-              <Small weight="700" color={colors.primary}>Find member</Small>
+            <Pressable testID="conv-info-find-member" style={s.heroAction} onPress={() => { setAddMemberAutoFocus(true); setAddMemberOpen(true); }}>
+              <View style={[s.actionIcon, { backgroundColor: colors.info + "1F" }]}><Search size={18} color={colors.info} /></View>
+              <Small color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold }}>Find member</Small>
             </Pressable>
           </View>
         )}
@@ -292,29 +326,54 @@ export default function ConversationInfo() {
           <Small>{participants.length} of {participants.length}</Small>
         </View>
         <Card padded={false}>
-          {participants.map((p, i) => (
-            <Pressable
-              key={p.id}
-              testID={`conv-info-member-${p.id}`}
-              onLongPress={() => (conv.is_admin && p.id !== user?.id ? removeMember(p.id, p.full_name) : undefined)}
-              style={[s.memberRow, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}
-            >
-              <View style={s.avatar}><Small weight="700" color={colors.primary}>{p.avatar_initials || "?"}</Small></View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Body weight="600" numberOfLines={1}>{p.full_name}{p.id === user?.id ? " (you)" : ""}{p.admin ? "  ·  Admin" : ""}</Body>
-                <Small numberOfLines={1}>{String(p.role || "").toUpperCase()}{p.organization ? ` · ${p.organization}` : ""}</Small>
+          {participants.map((p, i) => {
+            const tone = roleTone(String(p.role || ""));
+            return (
+              <View key={p.id}>
+                {i > 0 && <View style={s.memberDivider} />}
+                <Pressable
+                  testID={`conv-info-member-${p.id}`}
+                  onLongPress={() => (conv.is_admin && p.id !== user?.id ? removeMember(p.id, p.full_name) : undefined)}
+                  style={s.memberRow}
+                >
+                  <View style={[s.avatar, { backgroundColor: tone.bg, borderWidth: 2, borderColor: tone.ring }]}>
+                    <Small color={tone.fg} style={{ fontFamily: fonts.bold, fontSize: 12 }}>{p.avatar_initials || "?"}</Small>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Body weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{p.full_name}{p.id === user?.id ? " (you)" : ""}</Body>
+                      {p.admin ? (
+                        <View style={s.adminBadge}>
+                          <ShieldCheck size={10} color={colors.accent} />
+                          <Small color={colors.accent} style={{ fontSize: 9, fontFamily: fonts.semibold }}>Admin</Small>
+                        </View>
+                      ) : null}
+                    </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+                      <View style={[s.roleDot, { backgroundColor: tone.dot }]} />
+                      <Small numberOfLines={1} style={{ flexShrink: 1 }}>{String(p.role || "").toUpperCase()}{p.organization ? ` · ${p.organization}` : ""}</Small>
+                    </View>
+                  </View>
+                  {p.is_online && <View style={s.onlineDot} />}
+                  <ChevronRight size={16} color={colors.mutedFg + "4D"} />
+                </Pressable>
               </View>
-              {p.is_online && <View style={s.onlineDot} />}
-              <ChevronRight size={16} color={colors.mutedFg} />
-            </Pressable>
-          ))}
+            );
+          })}
         </Card>
 
-        <Eyebrow style={{ marginTop: spacing.md }}>Shared files & media</Eyebrow>
+        <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.md }}>
+          <Eyebrow style={{ flex: 1 }}>Shared files & media</Eyebrow>
+          <Pressable testID="conv-info-all-files" onPress={() => router.push({ pathname: "/(app)/conversation/[id]/files", params: { id: String(id) } })} hitSlop={8} style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+            <Small color={colors.accent} style={{ fontSize: 11, fontFamily: fonts.semibold }}>All {conv.media_count || 0}</Small>
+            <ChevronRight size={14} color={colors.accent} />
+          </Pressable>
+        </View>
         {previewFiles.length > 0 && (
-          <View style={{ flexDirection: "row", gap: 10 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             {previewFiles.map((row) => {
               const Icon = iconFor(row.type);
+              const tint = tintFor(row.type);
               return (
                 <Pressable
                   key={row.message_id}
@@ -323,49 +382,44 @@ export default function ConversationInfo() {
                   onPress={() => downloadFile({ id: row.file_id, name: row.name, content_type: row.content_type }).catch(() => Alert.alert("Couldn't open file", "Try again in a moment."))}
                   style={s.fileTile}
                 >
-                  <Icon size={20} color={colors.primary} />
-                  <Small numberOfLines={1} color={colors.foreground} style={{ fontSize: 11, maxWidth: "100%" }}>{row.name || "Voice message"}</Small>
-                  {row.size ? <Small style={{ fontSize: 10 }}>{formatSize(row.size)}</Small> : null}
+                  <View style={[s.fileIcon, { backgroundColor: tint.bg }]}><Icon size={17} color={tint.fg} /></View>
+                  <Small numberOfLines={1} color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold, marginTop: 8, maxWidth: "100%" }}>{row.name || "Voice message"}</Small>
+                  {row.size ? <Small style={{ fontSize: 9, marginTop: 1 }}>{formatSize(row.size)}</Small> : null}
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
         )}
-        <Pressable testID="conv-info-all-files" onPress={() => router.push({ pathname: "/(app)/conversation/[id]/files", params: { id: String(id) } })}>
-          <Card style={{ flexDirection: "row", alignItems: "center" }}>
-            <Small style={{ flex: 1 }}>{conv.media_count || 0} item{conv.media_count === 1 ? "" : "s"}</Small>
-            <Small weight="700" color={colors.primary}>All {conv.media_count || 0}</Small>
-            <ChevronRight size={16} color={colors.primary} />
-          </Card>
-        </Pressable>
 
         <Eyebrow style={{ marginTop: spacing.md }}>Channel controls</Eyebrow>
-        <Card padded={false}>
+        <Card padded={false} style={{ borderRadius: radii.lg }}>
           <Pressable testID="conv-info-notifications" onPress={toggleNotifications} disabled={busy} style={[s.controlRow]}>
-            {conv.muted ? <BellOff size={18} color={colors.mutedFg} /> : <Bell size={18} color={colors.primary} />}
-            <View style={{ flex: 1, marginLeft: 10 }}>
+            <View style={[s.controlIcon, { backgroundColor: colors.warning + "26" }]}><Bell size={17} color={colors.warning} /></View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
               <Body weight="600">Notifications</Body>
-              <Small>{conv.muted ? "Off" : "Every message"}</Small>
+              <Small style={{ fontSize: 11 }}>{conv.muted ? "Muted — mentions only" : "Every message"}</Small>
             </View>
             <View style={[s.toggleTrack, !conv.muted && s.toggleTrackOn]}>
               <View style={[s.toggleThumb, !conv.muted && s.toggleThumbOn]} />
             </View>
           </Pressable>
-          <Pressable testID="conv-info-auto-delete" onPress={() => setAutoDeleteOpen(true)} style={[s.controlRow, { borderTopWidth: 1, borderTopColor: colors.border }]}>
-            <Clock size={18} color={colors.primary} />
-            <View style={{ flex: 1, marginLeft: 10 }}>
+          <View style={s.controlDivider} />
+          <Pressable testID="conv-info-auto-delete" onPress={() => setAutoDeleteOpen(true)} style={s.controlRow}>
+            <View style={[s.controlIcon, { backgroundColor: colors.info + "1F" }]}><Timer size={17} color={colors.info} /></View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
               <Body weight="600">Auto-delete timer</Body>
-              <Small>Messages stay until deleted</Small>
+              <Small style={{ fontSize: 11 }}>Messages stay until deleted</Small>
             </View>
-            <View style={s.pill}><Small weight="700" color={colors.primary}>{autoDeleteLabel}</Small></View>
+            <View style={s.pill}><Small color={colors.mutedFg} style={{ fontSize: 11, fontFamily: fonts.semibold }}>{autoDeleteLabel}</Small></View>
           </Pressable>
-          <View style={[s.controlRow, { borderTopWidth: 1, borderTopColor: colors.border }]}>
-            <ShieldCheck size={18} color={colors.success} />
-            <View style={{ flex: 1, marginLeft: 10 }}>
+          <View style={s.controlDivider} />
+          <View style={s.controlRow}>
+            <View style={[s.controlIcon, { backgroundColor: colors.violet + "1F" }]}><ShieldCheck size={17} color={colors.violet} /></View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
               <Body weight="600">Compliance & data controls</Body>
-              <Small>Retention and audit follow trial policy</Small>
+              <Small style={{ fontSize: 11 }}>Retention and audit follow trial policy</Small>
             </View>
-            <View style={[s.pill, { backgroundColor: colors.accent + "33" }]}><Small weight="700" color={colors.accentFg}>{complianceStandard ? "Standard" : "General"}</Small></View>
+            <View style={s.pill}><Small color={colors.mutedFg} style={{ fontSize: 11, fontFamily: fonts.semibold }}>{complianceStandard ? "Standard" : "General"}</Small></View>
           </View>
         </Card>
 
@@ -380,42 +434,51 @@ export default function ConversationInfo() {
           </Card>
         )}
 
-        <Card style={{ flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.secondary, borderColor: colors.secondary }}>
-          <ShieldCheck size={18} color={colors.primary} />
-          <Small style={{ flex: 1 }} color={colors.secondaryFg}>
-            <Small color={colors.secondaryFg} style={{ fontFamily: fonts.bold }}>Encrypted in transit and at rest.</Small>
-            {" "}Every message here is covered by MTB&apos;s data-protection policy.{" "}
-            <Small color={colors.info} weight="700" style={{ fontFamily: fonts.bold, textDecorationLine: "underline" }} onPress={() => router.push("/(app)/data-policy")}>View policy</Small>
-          </Small>
-        </Card>
+        <View style={s.encryptionCard}>
+          <View style={s.encryptionIcon}><Lock size={15} color={colors.success} /></View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Body weight="600" style={{ fontSize: 13 }}>Encrypted in transit and at rest</Body>
+            <Small style={{ fontSize: 11, marginTop: 2, lineHeight: 16 }}>
+              Every message here is covered by MTB&apos;s data-protection policy.{" "}
+              <Text testID="conv-info-view-policy" onPress={() => router.push("/(app)/data-policy")} style={{ fontFamily: fonts.semibold, fontSize: 11, color: colors.success }}>View policy</Text>
+            </Small>
+          </View>
+        </View>
 
         {conv.is_group && (
           <Pressable testID="conv-info-duplicate" onPress={setupSimilarChannel} disabled={busy}>
-            <Card style={{ flexDirection: "row", alignItems: "center", gap: 10, borderStyle: "dashed" }}>
-              <Copy size={18} color={colors.primary} />
+            <Card style={{ flexDirection: "row", alignItems: "center", gap: 12, borderRadius: radii.lg, borderStyle: "dashed", borderColor: colors.primary + "4D", backgroundColor: colors.card + "99" }}>
+              <View style={[s.controlIcon, { backgroundColor: colors.primary + "1A" }]}><Copy size={17} color={colors.primary} /></View>
               <View style={{ flex: 1 }}>
-                <Body weight="700" color={colors.primary}>Set up a similar channel</Body>
-                <Small>Start a new channel with these {participants.length} members, ready to adjust</Small>
+                <Body weight="600">Set up a similar channel</Body>
+                <Small style={{ fontSize: 11 }}>Start a new channel with these {participants.length} members, ready to adjust</Small>
               </View>
             </Card>
           </Pressable>
         )}
 
         {conv.is_group && (
-          <View style={{ marginTop: spacing.sm, gap: 8 }}>
-            <Pressable testID="conv-info-clear" onPress={clearMessages} style={s.dangerCard}>
-              <View style={s.dangerIcon}><Trash2 size={16} color={colors.destructive} /></View>
-              <Small weight="700" color={colors.destructive}>Clear messages</Small>
-            </Pressable>
-            <Pressable testID="conv-info-leave" onPress={leaveGroup} style={s.dangerCard}>
-              <View style={s.dangerIcon}><LogOut size={16} color={colors.destructive} /></View>
-              <Small weight="700" color={colors.destructive}>Leave group</Small>
-            </Pressable>
-            <Pressable testID="conv-info-report" onPress={() => setReportOpen(true)} style={s.dangerCard}>
-              <View style={s.dangerIcon}><Flag size={16} color={colors.destructive} /></View>
-              <Small weight="700" color={colors.destructive}>Report group</Small>
-            </Pressable>
-          </View>
+          <>
+            <Card padded={false} style={{ marginTop: spacing.sm, borderRadius: radii.lg }}>
+              <Pressable testID="conv-info-clear" onPress={clearMessages} style={s.dangerRow}>
+                <View style={s.dangerIcon}><Trash2 size={17} color={colors.destructive} /></View>
+                <Body weight="600" color={colors.destructive} style={{ fontSize: 14 }}>Clear messages</Body>
+              </Pressable>
+              <View style={s.controlDivider} />
+              <Pressable testID="conv-info-leave" onPress={leaveGroup} style={s.dangerRow}>
+                <View style={s.dangerIcon}><LogOut size={17} color={colors.destructive} /></View>
+                <Body weight="600" color={colors.destructive} style={{ fontSize: 14 }}>Leave group</Body>
+              </Pressable>
+              <View style={s.controlDivider} />
+              <Pressable testID="conv-info-report" onPress={() => setReportOpen(true)} style={s.dangerRow}>
+                <View style={s.dangerIcon}><ThumbsDown size={17} color={colors.destructive} /></View>
+                <Body weight="600" color={colors.destructive} style={{ fontSize: 14 }}>Report group</Body>
+              </Pressable>
+            </Card>
+            <Small style={{ fontSize: 10, textAlign: "center", marginTop: 4 }} color={colors.mutedFg + "99"}>
+              Channel created for {conv.protocol_id || "this trial"} · actions here are recorded in the audit trail
+            </Small>
+          </>
         )}
       </ScrollView>
 
@@ -458,24 +521,35 @@ export default function ConversationInfo() {
 
 const s = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, paddingVertical: 12 },
-  bigAvatar: { width: 84, height: 84, borderRadius: radii.xl, backgroundColor: colors.overlay20, alignItems: "center", justifyContent: "center" },
-  protocolTag: { marginTop: 8, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.overlay20 },
+  bigAvatar: { width: 84, height: 84, borderRadius: radii.xl, backgroundColor: colors.overlay20, borderWidth: 1, borderColor: colors.overlay25, alignItems: "center", justifyContent: "center" },
+  protocolTag: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.overlay20, borderWidth: 1, borderColor: colors.overlay25 },
   titleInput: { marginTop: 10, width: "100%", textAlign: "center", fontFamily: "BricolageGrotesque-Bold", fontSize: 22, color: colors.primaryFg, borderBottomWidth: 1, borderColor: colors.overlay25, paddingVertical: 4 },
   descInput: { marginTop: 8, width: "100%", textAlign: "center", fontSize: 14, color: colors.primaryFg, paddingHorizontal: spacing.lg, minHeight: 40 },
   actionBtn: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 12, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
-  avatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  memberRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: spacing.md },
+  actionsCard: { flexDirection: "row", marginTop: -36, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 6, gap: 4, ...shadows.md },
+  heroAction: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 12, borderRadius: radii.lg },
+  actionIcon: { width: 40, height: 40, borderRadius: radii.lg, alignItems: "center", justifyContent: "center" },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
+  memberRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: spacing.md },
+  memberDivider: { marginLeft: 70, borderTopWidth: 1, borderTopColor: colors.border + "99" },
+  adminBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radii.pill, backgroundColor: colors.accent + "26" },
+  roleDot: { width: 6, height: 6, borderRadius: 3 },
   onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   controlRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: spacing.md },
+  controlIcon: { width: 36, height: 36, borderRadius: radii.md, alignItems: "center", justifyContent: "center" },
+  controlDivider: { marginLeft: 60, borderTopWidth: 1, borderTopColor: colors.border + "99" },
   toggleTrack: { width: 44, height: 26, borderRadius: 13, backgroundColor: colors.border, padding: 2, justifyContent: "center" },
   toggleTrackOn: { backgroundColor: colors.success },
   toggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.card },
   toggleThumbOn: { alignSelf: "flex-end" },
-  pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.secondary },
-  stackAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.overlay20, borderWidth: 2, borderColor: colors.primaryDeep, alignItems: "center", justifyContent: "center" },
-  fileTile: { flex: 1, maxWidth: "32%", aspectRatio: 1, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", gap: 4, padding: 8 },
-  dangerCard: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12, paddingHorizontal: spacing.md, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  dangerIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.destructive + "14", alignItems: "center", justifyContent: "center" },
+  pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.mutedFg + "1F" },
+  stackAvatar: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.overlay20, borderWidth: 2, borderColor: colors.primaryDeep, alignItems: "center", justifyContent: "center" },
+  fileTile: { width: 104, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, padding: 10, ...shadows.sm },
+  fileIcon: { width: 36, height: 36, borderRadius: radii.md, alignItems: "center", justifyContent: "center" },
+  encryptionCard: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginTop: 2, borderRadius: radii.lg, backgroundColor: colors.success + "14", borderWidth: 1, borderColor: colors.success + "33", padding: 14 },
+  encryptionIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.success + "26", alignItems: "center", justifyContent: "center" },
+  dangerRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
+  dangerIcon: { width: 36, height: 36, borderRadius: radii.md, backgroundColor: colors.destructive + "1A", alignItems: "center", justifyContent: "center" },
   reportOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(46,27,51,0.45)", alignItems: "center", justifyContent: "center", padding: spacing.md },
   reportInput: { minHeight: 80, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, padding: 10, color: colors.foreground, textAlignVertical: "top" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },

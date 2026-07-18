@@ -17,7 +17,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check, CheckCheck, ChevronDown, MoreVertical, ShieldCheck } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
-import { colors, spacing, radii, shadows } from "@/src/theme/tokens";
+import { colors, spacing, radii, shadows, fonts } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api, tokenStore, wsUrl } from "@/src/api/client";
@@ -27,11 +27,23 @@ import { useAudioRecorder, useAudioRecorderState, RecordingPresets, AudioModule,
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
 
-const AVATAR_TINTS = [colors.secondary, colors.info + "26", colors.accent + "33"];
-function avatarTint(id: string): string {
+const AVATAR_THEMES = [
+  { bg: colors.primary + "1F", fg: colors.primary, ring: colors.primary + "26" },
+  { bg: colors.info + "26", fg: colors.info, ring: colors.info + "26" },
+  { bg: colors.violet + "26", fg: colors.violet, ring: colors.violet + "26" },
+  { bg: colors.accent + "3D", fg: colors.accent, ring: colors.accent + "40" },
+  { bg: colors.success + "26", fg: colors.success, ring: colors.success + "26" },
+  { bg: colors.warning + "38", fg: colors.warning, ring: colors.warning + "33" },
+];
+const SUPPORT_AVATAR_THEME = { bg: colors.destructive + "24", fg: colors.destructive, ring: colors.destructive + "26" };
+function avatarTheme(id: string) {
   let hash = 0;
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return AVATAR_TINTS[hash % AVATAR_TINTS.length];
+  return AVATAR_THEMES[hash % AVATAR_THEMES.length];
+}
+
+function stripTitle(name: string): string {
+  return name.replace(/^(Dr\.|Mr\.|Ms\.)\s/, "");
 }
 
 function formatRowTimestamp(iso?: string): string {
@@ -403,7 +415,7 @@ export default function Chat() {
 
   const unarchivedConvs = convs.filter(c => !c.archived);
   const archivedConvs = convs.filter(c => c.archived);
-  const unreadTotal = unarchivedConvs.filter(c => (c.unread_count || 0) > 0).length;
+  const unreadTotal = unarchivedConvs.reduce((sum, c) => sum + (c.unread_count || 0), 0);
   const groupTotal = unarchivedConvs.filter(c => c.is_group).length;
   const visibleConvs = (filter === "archived" ? archivedConvs : unarchivedConvs)
     .filter(c => filter === "all" || filter === "archived" ? true : filter === "unread" ? (c.unread_count || 0) > 0 : !!c.is_group)
@@ -424,41 +436,45 @@ export default function Chat() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
         <View style={s.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
+          <Pressable onPress={() => router.back()} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Eyebrow color={colors.accent}>Secure inbox</Eyebrow>
-            <H1>Messages</H1>
+            <Eyebrow color={colors.primaryFg + "8C"}>Secure inbox</Eyebrow>
+            <H1 color={colors.primaryFg} style={{ fontSize: 20 }}>Messages</H1>
           </View>
-          <Pressable testID="chat-compose" onPress={() => { setComposeQuery(""); setComposeOpen(true); }} hitSlop={10} style={s.composeBtn} accessibilityLabel="New message">
-            <SquarePen size={19} color={colors.primary} />
+          <Pressable testID="chat-compose" onPress={() => { setComposeQuery(""); setComposeOpen(true); }} hitSlop={10} style={s.headerIconBtn} accessibilityLabel="New message">
+            <SquarePen size={20} color={colors.primaryFg} />
           </Pressable>
-          <Pressable testID="chat-menu" onPress={() => setInboxMenuOpen(true)} hitSlop={10} style={[s.composeBtn, { marginLeft: 8 }]} accessibilityLabel="More options">
-            <MoreVertical size={19} color={colors.primary} />
+          <Pressable testID="chat-menu" onPress={() => setInboxMenuOpen(true)} hitSlop={10} style={s.headerIconBtn} accessibilityLabel="More options">
+            <MoreVertical size={20} color={colors.primaryFg} />
           </Pressable>
         </View>
         {connectionBanner}
         {!loading && !loadError && (
           <View style={s.filterRow}>
             {([
-              { key: "all", label: `All · ${unarchivedConvs.length}` },
-              { key: "unread", label: `Unread · ${unreadTotal}` },
-              { key: "groups", label: `Groups · ${groupTotal}` },
-            ] as const).map(f => {
+              { key: "all", label: "All", count: 0 },
+              { key: "unread", label: "Unread", count: unreadTotal },
+              ...(groupTotal > 0 ? [{ key: "groups", label: "Groups", count: 0 }] : []),
+            ] as { key: "all" | "unread" | "groups"; label: string; count: number }[]).map(f => {
               const on = filter === f.key;
               return (
                 <Pressable key={f.key} testID={`chat-filter-${f.key}`} onPress={() => { animateNextLayout(); setFilter(f.key); }} style={[s.filterChip, on && s.filterChipOn]}>
-                  <Small weight="700" color={on ? colors.primaryFg : colors.mutedFg}>{f.label}</Small>
-                  {f.key === "groups" && <ChevronDown size={13} color={on ? colors.primaryFg : colors.mutedFg} />}
+                  <Small color={on ? colors.primaryFg : colors.mutedFg} style={on ? { fontFamily: fonts.medium } : undefined}>
+                    {f.label}{f.count ? ` ${f.count}` : ""}
+                  </Small>
                 </Pressable>
               );
             })}
+            <Pressable testID="chat-filter-expand" onPress={() => Alert.alert("Coming soon", "More filters will be available in a future update.")} style={s.filterMoreBtn} accessibilityLabel="More filters">
+              <ChevronDown size={15} color={colors.mutedFg} />
+            </Pressable>
           </View>
         )}
         {!loading && !loadError && archivedConvs.length > 0 && (
           <Pressable testID="chat-filter-archived" onPress={() => { animateNextLayout(); setFilter(filter === "archived" ? "all" : "archived"); }} style={s.archivedRow}>
-            <Archive size={16} color={colors.mutedFg} />
-            <Small weight="700" style={{ flex: 1, marginLeft: 10 }} color={filter === "archived" ? colors.primary : colors.foreground}>Archived</Small>
-            <Small color={colors.mutedFg}>{archivedConvs.length}</Small>
+            <Archive size={20} color={colors.primary} />
+            <Body weight={filter === "archived" ? "700" : "400"} style={{ flex: 1, marginLeft: 20, fontSize: 14 }} color={filter === "archived" ? colors.primary : colors.foreground}>Archived</Body>
+            <Small color={colors.mutedFg} style={{ fontSize: 12 }}>{archivedConvs.length}</Small>
           </Pressable>
         )}
         {loading ? (
@@ -480,11 +496,10 @@ export default function Chat() {
             </Card>
           </View>
         ) : (
-        <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
-          {error ? <Small color={colors.destructive} style={{ marginBottom: spacing.sm }}>{error}</Small> : null}
-          {visibleConvs.length > 0 && <Eyebrow style={{ marginBottom: spacing.sm }}>{filter === "all" ? "Recent" : filter === "unread" ? "Unread" : filter === "archived" ? "Archived" : "Groups"}</Eyebrow>}
+        <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
+          {error ? <Small color={colors.destructive} style={{ marginHorizontal: spacing.md, marginVertical: spacing.sm }}>{error}</Small> : null}
           {convs.length > 0 && visibleConvs.length === 0 && (
-            <Card style={{ alignItems: "center", paddingVertical: spacing.lg, marginBottom: spacing.sm }}>
+            <Card style={{ alignItems: "center", paddingVertical: spacing.lg, margin: spacing.md }}>
               <Body weight="600">{filter === "unread" ? "You're all caught up" : filter === "archived" ? "No archived chats" : "No group conversations yet"}</Body>
               <Small style={{ marginTop: 4 }}>{filter === "unread" ? "No unread conversations." : filter === "archived" ? "Conversations you archive appear here." : "Group chats appear here once you're added to one."}</Small>
             </Card>
@@ -496,46 +511,47 @@ export default function Chat() {
             const showReadReceipt = (c.unread_count || 0) === 0 && !!c.last_message;
             const isUnread = (c.unread_count || 0) > 0;
             const timestamp = formatRowTimestamp(c.updated_at);
+            const theme = isSupport ? SUPPORT_AVATAR_THEME : avatarTheme(c.id);
             return (
-              <Pressable key={c.id} testID={`conv-${c.id}`} onPress={() => openConv(c)} onLongPress={() => setDetails(c)}>
-                <Card style={{ marginBottom: spacing.sm }}>
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <View style={[s.avatar, !c.is_group && !isSupport && { backgroundColor: avatarTint(c.id) }, isSupport && s.avatarSupport]}>
-                      {c.is_group
-                        ? <Users size={18} color={colors.primary} />
-                        : isSupport
-                          ? <ShieldCheck size={18} color={colors.destructive} />
-                          : <Body weight="700" color={colors.primary}>{other?.avatar_initials || "?"}</Body>}
+              <Pressable key={c.id} testID={`conv-${c.id}`} onPress={() => openConv(c)} onLongPress={() => setDetails(c)} style={[s.convRow, isUnread && { backgroundColor: colors.primary + "09" }]}>
+                <View style={[s.listAvatar, { backgroundColor: theme.bg, borderColor: theme.ring }]}>
+                  {c.is_group
+                    ? <Users size={22} color={theme.fg} />
+                    : isSupport
+                      ? <ShieldCheck size={22} color={theme.fg} />
+                      : <Body weight="700" color={theme.fg}>{other?.avatar_initials || "?"}</Body>}
+                </View>
+                <View style={s.convRowContent}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+                    <Body weight={isUnread ? "700" : "600"} style={{ flex: 1 }} numberOfLines={1}>{name}</Body>
+                    {timestamp ? <Small color={isUnread ? colors.primary : colors.mutedFg} style={{ fontSize: 11, fontFamily: isUnread ? fonts.bold : fonts.regular }}>{timestamp}</Small> : null}
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
+                      {showReadReceipt && <CheckCheck size={14} color={colors.mutedFg} />}
+                      <Small numberOfLines={1} color={isUnread ? colors.foreground + "BF" : colors.mutedFg} style={{ flexShrink: 1, fontFamily: isUnread ? fonts.medium : fonts.regular }}>{c.last_message || "Start chatting"}</Small>
                     </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Body weight="700" style={{ flexShrink: 1, flex: 1 }} numberOfLines={1}>{name}</Body>
-                        {c.pinned ? <Pin size={12} color={colors.accent} /> : null}
-                        {c.muted ? <BellOff size={12} color={colors.mutedFg} /> : null}
-                        {timestamp ? <Small color={isUnread ? colors.primary : colors.mutedFg} style={{ fontSize: 11 }}>{timestamp}</Small> : null}
-                      </View>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-                        {showReadReceipt && <CheckCheck size={12} color={colors.mutedFg} />}
-                        <Small numberOfLines={1} style={{ flexShrink: 1, flex: 1 }}>{c.last_message || "Start chatting"}</Small>
-                        {c.unread_count > 0 && (
-                          <View style={[s.badge, c.muted && { backgroundColor: colors.mutedFg }]}>
-                            <Small color={colors.primaryFg} style={{ fontSize: 10, fontWeight: "700" as any }}>{c.unread_count}</Small>
-                          </View>
-                        )}
-                      </View>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      {c.pinned ? <Pin size={14} color={colors.mutedFg + "99"} style={{ transform: [{ rotate: "-45deg" }] }} /> : null}
+                      {c.muted ? <BellOff size={14} color={colors.mutedFg} /> : null}
+                      {c.unread_count > 0 && (
+                        <View style={[s.badge, c.muted && { backgroundColor: colors.mutedFg }]}>
+                          <Small color={colors.primaryFg} style={{ fontSize: 11, fontFamily: fonts.bold }}>{c.unread_count}</Small>
+                        </View>
+                      )}
                     </View>
                   </View>
-                </Card>
+                </View>
               </Pressable>
             );
           })}
           {convs.length === 0 && users.length === 0 && (
-            <Card style={{ alignItems: "center", paddingVertical: spacing.lg }}>
+            <Card style={{ alignItems: "center", paddingVertical: spacing.lg, margin: spacing.md }}>
               <Body weight="600">No conversations available</Body>
               <Small style={{ marginTop: 4, textAlign: "center" }}>Your care-team contacts appear here once they are linked to your account.</Small>
             </Card>
           )}
-          {users.length > 0 && <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>Start a new chat</Eyebrow>}
+          {users.length > 0 && <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm, marginHorizontal: spacing.md }}>Start a new chat</Eyebrow>}
           {users.map(u => (
             <Pressable
               key={u.id}
@@ -543,7 +559,7 @@ export default function Chat() {
               disabled={!!starting}
               onPress={() => startWith(u.id).catch((e: any) => setError(e?.response?.data?.detail || "Couldn't start this conversation."))}
             >
-              <Card style={{ marginBottom: spacing.sm, opacity: starting && starting !== u.id ? 0.6 : 1 }}>
+              <Card style={{ marginHorizontal: spacing.md, marginBottom: spacing.sm, opacity: starting && starting !== u.id ? 0.6 : 1 }}>
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                   <View style={s.avatar}><Body weight="700" color={colors.primary}>{u.avatar_initials}</Body></View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
@@ -659,22 +675,26 @@ export default function Chat() {
         </Modal>
 
         {/* Compose: searchable authorized-recipient picker, with a group-creation mode */}
-        <Modal visible={composeOpen} transparent animationType="slide" onRequestClose={() => setComposeOpen(false)}>
-          <View style={s.modalOverlay}>
-            <Pressable style={{ flex: 1 }} onPress={() => setComposeOpen(false)} />
-            <View style={s.modalSheet}>
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
-                <Body weight="700" style={{ flex: 1 }}>{groupMode ? "New group" : "New message"}</Body>
-                <Pressable
-                  testID="compose-group-toggle"
-                  onPress={() => { setGroupMode(v => !v); setGroupSelectedIds([]); setGroupTitle(""); }}
-                  style={[s.groupToggle, groupMode && s.groupToggleOn]}
-                >
-                  <Users size={14} color={groupMode ? colors.primaryFg : colors.primary} />
-                  <Small weight="700" color={groupMode ? colors.primaryFg : colors.primary}>Group</Small>
-                </Pressable>
-                <Pressable onPress={() => setComposeOpen(false)} hitSlop={10} style={{ marginLeft: 10 }}><X size={18} color={colors.mutedFg} /></Pressable>
+        <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
+            <View style={s.header}>
+              <Pressable testID="compose-close" onPress={() => setComposeOpen(false)} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
+              <View style={{ flex: 1, marginLeft: 16 }}>
+                <Body weight="600" color={colors.primaryFg}>{groupMode ? "New group" : "New chat"}</Body>
+                <Small color={colors.primaryFg + "B3"} style={{ fontSize: 12 }}>
+                  {groupMode ? `${groupSelectedIds.length} selected` : `${users.length} available`}
+                </Small>
               </View>
+              <Pressable
+                testID="compose-group-toggle"
+                onPress={() => { setGroupMode(v => !v); setGroupSelectedIds([]); setGroupTitle(""); }}
+                style={[s.groupToggle, groupMode && s.groupToggleOn]}
+              >
+                <Users size={14} color={groupMode ? colors.primary : colors.primaryFg} />
+                <Small color={groupMode ? colors.primary : colors.primaryFg} style={{ fontFamily: fonts.bold }}>Group</Small>
+              </Pressable>
+            </View>
+            <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.sm }}>
               <View style={s.composeSearch}>
                 <Search size={15} color={colors.mutedFg} />
                 <TextInput
@@ -686,7 +706,8 @@ export default function Chat() {
                   style={{ flex: 1, paddingVertical: 8, color: colors.foreground, fontSize: 14 }}
                 />
               </View>
-              <ScrollView style={{ maxHeight: 320, marginTop: spacing.sm }} keyboardShouldPersistTaps="handled">
+            </View>
+            <ScrollView style={{ flex: 1, marginTop: spacing.sm }} contentContainerStyle={{ paddingHorizontal: spacing.md, paddingBottom: spacing.md }} keyboardShouldPersistTaps="handled">
                 {users
                   .filter(u => {
                     const q = composeQuery.trim().toLowerCase();
@@ -726,9 +747,9 @@ export default function Chat() {
                     No authorized contacts are available for your account.
                   </Small>
                 )}
-              </ScrollView>
-              {groupMode && groupSelectedIds.length > 0 && (
-                <View style={{ marginTop: spacing.sm }}>
+            </ScrollView>
+            {groupMode && groupSelectedIds.length > 0 && (
+              <View style={{ padding: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.card }}>
                   <TextInput
                     testID="compose-group-title"
                     value={groupTitle}
@@ -760,10 +781,9 @@ export default function Chat() {
                   >
                     {creatingGroup ? <ActivityIndicator size="small" color={colors.primary} /> : <Small weight="700" color={colors.primary}>Create group ({groupSelectedIds.length} member{groupSelectedIds.length === 1 ? "" : "s"})</Small>}
                   </Pressable>
-                </View>
-              )}
-            </View>
-          </View>
+              </View>
+            )}
+          </SafeAreaView>
         </Modal>
       </SafeAreaView>
     );
@@ -772,35 +792,42 @@ export default function Chat() {
   // ── Active conversation view ──
   const other = active.other_participant;
   const memberCount = (active.participants || []).length;
+  const onlineCount = (active.participants || []).filter((p: any) => p.is_online).length;
+  const isThreadSupport = !active.is_group && other?.role === "admin";
+  const joinedNames = active.is_group
+    ? (active.participants || []).map((p: any) => (p.id === userId ? "You" : stripTitle(p.full_name || ""))).join(", ")
+    : "";
+  const groupSubline = joinedNames && joinedNames.length <= 60 ? joinedNames : `${memberCount} members`;
+  const subline = connection === "offline"
+    ? "reconnecting…"
+    : typing
+      ? "typing…"
+      : active.is_group
+        ? `${groupSubline}${onlineCount ? ` · ${onlineCount} online` : ""}`
+        : other?.is_online ? "online" : "offline";
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <View style={s.header}>
-          <Pressable onPress={() => setActive(null)} hitSlop={12}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
+          <Pressable onPress={() => setActive(null)} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
           <Pressable testID="chat-header-info" onPress={() => router.push({ pathname: "/(app)/conversation/[id]", params: { id: active.id } })} style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[s.avatar, { marginLeft: 12 }]}>
-              {active.is_group ? <Users size={18} color={colors.primary} /> : <Body weight="700" color={colors.primary}>{other?.avatar_initials || "?"}</Body>}
+            <View style={s.threadAvatar}>
+              {active.is_group
+                ? <Users size={20} color={colors.primaryFg} />
+                : isThreadSupport
+                  ? <ShieldCheck size={20} color={colors.primaryFg} />
+                  : <Body weight="700" color={colors.primaryFg}>{other?.avatar_initials || "?"}</Body>}
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Body weight="700">{active.title || other?.full_name || "Conversation"}</Body>
-              <Small>
-                {connection === "offline" ? "reconnecting…" : typing ? "typing…" : active.is_group ? `${memberCount} members` : other?.is_online ? "online" : "offline"}
-              </Small>
+              <Body weight="600" color={colors.primaryFg} numberOfLines={1}>{active.title || other?.full_name || "Conversation"}</Body>
+              <Small color={colors.primaryFg + "B3"} numberOfLines={1} style={{ fontSize: 12 }}>{subline}</Small>
             </View>
           </Pressable>
           <Pressable testID="chat-thread-menu" onPress={() => setThreadMenuOpen(true)} hitSlop={10} style={{ marginLeft: 8 }}>
-            <MoreVertical size={19} color={colors.foreground} />
+            <MoreVertical size={20} color={colors.primaryFg} />
           </Pressable>
         </View>
         {connectionBanner}
-        {active.is_group && (
-          <View style={s.encryptedBanner}>
-            <ShieldCheck size={13} color={colors.mutedFg} />
-            <Small color={colors.mutedFg} style={{ flex: 1, fontSize: 12 }}>
-              Encrypted in transit and at rest — shared with all {memberCount} members.
-            </Small>
-          </View>
-        )}
 
         {threadLoading ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
@@ -827,6 +854,15 @@ export default function Chat() {
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: spacing.md, gap: 8 }}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+          ListHeaderComponent={active.is_group ? (
+            <View style={{ alignItems: "center", paddingVertical: 8 }}>
+              <View style={s.encryptedPill}>
+                <Small color={colors.mutedFg} style={{ fontSize: 11, textAlign: "center" }}>
+                  Encrypted in transit and at rest · shared with all {memberCount} site-team members.
+                </Small>
+              </View>
+            </View>
+          ) : null}
           ListEmptyComponent={
             <View style={{ alignItems: "center", paddingTop: spacing.xl }}>
               <Small color={colors.mutedFg}>No messages yet — say hello.</Small>
@@ -935,13 +971,20 @@ export default function Chat() {
 
         <View style={s.inputBar}>
           {error ? <Small color={colors.destructive} style={s.inputError}>{error}</Small> : null}
-          <Pressable testID="chat-emoji-toggle" onPress={() => { setAttachMenuOpen(false); setEmojiRowOpen((v) => !v); }} hitSlop={8} style={s.iconBtn}>
-            <Smile size={20} color={colors.mutedFg} />
-          </Pressable>
-          <Pressable testID="chat-attach-toggle" onPress={() => { setEmojiRowOpen(false); setAttachMenuOpen((v) => !v); }} hitSlop={8} style={s.iconBtn}>
-            <Paperclip size={20} color={colors.mutedFg} />
-          </Pressable>
-          <TextInput testID="chat-input" placeholder="Type a message…" value={text} onChangeText={onType} style={s.textInput} multiline />
+          <View style={s.inputPill}>
+            <Pressable testID="chat-emoji-toggle" onPress={() => { setAttachMenuOpen(false); setEmojiRowOpen((v) => !v); }} hitSlop={8}>
+              <Smile size={20} color={colors.mutedFg} />
+            </Pressable>
+            <TextInput testID="chat-input" placeholder="Message" placeholderTextColor={colors.mutedFg + "99"} value={text} onChangeText={onType} style={s.textInput} multiline />
+            <Pressable testID="chat-attach-toggle" onPress={() => { setEmojiRowOpen(false); setAttachMenuOpen((v) => !v); }} hitSlop={8}>
+              <Paperclip size={20} color={colors.mutedFg} />
+            </Pressable>
+            {!text.trim() && (
+              <Pressable testID="chat-camera" onPress={() => pickAndSendImage(true)} hitSlop={8}>
+                <CameraIcon size={20} color={colors.mutedFg} />
+              </Pressable>
+            )}
+          </View>
           {text.trim() ? (
             <Pressable testID="chat-send" onPress={send} disabled={sending} style={[s.sendBtn, sending && { opacity: 0.5 }]}>
               {sending ? <ActivityIndicator size="small" color={colors.primaryFg} /> : <Send size={20} color={colors.primaryFg} />}
@@ -965,40 +1008,44 @@ export default function Chat() {
 }
 
 const s = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, paddingVertical: 12, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, paddingVertical: 12, backgroundColor: colors.primaryDeep },
+  headerIconBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: 4 },
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  badge: { minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  listAvatar: { width: 52, height: 52, borderRadius: 26, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  threadAvatar: { width: 40, height: 40, borderRadius: 20, marginLeft: 12, backgroundColor: colors.overlay20, borderWidth: 1, borderColor: colors.overlay25, alignItems: "center", justifyContent: "center" },
+  badge: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", ...shadows.sm },
   bubble: { maxWidth: "78%", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
-  bubbleMine: { alignSelf: "flex-end", backgroundColor: colors.primary, borderBottomRightRadius: 4 },
-  bubbleOther: { alignSelf: "flex-start", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderBottomLeftRadius: 4 },
+  bubbleMine: { alignSelf: "flex-end", backgroundColor: colors.primary, borderTopRightRadius: 4 },
+  bubbleOther: { alignSelf: "flex-start", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderTopLeftRadius: 4 },
   bubbleFailed: { opacity: 0.85, borderWidth: 1, borderColor: colors.destructive },
   offlineBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: spacing.md, paddingVertical: 8, backgroundColor: "rgba(216,154,60,0.12)", borderBottomWidth: 1, borderBottomColor: "rgba(216,154,60,0.25)" },
-  composeBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: spacing.md, paddingTop: spacing.sm },
-  filterChip: { flexDirection: "row", gap: 4, paddingHorizontal: 12, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  filterChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  archivedRow: { flexDirection: "row", alignItems: "center", marginHorizontal: spacing.md, marginTop: spacing.sm, paddingVertical: 10, paddingHorizontal: spacing.md, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  filterRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: radii.pill, backgroundColor: colors.surface },
+  filterChipOn: { backgroundColor: colors.primary },
+  filterMoreBtn: { padding: 6, borderRadius: radii.pill, backgroundColor: colors.surface },
+  archivedRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 12, backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
+  convRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 14, paddingRight: 12 },
+  convRowContent: { flex: 1, minWidth: 0, borderBottomWidth: 1, borderBottomColor: colors.border + "B3", paddingVertical: 12 },
+  encryptedPill: { maxWidth: "82%", backgroundColor: colors.card + "E6", borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm, paddingHorizontal: 12, paddingVertical: 6, ...shadows.sm },
   modalOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
   modalSheet: { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.md, paddingBottom: spacing.xl },
   flagBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 11, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
   flagBtnOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   composeSearch: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingHorizontal: 12 },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
-  inputBar: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", gap: 8, paddingHorizontal: spacing.md, paddingVertical: 12, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  inputBar: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", gap: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.surface },
   inputError: { width: "100%" },
-  textInput: { flex: 1, maxHeight: 100, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, color: colors.foreground, fontSize: 15 },
+  inputPill: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: radii.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, minHeight: 44 },
+  textInput: { flex: 1, maxHeight: 100, paddingVertical: 10, color: colors.foreground, fontSize: 15 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
-  iconBtn: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
   attachmentRow: { flexDirection: "row", alignItems: "center", minWidth: 140 },
   emojiRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 8, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   attachRow: { flexDirection: "row", gap: 10, paddingHorizontal: spacing.md, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   attachOption: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 10, borderRadius: radii.md, backgroundColor: colors.primary + "0D" },
-  groupToggle: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, height: 28, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
-  groupToggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  groupToggle: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, height: 28, borderRadius: 999, borderWidth: 1, borderColor: colors.overlay25, backgroundColor: colors.overlay10 },
+  groupToggleOn: { backgroundColor: colors.primaryFg, borderColor: colors.primaryFg },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: colors.primary + "66", alignItems: "center", justifyContent: "center" },
   checkboxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  avatarSupport: { backgroundColor: colors.destructive + "1A" },
-  encryptedBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: spacing.md, paddingVertical: 7, backgroundColor: colors.secondary + "55", borderBottomWidth: 1, borderBottomColor: colors.border },
   menuOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.25)" },
   menuCard: { position: "absolute", top: 68, right: spacing.md, minWidth: 210, backgroundColor: colors.card, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, overflow: "hidden", ...shadows.md },
   menuRow: { paddingHorizontal: spacing.md, paddingVertical: 13 },
