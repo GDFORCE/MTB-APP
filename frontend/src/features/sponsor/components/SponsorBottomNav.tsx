@@ -1,15 +1,19 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { Bell, FlaskConical, LayoutGrid, MapPin, UserRound } from "lucide-react-native";
+import { Bell, FlaskConical, LayoutGrid, MessageCircle, UserRound } from "lucide-react-native";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
-export type SponsorTab = "dashboard" | "trials" | "sites" | "notifs" | "me";
+// "sites" is kept in the union (not in the tab bar) purely so sites.tsx's
+// existing `active="sites"` prop still type-checks — Sites is no longer a
+// persistent tab (replaced by Messages) but stays reachable from Dashboard /
+// trial detail, so nothing gets highlighted while viewing it.
+export type SponsorTab = "dashboard" | "trials" | "chat" | "notifs" | "me" | "sites";
 
 const tabs = [
   { key: "dashboard", label: "Dashboard", icon: LayoutGrid, route: "/(app)/sponsor/dashboard" },
   { key: "trials", label: "Trials", icon: FlaskConical, route: "/(app)/sponsor/trials" },
-  { key: "sites", label: "Sites", icon: MapPin, route: "/(app)/sponsor/sites" },
+  { key: "chat", label: "Messages", icon: MessageCircle, route: "/(app)/chat" },
   { key: "notifs", label: "Notifs", icon: Bell, route: "/(app)/sponsor/notifications" },
   { key: "me", label: "Me", icon: UserRound, route: "/(app)/sponsor/profile" },
 ] as const;
@@ -17,9 +21,11 @@ const tabs = [
 export function SponsorBottomNav({
   active,
   unread = 0,
+  unreadMessages = 0,
 }: {
   active: SponsorTab;
   unread?: number;
+  unreadMessages?: number;
 }) {
   const router = useRouter();
   return (
@@ -27,6 +33,7 @@ export function SponsorBottomNav({
       {tabs.map((tab) => {
         const selected = active === tab.key;
         const Icon = tab.icon;
+        const badgeCount = tab.key === "notifs" ? unread : tab.key === "chat" ? unreadMessages : 0;
         return (
           <Pressable
             key={tab.key}
@@ -41,9 +48,9 @@ export function SponsorBottomNav({
                 strokeWidth={selected ? 2.4 : 1.8}
                 color={selected ? colors.primary : colors.mutedFg}
               />
-              {tab.key === "notifs" && unread > 0 ? (
+              {badgeCount > 0 ? (
                 <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{unread > 9 ? "9+" : unread}</Text>
+                  <Text style={styles.badgeText}>{badgeCount > 9 ? "9+" : badgeCount}</Text>
                 </View>
               ) : null}
             </View>

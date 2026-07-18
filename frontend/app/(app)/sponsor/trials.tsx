@@ -12,10 +12,11 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { AlertTriangle, ArrowUpRight, FlaskConical, Plus, Search, SlidersHorizontal, X } from "lucide-react-native";
+import { AlertTriangle, ArrowUpRight, Bell, FlaskConical, Search, SlidersHorizontal, UserCheck, X } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth/AuthContext";
 import { Rise } from "@/src/components/Rise";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
 import { getSponsorDashboard } from "@/src/features/sponsor/api";
 import type { SponsorTrial } from "@/src/features/sponsor/types";
@@ -35,6 +36,11 @@ function tone(status: string) {
 export default function SponsorTrialsScreen() {
   const router = useRouter();
   const { user } = useAuth();
+  const unread = useUnreadCount();
+  const fullName = user?.full_name || "";
+  const initials = user?.avatar_initials || fullName.split(/\s+/).filter(Boolean).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "?";
+  const roleLabel = user?.role === "cro" ? "CRO" : "Sponsor";
+  const organization = user?.organization || "";
   const [trials, setTrials] = useState<SponsorTrial[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -74,15 +80,19 @@ export default function SponsorTrialsScreen() {
   return (
     <View style={s.page}>
       <SafeAreaView edges={["top"]} style={s.header}>
-        <View>
-          <Text style={s.headerEyebrow}>{user?.role === "cro" ? "CRO PORTFOLIO" : "SPONSOR PORTFOLIO"}</Text>
+        <View style={s.headerIdentity}>
+          <Text style={s.headerEyebrow} numberOfLines={1}>{roleLabel}{organization ? ` · ${organization}` : ""}</Text>
           <Text style={s.headerTitle}>Trials</Text>
         </View>
-        {canAddTrial ? (
-          <Pressable onPress={() => router.push("/(app)/sponsor/add-trial" as never)} style={({ pressed }) => [s.addButton, pressed && s.pressed]}>
-            <Plus size={17} color={colors.white} /><Text style={s.addButtonText}>Add Trial</Text>
-          </Pressable>
-        ) : <View style={{ width: 36 }} />}
+        <Pressable onPress={() => router.push("/(app)/sponsor/notifications" as never)} style={s.iconButton}>
+          <Bell size={18} color={colors.primaryFg} />
+          {!!unread && unread > 0 && (
+            <View style={s.notifBadge}><Text style={s.notifBadgeText}>{Math.min(9, unread)}</Text></View>
+          )}
+        </Pressable>
+        <Pressable onPress={() => router.push("/(app)/sponsor/profile" as never)} style={s.iconButton}>
+          <Text style={s.avatarText}>{initials}</Text>
+        </Pressable>
       </SafeAreaView>
 
       <View style={s.toolbar}>
@@ -94,6 +104,13 @@ export default function SponsorTrialsScreen() {
         <Pressable onPress={() => setFiltersOpen((value) => !value)} style={[s.filterToggle, (filtersOpen || phase !== "All") && s.filterToggleActive]}>
           <SlidersHorizontal size={17} color={(filtersOpen || phase !== "All") ? colors.white : colors.mutedFg} />
         </Pressable>
+        {canAddTrial && (
+          <Pressable onPress={() => router.push("/(app)/sponsor/add-trial" as never)} style={({ pressed }) => [pressed && s.pressed]}>
+            <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.addButton}>
+              <FlaskConical size={15} color={colors.white} /><Text style={s.addButtonText}>Add Trial</Text>
+            </LinearGradient>
+          </Pressable>
+        )}
       </View>
 
       {filtersOpen && (
@@ -112,12 +129,13 @@ export default function SponsorTrialsScreen() {
         </View>
       )}
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.statusRow}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.statusScroll} contentContainerStyle={s.statusRow}>
         {statuses.map((value) => {
           const count = value === "All" ? trials.length : trials.filter((trial) => trial.status.toLowerCase() === value.toLowerCase()).length;
           const active = status === value;
           return (
-            <Pressable key={value} onPress={() => setStatus(value)} style={[s.statusChip, active && s.statusChipActive]}>
+            <Pressable key={value} onPress={() => setStatus(value)} style={[s.statusChip, active && s.statusChipActiveBorder]}>
+              {active && <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={StyleSheet.absoluteFill} />}
               <Text style={[s.statusChipText, active && s.statusChipTextActive]}>{value} {count}</Text>
             </Pressable>
           );
@@ -158,30 +176,24 @@ export default function SponsorTrialsScreen() {
                 </View>
                 <Text style={s.trialTitle}>{trial.title}</Text>
                 <View style={s.tags}>
-                  {[trial.phase, trial.condition, trial.drug, trial.recruitmentStatus, trial.sites ? `${trial.sites} sites` : ""].filter(Boolean).map((value) => (
+                  {[trial.phase, trial.condition, trial.drug, trial.sites ? `${trial.sites} sites` : ""].filter(Boolean).map((value) => (
                     <View key={value} style={s.tag}><Text style={s.tagText}>{value}</Text></View>
                   ))}
                 </View>
-                <View style={s.attribution}>
-                  <Text style={s.attributionText}>
-                    Created by {trial.createdByName || "Unknown"}
-                    {trial.createdByRole ? ` · ${trial.createdByRole.toUpperCase()}` : ""}
-                  </Text>
-                  <Text style={s.attributionText}>{formatDate(trial.createdAt)}</Text>
-                </View>
-                <View style={s.countRow}>
-                  <View style={s.countItem}><Text style={s.countValue}>{trial.randomized}</Text><Text style={s.countLabel}>Randomized</Text></View>
-                  <View style={s.countDivider} />
-                  <View style={s.countItem}><Text style={s.countValue}>{trial.sites}</Text><Text style={s.countLabel}>Sites</Text></View>
-                  <View style={s.countDivider} />
-                  <View style={s.countItem}><Text style={s.countValue}>{trial.enrolled}</Text><Text style={s.countLabel}>Enrolled</Text></View>
-                </View>
                 <View style={s.progressMeta}>
                   <Text style={s.progressLabel}>Enrolled</Text>
-                  <Text style={s.progressValue}>{trial.enrolled}/{trial.target || "—"} · {pct}%</Text>
+                  <Text style={s.progressValue}>{trial.enrolled}</Text>
                 </View>
                 <View style={s.track}>
                   <AnimatedProgress percentage={pct} />
+                </View>
+                <View style={s.attribution}>
+                  <UserCheck size={13} color={colors.primary} />
+                  <Text style={s.attributionText} numberOfLines={1}>
+                    Created by {trial.createdByName || "Unknown"}
+                    {trial.createdByRole ? ` · ${trial.createdByRole.toUpperCase()}` : ""}
+                  </Text>
+                  <Text style={s.attributionDate}>{formatDate(trial.createdAt)}</Text>
                 </View>
                 </Pressable>
               </Rise>
@@ -228,10 +240,15 @@ function AnimatedProgress({ percentage }: { percentage: number }) {
 
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background },
-  header: { minHeight: 74, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.primaryDeep },
-  headerEyebrow: { fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.1, color: "rgba(255,255,255,0.64)" },
+  header: { minHeight: 74, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 13, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.primaryDeep },
+  headerIdentity: { flex: 1, minWidth: 0 },
+  headerEyebrow: { fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.1, color: "rgba(255,255,255,0.64)", textTransform: "uppercase" },
   headerTitle: { marginTop: 2, fontFamily: fonts.heading, fontSize: 20, color: colors.white },
-  addButton: { height: 36, paddingHorizontal: 12, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(255,255,255,0.14)" },
+  iconButton: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  avatarText: { fontFamily: fonts.bold, fontSize: 12, color: colors.primaryFg },
+  notifBadge: { position: "absolute", top: -2, right: -2, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3, alignItems: "center", justifyContent: "center", backgroundColor: colors.destructive, borderWidth: 2, borderColor: colors.primaryDeep },
+  notifBadgeText: { fontFamily: fonts.bold, fontSize: 8, color: colors.white },
+  addButton: { height: 43, paddingHorizontal: 14, borderRadius: 15, flexDirection: "row", alignItems: "center", gap: 5 },
   addButtonText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.white },
   toolbar: { padding: 14, paddingBottom: 10, flexDirection: "row", gap: 8 },
   searchBox: { flex: 1, height: 43, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 15, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
@@ -247,9 +264,10 @@ const s = StyleSheet.create({
   phaseChipActive: { backgroundColor: colors.primary },
   phaseText: { fontFamily: fonts.medium, fontSize: 10.5, color: colors.mutedFg },
   phaseTextActive: { color: colors.white },
-  statusRow: { paddingHorizontal: 14, paddingBottom: 12, gap: 8 },
-  statusChip: { paddingHorizontal: 13, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  statusChipActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  statusScroll: { flexGrow: 0, flexShrink: 0 },
+  statusRow: { paddingHorizontal: 14, paddingBottom: 12, gap: 8, alignItems: "center" },
+  statusChip: { overflow: "hidden", alignSelf: "flex-start", paddingHorizontal: 13, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  statusChipActiveBorder: { borderColor: "transparent" },
   statusChipText: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.mutedFg },
   statusChipTextActive: { color: colors.white },
   list: { paddingHorizontal: 14, paddingBottom: 26, gap: 12 },
@@ -266,14 +284,10 @@ const s = StyleSheet.create({
   tags: { marginTop: 9, flexDirection: "row", flexWrap: "wrap", gap: 6 },
   tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.surface },
   tagText: { fontFamily: fonts.medium, fontSize: 9.5, color: colors.mutedFg },
-  attribution: { marginTop: 10, paddingTop: 9, flexDirection: "row", justifyContent: "space-between", gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  attributionText: { flexShrink: 1, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
-  countRow: { marginTop: 11, paddingVertical: 9, flexDirection: "row", alignItems: "center", borderRadius: 14, backgroundColor: colors.surface },
-  countItem: { flex: 1, alignItems: "center" },
-  countValue: { fontFamily: fonts.heading, fontSize: 15, color: colors.foreground },
-  countLabel: { marginTop: 1, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
-  countDivider: { width: 1, height: 25, backgroundColor: colors.border },
-  progressMeta: { marginTop: 13, marginBottom: 6, flexDirection: "row", justifyContent: "space-between" },
+  attribution: { marginTop: 12, paddingTop: 9, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(107,20,55,0.1)" },
+  attributionText: { flex: 1, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
+  attributionDate: { fontFamily: fonts.mono, fontSize: 10, color: colors.mutedFg },
+  progressMeta: { marginTop: 10, marginBottom: 6, flexDirection: "row", justifyContent: "space-between" },
   progressLabel: { fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
   progressValue: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.foreground },
   track: { height: 7, borderRadius: 999, overflow: "hidden", backgroundColor: colors.surface },

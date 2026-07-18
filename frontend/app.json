@@ -33,6 +33,12 @@
           "resizeMode": "contain",
           "backgroundColor": "#FBF2E8"
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow My Trial Board to access your microphone to record voice messages."
+        }
       ]
     ],
     "experiments": {
