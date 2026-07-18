@@ -14,8 +14,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search } from "lucide-react-native";
-import { colors, spacing } from "@/src/theme/tokens";
+import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive } from "lucide-react-native";
+import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api, tokenStore, wsUrl } from "@/src/api/client";
@@ -42,7 +42,7 @@ export default function Chat() {
   const [starting, setStarting] = useState<string | null>(null);
   const [connection, setConnection] = useState<Connection>("connecting");
   const [directoryLoaded, setDirectoryLoaded] = useState(false);
-  const [filter, setFilter] = useState<"all" | "unread" | "groups">("all");
+  const [filter, setFilter] = useState<"all" | "unread" | "groups" | "archived">("all");
   const [details, setDetails] = useState<any | null>(null);
   const [flagBusy, setFlagBusy] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -247,22 +247,24 @@ export default function Chat() {
   };
 
   // Per-user pin/mute via POST /conversations/{id}/flags (member-gated).
-  const setFlags = async (c: any, flags: { pinned?: boolean; muted?: boolean }) => {
+  const setFlags = async (c: any, flags: { pinned?: boolean; muted?: boolean; archived?: boolean }) => {
     setFlagBusy(true);
     try {
       const r = await api.post(`/conversations/${c.id}/flags`, flags);
       animateNextLayout();
-      setConvs(prev => prev.map(x => x.id === c.id ? { ...x, pinned: r.data.pinned, muted: r.data.muted } : x));
-      setDetails((prev: any) => prev && prev.id === c.id ? { ...prev, pinned: r.data.pinned, muted: r.data.muted } : prev);
+      setConvs(prev => prev.map(x => x.id === c.id ? { ...x, pinned: r.data.pinned, muted: r.data.muted, archived: r.data.archived } : x));
+      setDetails((prev: any) => prev && prev.id === c.id ? { ...prev, pinned: r.data.pinned, muted: r.data.muted, archived: r.data.archived } : prev);
     } catch {
       setError("Couldn't update this conversation. Try again.");
     } finally { setFlagBusy(false); }
   };
 
-  const unreadTotal = convs.filter(c => (c.unread_count || 0) > 0).length;
-  const groupTotal = convs.filter(c => c.is_group).length;
-  const visibleConvs = convs
-    .filter(c => filter === "all" ? true : filter === "unread" ? (c.unread_count || 0) > 0 : !!c.is_group)
+  const unarchivedConvs = convs.filter(c => !c.archived);
+  const archivedConvs = convs.filter(c => c.archived);
+  const unreadTotal = unarchivedConvs.filter(c => (c.unread_count || 0) > 0).length;
+  const groupTotal = unarchivedConvs.filter(c => c.is_group).length;
+  const visibleConvs = (filter === "archived" ? archivedConvs : unarchivedConvs)
+    .filter(c => filter === "all" || filter === "archived" ? true : filter === "unread" ? (c.unread_count || 0) > 0 : !!c.is_group)
     .slice()
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
 
@@ -293,7 +295,7 @@ export default function Chat() {
         {!loading && !loadError && (
           <View style={s.filterRow}>
             {([
-              { key: "all", label: `All · ${convs.length}` },
+              { key: "all", label: `All · ${unarchivedConvs.length}` },
               { key: "unread", label: `Unread · ${unreadTotal}` },
               { key: "groups", label: `Groups · ${groupTotal}` },
             ] as const).map(f => {
@@ -305,6 +307,13 @@ export default function Chat() {
               );
             })}
           </View>
+        )}
+        {!loading && !loadError && archivedConvs.length > 0 && (
+          <Pressable testID="chat-filter-archived" onPress={() => { animateNextLayout(); setFilter(filter === "archived" ? "all" : "archived"); }} style={s.archivedRow}>
+            <Archive size={16} color={colors.mutedFg} />
+            <Small weight="700" style={{ flex: 1, marginLeft: 10 }} color={filter === "archived" ? colors.primary : colors.foreground}>Archived</Small>
+            <Small color={colors.mutedFg}>{archivedConvs.length}</Small>
+          </Pressable>
         )}
         {loading ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
@@ -448,6 +457,15 @@ export default function Chat() {
                     <Small weight="700" color={details.muted ? colors.primaryFg : colors.primary}>{details.muted ? "Unmute" : "Mute"}</Small>
                   </Pressable>
                 </View>
+                <Pressable
+                  testID="conv-archive-toggle"
+                  disabled={flagBusy}
+                  onPress={() => setFlags(details, { archived: !details.archived })}
+                  style={[s.flagBtn, { marginTop: 10 }, details.archived && s.flagBtnOn]}
+                >
+                  <Archive size={14} color={details.archived ? colors.primaryFg : colors.primary} />
+                  <Small weight="700" color={details.archived ? colors.primaryFg : colors.primary}>{details.archived ? "Unarchive" : "Archive"}</Small>
+                </Pressable>
                 <Pressable onPress={() => { const c = details; setDetails(null); openConv(c); }} style={[s.flagBtn, { marginTop: 10, borderColor: colors.border }]}>
                   <Small weight="700" color={colors.foreground}>Open conversation</Small>
                 </Pressable>
@@ -617,6 +635,7 @@ const s = StyleSheet.create({
   filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: spacing.md, paddingTop: spacing.sm },
   filterChip: { paddingHorizontal: 12, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   filterChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  archivedRow: { flexDirection: "row", alignItems: "center", marginHorizontal: spacing.md, marginTop: spacing.sm, paddingVertical: 10, paddingHorizontal: spacing.md, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   modalOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
   modalSheet: { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.md, paddingBottom: spacing.xl },
   flagBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 11, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
