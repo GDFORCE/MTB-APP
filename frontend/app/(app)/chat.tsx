@@ -14,10 +14,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check } from "lucide-react-native";
+import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check, CheckCheck, ChevronDown, MoreVertical, ShieldCheck } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
-import { colors, spacing, radii } from "@/src/theme/tokens";
+import { colors, spacing, radii, shadows } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api, tokenStore, wsUrl } from "@/src/api/client";
@@ -26,6 +26,13 @@ import { uploadFile, downloadFile, PickedAsset } from "@/src/lib/upload";
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets, AudioModule, useAudioPlayer } from "expo-audio";
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
+
+function formatSize(bytes?: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 type Connection = "connecting" | "online" | "offline";
 
@@ -72,6 +79,8 @@ export default function Chat() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeQuery, setComposeQuery] = useState("");
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [inboxMenuOpen, setInboxMenuOpen] = useState(false);
+  const [threadMenuOpen, setThreadMenuOpen] = useState(false);
   const [emojiRowOpen, setEmojiRowOpen] = useState(false);
   const [groupMode, setGroupMode] = useState(false);
   const [groupSelectedIds, setGroupSelectedIds] = useState<string[]>([]);
@@ -397,11 +406,14 @@ export default function Chat() {
         <View style={s.header}>
           <Pressable onPress={() => router.back()} hitSlop={12}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
           <View style={{ flex: 1, marginLeft: 12 }}>
-            <Eyebrow color={colors.accent}>Conversations</Eyebrow>
+            <Eyebrow color={colors.accent}>Secure inbox</Eyebrow>
             <H1>Messages</H1>
           </View>
           <Pressable testID="chat-compose" onPress={() => { setComposeQuery(""); setComposeOpen(true); }} hitSlop={10} style={s.composeBtn} accessibilityLabel="New message">
             <SquarePen size={19} color={colors.primary} />
+          </Pressable>
+          <Pressable testID="chat-menu" onPress={() => setInboxMenuOpen(true)} hitSlop={10} style={[s.composeBtn, { marginLeft: 8 }]} accessibilityLabel="More options">
+            <MoreVertical size={19} color={colors.primary} />
           </Pressable>
         </View>
         {connectionBanner}
@@ -416,6 +428,7 @@ export default function Chat() {
               return (
                 <Pressable key={f.key} testID={`chat-filter-${f.key}`} onPress={() => { animateNextLayout(); setFilter(f.key); }} style={[s.filterChip, on && s.filterChipOn]}>
                   <Small weight="700" color={on ? colors.primaryFg : colors.mutedFg}>{f.label}</Small>
+                  {f.key === "groups" && <ChevronDown size={13} color={on ? colors.primaryFg : colors.mutedFg} />}
                 </Pressable>
               );
             })}
@@ -449,24 +462,28 @@ export default function Chat() {
         ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xxl }}>
           {error ? <Small color={colors.destructive} style={{ marginBottom: spacing.sm }}>{error}</Small> : null}
-          {visibleConvs.length > 0 && <Eyebrow style={{ marginBottom: spacing.sm }}>{filter === "all" ? "Recent" : filter === "unread" ? "Unread" : "Groups"}</Eyebrow>}
+          {visibleConvs.length > 0 && <Eyebrow style={{ marginBottom: spacing.sm }}>{filter === "all" ? "Recent" : filter === "unread" ? "Unread" : filter === "archived" ? "Archived" : "Groups"}</Eyebrow>}
           {convs.length > 0 && visibleConvs.length === 0 && (
             <Card style={{ alignItems: "center", paddingVertical: spacing.lg, marginBottom: spacing.sm }}>
-              <Body weight="600">{filter === "unread" ? "You're all caught up" : "No group conversations yet"}</Body>
-              <Small style={{ marginTop: 4 }}>{filter === "unread" ? "No unread conversations." : "Group chats appear here once you're added to one."}</Small>
+              <Body weight="600">{filter === "unread" ? "You're all caught up" : filter === "archived" ? "No archived chats" : "No group conversations yet"}</Body>
+              <Small style={{ marginTop: 4 }}>{filter === "unread" ? "No unread conversations." : filter === "archived" ? "Conversations you archive appear here." : "Group chats appear here once you're added to one."}</Small>
             </Card>
           )}
           {visibleConvs.map(c => {
             const other = c.other_participant;
             const name = c.title || other?.full_name || "Conversation";
+            const isSupport = !c.is_group && other?.role === "admin";
+            const showReadReceipt = (c.unread_count || 0) === 0 && !!c.last_message;
             return (
               <Pressable key={c.id} testID={`conv-${c.id}`} onPress={() => openConv(c)} onLongPress={() => setDetails(c)}>
                 <Card style={{ marginBottom: spacing.sm }}>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <View style={s.avatar}>
+                    <View style={[s.avatar, isSupport && s.avatarSupport]}>
                       {c.is_group
                         ? <Users size={18} color={colors.primary} />
-                        : <Body weight="700" color={colors.primary}>{other?.avatar_initials || "?"}</Body>}
+                        : isSupport
+                          ? <ShieldCheck size={18} color={colors.destructive} />
+                          : <Body weight="700" color={colors.primary}>{other?.avatar_initials || "?"}</Body>}
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -480,7 +497,10 @@ export default function Chat() {
                           </View>
                         )}
                       </View>
-                      <Small numberOfLines={1} style={{ marginTop: 2 }}>{c.last_message || "Start chatting"}</Small>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                        {showReadReceipt && <CheckCheck size={12} color={colors.mutedFg} />}
+                        <Small numberOfLines={1} style={{ flexShrink: 1 }}>{c.last_message || "Start chatting"}</Small>
+                      </View>
                     </View>
                   </View>
                 </Card>
@@ -517,6 +537,35 @@ export default function Chat() {
           ))}
         </ScrollView>
         )}
+
+        {/* Inbox overflow menu (kebab in the header) */}
+        <Modal visible={inboxMenuOpen} transparent animationType="fade" onRequestClose={() => setInboxMenuOpen(false)}>
+          <Pressable style={s.menuOverlay} onPress={() => setInboxMenuOpen(false)}>
+            <View style={s.menuCard}>
+              <Pressable
+                testID="chat-menu-mark-read"
+                onPress={() => { setInboxMenuOpen(false); Alert.alert("Coming soon", "Mark all as read will be available in a future update."); }}
+                style={s.menuRow}
+              >
+                <Body weight="600">Mark all as read</Body>
+              </Pressable>
+              <Pressable
+                testID="chat-menu-notifications"
+                onPress={() => { setInboxMenuOpen(false); Alert.alert("Coming soon", "Notification settings will be available in a future update."); }}
+                style={[s.menuRow, { borderTopWidth: 1, borderTopColor: colors.border }]}
+              >
+                <Body weight="600">Notification settings</Body>
+              </Pressable>
+              <Pressable
+                testID="chat-menu-archived"
+                onPress={() => { setInboxMenuOpen(false); animateNextLayout(); setFilter(filter === "archived" ? "all" : "archived"); }}
+                style={[s.menuRow, { borderTopWidth: 1, borderTopColor: colors.border }]}
+              >
+                <Body weight="600">Archived chats</Body>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
 
         {/* Conversation / group details + pin/mute (long-press a conversation) */}
         <Modal visible={!!details} transparent animationType="slide" onRequestClose={() => setDetails(null)}>
@@ -717,8 +766,19 @@ export default function Chat() {
               </Small>
             </View>
           </Pressable>
+          <Pressable testID="chat-thread-menu" onPress={() => setThreadMenuOpen(true)} hitSlop={10} style={{ marginLeft: 8 }}>
+            <MoreVertical size={19} color={colors.foreground} />
+          </Pressable>
         </View>
         {connectionBanner}
+        {active.is_group && (
+          <View style={s.encryptedBanner}>
+            <ShieldCheck size={13} color={colors.mutedFg} />
+            <Small color={colors.mutedFg} style={{ flex: 1, fontSize: 12 }}>
+              Encrypted in transit and at rest — shared with all {memberCount} members.
+            </Small>
+          </View>
+        )}
 
         {threadLoading ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 10 }}>
@@ -768,7 +828,14 @@ export default function Chat() {
                       style={s.attachmentRow}
                     >
                       {item.type === "image" ? <ImageIcon size={18} color={mine ? colors.primaryFg : colors.primary} /> : <FileText size={18} color={mine ? colors.primaryFg : colors.primary} />}
-                      <Body color={mine ? colors.primaryFg : colors.foreground} numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>{item.attachment.name}</Body>
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Body color={mine ? colors.primaryFg : colors.foreground} numberOfLines={1}>{item.attachment.name}</Body>
+                        {item.type !== "image" && item.attachment.size ? (
+                          <Small color={mine ? colors.primaryFg : colors.mutedFg} style={{ fontSize: 11, marginTop: 1, opacity: mine ? 0.85 : 1 }}>
+                            {formatSize(item.attachment.size)} · Tap to open
+                          </Small>
+                        ) : null}
+                      </View>
                     </Pressable>
                   )
                 ) : (
@@ -823,6 +890,27 @@ export default function Chat() {
             </Pressable>
           </View>
         )}
+        <Modal visible={threadMenuOpen} transparent animationType="fade" onRequestClose={() => setThreadMenuOpen(false)}>
+          <Pressable style={s.menuOverlay} onPress={() => setThreadMenuOpen(false)}>
+            <View style={s.menuCard}>
+              <Pressable
+                testID="chat-thread-menu-info"
+                onPress={() => { setThreadMenuOpen(false); router.push({ pathname: "/(app)/conversation/[id]", params: { id: active.id } }); }}
+                style={s.menuRow}
+              >
+                <Body weight="600">View channel info</Body>
+              </Pressable>
+              <Pressable
+                testID="chat-thread-menu-search"
+                onPress={() => { setThreadMenuOpen(false); Alert.alert("Coming soon", "Searching within a conversation will be available in a future update."); }}
+                style={[s.menuRow, { borderTopWidth: 1, borderTopColor: colors.border }]}
+              >
+                <Body weight="600">Search in conversation</Body>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
+
         <View style={s.inputBar}>
           {error ? <Small color={colors.destructive} style={s.inputError}>{error}</Small> : null}
           <Pressable testID="chat-emoji-toggle" onPress={() => { setAttachMenuOpen(false); setEmojiRowOpen((v) => !v); }} hitSlop={8} style={s.iconBtn}>
@@ -865,7 +953,7 @@ const s = StyleSheet.create({
   offlineBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: spacing.md, paddingVertical: 8, backgroundColor: "rgba(216,154,60,0.12)", borderBottomWidth: 1, borderBottomColor: "rgba(216,154,60,0.25)" },
   composeBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
   filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: spacing.md, paddingTop: spacing.sm },
-  filterChip: { paddingHorizontal: 12, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  filterChip: { flexDirection: "row", gap: 4, paddingHorizontal: 12, height: 30, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   filterChipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   archivedRow: { flexDirection: "row", alignItems: "center", marginHorizontal: spacing.md, marginTop: spacing.sm, paddingVertical: 10, paddingHorizontal: spacing.md, borderRadius: radii.lg, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   modalOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
@@ -887,4 +975,9 @@ const s = StyleSheet.create({
   groupToggleOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: colors.primary + "66", alignItems: "center", justifyContent: "center" },
   checkboxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
+  avatarSupport: { backgroundColor: colors.destructive + "1A" },
+  encryptedBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: spacing.md, paddingVertical: 7, backgroundColor: colors.secondary + "55", borderBottomWidth: 1, borderBottomColor: colors.border },
+  menuOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.25)" },
+  menuCard: { position: "absolute", top: 68, right: spacing.md, minWidth: 210, backgroundColor: colors.card, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, overflow: "hidden", ...shadows.md },
+  menuRow: { paddingHorizontal: spacing.md, paddingVertical: 13 },
 });
