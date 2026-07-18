@@ -11,15 +11,20 @@
 //   • send stays disabled without text; HTTP sending works even while the
 //     socket is down, so the offline banner never blocks output silently.
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal } from "react-native";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive } from "lucide-react-native";
+import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon } from "lucide-react-native";
+import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api, tokenStore, wsUrl } from "@/src/api/client";
 import { animateNextLayout } from "@/src/lib/motion";
+import { uploadFile, downloadFile, PickedAsset } from "@/src/lib/upload";
+
+const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
 
 type Connection = "connecting" | "online" | "offline";
 
@@ -47,6 +52,8 @@ export default function Chat() {
   const [flagBusy, setFlagBusy] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeQuery, setComposeQuery] = useState("");
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [emojiRowOpen, setEmojiRowOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
@@ -229,6 +236,46 @@ export default function Chat() {
       setSending(false);
     }
   }, [active, userId]);
+
+  const sendAttachment = useCallback(async (asset: PickedAsset, msgType: "image" | "document") => {
+    if (!active) return;
+    setSending(true);
+    try {
+      const uploaded = await uploadFile(asset, { scopeType: "conversation", scopeId: active.id });
+      const response = await api.post(`/conversations/${active.id}/messages`, {
+        content: "", type: msgType,
+        attachment: { file_id: uploaded.id, name: uploaded.name, size: uploaded.size, content_type: uploaded.content_type },
+      });
+      setMessages(prev => [...prev, response.data]);
+      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: response.data.content } : c));
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    } catch {
+      Alert.alert("Couldn't send attachment", "Try again in a moment.");
+    } finally {
+      setSending(false);
+    }
+  }, [active]);
+
+  const pickAndSendImage = async (fromCamera: boolean) => {
+    const perm = fromCamera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert("Permission needed", fromCamera ? "Camera access is required to take a photo." : "Photo library access is required."); return; }
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ["images"] });
+    if (result.canceled || !result.assets?.length) return;
+    const a = result.assets[0];
+    await sendAttachment({ uri: a.uri, name: a.fileName || `photo-${Date.now()}.jpg`, mimeType: a.mimeType || "image/jpeg" }, "image");
+  };
+
+  const pickAndSendDocument = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    const a = result.assets[0];
+    await sendAttachment({ uri: a.uri, name: a.name || "document", mimeType: a.mimeType, file: (a as any).file }, "document");
+  };
 
   const send = async () => {
     const content = text.trim();
@@ -593,7 +640,18 @@ export default function Chat() {
             const bubble = (
               <View style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther, item.failed && s.bubbleFailed]}>
                 {senderName ? <Small weight="700" color={colors.primary} style={{ marginBottom: 2 }}>{senderName}</Small> : null}
-                <Body color={mine ? colors.primaryFg : colors.foreground}>{item.content}</Body>
+                {item.attachment ? (
+                  <Pressable
+                    testID={`attachment-${item.id}`}
+                    onPress={() => downloadFile({ id: item.attachment.file_id, name: item.attachment.name, content_type: item.attachment.content_type }).catch(() => Alert.alert("Couldn't open file", "Try again in a moment."))}
+                    style={s.attachmentRow}
+                  >
+                    {item.type === "image" ? <ImageIcon size={18} color={mine ? colors.primaryFg : colors.primary} /> : <FileText size={18} color={mine ? colors.primaryFg : colors.primary} />}
+                    <Body color={mine ? colors.primaryFg : colors.foreground} numberOfLines={1} style={{ flex: 1, marginLeft: 8 }}>{item.attachment.name}</Body>
+                  </Pressable>
+                ) : (
+                  <Body color={mine ? colors.primaryFg : colors.foreground}>{item.content}</Body>
+                )}
                 <Small color={mine ? colors.overlay25 : colors.mutedFg} style={{ marginTop: 4, fontSize: 10 }}>
                   {item.pending
                     ? "Sending…"
@@ -621,8 +679,36 @@ export default function Chat() {
         />
         )}
 
+        {emojiRowOpen && (
+          <View style={s.emojiRow}>
+            {QUICK_EMOJI.map((e) => (
+              <Pressable key={e} testID={`emoji-${e}`} onPress={() => setText((t) => t + e)} style={{ padding: 6 }}>
+                <Body style={{ fontSize: 22 }}>{e}</Body>
+              </Pressable>
+            ))}
+          </View>
+        )}
+        {attachMenuOpen && (
+          <View style={s.attachRow}>
+            <Pressable testID="attach-camera" onPress={() => { setAttachMenuOpen(false); pickAndSendImage(true); }} style={s.attachOption}>
+              <CameraIcon size={20} color={colors.primary} /><Small color={colors.primary} weight="700">Camera</Small>
+            </Pressable>
+            <Pressable testID="attach-photo" onPress={() => { setAttachMenuOpen(false); pickAndSendImage(false); }} style={s.attachOption}>
+              <ImageIcon size={20} color={colors.primary} /><Small color={colors.primary} weight="700">Photo</Small>
+            </Pressable>
+            <Pressable testID="attach-document" onPress={() => { setAttachMenuOpen(false); pickAndSendDocument(); }} style={s.attachOption}>
+              <FileText size={20} color={colors.primary} /><Small color={colors.primary} weight="700">Document</Small>
+            </Pressable>
+          </View>
+        )}
         <View style={s.inputBar}>
           {error ? <Small color={colors.destructive} style={s.inputError}>{error}</Small> : null}
+          <Pressable testID="chat-emoji-toggle" onPress={() => { setAttachMenuOpen(false); setEmojiRowOpen((v) => !v); }} hitSlop={8} style={s.iconBtn}>
+            <Smile size={20} color={colors.mutedFg} />
+          </Pressable>
+          <Pressable testID="chat-attach-toggle" onPress={() => { setEmojiRowOpen(false); setAttachMenuOpen((v) => !v); }} hitSlop={8} style={s.iconBtn}>
+            <Paperclip size={20} color={colors.mutedFg} />
+          </Pressable>
           <TextInput testID="chat-input" placeholder="Type a message…" value={text} onChangeText={onType} style={s.textInput} multiline />
           <Pressable testID="chat-send" onPress={send} disabled={sending || !text.trim()} style={[s.sendBtn, (sending || !text.trim()) && { opacity: 0.5 }]}>
             {sending ? <ActivityIndicator size="small" color={colors.primaryFg} /> : <Send size={20} color={colors.primaryFg} />}
@@ -657,4 +743,9 @@ const s = StyleSheet.create({
   inputError: { width: "100%" },
   textInput: { flex: 1, maxHeight: 100, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, color: colors.foreground, fontSize: 15 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  iconBtn: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
+  attachmentRow: { flexDirection: "row", alignItems: "center", minWidth: 140 },
+  emojiRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 8, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  attachRow: { flexDirection: "row", gap: 10, paddingHorizontal: spacing.md, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  attachOption: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 10, borderRadius: radii.md, backgroundColor: colors.primary + "0D" },
 });
