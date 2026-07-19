@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ArrowLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check, CheckCheck, ChevronDown, MoreVertical, ShieldCheck } from "lucide-react-native";
+import { ChevronLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check, CheckCheck, ChevronDown, MoreVertical, ShieldCheck, Play, Pause } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { colors, spacing, radii, shadows, fonts } from "@/src/theme/tokens";
@@ -48,6 +48,18 @@ function stripTitle(name: string): string {
   return name.replace(/^(Dr\.|Mr\.|Ms\.)\s/, "");
 }
 
+// On-brand sender-name colours for group bubbles (reference senderPalette).
+const SENDER_PALETTE = [colors.info, colors.violet, colors.accent, colors.warning, colors.success, colors.destructive];
+function senderColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return SENDER_PALETTE[hash % SENDER_PALETTE.length];
+}
+
+function fmtDuration(secs: number): string {
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+}
+
 function formatRowTimestamp(iso?: string): string {
   if (!iso) return "";
   const date = new Date(iso);
@@ -72,18 +84,26 @@ type Connection = "connecting" | "online" | "offline";
 
 function VoiceBubble({ fileId, duration, mine }: { fileId: string; duration?: number; mine: boolean }) {
   const [uri, setUri] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
   const player = useAudioPlayer(uri || undefined);
-  const load = async () => {
-    if (uri) { player.seekTo(0); player.play(); return; }
-    const { fetchFileUri } = await import("@/src/lib/upload");
-    const u = await fetchFileUri(fileId);
-    setUri(u);
+  useEffect(() => { if (uri) { player.play(); setPlaying(true); } }, [uri]);
+  const toggle = async () => {
+    if (!uri) {
+      const { fetchFileUri } = await import("@/src/lib/upload");
+      setUri(await fetchFileUri(fileId));
+      return;
+    }
+    if (playing) { player.pause(); setPlaying(false); }
+    else { player.seekTo(0); player.play(); setPlaying(true); }
   };
-  useEffect(() => { if (uri) player.play(); }, [uri]);
+  const fg = mine ? colors.primaryFg : colors.primary;
   return (
-    <Pressable testID={`voice-${fileId}`} onPress={load} style={{ flexDirection: "row", alignItems: "center", minWidth: 120 }}>
-      <Send size={16} color={mine ? colors.primaryFg : colors.primary} style={{ transform: [{ rotate: "0deg" }] }} />
-      <Small color={mine ? colors.primaryFg : colors.foreground} style={{ marginLeft: 8 }}>{duration ? `${duration}s voice message` : "Voice message"}</Small>
+    <Pressable testID={`voice-${fileId}`} onPress={toggle} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 2 }}>
+      {playing ? <Pause size={24} color={fg} /> : <Play size={24} color={fg} />}
+      <View style={{ height: 4, width: 112, borderRadius: 2, backgroundColor: mine ? colors.overlay25 : colors.border }}>
+        <View style={{ height: 4, width: "33%", borderRadius: 2, backgroundColor: mine ? colors.card : colors.primary }} />
+      </View>
+      <Small color={mine ? colors.primaryFg + "B3" : colors.mutedFg} style={{ fontSize: 11, fontFamily: fonts.mono }}>{fmtDuration(duration ?? 0)}</Small>
     </Pressable>
   );
 }
@@ -123,7 +143,9 @@ export default function Chat() {
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder);
   const [recording, setRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
   const recordStartRef = useRef<number>(0);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
@@ -352,6 +374,9 @@ export default function Chat() {
     if (!status.granted) { Alert.alert("Permission needed", "Microphone access is required to record a voice message."); return; }
     setAttachMenuOpen(false); setEmojiRowOpen(false);
     recordStartRef.current = Date.now();
+    setRecordingTime(0);
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
     await audioRecorder.prepareToRecordAsync();
     audioRecorder.record();
     setRecording(true);
@@ -359,6 +384,8 @@ export default function Chat() {
 
   const stopAndSendRecording = async () => {
     setRecording(false);
+    if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+    setRecordingTime(0);
     await audioRecorder.stop();
     const uri = audioRecorder.uri;
     if (!uri || !active) return;
@@ -383,6 +410,8 @@ export default function Chat() {
 
   const cancelRecording = async () => {
     setRecording(false);
+    if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+    setRecordingTime(0);
     await audioRecorder.stop().catch(() => {});
   };
 
@@ -454,7 +483,7 @@ export default function Chat() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
         <View style={s.header}>
-          <Pressable testID="chat-back" onPress={goBack} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
+          <Pressable testID="chat-back" onPress={goBack} hitSlop={12}><ChevronLeft size={24} color={colors.primaryFg} /></Pressable>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Eyebrow color={colors.primaryFg + "8C"}>Secure inbox</Eyebrow>
             <H1 color={colors.primaryFg} style={{ fontSize: 20 }}>Messages</H1>
@@ -668,7 +697,7 @@ export default function Chat() {
         <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
           <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
             <View style={s.header}>
-              <Pressable testID="compose-close" onPress={() => setComposeOpen(false)} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
+              <Pressable testID="compose-close" onPress={() => setComposeOpen(false)} hitSlop={12}><ChevronLeft size={24} color={colors.primaryFg} /></Pressable>
               <View style={{ flex: 1, marginLeft: 16 }}>
                 <Body weight="600" color={colors.primaryFg}>{groupMode ? "New group" : "New chat"}</Body>
                 <Small color={colors.primaryFg + "B3"} style={{ fontSize: 12 }}>
@@ -803,7 +832,7 @@ export default function Chat() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <View style={s.header}>
-          <Pressable onPress={() => setActive(null)} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
+          <Pressable onPress={() => setActive(null)} hitSlop={12}><ChevronLeft size={24} color={colors.primaryFg} /></Pressable>
           <Pressable testID="chat-header-info" onPress={() => router.push({ pathname: "/(app)/conversation/[id]", params: { id: active.id } })} style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
             <View style={s.threadAvatar}>
               {active.is_group
@@ -867,25 +896,33 @@ export default function Chat() {
             const senderName = active.is_group && !mine
               ? (active.participants || []).find((p: any) => p.id === item.sender_id)?.full_name
               : null;
+            const isRead = mine && item.read_by && Object.keys(item.read_by).some((id: string) => id !== userId);
             const bubble = (
               <View style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther, item.failed && s.bubbleFailed]}>
-                {senderName ? <Small weight="700" color={colors.primary} style={{ marginBottom: 2 }}>{senderName}</Small> : null}
+                {senderName ? <Small style={{ marginBottom: 2, fontFamily: fonts.bold, fontSize: 12 }} color={senderColor(senderName)}>{senderName}</Small> : null}
                 {item.attachment ? (
                   item.type === "voice" ? (
                     <VoiceBubble fileId={item.attachment.file_id} duration={item.attachment.duration} mine={mine} />
+                  ) : item.type === "image" ? (
+                    <Pressable
+                      testID={`attachment-${item.id}`}
+                      onPress={() => downloadFile({ id: item.attachment.file_id, name: item.attachment.name, content_type: item.attachment.content_type }).catch(() => Alert.alert("Couldn't open file", "Try again in a moment."))}
+                      style={[s.imageBox, { backgroundColor: mine ? colors.overlay10 : colors.surface }]}
+                    >
+                      <CameraIcon size={32} color={mine ? colors.primaryFg + "99" : colors.mutedFg + "B3"} />
+                      <Small color={mine ? colors.primaryFg + "B3" : colors.mutedFg} style={{ fontSize: 12 }} numberOfLines={1}>{item.attachment.name}</Small>
+                    </Pressable>
                   ) : (
                     <Pressable
                       testID={`attachment-${item.id}`}
                       onPress={() => downloadFile({ id: item.attachment.file_id, name: item.attachment.name, content_type: item.attachment.content_type }).catch(() => Alert.alert("Couldn't open file", "Try again in a moment."))}
-                      style={s.attachmentRow}
+                      style={[s.docBox, { backgroundColor: mine ? colors.overlay20 : colors.surface }]}
                     >
-                      {item.type === "image" ? <ImageIcon size={18} color={mine ? colors.primaryFg : colors.primary} /> : <FileText size={18} color={mine ? colors.primaryFg : colors.primary} />}
-                      <View style={{ flex: 1, marginLeft: 8 }}>
-                        <Body color={mine ? colors.primaryFg : colors.foreground} numberOfLines={1}>{item.attachment.name}</Body>
-                        {item.type !== "image" && item.attachment.size ? (
-                          <Small color={mine ? colors.primaryFg : colors.mutedFg} style={{ fontSize: 11, marginTop: 1, opacity: mine ? 0.85 : 1 }}>
-                            {formatSize(item.attachment.size)} · Tap to open
-                          </Small>
+                      <FileText size={28} color={mine ? colors.primaryFg + "CC" : colors.destructive} />
+                      <View style={{ minWidth: 0, flexShrink: 1 }}>
+                        <Small numberOfLines={1} color={mine ? colors.primaryFg : colors.foreground} style={{ fontSize: 12, fontFamily: fonts.semibold }}>{item.attachment.name}</Small>
+                        {item.attachment.size ? (
+                          <Small color={mine ? colors.primaryFg + "99" : colors.mutedFg} style={{ fontSize: 10 }}>{formatSize(item.attachment.size)} · Tap to open</Small>
                         ) : null}
                       </View>
                     </Pressable>
@@ -893,14 +930,20 @@ export default function Chat() {
                 ) : (
                   <Body color={mine ? colors.primaryFg : colors.foreground}>{item.content}</Body>
                 )}
-                <Small color={mine ? colors.overlay25 : colors.mutedFg} style={{ marginTop: 4, fontSize: 10 }}>
-                  {item.pending
-                    ? "Sending…"
-                    : item.failed
-                      ? "Not sent"
-                      : `${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${
-                          mine && item.read_by && Object.keys(item.read_by).some(id => id !== userId) ? " · Read" : ""}`}
-                </Small>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, marginTop: 3 }}>
+                  <Small color={mine ? colors.primaryFg + "B3" : colors.mutedFg + "B3"} style={{ fontSize: 10 }}>
+                    {item.pending
+                      ? "Sending…"
+                      : item.failed
+                        ? "Not sent"
+                        : new Date(item.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                  </Small>
+                  {mine && !item.pending && !item.failed && (
+                    isRead
+                      ? <CheckCheck size={13} color={colors.accent} />
+                      : <Check size={13} color={colors.primaryFg + "B3"} />
+                  )}
+                </View>
               </View>
             );
             if (!item.failed) return bubble;
@@ -929,16 +972,30 @@ export default function Chat() {
             ))}
           </View>
         )}
-        {attachMenuOpen && (
+        {recording && (
+          <View style={s.recordingBar}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: colors.destructive }} />
+              <Small color={colors.destructive} style={{ fontFamily: fonts.mono, fontSize: 13 }}>Recording… {fmtDuration(recordingTime)}</Small>
+            </View>
+            <Pressable testID="chat-recording-stop" onPress={stopAndSendRecording} hitSlop={10}>
+              <Small color={colors.destructive} style={{ fontFamily: fonts.bold, fontSize: 13 }}>Stop</Small>
+            </Pressable>
+          </View>
+        )}
+        {attachMenuOpen && !recording && (
           <View style={s.attachRow}>
-            <Pressable testID="attach-camera" onPress={() => { setAttachMenuOpen(false); pickAndSendImage(true); }} style={s.attachOption}>
-              <CameraIcon size={20} color={colors.primary} /><Small color={colors.primary} weight="700">Camera</Small>
+            <Pressable testID="attach-document" onPress={() => { setAttachMenuOpen(false); pickAndSendDocument(); }} style={s.attachOption}>
+              <View style={[s.attachCircle, { backgroundColor: colors.destructive + "1A" }]}><FileText size={20} color={colors.destructive} /></View>
+              <Small color={colors.mutedFg} style={{ fontSize: 11 }}>Document</Small>
             </Pressable>
             <Pressable testID="attach-photo" onPress={() => { setAttachMenuOpen(false); pickAndSendImage(false); }} style={s.attachOption}>
-              <ImageIcon size={20} color={colors.primary} /><Small color={colors.primary} weight="700">Photo</Small>
+              <View style={[s.attachCircle, { backgroundColor: colors.violet + "1F" }]}><ImageIcon size={20} color={colors.violet} /></View>
+              <Small color={colors.mutedFg} style={{ fontSize: 11 }}>Gallery</Small>
             </Pressable>
-            <Pressable testID="attach-document" onPress={() => { setAttachMenuOpen(false); pickAndSendDocument(); }} style={s.attachOption}>
-              <FileText size={20} color={colors.primary} /><Small color={colors.primary} weight="700">Document</Small>
+            <Pressable testID="attach-camera" onPress={() => { setAttachMenuOpen(false); pickAndSendImage(true); }} style={s.attachOption}>
+              <View style={[s.attachCircle, { backgroundColor: colors.info + "1F" }]}><CameraIcon size={20} color={colors.info} /></View>
+              <Small color={colors.mutedFg} style={{ fontSize: 11 }}>Camera</Small>
             </Pressable>
           </View>
         )}
@@ -1032,10 +1089,13 @@ const s = StyleSheet.create({
   inputPill: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: radii.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, minHeight: 44 },
   textInput: { flex: 1, maxHeight: 100, paddingVertical: 10, color: colors.foreground, fontSize: 15 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
-  attachmentRow: { flexDirection: "row", alignItems: "center", minWidth: 140 },
+  imageBox: { width: 208, height: 160, borderRadius: radii.sm, margin: 2, alignItems: "center", justifyContent: "center", gap: 4, overflow: "hidden" },
+  docBox: { flexDirection: "row", alignItems: "center", gap: 12, margin: 2, borderRadius: radii.sm, paddingHorizontal: 10, paddingVertical: 8, minWidth: 160 },
+  recordingBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingVertical: 12, backgroundColor: colors.card, borderTopWidth: 1, borderTopColor: colors.border },
   emojiRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, paddingHorizontal: spacing.md, paddingVertical: 8, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  attachRow: { flexDirection: "row", gap: 10, paddingHorizontal: spacing.md, paddingVertical: 10, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  attachOption: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 10, borderRadius: radii.md, backgroundColor: colors.primary + "0D" },
+  attachRow: { flexDirection: "row", gap: 24, paddingHorizontal: 20, paddingVertical: 14, borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  attachOption: { alignItems: "center", gap: 6 },
+  attachCircle: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
   groupToggle: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, height: 28, borderRadius: 999, borderWidth: 1, borderColor: colors.overlay25, backgroundColor: colors.overlay10 },
   groupToggleOn: { backgroundColor: colors.primaryFg, borderColor: colors.primaryFg },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: colors.primary + "66", alignItems: "center", justifyContent: "center" },
