@@ -228,11 +228,17 @@ export default function Chat() {
               : c));
           } else if (data.type === "typing" && data.conversation_id === activeIdRef.current) {
             setTyping(true); setTimeout(() => setTyping(false), 2500);
-          } else if (data.type === "read" && data.conversation_id === activeIdRef.current) {
-            // live read receipt: mark my messages as read by that member
-            setMessages(prev => prev.map(m => m.sender_id === userId
-              ? { ...m, read_by: { ...(m.read_by || {}), [data.user_id]: data.read_at } }
-              : m));
+          } else if (data.type === "read") {
+            // live read receipt: flip the inbox ✓✓ and, when the thread is
+            // open, mark my messages as read by that member
+            setConvs(prev => prev.map(c => c.id === data.conversation_id && c.last_sender_id === userId
+              ? { ...c, last_read: true }
+              : c));
+            if (data.conversation_id === activeIdRef.current) {
+              setMessages(prev => prev.map(m => m.sender_id === userId
+                ? { ...m, read_by: { ...(m.read_by || {}), [data.user_id]: data.read_at } }
+                : m));
+            }
           }
         } catch {}
       };
