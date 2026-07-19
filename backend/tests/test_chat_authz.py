@@ -171,9 +171,15 @@ def test_history_message_and_read_are_membership_scoped(world):
                 f"/api/conversations/{cid}/read",
                 headers=world["pi_b_h"],
             )
+            mine = await cli.get("/api/conversations", headers=world["pi_a_h"])
 
         assert sent.status_code == 200, sent.text
         assert sent.json()["content"] == "scoped hello"
+        # last-message attribution surfaces in the list contract: PI-A sent
+        # the last message and CRC-A has read it, so the sender sees ✓✓-read.
+        row = next(r for r in mine.json() if r["id"] == cid)
+        assert row["last_sender_id"] == world["pi_a"]["id"]
+        assert row["last_read"] is True
         assert history.status_code == 200, history.text
         assert any(row["id"] == sent.json()["id"] for row in history.json())
         assert read.status_code == 200, read.text

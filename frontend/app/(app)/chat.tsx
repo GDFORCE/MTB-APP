@@ -60,6 +60,16 @@ function fmtDuration(secs: number): string {
   return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 }
 
+// Inbox preview text for a message — mirrors the backend's stored preview
+// so optimistic/WS updates don't blank attachment previews (content is "").
+function previewFor(msg: any): string {
+  if (msg?.content) return msg.content;
+  if (msg?.type === "image") return "📷 Photo";
+  if (msg?.type === "document") return `📄 ${msg?.attachment?.name || "Document"}`;
+  if (msg?.type === "voice") return "🎤 Voice message";
+  return msg?.content || "";
+}
+
 function formatRowTimestamp(iso?: string): string {
   if (!iso) return "";
   const date = new Date(iso);
@@ -214,7 +224,7 @@ export default function Chat() {
               ws.send(JSON.stringify({ type: "read", conversation_id: data.conversation_id }));
             }
             setConvs(prev => prev.map(c => c.id === data.conversation_id
-              ? { ...c, last_message: data.content, unread_count: data.conversation_id === activeIdRef.current ? 0 : (c.unread_count || 0) + (data.sender_id === userId ? 0 : 1) }
+              ? { ...c, last_message: previewFor(data), last_sender_id: data.sender_id, last_read: false, unread_count: data.conversation_id === activeIdRef.current ? 0 : (c.unread_count || 0) + (data.sender_id === userId ? 0 : 1) }
               : c));
           } else if (data.type === "typing" && data.conversation_id === activeIdRef.current) {
             setTyping(true); setTimeout(() => setTyping(false), 2500);
@@ -321,7 +331,7 @@ export default function Chat() {
         const replaced = prev.map(m => (m.id === localId ? response.data : m));
         return replaced.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i);
       });
-      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: response.data.content } : c));
+      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: previewFor(response.data), last_sender_id: userId, last_read: false } : c));
     } catch {
       setMessages(prev => prev.map(m => m.id === localId ? { ...m, pending: false, failed: true } : m));
     } finally {
@@ -339,7 +349,7 @@ export default function Chat() {
         attachment: { file_id: uploaded.id, name: uploaded.name, size: uploaded.size, content_type: uploaded.content_type },
       });
       setMessages(prev => [...prev, response.data]);
-      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: response.data.content } : c));
+      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: previewFor(response.data), last_sender_id: userId, last_read: false } : c));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } catch {
       Alert.alert("Couldn't send attachment", "Try again in a moment.");
@@ -399,7 +409,7 @@ export default function Chat() {
         attachment: { file_id: uploaded.id, name: uploaded.name, size: uploaded.size, content_type: uploaded.content_type, duration: durationSec },
       });
       setMessages(prev => [...prev, response.data]);
-      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: response.data.content } : c));
+      setConvs(prev => prev.map(c => c.id === active.id ? { ...c, last_message: previewFor(response.data), last_sender_id: userId, last_read: false } : c));
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } catch {
       Alert.alert("Couldn't send voice message", "Try again in a moment.");
@@ -549,7 +559,11 @@ export default function Chat() {
             const other = c.other_participant;
             const name = c.title || other?.full_name || "Conversation";
             const isSupport = !c.is_group && other?.role === "admin";
-            const showReadReceipt = (c.unread_count || 0) === 0 && !!c.last_message;
+            const lastFromSelf = !!c.last_sender_id && c.last_sender_id === userId;
+            const lastSenderName = !lastFromSelf && c.is_group && c.last_sender_id
+              ? stripTitle(((c.participants || []).find((p: any) => p.id === c.last_sender_id)?.full_name) || "")
+              : "";
+            const prefix = lastFromSelf ? "You: " : lastSenderName ? `${lastSenderName}: ` : "";
             const isUnread = (c.unread_count || 0) > 0;
             const timestamp = formatRowTimestamp(c.updated_at);
             const theme = isSupport ? SUPPORT_AVATAR_THEME : avatarTheme(c.id);
@@ -569,8 +583,11 @@ export default function Chat() {
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                      {showReadReceipt && <CheckCheck size={14} color={colors.mutedFg} />}
-                      <Small numberOfLines={1} color={isUnread ? colors.foreground + "BF" : colors.mutedFg} style={{ flexShrink: 1, fontFamily: isUnread ? fonts.medium : fonts.regular }}>{c.last_message || "Start chatting"}</Small>
+                      {lastFromSelf && !!c.last_message && <CheckCheck size={14} color={c.last_read ? colors.accent : colors.mutedFg + "99"} />}
+                      <Small numberOfLines={1} color={isUnread ? colors.foreground + "BF" : colors.mutedFg} style={{ flexShrink: 1, fontFamily: isUnread ? fonts.medium : fonts.regular }}>
+                        {prefix ? <Small color={colors.foreground + "A6"} style={{ fontFamily: fonts.medium }}>{prefix}</Small> : null}
+                        {c.last_message || "Start chatting"}
+                      </Small>
                     </View>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                       {c.pinned ? <Pin size={14} color={colors.mutedFg + "99"} style={{ transform: [{ rotate: "-45deg" }] }} /> : null}

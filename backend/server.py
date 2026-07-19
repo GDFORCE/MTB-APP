@@ -3660,6 +3660,16 @@ async def list_conversations(user=Depends(current_user)):
             **_visible_messages_filter(c['id'], c, user['id']),
             'sender_id': {'$ne': user['id']}, f'read_by.{user["id"]}': {'$exists': False},
         })
+        # last-message attribution for the inbox preview line: who sent it,
+        # and whether every other member has read it (drives the ✓✓ tick).
+        last = await db.messages.find_one(
+            _visible_messages_filter(c['id'], c, user['id']),
+            {'_id': 0, 'sender_id': 1, 'read_by': 1},
+            sort=[('created_at', -1)])
+        last_sender_id = (last or {}).get('sender_id')
+        last_recipients = [pid for pid in c.get('participant_ids', []) if pid != last_sender_id]
+        last_read = bool(last) and bool(last_recipients) and all(
+            pid in ((last or {}).get('read_by') or {}) for pid in last_recipients)
         # other participant for 1-1
         other = None
         participants = None
@@ -3677,6 +3687,7 @@ async def list_conversations(user=Depends(current_user)):
         out.append({
             **c, 'unread_count': unread, 'other_participant': other,
             'participants': participants,
+            'last_sender_id': last_sender_id, 'last_read': last_read,
             'pinned': user['id'] in (c.get('pinned_by') or []),
             'muted': user['id'] in (c.get('muted_by') or []),
             'archived': user['id'] in (c.get('archived_by') or []),
