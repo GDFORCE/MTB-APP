@@ -516,12 +516,6 @@ export default function Chat() {
         ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: isPatient ? 120 : spacing.xxl }}>
           {error ? <Small color={colors.destructive} style={{ marginHorizontal: spacing.md, marginVertical: spacing.sm }}>{error}</Small> : null}
-          {convs.length > 0 && visibleConvs.length === 0 && (
-            <Card style={{ alignItems: "center", paddingVertical: spacing.lg, margin: spacing.md }}>
-              <Body weight="600">{filter === "unread" ? "You're all caught up" : filter === "archived" ? "No archived chats" : "No group conversations yet"}</Body>
-              <Small style={{ marginTop: 4 }}>{filter === "unread" ? "No unread conversations." : filter === "archived" ? "Conversations you archive appear here." : "Group chats appear here once you're added to one."}</Small>
-            </Card>
-          )}
           {visibleConvs.map(c => {
             const other = c.other_participant;
             const name = c.title || other?.full_name || "Conversation";
@@ -563,34 +557,12 @@ export default function Chat() {
               </Pressable>
             );
           })}
-          {convs.length === 0 && users.length === 0 && (
-            <Card style={{ alignItems: "center", paddingVertical: spacing.lg, margin: spacing.md }}>
-              <Body weight="600">No conversations available</Body>
-              <Small style={{ marginTop: 4, textAlign: "center" }}>Your care-team contacts appear here once they are linked to your account.</Small>
-            </Card>
+          {visibleConvs.length === 0 && (
+            <View style={{ alignItems: "center", justifyContent: "center", paddingVertical: 80, gap: 12, paddingHorizontal: spacing.lg }}>
+              <Search size={40} color={colors.mutedFg + "66"} />
+              <Small color={colors.mutedFg}>No chats found</Small>
+            </View>
           )}
-          {users.length > 0 && <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm, marginHorizontal: spacing.md }}>Start a new chat</Eyebrow>}
-          {users.map(u => (
-            <Pressable
-              key={u.id}
-              testID={`user-${u.id}`}
-              disabled={!!starting}
-              onPress={() => startWith(u.id).catch((e: any) => setError(e?.response?.data?.detail || "Couldn't start this conversation."))}
-            >
-              <Card style={{ marginHorizontal: spacing.md, marginBottom: spacing.sm, opacity: starting && starting !== u.id ? 0.6 : 1 }}>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <View style={s.avatar}><Body weight="700" color={colors.primary}>{u.avatar_initials}</Body></View>
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Body weight="700">{u.full_name}</Body>
-                    <Small style={{ marginTop: 2 }}>{u.role.toUpperCase()} · {u.organization || u.email}</Small>
-                  </View>
-                  {starting === u.id
-                    ? <ActivityIndicator size="small" color={colors.primary} />
-                    : u.is_online && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.success }} />}
-                </View>
-              </Card>
-            </Pressable>
-          ))}
         </ScrollView>
         )}
 
