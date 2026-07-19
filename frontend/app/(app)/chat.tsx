@@ -24,6 +24,8 @@ import { api, tokenStore, wsUrl } from "@/src/api/client";
 import { animateNextLayout } from "@/src/lib/motion";
 import { uploadFile, downloadFile, PickedAsset } from "@/src/lib/upload";
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets, AudioModule, useAudioPlayer } from "expo-audio";
+import { PatientBottomNav } from "@/src/features/patient/components/PatientBottomNav";
+import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
 
@@ -413,6 +415,22 @@ export default function Chat() {
     } finally { setFlagBusy(false); }
   };
 
+  // Back must always land somewhere: pop history when it exists, otherwise
+  // fall through to the caller's role dashboard (covers reload/deep-link
+  // entries where this screen is the first thing on the stack).
+  const goBack = () => {
+    if (router.canGoBack()) { router.back(); return; }
+    const role = user?.role;
+    if (role === "patient") router.replace("/(app)/patient/dashboard");
+    else if (role === "site") router.replace("/(app)/site/dashboard");
+    else if (role === "pi" || role === "smo") router.replace("/(app)/pi/dashboard");
+    else if (role === "crc") router.replace("/(app)/crc/dashboard");
+    else router.replace("/(app)/sponsor/dashboard");
+  };
+
+  const isPatient = user?.role === "patient";
+  const isSponsorLike = user?.role === "sponsor" || user?.role === "cro";
+
   const unarchivedConvs = convs.filter(c => !c.archived);
   const archivedConvs = convs.filter(c => c.archived);
   const unreadTotal = unarchivedConvs.reduce((sum, c) => sum + (c.unread_count || 0), 0);
@@ -436,7 +454,7 @@ export default function Chat() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
         <View style={s.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
+          <Pressable testID="chat-back" onPress={goBack} hitSlop={12}><ArrowLeft size={22} color={colors.primaryFg} /></Pressable>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Eyebrow color={colors.primaryFg + "8C"}>Secure inbox</Eyebrow>
             <H1 color={colors.primaryFg} style={{ fontSize: 20 }}>Messages</H1>
@@ -496,7 +514,7 @@ export default function Chat() {
             </Card>
           </View>
         ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: isPatient ? 120 : spacing.xxl }}>
           {error ? <Small color={colors.destructive} style={{ marginHorizontal: spacing.md, marginVertical: spacing.sm }}>{error}</Small> : null}
           {convs.length > 0 && visibleConvs.length === 0 && (
             <Card style={{ alignItems: "center", paddingVertical: spacing.lg, margin: spacing.md }}>
@@ -785,6 +803,10 @@ export default function Chat() {
             )}
           </SafeAreaView>
         </Modal>
+
+        {/* Role tab bar — inbox only; threads hide it, matching the reference. */}
+        {isPatient && <PatientBottomNav active="messages" />}
+        {isSponsorLike && <SponsorBottomNav active="chat" unreadMessages={unreadTotal} />}
       </SafeAreaView>
     );
   }
