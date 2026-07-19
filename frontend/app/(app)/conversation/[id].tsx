@@ -64,7 +64,8 @@ export default function ConversationInfo() {
   const [editDescription, setEditDescription] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
-  const [addMemberAutoFocus, setAddMemberAutoFocus] = useState(false);
+  const [showMemberSearch, setShowMemberSearch] = useState(false);
+  const [memberQuery, setMemberQuery] = useState("");
   const [autoDeleteOpen, setAutoDeleteOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
@@ -236,6 +237,10 @@ export default function ConversationInfo() {
 
   const participants: any[] = conv.participants || [];
   const onlineCount = participants.filter((p) => p.is_online).length;
+  const memberQ = memberQuery.trim().toLowerCase();
+  const roster = memberQ
+    ? participants.filter((p) => `${p.full_name || ""} ${p.role || ""}`.toLowerCase().includes(memberQ))
+    : participants;
   const autoDeleteLabel = AUTO_DELETE_OPTIONS.find((o) => o.days === (conv.auto_delete_days ?? null))?.label || "Off";
   const complianceStandard = !!conv.trial_id;
 
@@ -306,7 +311,7 @@ export default function ConversationInfo() {
       <ScrollView contentContainerStyle={{ padding: spacing.md, paddingTop: 0, paddingBottom: spacing.xxl, gap: spacing.sm }}>
         {conv.is_group && (
           <View style={s.actionsCard}>
-            <Pressable testID="conv-info-add-member" style={s.heroAction} onPress={() => { setAddMemberAutoFocus(false); setAddMemberOpen(true); }}>
+            <Pressable testID="conv-info-add-member" style={s.heroAction} onPress={() => setAddMemberOpen(true)}>
               <View style={[s.actionIcon, { backgroundColor: colors.primary + "1A" }]}><UserPlus size={18} color={colors.primary} /></View>
               <Small color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold }}>Add member</Small>
             </Pressable>
@@ -314,7 +319,7 @@ export default function ConversationInfo() {
               <View style={[s.actionIcon, { backgroundColor: colors.violet + "1F" }]}><Link2 size={18} color={colors.violet} /></View>
               <Small color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold }}>Invite link</Small>
             </Pressable>
-            <Pressable testID="conv-info-find-member" style={s.heroAction} onPress={() => { setAddMemberAutoFocus(true); setAddMemberOpen(true); }}>
+            <Pressable testID="conv-info-find-member" style={s.heroAction} onPress={() => { setShowMemberSearch(v => !v); if (showMemberSearch) setMemberQuery(""); }}>
               <View style={[s.actionIcon, { backgroundColor: colors.info + "1F" }]}><Search size={18} color={colors.info} /></View>
               <Small color={colors.foreground} style={{ fontSize: 11, fontFamily: fonts.semibold }}>Find member</Small>
             </Pressable>
@@ -323,10 +328,34 @@ export default function ConversationInfo() {
 
         <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.md }}>
           <Eyebrow style={{ flex: 1 }}>Who&apos;s in this channel</Eyebrow>
-          <Small>{participants.length} of {participants.length}</Small>
+          <Small>{roster.length} of {participants.length}</Small>
         </View>
+        {showMemberSearch && (
+          <View style={s.memberSearchBox}>
+            <Search size={16} color={colors.mutedFg + "99"} />
+            <TextInput
+              testID="conv-info-member-search"
+              autoFocus
+              value={memberQuery}
+              onChangeText={setMemberQuery}
+              placeholder="Find a member or role"
+              placeholderTextColor={colors.mutedFg + "99"}
+              style={{ flex: 1, paddingVertical: 10, color: colors.foreground, fontSize: 14 }}
+            />
+            {memberQuery ? (
+              <Pressable testID="conv-info-member-search-clear" onPress={() => setMemberQuery("")} hitSlop={8}>
+                <X size={14} color={colors.mutedFg} />
+              </Pressable>
+            ) : null}
+          </View>
+        )}
         <Card padded={false}>
-          {participants.map((p, i) => {
+          {roster.length === 0 && (
+            <Small style={{ padding: spacing.lg, textAlign: "center", fontSize: 12 }}>
+              No member matches &ldquo;{memberQuery.trim()}&rdquo;. Clear the search to see the full roster.
+            </Small>
+          )}
+          {roster.map((p, i) => {
             const tone = roleTone(String(p.role || ""));
             return (
               <View key={p.id}>
@@ -487,7 +516,6 @@ export default function ConversationInfo() {
         onClose={() => setAddMemberOpen(false)}
         conversationId={String(id)}
         existingIds={participants.map((p) => p.id)}
-        autoFocusSearch={addMemberAutoFocus}
         onMemberAdded={(updated) => setConv((prev: any) => ({ ...prev, participant_ids: updated.participant_ids }))}
       />
 
@@ -532,6 +560,7 @@ const s = StyleSheet.create({
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
   memberRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: spacing.md },
   memberDivider: { marginLeft: 70, borderTopWidth: 1, borderTopColor: colors.border + "99" },
+  memberSearchBox: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingHorizontal: 14 },
   adminBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radii.pill, backgroundColor: colors.accent + "26" },
   roleDot: { width: 6, height: 6, borderRadius: 3 },
   onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
