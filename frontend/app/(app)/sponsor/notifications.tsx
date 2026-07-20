@@ -80,12 +80,26 @@ export default function SponsorNotifications() {
         <Text style={s.summaryText}>{unread ? "New trial, site and recruitment updates need your attention." : "You have reviewed every portfolio update."}</Text>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filters}>
-        {filters.map((value) => (
-          <Pressable key={value} onPress={() => setFilter(value)} style={[s.filter, filter === value && s.filterActive]}>
-            <Text style={[s.filterText, filter === value && s.filterTextActive]}>{value}</Text>
-          </Pressable>
-        ))}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filtersScroll} contentContainerStyle={s.filters}>
+        {filters.map((value) => {
+          const count = value === "All" ? items.length : items.filter((item) => categoryOf(item) === value).length;
+          const active = filter === value;
+          return (
+            <Pressable key={value} onPress={() => setFilter(value)} style={s.filterPressable}>
+              {active ? (
+                <LinearGradient colors={dawnGradient as any} style={s.filterActive}>
+                  <Text style={s.filterTextActive}>{value}</Text>
+                  <View style={s.filterCountActive}><Text style={s.filterCountTextActive}>{count}</Text></View>
+                </LinearGradient>
+              ) : (
+                <View style={s.filter}>
+                  <Text style={s.filterText}>{value}</Text>
+                  <View style={s.filterCount}><Text style={s.filterCountText}>{count}</Text></View>
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
       </ScrollView>
 
       {loading ? <View style={s.center}><ActivityIndicator size="large" color={colors.primary} /></View> : error ? (
@@ -101,18 +115,17 @@ export default function SponsorNotifications() {
             const category = categoryOf(item);
             const { Icon, fg, bg } = iconOf(category);
             return (
-              <Pressable key={item.id} onPress={() => !item.read && markRead(item.id)} style={[s.card, item.read && { opacity: 0.67 }]}>
+              <Pressable key={item.id} onPress={() => !item.read && markRead(item.id)} style={[s.card, !item.read && s.cardUnread]}>
                 {!item.read && <LinearGradient colors={dawnGradient as any} style={s.unreadRail} />}
                 <View style={[s.icon, { backgroundColor: bg }]}><Icon size={18} color={fg} /></View>
                 <View style={{ flex: 1 }}>
                   <View style={s.cardTop}>
-                    <Text style={s.title}>{item.title}</Text>
-                    {!item.read && <View style={s.dot} />}
+                    <Text style={[s.title, !item.read && s.titleUnread]} numberOfLines={1}>{item.title}</Text>
+                    <Text style={s.time}>{item.created_at ? new Date(item.created_at).toLocaleString() : ""}</Text>
                   </View>
-                  <Text style={s.body}>{item.body || item.message || "Open this update for more information."}</Text>
+                  <Text style={s.body} numberOfLines={2}>{item.body || item.message || "Open this update for more information."}</Text>
                   <View style={s.metaRow}>
                     <Text style={s.category}>{category}</Text>
-                    <Text style={s.time}>{item.created_at ? new Date(item.created_at).toLocaleString() : ""}</Text>
                   </View>
                 </View>
               </Pressable>
@@ -142,26 +155,33 @@ const s = StyleSheet.create({
   summaryRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
   summaryLabel: { fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1, color: colors.primary },
   summaryText: { marginTop: 4, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
-  filters: { paddingHorizontal: 14, paddingVertical: 11, gap: 8 },
-  filter: { paddingHorizontal: 13, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  filterActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  filtersScroll: { flexGrow: 0, flexShrink: 0 },
+  filters: { paddingHorizontal: 14, paddingVertical: 11, gap: 8, alignItems: "flex-start" },
+  filterPressable: { alignSelf: "flex-start" },
+  filter: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 13, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  filterActive: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 13, paddingVertical: 7, borderRadius: 999, ...shadows.sm },
   filterText: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.mutedFg },
-  filterTextActive: { color: colors.white },
+  filterTextActive: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.white },
+  filterCount: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.secondary },
+  filterCountText: { fontFamily: fonts.mono, fontSize: 9, color: colors.mutedFg },
+  filterCountActive: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.25)" },
+  filterCountTextActive: { fontFamily: fonts.mono, fontSize: 9, color: colors.white },
   center: { flex: 1, padding: 30, alignItems: "center", justifyContent: "center", gap: 12 },
   error: { textAlign: "center", fontFamily: fonts.regular, fontSize: 13, color: colors.destructive },
   retry: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999, backgroundColor: colors.primary },
   retryText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.white },
   list: { padding: 14, paddingTop: 2, paddingBottom: 26, gap: 9 },
   card: { position: "relative", overflow: "hidden", padding: 12, paddingLeft: 15, flexDirection: "row", gap: 10, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
+  cardUnread: { backgroundColor: "rgba(166,33,63,0.045)" },
   unreadRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
   icon: { width: 38, height: 38, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
-  title: { flex: 1, fontFamily: fonts.semibold, fontSize: 12.5, color: colors.foreground },
-  dot: { width: 7, height: 7, marginTop: 4, borderRadius: 4, backgroundColor: colors.destructive },
+  title: { flex: 1, fontFamily: fonts.medium, fontSize: 12.5, color: colors.foreground },
+  titleUnread: { fontFamily: fonts.bold },
   body: { marginTop: 3, fontFamily: fonts.regular, fontSize: 10.5, lineHeight: 14, color: colors.mutedFg },
   metaRow: { marginTop: 7, flexDirection: "row", justifyContent: "space-between" },
   category: { fontFamily: fonts.semibold, fontSize: 9, color: colors.primary },
-  time: { fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  time: { fontFamily: fonts.mono, fontSize: 8.5, color: colors.mutedFg, flexShrink: 0, paddingTop: 1 },
   empty: { paddingVertical: 55, alignItems: "center" },
   emptyIcon: { width: 52, height: 52, marginBottom: 10, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: colors.secondary },
   emptyTitle: { fontFamily: fonts.heading, fontSize: 16, color: colors.foreground },
