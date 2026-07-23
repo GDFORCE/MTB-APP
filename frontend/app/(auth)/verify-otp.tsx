@@ -111,7 +111,7 @@ function CountdownTrack({ timeLeft, expired }: { timeLeft: number; expired: bool
 
 export default function VerifyOtp() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ registration_id: string; channels: string; email: string; phone: string; role: string }>();
+  const params = useLocalSearchParams<{ registration_id: string; channels: string; email: string; phone: string; role: string; invited?: string }>();
   const channels: string[] = (() => { try { return JSON.parse(params.channels || "[]"); } catch { return []; } })();
   const needEmail = channels.includes("email");
   const needPhone = channels.includes("phone");
@@ -155,7 +155,7 @@ export default function VerifyOtp() {
       if (!data.verified) { setErr("Some codes were not accepted. Please check and try again."); return; }
       router.push({
         pathname: "/(auth)/set-password",
-        params: { registration_id: params.registration_id, role: params.role },
+        params: { registration_id: params.registration_id, role: params.role, invited: params.invited || "" },
       });
     } catch (e: any) {
       const detail = String(e?.response?.data?.detail || "");
@@ -244,7 +244,9 @@ export default function VerifyOtp() {
                 <Text style={{ fontFamily: fonts.heading, fontSize: 18, color: colors.destructive, marginBottom: 6 }}>{blockedTitle}</Text>
                 <Small style={{ textAlign: "center", lineHeight: 20 }}>{blockedCopy}</Small>
                 <Pressable
-                  onPress={() => router.replace("/(auth)/register")}
+                  onPress={() => router.replace(
+                    params.invited === "1" ? "/(auth)/join-invite" : "/(auth)/entity-type",
+                  )}
                   style={({ pressed }) => [s.restartBtn, pressed && { opacity: 0.8 }]}
                 >
                   <Small color={colors.primaryFg} weight="700">Restart registration</Small>

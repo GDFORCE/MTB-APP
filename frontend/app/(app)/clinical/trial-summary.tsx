@@ -22,6 +22,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   AlertTriangle,
   ArrowLeft,
+  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -30,11 +31,13 @@ import {
   FileText,
   Mail,
   MapPin,
+  MoreVertical,
   Pencil,
   Phone,
   RefreshCw,
   Share2,
   Target,
+  Stethoscope,
   Upload,
   UserPlus,
   UserRoundCheck,
@@ -130,15 +133,14 @@ const EMPTY_FUNNEL: RecruitmentFunnel = {
   completed: 0,
 };
 
-const FUNNEL: { key: keyof RecruitmentFunnel; label: string; tone?: string }[] = [
-  { key: "screened", label: "Screened" },
-  { key: "screen_fail", label: "Screen fails", tone: colors.destructive },
+const FUNNEL: { key: keyof RecruitmentFunnel; label: string }[] = [
+  { key: "screened", label: "Total Screened" },
+  { key: "screen_fail", label: "Screen Failures" },
   { key: "randomized", label: "Randomized" },
-  { key: "active", label: "Active", tone: colors.success },
-  { key: "follow_up", label: "Follow-up", tone: colors.info },
-  { key: "completed", label: "Completed", tone: colors.success },
-  { key: "withdrawn", label: "Withdrawn", tone: colors.warning },
-  { key: "dropout", label: "Dropout", tone: colors.warning },
+  { key: "follow_up", label: "Follow Up" },
+  { key: "completed", label: "Completed" },
+  { key: "withdrawn", label: "Withdrawn" },
+  { key: "dropout", label: "Dropout" },
 ];
 
 function useReducedMotion() {
@@ -193,6 +195,7 @@ export default function TrialSummary() {
   const [uploading, setUploading] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
+  const [showActions, setShowActions] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -201,6 +204,7 @@ export default function TrialSummary() {
     condition: "",
     drug: "",
     duration: "",
+    target_enrollment: "",
     ctri_number: "",
     recruitment_status: "",
     description: "",
@@ -266,10 +270,11 @@ export default function TrialSummary() {
   const primarySite = recruitment.sites[0];
   const assignedPi = team.find((member) => member.role === "pi");
   const assignedCrc = team.find((member) => member.role === "crc");
+  const sponsorLike = user?.role === "sponsor" || user?.role === "cro";
   const canAddPatient = user?.role === "pi" || user?.role === "crc";
-  const canEdit = user?.role === "pi" && trial?.created_by === user.id;
-  const canShare = user?.role === "pi";
-  const canUpload = user?.role === "pi" || user?.role === "crc";
+  const canEdit = sponsorLike || (user?.role === "pi" && trial?.created_by === user.id);
+  const canShare = sponsorLike || user?.role === "pi";
+  const canUpload = sponsorLike || user?.role === "pi" || user?.role === "crc";
 
   const openSubject = async (subject: SponsorTrialSubject) => {
     if (expandedSubject === subject.id) {
@@ -358,6 +363,7 @@ export default function TrialSummary() {
       condition: trial.condition || "",
       drug: trial.drug || "",
       duration: trial.duration || "",
+      target_enrollment: trial.target_enrollment ? String(trial.target_enrollment) : "",
       ctri_number: trial.ctri_number || "",
       recruitment_status: trial.recruitment_status || trial.status || "",
       description: trial.description || "",
@@ -371,6 +377,13 @@ export default function TrialSummary() {
       showFeedback({ tone: "error", message: "Title, phase, and condition are required." });
       return;
     }
+    const targetEnrollment = editForm.target_enrollment.trim()
+      ? Number(editForm.target_enrollment)
+      : undefined;
+    if (targetEnrollment !== undefined && (!Number.isInteger(targetEnrollment) || targetEnrollment < 0)) {
+      showFeedback({ tone: "error", message: "Target enrollment must be a whole number." });
+      return;
+    }
     setSavingEdit(true);
     try {
       await api.patch(`/trials/${trial.id}`, {
@@ -379,6 +392,7 @@ export default function TrialSummary() {
         condition: editForm.condition.trim(),
         drug: editForm.drug.trim(),
         duration: editForm.duration.trim(),
+        target_enrollment: targetEnrollment,
         ctri_number: editForm.ctri_number.trim(),
         recruitment_status: editForm.recruitment_status.trim(),
         description: editForm.description.trim(),
@@ -437,21 +451,19 @@ export default function TrialSummary() {
           <ArrowLeft size={20} color={colors.white} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={s.headerEyebrow}>{user?.role === "crc" ? "RESEARCH COORDINATOR" : "PRINCIPAL INVESTIGATOR"}</Text>
+          <Text style={s.headerEyebrow}>TRIAL SUMMARY</Text>
           <Text numberOfLines={1} style={s.headerTitle}>{trial.protocol_id}</Text>
         </View>
-        {canShare ? (
-          <Pressable
-            testID="share-trial"
-            onPress={() => router.push({
-              pathname: "/(app)/sponsor/share-schedule",
-              params: { id: trial.id },
-            })}
-            hitSlop={10}
-          >
-            <Share2 size={19} color={colors.white} />
-          </Pressable>
-        ) : <View style={{ width: 19 }} />}
+        <Pressable
+          testID="trial-actions-menu"
+          accessibilityLabel="Trial actions"
+          accessibilityState={{ expanded: showActions }}
+          onPress={() => setShowActions(true)}
+          hitSlop={10}
+          style={s.headerAction}
+        >
+          <MoreVertical size={20} color={colors.white} />
+        </Pressable>
       </SafeAreaView>
 
       <ScrollView
@@ -506,6 +518,17 @@ export default function TrialSummary() {
               </View>
             </View>
             <Text style={s.heroTitle}>{trial.title}</Text>
+            <View style={s.heroTags}>
+              {[trial.phase, trial.condition, trial.drug].filter(Boolean).map((tag) => (
+                <View key={tag} style={s.heroTag}><Text style={s.heroTagText}>{tag}</Text></View>
+              ))}
+            </View>
+            <View style={s.heroSponsor}>
+              <Building2 size={14} color="rgba(255,255,255,0.84)" />
+              <Text style={s.heroSponsorText}>
+                {trial.sponsor_name || "Sponsor not recorded"} · {trial.recruitment_status || trial.status || "Active"}
+              </Text>
+            </View>
             <View style={s.detailGrid}>
               <Detail label="CTRI number" value={trial.ctri_number || "Not recorded"} />
               <Detail label="Sponsor / CRO" value={trial.sponsor_name || "Not recorded"} />
@@ -532,7 +555,19 @@ export default function TrialSummary() {
         </Entrance>
 
         <Entrance index={1} reduced={reducedMotion}>
-          <Section title="Recruitment overview" icon={Target}>
+          <Section title="Trial Details" icon={FileText}>
+            <View style={s.trialDetailsGrid}>
+              <SummaryDetail icon={FileText} label="CTRI No." value={trial.ctri_number || "Not recorded"} wide />
+              <SummaryDetail icon={Building2} label="Sponsor Name" value={trial.sponsor_name || "Not recorded"} />
+              <SummaryDetail icon={MapPin} label="Site Name" value={siteNames.join(", ") || user?.organization || "Not assigned"} />
+              <SummaryDetail icon={UserRoundCheck} label="PI Name" value={primarySite?.pi_name || assignedPi?.name || "Not assigned"} />
+              <SummaryDetail icon={Stethoscope} label="Department" value={primarySite?.department || "Not recorded"} />
+            </View>
+          </Section>
+        </Entrance>
+
+        <Entrance index={2} reduced={reducedMotion}>
+          <Section title="Enrollment" icon={Target}>
             <View style={s.metrics}>
               <Metric label="Sites" value={String(recruitment.sites.length)} />
               <Metric label="Enrolled" value={String(enrolled)} />
@@ -546,7 +581,18 @@ export default function TrialSummary() {
         </Entrance>
 
         <Entrance index={2} reduced={reducedMotion}>
-          <Section title="Sites and investigators" icon={MapPin}>
+          <Section
+            title="Sites and investigators"
+            icon={MapPin}
+            action={sponsorLike ? (
+              <Pressable
+                onPress={() => router.push({ pathname: "/(app)/sponsor/sites", params: { trialId: trial.id } })}
+                style={s.inlineAction}
+              >
+                <Text style={s.inlineActionText}>Manage Sites</Text>
+              </Pressable>
+            ) : undefined}
+          >
             {recruitment.sites.length ? recruitment.sites.map((site) => (
               <View key={site.id} style={s.siteCard}>
                 <View style={s.between}>
@@ -571,23 +617,30 @@ export default function TrialSummary() {
               <View key={member.id} style={s.teamCard}>
                 <View style={s.avatar}><Text style={s.avatarText}>{initials(member.name)}</Text></View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text numberOfLines={1} style={s.memberName}>{member.name || "Unnamed member"}</Text>
+                  <View style={s.teamTop}>
+                    <Text numberOfLines={1} style={s.memberName}>{member.name || "Unnamed member"}</Text>
+                    <View style={s.teamRolePill}>
+                      <Text style={s.teamRoleText}>
+                        {member.role === "pi" ? "PI" : member.role === "crc" ? "CRC" : "Sponsor"}
+                      </Text>
+                    </View>
+                  </View>
                   <Text numberOfLines={1} style={s.memberMeta}>
-                    {[member.role, member.designation, member.organization].filter(Boolean).join(" · ")}
+                    {[member.designation, member.organization].filter(Boolean).join(" · ") || "Trial team"}
                   </Text>
                   <View style={s.contactRow}>
-                    <Contact
-                      icon={Phone}
-                      label="Call"
-                      disabled={!member.phone}
-                      onPress={() => member.phone && openContact(`tel:${member.phone}`)}
-                    />
-                    <Contact
-                      icon={Mail}
-                      label="Email"
-                      disabled={!member.email}
-                      onPress={() => member.email && openContact(`mailto:${member.email}`)}
-                    />
+                    {!!member.email && (
+                      <Pressable onPress={() => openContact(`mailto:${member.email}`)} style={s.teamContactRow}>
+                        <Mail size={12} color={colors.mutedFg} />
+                        <Text numberOfLines={1} style={s.teamContactText}>{member.email}</Text>
+                      </Pressable>
+                    )}
+                    {!!member.phone && (
+                      <Pressable onPress={() => openContact(`tel:${member.phone}`)} style={s.teamContactRow}>
+                        <Phone size={12} color={colors.mutedFg} />
+                        <Text style={s.teamContactText}>{member.phone}</Text>
+                      </Pressable>
+                    )}
                   </View>
                 </View>
               </View>
@@ -597,7 +650,7 @@ export default function TrialSummary() {
 
         <Entrance index={4} reduced={reducedMotion}>
           <Section
-            title="Patient visit journeys"
+            title="Patients"
             icon={UserRoundCheck}
             action={canAddPatient ? (
               <Pressable
@@ -616,6 +669,9 @@ export default function TrialSummary() {
             {subjects.length ? subjects.map((subject) => {
               const expanded = expandedSubject === subject.id;
               const visits = subjectVisits[subject.id] || [];
+              const subjectStatus = subject.current_visit?.status === "overdue"
+                ? "overdue"
+                : subject.status;
               return (
                 <Pressable
                   key={subject.id}
@@ -633,7 +689,37 @@ export default function TrialSummary() {
                         <Text style={s.subjectMeta}>{subject.site} · {subject.visits_completed} visits completed</Text>
                       </View>
                     </View>
-                    <Text style={s.subjectStatus}>{subject.status}</Text>
+                    <View style={[
+                      s.subjectStatusPill,
+                      {
+                        backgroundColor: subjectStatus === "overdue"
+                          ? colors.destructive + "16"
+                          : subjectStatus === "completed"
+                            ? colors.info + "16"
+                            : subjectStatus === "withdrawn" || subjectStatus === "dropout"
+                              ? colors.mutedFg + "22"
+                              : colors.success + "18",
+                      },
+                    ]}>
+                      <Text style={[
+                        s.subjectStatus,
+                        {
+                          color: subjectStatus === "overdue"
+                            ? colors.destructive
+                            : subjectStatus === "completed"
+                              ? colors.info
+                              : subjectStatus === "withdrawn" || subjectStatus === "dropout"
+                                ? colors.mutedFg
+                                : colors.success,
+                        },
+                      ]}>{subjectStatus}</Text>
+                    </View>
+                  </View>
+                  <View style={s.patientVisitGrid}>
+                    <PatientField label="VISIT NO." value={subject.current_visit?.visit_number ? `Visit ${subject.current_visit.visit_number}` : "—"} />
+                    <PatientField label="VISIT NAME" value={subject.current_visit?.name || "Not scheduled"} />
+                    <PatientField label="VISIT TYPE" value={subject.current_visit?.visit_type || "—"} />
+                    <PatientField label="VISIT DATE" value={dateLabel(subject.current_visit?.scheduled_date)} />
                   </View>
                   {expanded && (
                     <View style={s.subjectVisits}>
@@ -672,7 +758,18 @@ export default function TrialSummary() {
         </Entrance>
 
         <Entrance index={5} reduced={reducedMotion}>
-          <Section title="Visit schedule" icon={CalendarDays}>
+          <Section
+            title="Visit schedule"
+            icon={CalendarDays}
+            action={sponsorLike ? (
+              <Pressable
+                onPress={() => router.push({ pathname: "/(app)/sponsor/visit-schedule", params: { id: trial.id } })}
+                style={s.inlineAction}
+              >
+                <Text style={s.inlineActionText}>Edit Schedule</Text>
+              </Pressable>
+            ) : undefined}
+          >
             {(trial.visits || []).length ? (trial.visits || []).map((visit, index) => (
               <View key={visit.id || `${visit.name}-${index}`} style={s.scheduleRow}>
                 <View style={s.visitNumber}>
@@ -689,7 +786,7 @@ export default function TrialSummary() {
 
         <Entrance index={6} reduced={reducedMotion}>
           <Section
-            title="Documents and versions"
+            title="Documents"
             icon={FileClock}
             action={canUpload ? (
               <Pressable
@@ -779,6 +876,51 @@ export default function TrialSummary() {
       </ScrollView>
 
       <Modal
+        visible={showActions}
+        transparent
+        statusBarTranslucent
+        animationType={reducedMotion ? "none" : "fade"}
+        onRequestClose={() => setShowActions(false)}
+      >
+        <View style={s.actionMenuRoot}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowActions(false)} />
+          <View accessibilityRole="menu" style={s.actionMenu}>
+            {canEdit && (
+              <Pressable
+                accessibilityRole="menuitem"
+                onPress={() => { setShowActions(false); openEdit(); }}
+                style={s.actionMenuItem}
+              >
+                <Pencil size={16} color={colors.mutedFg} />
+                <Text style={s.actionMenuText}>Edit</Text>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityRole="menuitem"
+              onPress={() => { setShowActions(false); void download(); }}
+              style={s.actionMenuItem}
+            >
+              <Download size={16} color={colors.mutedFg} />
+              <Text style={s.actionMenuText}>Download</Text>
+            </Pressable>
+            {canShare && (
+              <Pressable
+                accessibilityRole="menuitem"
+                onPress={() => {
+                  setShowActions(false);
+                  router.push({ pathname: "/(app)/sponsor/share-schedule", params: { id: trial.id } });
+                }}
+                style={s.actionMenuItem}
+              >
+                <Share2 size={16} color={colors.mutedFg} />
+                <Text style={s.actionMenuText}>Share</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={showEdit}
         transparent
         animationType={reducedMotion ? "none" : "slide"}
@@ -814,6 +956,12 @@ export default function TrialSummary() {
                 <View style={{ flex: 1 }}><EditField label="Drug" value={editForm.drug} onChangeText={(value) => setEditForm((current) => ({ ...current, drug: value }))} /></View>
                 <View style={{ flex: 1 }}><EditField label="Duration" value={editForm.duration} onChangeText={(value) => setEditForm((current) => ({ ...current, duration: value }))} /></View>
               </View>
+              <EditField
+                label="Target enrollment"
+                value={editForm.target_enrollment}
+                keyboardType="number-pad"
+                onChangeText={(value) => setEditForm((current) => ({ ...current, target_enrollment: value.replace(/\D/g, "") }))}
+              />
               <EditField label="CTRI number" value={editForm.ctri_number} onChangeText={(value) => setEditForm((current) => ({ ...current, ctri_number: value }))} />
               <EditField label="Recruitment status" value={editForm.recruitment_status} onChangeText={(value) => setEditForm((current) => ({ ...current, recruitment_status: value }))} />
               <EditField label="Description" value={editForm.description} onChangeText={(value) => setEditForm((current) => ({ ...current, description: value }))} multiline />
@@ -908,6 +1056,27 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SummaryDetail({ icon: Icon, label, value, wide = false }: { icon: any; label: string; value: string; wide?: boolean }) {
+  return (
+    <View style={[s.summaryDetail, wide && s.summaryDetailWide]}>
+      <Icon size={14} color={colors.mutedFg} style={{ marginTop: 1 }} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={s.summaryDetailLabel}>{label}</Text>
+        <Text numberOfLines={2} style={s.summaryDetailValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function PatientField({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={s.patientField}>
+      <Text style={s.patientFieldLabel}>{label}</Text>
+      <Text numberOfLines={2} style={s.patientFieldValue}>{value}</Text>
+    </View>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <View style={s.metric}>
@@ -918,16 +1087,27 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function Funnel({ data }: { data: RecruitmentFunnel }) {
+  const tones: Record<string, { backgroundColor: string; color: string }> = {
+    screened: { backgroundColor: colors.info + "1A", color: colors.info },
+    screen_fail: { backgroundColor: colors.warning + "26", color: colors.warning },
+    randomized: { backgroundColor: colors.violet + "1A", color: colors.violet },
+    follow_up: { backgroundColor: colors.accent + "1F", color: colors.accent },
+    completed: { backgroundColor: colors.success + "26", color: colors.success },
+    withdrawn: { backgroundColor: colors.surface, color: colors.mutedFg },
+    dropout: { backgroundColor: colors.destructive + "1A", color: colors.destructive },
+  };
   return (
     <View style={s.funnel}>
-      {FUNNEL.map((field) => (
-        <View key={field.key} style={s.funnelCell}>
-          <Text style={[s.funnelValue, field.tone ? { color: field.tone } : undefined]}>
+      {FUNNEL.map((field) => {
+        const tone = tones[field.key] || tones.screened;
+        return (
+        <View key={field.key} style={[s.funnelCell, { backgroundColor: tone.backgroundColor }]}>
+          <Text style={[s.funnelValue, { color: tone.color }]}>
             {Number(data?.[field.key] || 0)}
           </Text>
           <Text style={s.funnelLabel}>{field.label}</Text>
         </View>
-      ))}
+      )})}
     </View>
   );
 }
@@ -964,29 +1144,6 @@ function Progress({
   );
 }
 
-function Contact({
-  icon: Icon,
-  label,
-  disabled,
-  onPress,
-}: {
-  icon: any;
-  label: string;
-  disabled: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={[s.contact, disabled && s.disabled]}
-    >
-      <Icon size={12} color={disabled ? colors.mutedFg : colors.info} />
-      <Text style={[s.contactText, disabled && { color: colors.mutedFg }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function EditField({
   label,
   multiline,
@@ -1017,6 +1174,7 @@ const s = StyleSheet.create({
   header: { minHeight: 73, paddingHorizontal: 17, paddingTop: 8, paddingBottom: 12, flexDirection: "row", alignItems: "center", gap: 13, backgroundColor: colors.primaryDeep },
   headerEyebrow: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 1.05, color: "rgba(255,255,255,0.62)" },
   headerTitle: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 15, color: colors.white },
+  headerAction: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17 },
   content: { padding: 15, paddingBottom: 40, gap: 13 },
   feedback: { minHeight: 44, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 15, borderWidth: 1 },
   feedbackSuccess: { borderColor: colors.success + "45", backgroundColor: colors.success + "12" },
@@ -1029,25 +1187,35 @@ const s = StyleSheet.create({
   statusPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.20)", backgroundColor: "rgba(255,255,255,0.16)" },
   statusText: { fontFamily: fonts.semibold, fontSize: 9.5, color: colors.white, textTransform: "capitalize" },
   heroTitle: { marginTop: 14, fontFamily: fonts.heading, fontSize: 19, lineHeight: 24, color: colors.white },
-  detailGrid: { marginTop: 15, flexDirection: "row", flexWrap: "wrap", rowGap: 11 },
+  heroTags: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 12 },
+  heroTag: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.16)" },
+  heroTagText: { color: colors.white, fontFamily: fonts.semibold, fontSize: 8.5 },
+  heroSponsor: { marginTop: 14, flexDirection: "row", alignItems: "center", gap: 6 },
+  heroSponsorText: { flex: 1, fontFamily: fonts.medium, fontSize: 9.5, color: "rgba(255,255,255,0.88)" },
+  detailGrid: { display: "none", marginTop: 15, flexDirection: "row", flexWrap: "wrap", rowGap: 11 },
   detail: { width: "50%", paddingRight: 9 },
   detailLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.7, textTransform: "uppercase", color: "rgba(255,255,255,0.60)" },
   detailValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 10.5, lineHeight: 14, color: colors.white },
-  heroFooter: { marginTop: 14, paddingTop: 12, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
+  heroFooter: { display: "none", marginTop: 14, paddingTop: 12, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
   heroFooterText: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, color: "rgba(255,255,255,0.82)" },
-  heroAudit: { marginTop: 6, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: "rgba(255,255,255,0.62)" },
+  heroAudit: { display: "none", marginTop: 6, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: "rgba(255,255,255,0.62)" },
   card: { padding: 15, gap: 12, borderRadius: 21, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   sectionIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 7 },
   sectionTitle: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
+  trialDetailsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 11 },
+  summaryDetail: { width: "47%", flexDirection: "row", alignItems: "flex-start", gap: 7 },
+  summaryDetailWide: { width: "100%" },
+  summaryDetailLabel: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.75, color: colors.mutedFg, textTransform: "uppercase" },
+  summaryDetailValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 10, lineHeight: 13, color: colors.foreground },
   inlineAction: { flexDirection: "row", alignItems: "center", gap: 4 },
   inlineActionText: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.info },
-  metrics: { flexDirection: "row", gap: 7 },
+  metrics: { display: "none", flexDirection: "row", gap: 7 },
   metric: { flex: 1, padding: 10, alignItems: "center", borderRadius: 13, backgroundColor: colors.surface },
   metricValue: { fontFamily: fonts.heading, fontSize: 18, color: colors.primaryDeep },
   metricLabel: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
   funnel: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  funnelCell: { width: "23%", minHeight: 51, padding: 5, alignItems: "center", justifyContent: "center", borderRadius: 11, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  funnelCell: { width: "31%", minHeight: 51, padding: 5, alignItems: "center", justifyContent: "center", borderRadius: 11 },
   funnelValue: { fontFamily: fonts.heading, fontSize: 14, color: colors.foreground },
   funnelLabel: { marginTop: 2, textAlign: "center", fontFamily: fonts.regular, fontSize: 7.5, color: colors.mutedFg },
   smallCaps: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.9, color: colors.mutedFg },
@@ -1061,18 +1229,26 @@ const s = StyleSheet.create({
   teamCard: { padding: 11, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: colors.surface },
   avatar: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: colors.primaryDeep },
   avatarText: { fontFamily: fonts.bold, fontSize: 10.5, color: colors.white },
-  memberName: { fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
+  teamTop: { flexDirection: "row", alignItems: "center", gap: 8 },
+  memberName: { flex: 1, fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
+  teamRolePill: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, backgroundColor: colors.secondary },
+  teamRoleText: { fontFamily: fonts.semibold, fontSize: 7.5, color: colors.primary },
   memberMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9, color: colors.mutedFg },
-  contactRow: { marginTop: 7, flexDirection: "row", gap: 7 },
-  contact: { paddingHorizontal: 8, paddingVertical: 5, flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 9, backgroundColor: colors.card },
-  contactText: { fontFamily: fonts.semibold, fontSize: 8.5, color: colors.info },
+  contactRow: { marginTop: 8, paddingTop: 8, gap: 5, borderTopWidth: 1, borderTopColor: colors.border },
+  teamContactRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  teamContactText: { flex: 1, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
   subjectCard: { padding: 11, gap: 10, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   subjectIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 9 },
   subjectAvatar: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 13, backgroundColor: colors.primaryDeep },
   subjectAvatarText: { fontFamily: fonts.bold, fontSize: 10, color: colors.white },
   subjectId: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
   subjectMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  subjectStatusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
   subjectStatus: { fontFamily: fonts.semibold, fontSize: 8, color: colors.success, textTransform: "capitalize" },
+  patientVisitGrid: { padding: 10, flexDirection: "row", flexWrap: "wrap", rowGap: 9, borderRadius: 13, backgroundColor: colors.card },
+  patientField: { width: "50%", paddingRight: 8 },
+  patientFieldLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.65, color: colors.mutedFg },
+  patientFieldValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 9.5, lineHeight: 12, color: colors.foreground },
   subjectVisits: { paddingTop: 9, gap: 8, borderTopWidth: 1, borderTopColor: colors.border },
   subjectVisitRow: { flexDirection: "row", alignItems: "center", gap: 9 },
   scheduleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
@@ -1101,6 +1277,10 @@ const s = StyleSheet.create({
   primaryWide: { minHeight: 47, marginTop: 9, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderRadius: 999, backgroundColor: colors.primary },
   primaryButtonText: { fontFamily: fonts.bold, fontSize: 11, color: colors.white },
   disabled: { opacity: 0.45 },
+  actionMenuRoot: { flex: 1, alignItems: "flex-end", paddingTop: Platform.OS === "ios" ? 86 : 64, paddingRight: 14, backgroundColor: "rgba(46,27,51,0.18)" },
+  actionMenu: { width: 142, paddingVertical: 6, borderRadius: 15, backgroundColor: colors.card, ...shadows.md },
+  actionMenuItem: { minHeight: 42, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10 },
+  actionMenuText: { fontFamily: fonts.medium, fontSize: 12, color: colors.foreground },
   modalRoot: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(46,27,51,0.48)" },
   editSheet: { maxHeight: "92%", paddingTop: 10, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.background, ...shadows.md },

@@ -279,7 +279,7 @@ export default function SponsorDashboard() {
                   <TrialCard
                     trial={trial}
                     reducedMotion={reducedMotion}
-                    onPress={() => router.push({ pathname: "/(app)/sponsor/trial-detail", params: { id: trial.id } })}
+                    onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } })}
                   />
                 </MotionItem>
               ))}

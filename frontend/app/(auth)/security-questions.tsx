@@ -98,6 +98,7 @@ export default function SecurityQuestions() {
           email: data.email || "",
           phone: data.phone || "",
           role: role || "patient",
+          invited: fld.inviteToken ? "1" : "",
         },
       });
     } catch (e: any) {

@@ -26,6 +26,7 @@ import { uploadFile, downloadFile, PickedAsset } from "@/src/lib/upload";
 import { useAudioRecorder, useAudioRecorderState, RecordingPresets, AudioModule, useAudioPlayer } from "expo-audio";
 import { PatientBottomNav } from "@/src/features/patient/components/PatientBottomNav";
 import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
+import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🙏", "👏", "✅", "🎉", "😊"];
 
@@ -475,6 +476,11 @@ export default function Chat() {
 
   const isPatient = user?.role === "patient";
   const isSponsorLike = user?.role === "sponsor" || user?.role === "cro";
+  const isCrc = user?.role === "crc";
+  const isClinical = user?.role === "pi"
+    || user?.role === "crc"
+    || user?.role === "smo"
+    || user?.role === "site";
   const inboxRole = user?.role === "cro" ? "CRO" : (user?.role || "Secure inbox").toUpperCase();
   const inboxEyebrow = user?.organization
     ? `${inboxRole} · ${user.organization.toUpperCase()}`
@@ -559,7 +565,7 @@ export default function Chat() {
             </Card>
           </View>
         ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: isPatient ? 120 : spacing.xxl }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: isPatient || isSponsorLike || isClinical ? 120 : spacing.xxl }}>
           {error ? <Small color={colors.destructive} style={{ marginHorizontal: spacing.md, marginVertical: spacing.sm }}>{error}</Small> : null}
           {visibleConvs.map(c => {
             const other = c.other_participant;
@@ -832,6 +838,13 @@ export default function Chat() {
         {/* Role tab bar — inbox only; threads hide it, matching the reference. */}
         {isPatient && <PatientBottomNav active="messages" />}
         {isSponsorLike && <SponsorBottomNav active="chat" unreadMessages={unreadTotal} />}
+        {isClinical && (
+          <PiBottomNav
+            active="messages"
+            calendarRole={isCrc ? "crc" : user?.role === "pi" ? "pi" : "smo"}
+            role={isCrc ? "crc" : "pi"}
+          />
+        )}
       </SafeAreaView>
     );
   }
@@ -1079,6 +1092,13 @@ export default function Chat() {
           )}
         </View>
       </KeyboardAvoidingView>
+      {isClinical && (
+        <PiBottomNav
+          active="messages"
+          calendarRole={isCrc ? "crc" : user?.role === "pi" ? "pi" : "smo"}
+          role={isCrc ? "crc" : "pi"}
+        />
+      )}
     </SafeAreaView>
   );
 }

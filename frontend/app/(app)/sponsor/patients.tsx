@@ -207,7 +207,7 @@ export default function SponsorPatients() {
               key={trial.id}
               trial={trial}
               onPress={() => router.push({
-                pathname: "/(app)/sponsor/trial-detail",
+                pathname: "/(app)/clinical/trial-summary",
                 params: { id: trial.id },
               })}
             />

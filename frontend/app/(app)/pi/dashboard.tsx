@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator, Modal, TextInput } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle } from "react-native-svg";
 import {
   Bell, Sun, Users, FileText, Stethoscope, ArrowUpRight, ChevronRight, FilePlus2, UserPlus,
-  ListTodo, AlertTriangle, ClipboardCheck, Home, MessageCircle, Calendar as CalIcon, User, ShieldCheck,
+  ListTodo, AlertTriangle, ClipboardCheck, Home, Calendar as CalIcon, ShieldCheck, X, CheckCircle2,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -20,6 +20,7 @@ import {
   DashboardReveal,
   useAnimatedProgress,
 } from "@/src/features/clinical/dashboard";
+import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 
 const C = {
   bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -33,6 +34,15 @@ const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 // GET /api/tasks item — action queue computed server-side for site staff.
 type Task = ClinicalDashboardTask;
 type TeamVisit = ClinicalDashboardVisit;
+
+const VISIT_STATUS_OPTIONS = [
+  { value: "scheduled", label: "Scheduled" },
+  { value: "upcoming", label: "Upcoming" },
+  { value: "completed", label: "Completed" },
+  { value: "screen_fail", label: "Screen Failure" },
+  { value: "dropout", label: "Dropout" },
+  { value: "withdrawn", label: "Withdrawn" },
+] as const;
 
 export default function PiDashboard() {
   const router = useRouter();
@@ -50,6 +60,10 @@ export default function PiDashboard() {
   const [dashboard, setDashboard] = useState<ClinicalDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [editingVisit, setEditingVisit] = useState<TeamVisit | null>(null);
+  const [visitForm, setVisitForm] = useState({ dateISO: "", status: "", note: "" });
+  const [savingVisit, setSavingVisit] = useState(false);
+  const [visitSaveError, setVisitSaveError] = useState("");
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -133,6 +147,38 @@ export default function PiDashboard() {
     });
   }, [tasks]);
 
+  const openVisitUpdate = (visit: TeamVisit) => {
+    setVisitSaveError("");
+    setVisitForm({
+      dateISO: (visit.scheduled_date || "").slice(0, 10),
+      status: visit.status || "upcoming",
+      note: (visit as any).note || "",
+    });
+    setEditingVisit(visit);
+  };
+
+  const saveVisitUpdate = async () => {
+    if (!editingVisit || savingVisit) return;
+    const patch: Record<string, string> = {};
+    if (visitForm.dateISO && visitForm.dateISO !== (editingVisit.scheduled_date || "").slice(0, 10)) patch.scheduled_date = visitForm.dateISO;
+    if (visitForm.status && visitForm.status !== editingVisit.status) patch.status = visitForm.status;
+    if (visitForm.note !== ((editingVisit as any).note || "")) patch.note = visitForm.note;
+    if (Object.keys(patch).length === 0) { setEditingVisit(null); return; }
+
+    setSavingVisit(true);
+    setVisitSaveError("");
+    try {
+      const response = await api.patch(`/visit-instances/${editingVisit.id}`, patch);
+      const updated = response.data as TeamVisit;
+      setUpcomingVisits(current => current.map(visit => visit.id === updated.id ? { ...visit, ...updated } : visit));
+      setEditingVisit(null);
+    } catch (error: any) {
+      setVisitSaveError(error?.response?.data?.detail || "Couldn't save this visit update. Please try again.");
+    } finally {
+      setSavingVisit(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={C.primaryDeep} />
@@ -194,9 +240,9 @@ export default function PiDashboard() {
           {/* Stat tiles */}
           <DashboardReveal delay={40} style={{ flexDirection: "row", gap: 7 }}>
             <Stat compact icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
-            <Stat compact icon={Stethoscope} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? null : sponsorCount} label="Sponsors" />
+            <Stat compact icon={Stethoscope} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? null : sponsorCount} label="Sponsors" onPress={() => router.push("/(app)/clinical/sponsors")} />
             <Stat compact icon={Users} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? null : patients.length} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} />
-            <Stat compact icon={Home} iconColor={C.success} iconBg="rgba(92,154,110,0.14)" glow="rgba(92,154,110,0.18)" value={loading ? null : siteTotal} label="Sites" />
+            <Stat compact icon={Home} iconColor={C.success} iconBg="rgba(92,154,110,0.14)" glow="rgba(92,154,110,0.18)" value={loading ? null : siteTotal} label="Sites" onPress={() => router.push("/(app)/clinical/sites")} />
           </DashboardReveal>
 
           {/* Quick actions */}
@@ -226,13 +272,13 @@ export default function PiDashboard() {
           {/* Upcoming visits */}
           <Section label="UPCOMING VISITS" action={
             <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>
-              {isSmo ? `${tasks.filter(task => task.type === "visit_today").length} TODAY` : `${completedToday}/${visitsToday.length} DONE`}
+              {isSmo ? `${tasks.filter(task => task.type === "visit_today").length} TODAY` : `${upcomingVisits.filter(visit => visit.status === "completed").length}/${upcomingVisits.length} DONE`}
             </Text>
           } />
           <View style={{ gap: 10 }}>
             {loading && <LoadingCard />}
             {!loading && (isSmo ? patients : upcomingVisits).length === 0 && <EmptyCard text="No upcoming visits this week" />}
-            {!loading && (isSmo ? patients : upcomingVisits).slice(0, 3).map((p: any) => (
+            {!loading && isSmo && patients.slice(0, 3).map((p: any) => (
               <Pressable
                 key={p.id}
                 testID={`upcoming-visit-${p.id}`}
@@ -275,10 +321,35 @@ export default function PiDashboard() {
                 </View>
               </Pressable>
             ))}
+            {!loading && !isSmo && <UpcomingVisitTimeline visits={upcomingVisits.slice(0, 4)} todayIso={todayIso} onUpdate={openVisitUpdate} onOpen={(visit) => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: visit.patient_id } })} />}
           </View>
 
           {/* Today's Reviews — trials awaiting the PI's schedule sign-off */}
-          <Section label="TODAY'S REVIEWS" action={!loading ? <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{reviews.length} PENDING</Text> : undefined} />
+          {!loading && !isSmo && overdueVisits.length > 0 && (
+            <>
+              <Section label="OVERDUE" action={<View style={pi.overdueCount}><Text style={pi.overdueCountText}>{overdueVisits.length}</Text></View>} />
+              <View style={{ gap: 10 }}>
+                {overdueVisits.map((task) => {
+                  const daysLate = task.due ? Math.max(1, Math.floor((Date.now() - new Date(task.due).getTime()) / 86400000)) : 1;
+                  return (
+                    <Pressable key={task.id} testID={`overdue-${task.id}`} onPress={() => task.patient_id && router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: task.patient_id } })} style={({ pressed }) => [pi.overdueCard, pressed && { opacity: 0.84 }]}>
+                      <View style={pi.overdueAlert}><AlertTriangle size={16} color={C.destructive} /></View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                          <Text style={pi.overduePatient}>{task.subtitle || "Participant"}</Text>
+                          <View style={pi.daysOverdueBadge}><Text style={pi.daysOverdueText}>{daysLate}d overdue</Text></View>
+                        </View>
+                        <Text style={pi.overdueVisit}>{task.title.replace(/^Overdue:\s*/, "")}</Text>
+                        <Text style={pi.overdueDate}>{task.due ? `Scheduled ${new Date(task.due).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · Schedule window has passed` : "Schedule window has passed"}</Text>
+                      </View>
+                      <View style={pi.reviewOverdueButton}><Text style={pi.reviewOverdueText}>Review</Text></View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
+          {false && <>
           {loading && <LoadingCard />}
           {!loading && reviews.length === 0 && <EmptyCard text="No reviews awaiting sign-off — you're all caught up" />}
           {!loading && (
@@ -340,6 +411,8 @@ export default function PiDashboard() {
             </View>
           )}
 
+          </>}
+
           {/* My Trials */}
           <Section label="MY TRIALS" action={
             <Pressable testID="see-all-trials" onPress={() => router.push("/(app)/clinical/my-trials")} style={{ flexDirection: "row", alignItems: "center" }}>
@@ -382,15 +455,144 @@ export default function PiDashboard() {
         </View>
       </ScrollView>
 
-      <View style={pi.tabBar}>
-        <Tab icon={Home} label="Dashboard" active />
-        <Tab icon={FileText} label="My Trials" onPress={() => router.push("/(app)/clinical/my-trials")} testID="tab-trials" />
-        <Tab icon={MessageCircle} label="Messages" onPress={() => router.push("/(app)/chat")} testID="tab-messages" />
-        <Tab icon={CalIcon} label="Calendar" onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: isSmo ? "smo" : "pi" } } as any)} testID="tab-calendar" />
-        <Tab icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
-      </View>
+      <PiBottomNav active="dashboard" calendarRole={isSmo ? "smo" : "pi"} />
+      <VisitUpdateSheet
+        visit={editingVisit}
+        trial={editingVisit?.trial_id ? trialById[editingVisit.trial_id] : null}
+        form={visitForm}
+        saving={savingVisit}
+        error={visitSaveError}
+        onChange={setVisitForm}
+        onClose={() => !savingVisit && setEditingVisit(null)}
+        onSave={saveVisitUpdate}
+      />
     </View>
   );
+}
+
+function UpcomingVisitTimeline({
+  visits,
+  todayIso,
+  onUpdate,
+  onOpen,
+}: {
+  visits: TeamVisit[];
+  todayIso: string;
+  onUpdate: (visit: TeamVisit) => void;
+  onOpen: (visit: TeamVisit) => void;
+}) {
+  return (
+    <View style={pi.visitTimeline}>
+      {visits.map((visit, index) => {
+        const isToday = visit.scheduled_date?.slice(0, 10) === todayIso;
+        const completed = visit.status === "completed";
+        const actionable = !completed && !["withdrawn", "dropout", "screen_fail"].includes(visit.status || "");
+        const last = index === visits.length - 1;
+        return (
+          <View key={visit.id} style={pi.timelineRow}>
+            <View style={pi.timelineRail}>
+              <View style={[pi.timelineDot, completed ? pi.timelineDotDone : isToday ? pi.timelineDotToday : pi.timelineDotUpcoming]}>
+                {completed ? <CheckCircle2 size={15} color={C.primaryFg} /> : <View style={[pi.timelineDotCore, isToday && { backgroundColor: C.accent }]} />}
+              </View>
+              {!last && <View style={pi.timelineLine} />}
+            </View>
+            <Pressable testID={`upcoming-visit-${visit.id}`} onPress={() => onOpen(visit)} style={({ pressed }) => [pi.visitTimelineCard, isToday && pi.visitTimelineCardToday, pressed && { opacity: 0.86 }]}>
+              <View style={pi.visitCardTop}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <Text style={pi.visitSubject}>{visit.subject_label || "SUBJECT"}</Text>
+                    <Text style={pi.visitInitials}>· {visit.patient_initials || "P"}</Text>
+                    {isToday ? <View style={pi.todayBadge}><Text style={pi.todayBadgeText}>VISIT IS TODAY</Text></View> : null}
+                  </View>
+                  <Text style={pi.visitMeta}>{[visit.protocol_id, visit.name].filter(Boolean).join(" · ") || "Scheduled visit"}</Text>
+                  <Text style={pi.visitMeta}>{visit.scheduled_date ? new Date(visit.scheduled_date).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "Date to be confirmed"}</Text>
+                  {(visit as any).crc_name ? <Text style={pi.visitCrc}>CRC: {(visit as any).crc_name}</Text> : null}
+                </View>
+                {completed ? (
+                  <View style={pi.doneVisitBadge}><CheckCircle2 size={13} color={C.success} /><Text style={pi.doneVisitText}>Done</Text></View>
+                ) : actionable ? (
+                  <Pressable testID={`update-${visit.id}`} onPress={(event) => { event.stopPropagation(); onUpdate(visit); }} style={pi.updateVisitButton}>
+                    <Text style={pi.updateVisitText}>Update</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </Pressable>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function VisitUpdateSheet({
+  visit,
+  trial,
+  form,
+  saving,
+  error,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  visit: TeamVisit | null;
+  trial: any;
+  form: { dateISO: string; status: string; note: string };
+  saving: boolean;
+  error: string;
+  onChange: React.Dispatch<React.SetStateAction<{ dateISO: string; status: string; note: string }>>;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <Modal visible={!!visit} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={pi.sheetBackdrop} onPress={onClose} />
+      <View style={pi.visitSheet}>
+        <View style={pi.sheetGrabber} />
+        <View style={pi.sheetHeader}>
+          <View>
+            <Text style={pi.sheetTitle}>Update Visit</Text>
+            <Text style={pi.sheetSubtitle}>{visit ? `${visit.subject_label || "Subject"} · ${visit.name || "Visit"}` : ""}</Text>
+          </View>
+          <Pressable testID="visit-sheet-close" onPress={onClose} hitSlop={10}><X size={20} color={C.muted} /></Pressable>
+        </View>
+        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+          {error ? <View style={pi.sheetError}><Text style={pi.sheetErrorText}>{error}</Text></View> : null}
+          <View style={pi.visitContext}>
+            <SheetContext label="PROTOCOL ID" value={visit?.protocol_id || "—"} />
+            <SheetContext label="PHASE" value={trial?.phase || "—"} />
+            <SheetContext label="INDICATION" value={trial?.condition || visit?.condition || "—"} />
+          </View>
+          <View style={pi.formRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={pi.fieldLabel}>Visit</Text>
+              <View style={pi.readonlyField}><Text style={pi.readonlyFieldText}>{visit?.name || "Visit"}</Text></View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={pi.fieldLabel}>Visit Date</Text>
+              <TextInput testID="visit-update-date" value={form.dateISO} onChangeText={(dateISO) => onChange(current => ({ ...current, dateISO }))} placeholder="YYYY-MM-DD" placeholderTextColor={C.muted} style={pi.sheetInput} />
+            </View>
+          </View>
+          <Text style={pi.fieldLabel}>Status</Text>
+          <View style={pi.statusOptions}>
+            {VISIT_STATUS_OPTIONS.map((option) => {
+              const selected = form.status === option.value;
+              return <Pressable key={option.value} testID={`visit-status-${option.value}`} onPress={() => onChange(current => ({ ...current, status: option.value }))} style={[pi.statusOption, selected && pi.statusOptionSelected]}><Text style={[pi.statusOptionText, selected && pi.statusOptionTextSelected]}>{option.label}</Text></Pressable>;
+            })}
+          </View>
+          <Text style={[pi.fieldLabel, { marginTop: 14 }]}>Remarks</Text>
+          <TextInput testID="visit-update-note" value={form.note} onChangeText={(note) => onChange(current => ({ ...current, note }))} placeholder="Add any notes about this visit…" placeholderTextColor={C.muted} multiline textAlignVertical="top" style={[pi.sheetInput, pi.noteInput]} />
+          <View style={pi.sheetActions}>
+            <Pressable testID="visit-update-cancel" disabled={saving} onPress={onClose} style={pi.cancelSheetButton}><Text style={pi.cancelSheetText}>Cancel</Text></Pressable>
+            <Pressable testID="visit-update-save" disabled={saving} onPress={onSave} style={[pi.saveSheetButton, saving && { opacity: 0.65 }]}>{saving ? <ActivityIndicator color={C.primaryFg} /> : <Text style={pi.saveSheetText}>Save Update</Text>}</Pressable>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function SheetContext({ label, value }: { label: string; value: string }) {
+  return <View style={{ flex: 1, minWidth: 0 }}><Text style={pi.contextLabel}>{label}</Text><Text numberOfLines={1} style={pi.contextValue}>{value}</Text></View>;
 }
 
 function WeekLoadChart({ days }: { days: { label: string; count: number; today: boolean }[] }) {
@@ -557,16 +759,6 @@ function Ring({ value, size, stroke, children }: any) {
   );
 }
 
-function Tab({ icon: Icon, label, active, onPress, testID }: any) {
-  return (
-    <Pressable testID={testID} onPress={onPress} style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8 }}>
-      <Icon size={22} color={active ? C.primary : C.muted} />
-      <Text style={{ fontSize: 10, fontWeight: active ? "700" : "500", color: active ? C.primary : C.muted, marginTop: 4 }}>{label}</Text>
-      {active && <View style={{ position: "absolute", top: 0, height: 3, width: 32, backgroundColor: C.primary, borderRadius: 2 }} />}
-    </Pressable>
-  );
-}
-
 const pi = StyleSheet.create({
   hero: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56, overflow: "hidden" },
   heroTop: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8 },
@@ -609,5 +801,64 @@ const pi = StyleSheet.create({
   retryText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
   actionBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
   trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
+  visitTimeline: { gap: 8 },
+  timelineRow: { flexDirection: "row", alignItems: "stretch", gap: 10 },
+  timelineRail: { width: 24, alignItems: "center" },
+  timelineDot: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", zIndex: 1, borderWidth: 2, backgroundColor: C.card },
+  timelineDotUpcoming: { borderColor: C.info },
+  timelineDotToday: { borderColor: C.accent, backgroundColor: "#FFF4E5" },
+  timelineDotDone: { borderColor: C.success, backgroundColor: C.success },
+  timelineDotCore: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.info },
+  timelineLine: { position: "absolute", top: 22, bottom: -10, width: 2, backgroundColor: C.border },
+  visitTimelineCard: { flex: 1, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  visitTimelineCardToday: { borderColor: "rgba(230,155,92,0.72)", backgroundColor: "#FFF9F2" },
+  visitCardTop: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
+  visitSubject: { fontFamily: "monospace" as any, fontSize: 13, fontWeight: "700", color: C.fg },
+  visitInitials: { fontSize: 11, color: C.muted },
+  visitMeta: { marginTop: 3, fontSize: 10, color: C.muted },
+  visitCrc: { marginTop: 6, fontSize: 10, color: C.info, fontWeight: "700" },
+  todayBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(230,155,92,0.20)" },
+  todayBadgeText: { fontSize: 8, fontWeight: "800", color: C.accentFg, letterSpacing: 0.35 },
+  updateVisitButton: { alignSelf: "flex-start", paddingHorizontal: 11, height: 28, borderRadius: 14, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
+  updateVisitText: { color: C.accentFg, fontSize: 10, fontWeight: "800" },
+  doneVisitBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 7, height: 26, borderRadius: 13, backgroundColor: "rgba(92,154,110,0.12)" },
+  doneVisitText: { color: C.success, fontSize: 10, fontWeight: "800" },
+  overdueCount: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center" },
+  overdueCountText: { color: C.primaryFg, fontSize: 10, fontWeight: "800" },
+  overdueCard: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#FFF8F6", borderRadius: 15, borderWidth: 1, borderColor: "rgba(192,57,43,0.42)", borderLeftWidth: 4, borderLeftColor: C.destructive, padding: 11 },
+  overdueAlert: { width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  overduePatient: { color: C.fg, fontSize: 12, fontWeight: "800" },
+  daysOverdueBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(192,57,43,0.12)" },
+  daysOverdueText: { color: C.destructive, fontSize: 8, fontWeight: "800" },
+  overdueVisit: { marginTop: 3, color: C.muted, fontSize: 10, fontWeight: "700" },
+  overdueDate: { marginTop: 3, color: C.muted, fontSize: 9 },
+  reviewOverdueButton: { paddingHorizontal: 10, height: 28, borderRadius: 14, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center" },
+  reviewOverdueText: { color: C.primaryFg, fontSize: 10, fontWeight: "800" },
+  sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(46,27,51,0.44)" },
+  visitSheet: { maxHeight: "88%", backgroundColor: C.card, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 20, paddingTop: 10 },
+  sheetGrabber: { alignSelf: "center", width: 38, height: 4, borderRadius: 2, backgroundColor: C.border, marginBottom: 15 },
+  sheetHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 },
+  sheetTitle: { color: C.fg, fontSize: 20, fontWeight: "700" },
+  sheetSubtitle: { marginTop: 3, color: C.muted, fontSize: 12 },
+  sheetError: { marginBottom: 12, padding: 10, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.09)", borderWidth: 1, borderColor: "rgba(192,57,43,0.25)" },
+  sheetErrorText: { color: C.destructive, fontSize: 12, fontWeight: "600" },
+  visitContext: { flexDirection: "row", gap: 8, padding: 10, borderRadius: 13, backgroundColor: C.surface, marginBottom: 14 },
+  contextLabel: { color: C.muted, fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
+  contextValue: { color: C.fg, fontSize: 10, fontWeight: "700", marginTop: 4 },
+  formRow: { flexDirection: "row", gap: 10, marginBottom: 13 },
+  fieldLabel: { color: C.fg, fontSize: 11, fontWeight: "700", marginBottom: 6 },
+  readonlyField: { height: 42, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, justifyContent: "center", backgroundColor: "#FFFDF9" },
+  readonlyFieldText: { color: C.muted, fontSize: 12 },
+  sheetInput: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 9, color: C.fg, fontSize: 12, backgroundColor: "#FFFDF9" },
+  statusOptions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  statusOption: { minWidth: "30%", flexGrow: 1, paddingHorizontal: 10, height: 34, borderRadius: 17, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" },
+  statusOptionSelected: { backgroundColor: C.primary, borderColor: C.primary },
+  statusOptionText: { color: C.muted, fontSize: 10, fontWeight: "700" },
+  statusOptionTextSelected: { color: C.primaryFg },
+  noteInput: { height: 82, paddingTop: 10 },
+  sheetActions: { flexDirection: "row", gap: 10, marginTop: 18 },
+  cancelSheetButton: { flex: 1, height: 44, borderRadius: 22, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" },
+  cancelSheetText: { color: C.primary, fontSize: 12, fontWeight: "800" },
+  saveSheetButton: { flex: 1, height: 44, borderRadius: 22, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+  saveSheetText: { color: C.primaryFg, fontSize: 12, fontWeight: "800" },
 });

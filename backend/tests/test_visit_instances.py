@@ -757,6 +757,94 @@ class TestTasks:
                        for x in rc.json())
         run(flow())
 
+    def test_crc_queue_surfaces_admin_tasks_but_not_clinical_tasks(self, sponsor, pi, crc):
+        _, sp_headers = sponsor
+        pi_user, pi_headers = pi
+        crc_user, crc_headers = crc
+
+        async def flow():
+            trial, _ = await _make_trial(
+                sp_headers, templates=((0, 'Administrative workflow'),))
+            patient = await _enroll(
+                pi_headers,
+                trial['id'],
+                pi_id=pi_user['id'],
+                crc_id=crc_user['id'],
+                days_ago=0,
+            )
+            instance = await server.db.visit_instances.find_one(
+                {'patient_id': patient['id']}, {'_id': 0})
+            assert instance
+            clinical_id = str(uuid.uuid4())
+            admin_id = str(uuid.uuid4())
+            await server.db.visit_instances.update_one(
+                {'id': instance['id']},
+                {'$set': {
+                    'status': 'scheduled',
+                    'clinical_tasks': [{
+                        'id': clinical_id,
+                        'label': 'Record patient vitals',
+                        'completed': False,
+                    }],
+                    'admin_tasks': [{
+                        'id': admin_id,
+                        'label': 'Submit visit documentation',
+                        'completed': False,
+                    }],
+                }},
+            )
+
+            async with make_client() as cli:
+                response = await cli.get('/api/tasks', headers=crc_headers)
+            assert response.status_code == 200, response.text
+            patient_tasks = [
+                task for task in response.json()
+                if task.get('patient_id') == patient['id']
+            ]
+            assert any(
+                task['type'] == 'admin_task'
+                and task['title'] == 'Submit visit documentation'
+                and task['workflow_task_id'] == admin_id
+                and task['workflow_task_kind'] == 'admin_tasks'
+                for task in patient_tasks
+            )
+            assert not any(
+                task.get('workflow_task_id') == clinical_id
+                or task.get('title') == 'Record patient vitals'
+                for task in patient_tasks
+            )
+
+            async with make_client() as cli:
+                completed = await cli.patch(
+                    f"/api/visit-instances/{instance['id']}/tasks/{admin_id}",
+                    headers=crc_headers,
+                    json={'completed': True},
+                )
+                refreshed = await cli.get('/api/tasks', headers=crc_headers)
+            assert completed.status_code == 200, completed.text
+            stored = completed.json()
+            assert stored['admin_tasks'][0]['completed'] is True
+            assert stored['clinical_tasks'][0]['completed'] is False
+            assert not any(
+                task.get('workflow_task_id') == admin_id
+                for task in refreshed.json()
+            )
+
+            async with make_client() as cli:
+                withdrawn = await cli.patch(
+                    f"/api/visit-instances/{instance['id']}",
+                    headers=crc_headers,
+                    json={'status': 'withdrawn'},
+                )
+                after_withdrawal = await cli.get('/api/tasks', headers=crc_headers)
+            assert withdrawn.status_code == 200, withdrawn.text
+            assert not any(
+                task.get('patient_id') == patient['id']
+                for task in after_withdrawal.json()
+            )
+
+        run(flow())
+
     def test_missed_instance_leaves_the_overdue_queue(self, sponsor, pi):
         _, sp_headers = sponsor
         pi_user, pi_headers = pi

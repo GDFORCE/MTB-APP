@@ -9,6 +9,7 @@ import {
 } from "lucide-react-native";
 import { colors, spacing, radii, fonts, shadows, dawnGradient } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
+import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 
 // ── Date helpers (tz-safe, mirrors patient/calendar) ─────────────────────────
 // API dates are UTC ISO (midnight-anchored). We compare everything by a
@@ -329,6 +330,11 @@ export default function TeamCalendar() {
           </>
         )}
       </ScrollView>
+      <PiBottomNav
+        active="calendar"
+        calendarRole={role}
+        role={role}
+      />
     </View>
   );
 }

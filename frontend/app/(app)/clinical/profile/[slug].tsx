@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from "react";
 import {
   View, Text, ScrollView, Pressable, Switch, TextInput, StyleSheet, Modal,
-  KeyboardAvoidingView, Platform, ActivityIndicator, StatusBar, Linking,
+  KeyboardAvoidingView, Platform, ActivityIndicator, StatusBar,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import {
   ChevronLeft, ChevronRight, ChevronDown, Lock, AlertTriangle, Eye, EyeOff,
   Check, X, MessageCircle, Mail, Phone, Clock, Ticket, HelpCircle, BarChart2, Building2, FlaskConical,
-  Download, FileText as FileTextIcon, FileSpreadsheet,
+  Download, FileText as FileTextIcon, FileSpreadsheet, ShieldCheck, UserRound,
 } from "lucide-react-native";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
@@ -98,7 +98,14 @@ function EditProfile() {
         if (cancelled) return;
         setProf({ fullName: me.full_name || "", phone: (me.phone || "").replace(/^\+91\s?/, ""), email: me.email || "" });
         setLoaded({ phone: me.phone || "", email: me.email || "" });
-        const role = me.role === "pi" ? "PI" : "Research Team";
+        const role = ({
+          sponsor: "Sponsor",
+          cro: "CRO",
+          pi: "PI",
+          crc: "Research Team",
+          smo: "SMO",
+          site: "Site Admin",
+        } as Record<string, string>)[me.role] || me.role || "Member";
         setEntity(e => ({ ...e, orgName: me.organization || "—", role }));
         if (me.organization) {
           try {
@@ -169,7 +176,7 @@ function EditProfile() {
   return (
     <View style={p.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
-      <SubHeader eyebrow="Account" title="Edit Profile" rightLabel={saving ? "Saving…" : "Save"} onRight={save} />
+      <SubHeader eyebrow="Account" title="Edit Profile" />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={p.body} keyboardShouldPersistTaps="handled">
           {loading ? (
@@ -184,48 +191,67 @@ function EditProfile() {
               <Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Couldn’t load your profile. Some details may be missing.</Small>
             </View>
           ) : null}
-          <Rise delay={40}>
-            <View style={p.card}>
-              <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => setProf({ ...prof, fullName: v })} style={p.input} /></Field>
+          {!loading && (
+            <Rise delay={25}>
+              <View style={p.editIntro}>
+                <View style={p.editIntroIcon}><UserRound size={21} color={colors.primary} /></View>
+                <View style={{ flex: 1 }}>
+                  <Body weight="600">Keep your profile current</Body>
+                  <Small style={{ marginTop: 2, lineHeight: 17 }}>Your name updates immediately. Verified contact changes use a quick OTP check.</Small>
+                </View>
+              </View>
+            </Rise>
+          )}
+
+          <Rise delay={55}>
+            <View style={p.editCard}>
+              <View style={p.editSectionHead}>
+                <View style={[p.editSectionIcon, { backgroundColor: colors.primary + "14" }]}><UserRound size={16} color={colors.primary} /></View>
+                <View><Eyebrow color={colors.primary}>PERSONAL DETAILS</Eyebrow><Small style={{ marginTop: 1 }}>How your name appears across the app</Small></View>
+              </View>
+              <Field label="Full Name *">
+                <TextInput testID="edit-full-name" value={prof.fullName} onChangeText={v => setProf({ ...prof, fullName: v })} placeholder="Enter your full name" placeholderTextColor={colors.mutedFg + "88"} style={p.editInput} />
+              </Field>
             </View>
           </Rise>
-          <Rise delay={110}>
-            <View style={[p.card, { marginTop: spacing.md }]}>
-              <Eyebrow color={colors.mutedFg} style={{ marginBottom: spacing.sm }}>Contact — verified channels</Eyebrow>
+
+          <Rise delay={105}>
+            <View style={[p.editCard, { marginTop: 14 }]}>
+              <View style={p.editSectionHead}>
+                <View style={[p.editSectionIcon, { backgroundColor: colors.info + "14" }]}><ShieldCheck size={16} color={colors.info} /></View>
+                <View><Eyebrow color={colors.info}>VERIFIED CONTACT</Eyebrow><Small style={{ marginTop: 1 }}>Used for sign-in and account recovery</Small></View>
+              </View>
               <Field label="Phone Number">
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <View style={p.prefix}><Text style={{ color: colors.mutedFg, fontFamily: fonts.semibold }}>+91</Text></View>
-                  <TextInput value={prof.phone} onChangeText={v => setProf({ ...prof, phone: v })} keyboardType="phone-pad" style={[p.input, { flex: 1 }]} />
+                <View style={p.phoneRow}>
+                  <View style={p.editPrefix}><Text style={p.prefixText}>+91</Text></View>
+                  <TextInput testID="edit-phone" value={prof.phone} onChangeText={v => setProf({ ...prof, phone: v })} keyboardType="phone-pad" style={[p.editInput, { flex: 1 }]} />
                 </View>
-                <View style={p.warn}><AlertTriangle size={14} color={colors.warning} /><Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Changing this requires OTP verification.</Small></View>
               </Field>
               <Field label="Email ID">
-                <TextInput value={prof.email} onChangeText={v => setProf({ ...prof, email: v })} keyboardType="email-address" autoCapitalize="none" style={p.input} />
-                <View style={p.warn}><AlertTriangle size={14} color={colors.warning} /><Small color={colors.warning} style={{ flex: 1, fontSize: 12 }}>Changing this requires OTP verification.</Small></View>
+                <TextInput testID="edit-email" value={prof.email} onChangeText={v => setProf({ ...prof, email: v })} keyboardType="email-address" autoCapitalize="none" style={p.editInput} />
               </Field>
+              <View style={p.otpNote}><ShieldCheck size={14} color={colors.warning} /><Small color={colors.mutedFg} style={{ flex: 1, lineHeight: 17 }}>Changing phone or email requires OTP verification before it is saved.</Small></View>
             </View>
           </Rise>
-          <Rise delay={200}>
-            <View style={[p.card, { marginTop: spacing.md }]}>
-              <Eyebrow color={colors.mutedFg} style={{ marginBottom: spacing.sm }}>Entity — managed by your admin</Eyebrow>
+
+          <Rise delay={155}>
+            <View style={[p.editCard, { marginTop: 14 }]}>
+              <View style={p.editSectionHead}>
+                <View style={[p.editSectionIcon, { backgroundColor: colors.accent + "18" }]}><Building2 size={16} color={colors.accent} /></View>
+                <View><Eyebrow color={colors.accent}>ORGANIZATION</Eyebrow><Small style={{ marginTop: 1 }}>Managed by your organization administrator</Small></View>
+              </View>
               {[
                 { label: "Entity Type", val: entity.type },
                 { label: "Organization", val: entity.orgName },
                 { label: "Org. Address", val: entity.orgAddress },
                 { label: "Role", val: entity.role },
-              ].map((r, i) => (
-                <View key={r.label} style={[{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10 }, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border + "99" }]}>
-                  <View style={{ flex: 1, minWidth: 0, paddingRight: spacing.sm }}>
-                    <Small>{r.label}</Small>
-                    <Body weight="600" style={{ marginTop: 2 }}>{r.val}</Body>
-                  </View>
-                  <Lock size={14} color={colors.mutedFg} />
+              ].map((row, index) => (
+                <View key={row.label} style={[p.lockedRow, index > 0 && p.lockedBorder]}>
+                  <View style={{ flex: 1, paddingRight: 10 }}><Small>{row.label}</Small><Body weight="600" style={{ marginTop: 2, fontSize: 13 }}>{row.val}</Body></View>
+                  <View style={p.lockBadge}><Lock size={12} color={colors.mutedFg} /></View>
                 </View>
               ))}
-              <Springy onPress={() => router.replace("/(app)/clinical/profile/entity-change")} style={p.linkBtn}>
-                <Building2 size={15} color={colors.primary} />
-                <Small color={colors.primary} weight="700">Request an entity change</Small>
-              </Springy>
+              <Springy onPress={() => router.replace("/(app)/clinical/profile/entity-change")} style={p.linkBtn}><Building2 size={15} color={colors.primary} /><Small color={colors.primary} weight="700">Request an entity change</Small></Springy>
             </View>
           </Rise>
           {saveError ? <Small color={colors.destructive} style={{ marginTop: spacing.md }}>{saveError}</Small> : null}
@@ -1170,6 +1196,19 @@ const p = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   body: { padding: spacing.md, paddingBottom: spacing.xxl + 72 },
   card: { backgroundColor: colors.card, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
+  editIntro: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: colors.primary + "28", backgroundColor: colors.primary + "0A" },
+  editIntroIcon: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  editCard: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 15, paddingTop: 15, paddingBottom: 2 },
+  editSectionHead: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 },
+  editSectionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  editInput: { minHeight: 47, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, color: colors.foreground, fontFamily: fonts.regular },
+  phoneRow: { flexDirection: "row", gap: 8 },
+  editPrefix: { minWidth: 58, minHeight: 47, alignItems: "center", justifyContent: "center", borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  prefixText: { color: colors.foreground, fontFamily: fonts.semibold, fontSize: 14 },
+  otpNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 14, marginTop: -2, padding: 10, borderRadius: 13, borderWidth: 1, borderColor: colors.warning + "35", backgroundColor: colors.warning + "10" },
+  lockedRow: { flexDirection: "row", alignItems: "center", minHeight: 56, paddingVertical: 9 },
+  lockedBorder: { borderTopWidth: 1, borderTopColor: colors.border + "99" },
+  lockBadge: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
   iconTile: { width: 40, height: 40, borderRadius: radii.md, alignItems: "center", justifyContent: "center" },
   iconCircle: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   iconSm: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },

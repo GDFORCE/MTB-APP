@@ -11,12 +11,19 @@ import {
 
 export type ClinicalDashboardTask = {
   id: string;
-  type: "overdue_visit" | "visit_today" | "schedule_review" | "unread_messages";
+  type: "admin_task" | "overdue_visit" | "window_closes_today" | "visit_today" | "schedule_review" | "unread_messages";
   title: string;
   subtitle: string;
   due: string | null;
+  due_label?: string;
+  deadline_state?: "overdue" | "window_closes_today" | "scheduled_today";
+  days_overdue?: number;
   patient_id?: string;
   trial_id?: string;
+  visit_instance_id?: string;
+  visit_name?: string;
+  workflow_task_id?: string;
+  workflow_task_kind?: "admin_tasks";
   schedule_review_id?: string;
   priority: "high" | "medium" | "low";
   count?: number;

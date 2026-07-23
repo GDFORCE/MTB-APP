@@ -101,7 +101,6 @@ export function validateRegistration(
       required(fields, errors, "hospitalType", "Hospital type");
       required(fields, errors, "role", "Role");
     }
-    required(fields, errors, "verificationDoc", "Verification document");
   }
 
   return {

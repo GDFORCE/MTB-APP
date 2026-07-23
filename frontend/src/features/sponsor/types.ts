@@ -43,6 +43,16 @@ export type SponsorTrialSubject = {
   status: string;
   enrolled_at?: string;
   visits_completed: number;
+  current_visit?: {
+    id: string;
+    visit_number?: number;
+    name: string;
+    status: string;
+    visit_type?: string;
+    scheduled_date?: string;
+    window_start?: string;
+    window_end?: string;
+  } | null;
   deidentified: true;
 };
 

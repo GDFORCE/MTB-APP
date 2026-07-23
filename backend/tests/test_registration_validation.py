@@ -108,3 +108,42 @@ def test_registration_rejects_invalid_phone_dob_future_and_age(monkeypatch):
                 assert message in response.json()['detail'].lower()
 
     run(flow())
+
+
+def test_site_registration_creates_pi_or_crc_role_from_selected_site_role(monkeypatch):
+    async def no_delivery(*_args, **_kwargs):
+        return None
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', no_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        created = []
+        try:
+            async with make_client() as cli:
+                for index, (selected, expected) in enumerate([
+                    ('PI', 'pi'),
+                    ('Research Team', 'crc'),
+                ]):
+                    response = await cli.post('/api/auth/register/start', json={
+                        'full_name': f'Site Member {index}',
+                        'role': 'site',
+                        'email': f'site-{RUN_ID}-{index}@example.com',
+                        'phone': f'+91987654{index:04d}',
+                        'organization': f'Site {RUN_ID}',
+                        'profile': {'role': selected},
+                    })
+                    assert response.status_code == 200, response.text
+                    registration_id = response.json()['registration_id']
+                    created.append(registration_id)
+                    pending = await server.db.pending_registrations.find_one(
+                        {'id': registration_id}, {'_id': 0, 'role': 1})
+                    assert pending['role'] == expected
+        finally:
+            await server.db.pending_registrations.delete_many(
+                {'id': {'$in': created}})
+
+    run(flow())

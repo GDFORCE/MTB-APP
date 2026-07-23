@@ -932,6 +932,15 @@ async def register_start(body: RegisterStartIn):
                 400, f'This invitation is {status} and can no longer be used')
 
     effective_role = invitation.get('role') if invitation else body.role
+    if not invitation and effective_role == 'site':
+        selected_site_role = str((body.profile or {}).get('role') or '').strip().lower()
+        if selected_site_role == 'pi':
+            effective_role = 'pi'
+        elif selected_site_role in ('research team', 'crc'):
+            effective_role = 'crc'
+        else:
+            raise HTTPException(
+                400, 'Select either PI or Research Team for Site registration')
     if effective_role == 'admin':
         raise HTTPException(403, 'This role cannot self-register')
     channels = required_channels(effective_role)
@@ -1838,10 +1847,28 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
     visit_instances = await db.visit_instances.find(
         {'patient_id': {'$in': patient_ids}} if patient_ids else
         {'patient_id': {'$in': []}},
-        {'_id': 0, 'patient_id': 1, 'status': 1},
+        {
+            '_id': 0, 'id': 1, 'patient_id': 1, 'status': 1,
+            'visit_number': 1, 'seq': 1, 'name': 1, 'visit_type': 1,
+            'scheduled_date': 1, 'window_start': 1, 'window_end': 1,
+        },
     ).to_list(20000)
     completed_visits: Dict[str, int] = {}
+    current_visits: Dict[str, dict] = {}
     site_visit_stats: Dict[str, dict] = {}
+
+    def visit_sort_timestamp(value) -> float:
+        if not value:
+            return float('inf')
+        try:
+            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+                str(value).replace('Z', '+00:00'))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except (TypeError, ValueError):
+            return float('inf')
+
     patient_site: Dict[str, str] = {}
     for site_name, group in site_groups.items():
         for patient in group['patients']:
@@ -1860,6 +1887,16 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
             completed_visits[patient_id] = completed_visits.get(patient_id, 0) + 1
         if instance_status == 'overdue':
             stats['overdue'] += 1
+        effective_status = _effective_visit_status(instance)
+        if effective_status not in VISIT_QUEUE_TERMINAL_STATUSES:
+            candidate = {**instance, 'status': effective_status}
+            existing = current_visits.get(patient_id)
+            candidate_rank = 0 if effective_status == 'overdue' else 1
+            existing_rank = 0 if existing and existing.get('status') == 'overdue' else 1
+            candidate_date = visit_sort_timestamp(candidate.get('scheduled_date'))
+            existing_date = visit_sort_timestamp((existing or {}).get('scheduled_date'))
+            if existing is None or (candidate_rank, candidate_date) < (existing_rank, existing_date):
+                current_visits[patient_id] = candidate
 
     funnel_keys = (
         'screened', 'screen_fail', 'randomized', 'active', 'withdrawn',
@@ -1875,6 +1912,7 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
         elif bucket not in ('screen_fail', 'withdrawn', 'dropout', 'completed'):
             recruitment['active'] += 1
         site_name = patient_site.get(patient['id'], 'Unassigned site')
+        current_visit = current_visits.get(patient['id'])
         subjects.append({
             'id': patient['id'],
             'subject_id': patient.get('subject_id') or f"SUBJ-{index + 1:03d}",
@@ -1883,6 +1921,16 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
             'status': patient.get('status') or 'active',
             'enrolled_at': iso(patient.get('enrolled_date') or patient.get('created_at')),
             'visits_completed': completed_visits.get(patient['id'], 0),
+            'current_visit': {
+                'id': current_visit.get('id'),
+                'visit_number': current_visit.get('visit_number') or current_visit.get('seq'),
+                'name': current_visit.get('name') or 'Visit',
+                'status': current_visit.get('status') or 'scheduled',
+                'visit_type': current_visit.get('visit_type') or '',
+                'scheduled_date': iso(current_visit.get('scheduled_date')),
+                'window_start': iso(current_visit.get('window_start')),
+                'window_end': iso(current_visit.get('window_end')),
+            } if current_visit else None,
             'deidentified': True,
         })
 
@@ -4755,6 +4803,7 @@ class VisitInstancePatch(BaseModel):
         'screen_pass', 'screen_fail', 'withdrawn', 'dropout',
     ]] = None
     scheduled_date: Optional[str] = None
+    visit_type: Optional[Literal['Hospital', 'Phone', 'Remote', 'Home']] = None
     note: Optional[str] = Field(default=None, max_length=2000)
 
 class VisitInstanceTaskPatch(BaseModel):
@@ -4785,6 +4834,8 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
             upd['completed_at'] = None
     if body.note is not None:
         upd['note'] = body.note
+    if body.visit_type is not None:
+        upd['visit_type'] = body.visit_type
     if body.scheduled_date is not None:
         try:
             sched = datetime.fromisoformat(body.scheduled_date)
@@ -5117,6 +5168,10 @@ async def reject_schedule_review(review_id: str, body: ScheduleRejectIn,
         review_id, user, 'rejected', notes=body.notes or '', reason=body.reason)
 
 # ── Tasks queue (pi/crc action items, computed on read) ─────────────────────
+VISIT_QUEUE_TERMINAL_STATUSES = [
+    'completed', 'missed', 'screen_fail', 'withdrawn', 'dropout',
+]
+
 @api.get('/tasks')
 async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
     """Action queue for site staff: overdue visit instances, visits due today,
@@ -5132,26 +5187,85 @@ async def my_tasks(user=Depends(require_roles('pi', 'crc'))):
     if pmap:
         insts = await db.visit_instances.find({
             'patient_id': {'$in': list(pmap)},
-            'status': {'$nin': ['completed', 'missed']},
-            'scheduled_date': {'$lt': end_today},
+            'status': {'$nin': VISIT_QUEUE_TERMINAL_STATUSES},
         }, {'_id': 0}).sort('scheduled_date', 1).to_list(1000)
-        for i in insts:
-            sd = i.get('scheduled_date')
-            if not isinstance(sd, datetime):
+        for raw_instance in insts:
+            instance = await _ensure_visit_instance_workflow(raw_instance)
+            scheduled = instance.get('scheduled_date')
+            window_end = instance.get('window_end') or scheduled
+            if not isinstance(scheduled, datetime) or not isinstance(window_end, datetime):
                 continue
-            overdue = sd < start_today
-            ttype = 'overdue_visit' if overdue else 'visit_today'
-            p = pmap.get(i['patient_id'], {})
-            tasks.append({
-                'id': f"{ttype}:{i['id']}",
-                'type': ttype,
-                'title': f"{'Overdue' if overdue else 'Today'}: {i.get('name', 'Visit')}",
-                'subtitle': p.get('full_name', ''),
-                'due': iso(sd),
-                'patient_id': i['patient_id'],
-                'trial_id': i.get('trial_id'),
-                'priority': 'high' if overdue else 'medium',
-            })
+            if scheduled.tzinfo is None:
+                scheduled = scheduled.replace(tzinfo=timezone.utc)
+            if window_end.tzinfo is None:
+                window_end = window_end.replace(tzinfo=timezone.utc)
+
+            if window_end < start_today:
+                deadline_state = 'overdue'
+                task_type = 'overdue_visit'
+                days_overdue = max(1, (start_today.date() - window_end.date()).days)
+                due_label = f'{days_overdue} day{"s" if days_overdue != 1 else ""} overdue'
+                priority = 'high'
+            elif start_today <= window_end < end_today:
+                deadline_state = 'window_closes_today'
+                task_type = 'window_closes_today'
+                days_overdue = 0
+                due_label = 'Window closes today'
+                priority = 'high'
+            elif start_today <= scheduled < end_today:
+                deadline_state = 'scheduled_today'
+                task_type = 'visit_today'
+                days_overdue = 0
+                due_label = 'Today'
+                priority = 'medium'
+            else:
+                continue
+
+            patient = pmap.get(instance['patient_id'], {})
+            subject_label = patient.get('subject_id') or \
+                f"SUBJ-{(instance['patient_id'] or '')[-3:].upper()}"
+            common = {
+                'subtitle': subject_label,
+                'due': iso(window_end if deadline_state != 'scheduled_today' else scheduled),
+                'due_label': due_label,
+                'deadline_state': deadline_state,
+                'days_overdue': days_overdue,
+                'patient_id': instance['patient_id'],
+                'trial_id': instance.get('trial_id'),
+                'visit_instance_id': instance['id'],
+                'visit_name': instance.get('name', 'Visit'),
+                'priority': priority,
+            }
+
+            # CRC users receive administrative actions only. Clinical checklist
+            # items remain on Patient Record for the clinical team.
+            pending_admin = [
+                task for task in (instance.get('admin_tasks') or [])
+                if isinstance(task, dict) and not task.get('completed')
+            ] if user['role'] == 'crc' else []
+            if pending_admin:
+                for admin_task in pending_admin:
+                    tasks.append({
+                        **common,
+                        'id': f"admin_task:{instance['id']}:{admin_task['id']}",
+                        'type': 'admin_task',
+                        'title': admin_task.get('label') or 'Administrative visit task',
+                        'workflow_task_id': admin_task['id'],
+                        'workflow_task_kind': 'admin_tasks',
+                    })
+            else:
+                tasks.append({
+                    **common,
+                    'id': f"{task_type}:{instance['id']}",
+                    'type': task_type,
+                    'title': (
+                        f"Overdue: {instance.get('name', 'Visit')}"
+                        if deadline_state == 'overdue'
+                        else f"Window closes today: {instance.get('name', 'Visit')}"
+                        if deadline_state == 'window_closes_today'
+                        else f"Today: {instance.get('name', 'Visit')}"
+                    ),
+                })
 
     if user['role'] == 'pi':
         pending_reviews = await db.schedule_reviews.find(
@@ -5323,6 +5437,7 @@ async def _clinical_dashboard_payload(user: dict) -> dict:
     today_visits = [
         visit for visit in upcoming
         if (visit.get('scheduled_date') or '')[:10] == today.isoformat()
+        and visit.get('status') not in ('missed', 'screen_fail', 'withdrawn', 'dropout')
     ]
     start_today = datetime(
         today.year, today.month, today.day, tzinfo=timezone.utc)
@@ -5330,14 +5445,14 @@ async def _clinical_dashboard_payload(user: dict) -> dict:
     if patient_ids:
         overdue_count = await db.visit_instances.count_documents({
             'patient_id': {'$in': patient_ids},
-            'scheduled_date': {'$lt': start_today},
-            'status': {'$nin': ['completed', 'missed']},
+            'window_end': {'$lt': start_today},
+            'status': {'$nin': VISIT_QUEUE_TERMINAL_STATUSES},
         })
     completed_today = sum(
         1 for visit in today_visits if visit.get('status') == 'completed')
     pending_today = sum(
         1 for visit in today_visits
-        if visit.get('status') not in ('completed', 'missed'))
+        if visit.get('status') not in VISIT_QUEUE_TERMINAL_STATUSES)
 
     sponsor_names = sorted({
         (trial.get('sponsor_name') or '').strip()

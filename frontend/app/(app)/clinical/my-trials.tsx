@@ -1,316 +1,78 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
-import {
-  CalendarDays,
-  ChevronRight,
-  FlaskConical,
-  MapPin,
-  Plus,
-  RefreshCw,
-  Search,
-  UserRound,
-} from "lucide-react-native";
-import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
-import { Eyebrow, H1, Body, Small, Card, Button } from "@/src/components/ui";
-import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
+import { ArrowUpRight, Bell, FlaskConical, Plus, Search, SlidersHorizontal } from "lucide-react-native";
+import { colors, spacing, radii } from "@/src/theme/tokens";
+import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
+import { ScreenContainer } from "@/src/components/ScreenHeader";
 import { Rise } from "@/src/components/Rise";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
+import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 
 type Trial = {
-  id: string;
-  protocol_id?: string;
-  title?: string;
-  phase?: string;
-  condition?: string;
-  drug?: string;
-  status?: string;
-  recruitment_status?: string;
-  enrolled_count?: number;
-  target_enrollment?: number | null;
-  site_names?: string[];
-  site_count?: number;
-  created_by_name?: string;
-  created_by_role?: string;
-  created_at?: string;
+  id: string; protocol_id?: string; title?: string; phase?: string; condition?: string; drug?: string;
+  status?: string; recruitment_status?: string; site_names?: string[]; sponsor_name?: string;
+  pi_name?: string; department?: string; created_by_name?: string;
 };
-
 const ALL = "all";
 
 export default function MyTrials() {
   const router = useRouter();
   const { user } = useAuth();
+  const unread = useUnreadCount();
   const [trials, setTrials] = useState<Trial[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState(ALL);
   const [status, setStatus] = useState(ALL);
-
-  const load = useCallback(async (refresh = false) => {
-    if (refresh) setRefreshing(true);
-    else setLoading(true);
-    setError("");
-    try {
-      const response = await api.get("/trials");
-      setTrials(Array.isArray(response.data) ? response.data : []);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || "Couldn't load your trials.");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+  const [showPhaseFilters, setShowPhaseFilters] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try { const response = await api.get("/trials"); setTrials(Array.isArray(response.data) ? response.data : []); }
+    catch (e: any) { setError(e?.response?.data?.detail || "Couldn't load your trials."); }
+    finally { setLoading(false); }
   }, []);
-
   useEffect(() => { load(); }, [load]);
-
-  const phases = useMemo(
-    () => [ALL, ...Array.from(new Set(trials.map(t => t.phase).filter(Boolean) as string[]))],
-    [trials],
-  );
-  const statuses = useMemo(
-    () => [ALL, ...Array.from(new Set(trials.map(t => t.recruitment_status || t.status).filter(Boolean) as string[]))],
-    [trials],
-  );
+  const phases = useMemo(() => [ALL, ...Array.from(new Set(trials.map(t => t.phase).filter(Boolean) as string[]))], [trials]);
+  const statuses = useMemo(() => [ALL, ...Array.from(new Set(trials.map(t => t.recruitment_status || t.status).filter(Boolean) as string[]))], [trials]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return trials.filter(t => {
-      const searchable = [t.protocol_id, t.title, t.condition, t.drug, ...(t.site_names || [])]
-        .filter(Boolean).join(" ").toLowerCase();
+      const text = [t.protocol_id, t.title, t.condition, t.drug, ...(t.site_names || [])].filter(Boolean).join(" ").toLowerCase();
       const state = t.recruitment_status || t.status || "";
-      return (!needle || searchable.includes(needle))
-        && (phase === ALL || t.phase === phase)
-        && (status === ALL || state === status);
+      return (!needle || text.includes(needle)) && (phase === ALL || t.phase === phase) && (status === ALL || state === status);
     });
   }, [phase, query, status, trials]);
-
+  const statusOptions = useMemo(() => [
+    { value: ALL, label: "All", count: trials.length },
+    ...statuses.filter(value => value !== ALL).map(value => ({ value, label: value, count: trials.filter(t => (t.recruitment_status || t.status) === value).length })),
+  ], [statuses, trials]);
   const canAdd = user?.role === "sponsor" || user?.role === "cro" || user?.role === "pi";
-
-  return (
-    <ScreenContainer>
-      <ScreenHeader
-        eyebrow="Clinical · Active studies"
-        title="My Trials"
-        right={(
-          <Pressable testID="trials-refresh" onPress={() => load(true)} disabled={refreshing} hitSlop={10}>
-            {refreshing
-              ? <ActivityIndicator size="small" color={colors.primaryFg} />
-              : <RefreshCw size={19} color={colors.primaryFg} />}
-          </Pressable>
-        )}
-      />
-      <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-        <Rise>
-          <View style={s.search}>
-            <Search size={17} color={colors.mutedFg} />
-            <TextInput
-              testID="trial-search"
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search protocol, trial, drug or site"
-              placeholderTextColor={colors.mutedFg}
-              style={s.searchInput}
-            />
-          </View>
-        </Rise>
-
-        <Rise delay={60}>
-          <FilterRow label="Phase" values={phases} selected={phase} onSelect={setPhase} />
-          <FilterRow label="Status" values={statuses} selected={status} onSelect={setStatus} />
-        </Rise>
-
-        {canAdd && (
-          <Rise delay={100}>
-            <Button testID="add-trial" onPress={() => router.push("/(app)/sponsor/add-trial")}>
-              <View style={s.buttonInner}>
-                <Plus size={16} color={colors.primaryFg} />
-                <Small color={colors.primaryFg} weight="700">Add Trial</Small>
-              </View>
-            </Button>
-          </Rise>
-        )}
-
-        {loading ? (
-          <View style={s.state}><ActivityIndicator color={colors.primary} /><Small>Loading your trials…</Small></View>
-        ) : error ? (
-          <Card style={s.stateCard}>
-            <Small color={colors.destructive} weight="700">{error}</Small>
-            <Button variant="secondary" style={{ marginTop: spacing.md }} onPress={() => load()}>
-              <Small color={colors.primary} weight="700">Retry</Small>
-            </Button>
-          </Card>
-        ) : filtered.length === 0 ? (
-          <Card style={s.stateCard}>
-            <FlaskConical size={28} color={colors.mutedFg + "88"} />
-            <Body weight="700" style={{ marginTop: spacing.sm }}>
-              {trials.length ? "No matching trials" : "No trials assigned"}
-            </Body>
-            <Small style={{ marginTop: 4, textAlign: "center" }}>
-              {trials.length ? "Try changing your search or filters." : "Assigned studies will appear here."}
-            </Small>
-          </Card>
-        ) : filtered.map((trial, index) => (
-          <Rise key={trial.id} delay={140 + Math.min(index, 8) * 55}>
-            <TrialCard
-              trial={trial}
-              onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } })}
-            />
-          </Rise>
-        ))}
-      </ScrollView>
-    </ScreenContainer>
-  );
-}
-
-function FilterRow({ label, values, selected, onSelect }: {
-  label: string;
-  values: string[];
-  selected: string;
-  onSelect: (value: string) => void;
-}) {
-  return (
-    <View style={{ marginBottom: spacing.sm }}>
-      <Eyebrow style={{ marginBottom: 6 }}>{label}</Eyebrow>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>
-        {values.map(value => {
-          const active = value === selected;
-          const countLabel = value === ALL ? "All" : value;
-          return (
-            <Pressable
-              key={value}
-              onPress={() => onSelect(value)}
-              style={[s.filterChip, active && s.filterChipActive]}
-            >
-              <Small color={active ? colors.primaryFg : colors.foreground} weight="700" style={{ textTransform: "capitalize" }}>
-                {countLabel}
-              </Small>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
+  return <ScreenContainer>
+    <View style={s.piHeader}><View><Text style={s.piEyebrow}>PRINCIPAL INVESTIGATOR</Text><Text style={s.piTitle}>My Trials</Text></View><View style={s.headerActions}><Pressable testID="pi-trials-bell" onPress={() => router.push("/(app)/notifications")} style={s.bell}><Bell size={18} color={colors.primaryFg} />{(unread ?? 0) > 0 && <View style={s.unread}><Text style={s.unreadText}>{Math.min(unread ?? 0, 9)}</Text></View>}</Pressable><View style={s.headerAvatar}><Text style={s.headerAvatarText}>{user?.avatar_initials || (user?.full_name || "PI").split(" ").map(x => x[0]).join("").slice(0, 2)}</Text></View></View></View>
+    <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+      <Rise><View style={s.controlRow}><View style={s.search}><Search size={15} color={colors.mutedFg} /><TextInput testID="trial-search" value={query} onChangeText={setQuery} placeholder="Search trials..." placeholderTextColor={colors.mutedFg} style={s.searchInput} /></View><Pressable testID="trial-phase-filter" onPress={() => setShowPhaseFilters(open => !open)} style={[s.filterIcon, (showPhaseFilters || phase !== ALL) && s.filterIconActive]}><SlidersHorizontal size={15} color={showPhaseFilters || phase !== ALL ? colors.primaryFg : colors.mutedFg} /></Pressable>{canAdd && <Pressable testID="add-trial" onPress={() => router.push("/(app)/sponsor/add-trial")} style={s.addTrial}><Plus size={15} color={colors.primaryFg} /><Text style={s.addTrialText}>Add Trial</Text></Pressable>}</View></Rise>
+      {showPhaseFilters && <Rise delay={40}><View style={s.phasePanel}><View style={s.phasePanelTop}><Eyebrow>FILTER BY PHASE</Eyebrow>{phase !== ALL && <Pressable onPress={() => setPhase(ALL)}><Small color={colors.primary} weight="700">Clear</Small></Pressable>}</View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>{phases.map(value => <Pressable key={value} onPress={() => setPhase(value)} style={[s.filterChip, phase === value && s.filterChipActive]}><Small color={phase === value ? colors.primaryFg : colors.foreground} weight="700">{value === ALL ? "All" : value}</Small></Pressable>)}</ScrollView></View></Rise>}
+      <Rise delay={60}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.statusRow}>{statusOptions.map(option => <Pressable key={option.value} onPress={() => setStatus(option.value)} style={[s.filterChip, status === option.value && s.filterChipActive]}><Small color={status === option.value ? colors.primaryFg : colors.foreground} weight="700">{option.label} {option.count}</Small></Pressable>)}</ScrollView></Rise>
+      {loading ? <View style={s.state}><ActivityIndicator color={colors.primary} /><Small>Loading your trials...</Small></View> : error ? <Card style={s.stateCard}><Small color={colors.destructive} weight="700">{error}</Small><Button variant="secondary" style={{ marginTop: spacing.md }} onPress={() => load()}><Small color={colors.primary} weight="700">Retry</Small></Button></Card> : filtered.length === 0 ? <Card style={s.stateCard}><FlaskConical size={28} color={colors.mutedFg + "88"} /><Body weight="700" style={{ marginTop: spacing.sm }}>{trials.length ? "No matching trials" : "No trials assigned"}</Body><Small style={{ marginTop: 4, textAlign: "center" }}>{trials.length ? "Try changing your search or filters." : "Assigned studies will appear here."}</Small></Card> : filtered.map((trial, index) => <Rise key={trial.id} delay={140 + Math.min(index, 8) * 55}><TrialCard trial={trial} onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } })} /></Rise>)}
+    </ScrollView>
+    <PiBottomNav active="trials" calendarRole="pi" />
+  </ScreenContainer>;
 }
 
 function TrialCard({ trial, onPress }: { trial: Trial; onPress: () => void }) {
-  const enrolled = trial.enrolled_count || 0;
-  const target = trial.target_enrollment || 0;
-  const pct = target ? Math.min(100, Math.round((enrolled / target) * 100)) : 0;
-  const sites = trial.site_names || [];
-  const state = trial.recruitment_status || trial.status || "active";
-  const created = trial.created_at
-    ? new Date(trial.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
-    : "";
-
-  return (
-    <Pressable testID={`trial-card-${trial.id}`} onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.86 }}>
-      <View style={{ marginBottom: spacing.md }}>
-        <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.hero}>
-          <View style={s.heroTop}>
-            <View style={s.heroChip}><Small color={colors.primaryFg} weight="700" style={{ fontFamily: "monospace" as any }}>{trial.protocol_id || "No protocol"}</Small></View>
-            <View style={s.heroChip}><Small color={colors.primaryFg} weight="700" style={{ textTransform: "capitalize" }}>{state}</Small></View>
-          </View>
-          <H1 color={colors.primaryFg} style={s.title}>{trial.title || "Untitled trial"}</H1>
-          <Small color={colors.overlay25} style={{ marginTop: 4 }}>
-            {[trial.phase, trial.condition, trial.drug].filter(Boolean).join(" · ") || "Trial details pending"}
-          </Small>
-        </LinearGradient>
-        <Card style={s.cardBody}>
-          <View style={s.metrics}>
-            <Metric label="Enrolled" value={target ? `${enrolled}/${target}` : String(enrolled)} />
-            <Metric label="Sites" value={String(trial.site_count ?? sites.length)} />
-            <Metric label="Progress" value={target ? `${pct}%` : "—"} accent />
-          </View>
-          {target > 0 && (
-            <View style={s.progressTrack}>
-              <View style={[s.progressFill, { width: `${pct}%` }]} />
-            </View>
-          )}
-          <View style={s.metaList}>
-            <View style={s.metaRow}>
-              <MapPin size={14} color={colors.accent} />
-              <Small numberOfLines={1} style={{ flex: 1 }}>{sites.length ? sites.join(", ") : "Site assignment pending"}</Small>
-            </View>
-            {!!trial.created_by_name && (
-              <View style={s.metaRow}>
-                <UserRound size={14} color={colors.mutedFg} />
-                <Small numberOfLines={1} style={{ flex: 1 }}>
-                  Created by {trial.created_by_name}{trial.created_by_role ? ` · ${trial.created_by_role.toUpperCase()}` : ""}
-                </Small>
-              </View>
-            )}
-            {!!created && (
-              <View style={s.metaRow}>
-                <CalendarDays size={14} color={colors.mutedFg} />
-                <Small>{created}</Small>
-              </View>
-            )}
-          </View>
-          <View style={s.footer}>
-            <Small weight="700" color={colors.accent}>View full trial summary</Small>
-            <ChevronRight size={15} color={colors.accent} />
-          </View>
-        </Card>
-      </View>
-    </Pressable>
-  );
-}
-
-function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <View style={{ flex: 1 }}>
-      <Eyebrow color={colors.mutedFg}>{label}</Eyebrow>
-      <Body weight="700" color={accent ? colors.accent : colors.foreground} style={{ marginTop: 2, fontSize: 14 }}>{value}</Body>
-    </View>
-  );
+  const state = trial.recruitment_status || trial.status || "Active";
+  const statusColor = state.toLowerCase().includes("complete") ? colors.success : state.toLowerCase().includes("terminat") || state.toLowerCase().includes("withdraw") ? colors.destructive : colors.accent;
+  const details = [{ label: "SPONSOR", value: trial.sponsor_name || trial.created_by_name || "Not assigned" }, { label: "PI", value: trial.pi_name || trial.created_by_name || "Study team" }, { label: "SITE", value: trial.site_names?.[0] || "Not assigned" }, { label: "DEPARTMENT", value: trial.department || "Not assigned" }];
+  const tags = [trial.phase, trial.condition, trial.drug].filter(Boolean) as string[];
+  return <Pressable testID={`trial-card-${trial.id}`} onPress={onPress} style={({ pressed }) => [s.trialCard, pressed && s.trialCardPressed]}><View style={s.trialStripe} /><View style={s.trialContent}><View style={s.trialTop}><Small color={colors.primary} weight="700" style={s.protocol}>{trial.protocol_id || "NO PROTOCOL"}</Small><View style={s.stateAction}><View style={[s.statusPill, { backgroundColor: statusColor + "20" }]}><Small color={statusColor} weight="700">{state}</Small></View><View style={s.arrow}><ArrowUpRight size={15} color={colors.mutedFg} /></View></View></View><Body weight="700" numberOfLines={2} style={s.trialTitle}>{trial.title || "Untitled trial"}</Body>{tags.length > 0 && <View style={s.tags}>{tags.map(tag => <View key={tag} style={s.tag}><Small numberOfLines={1}>{tag}</Small></View>)}</View>}<View style={s.detailGrid}>{details.map(detail => <View key={detail.label} style={s.detailItem}><Eyebrow style={s.detailLabel}>{detail.label}</Eyebrow><Small numberOfLines={1} weight="700" style={s.detailValue}>{detail.value}</Small></View>)}</View></View></Pressable>;
 }
 
 const s = StyleSheet.create({
-  content: { padding: spacing.md, paddingBottom: spacing.xxl },
-  search: {
-    height: 46,
-    paddingHorizontal: 14,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    marginBottom: spacing.md,
-  },
-  searchInput: { flex: 1, color: colors.foreground, paddingVertical: 0 },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.card,
-  },
-  filterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  buttonInner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
-  state: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  stateCard: { minHeight: 150, alignItems: "center", justifyContent: "center", marginTop: spacing.md },
-  hero: { borderTopLeftRadius: radii.xl, borderTopRightRadius: radii.xl, padding: spacing.md },
-  heroTop: { flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
-  heroChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: radii.pill, backgroundColor: colors.overlay20 },
-  title: { fontSize: 18, marginTop: spacing.sm },
-  cardBody: { borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTopWidth: 0, marginBottom: 0 },
-  metrics: { flexDirection: "row", gap: spacing.md },
-  progressTrack: { height: 5, borderRadius: 4, backgroundColor: colors.secondary, overflow: "hidden", marginTop: 10 },
-  progressFill: { height: "100%", borderRadius: 4, backgroundColor: colors.accent },
-  metaList: { gap: 7, paddingTop: spacing.sm, marginTop: spacing.sm, borderTopWidth: 1, borderColor: colors.border },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 7 },
-  footer: { flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 4, marginTop: spacing.sm },
+  piHeader: { backgroundColor: colors.primaryDeep, minHeight: 68, paddingHorizontal: spacing.md, paddingVertical: 11, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, piEyebrow: { color: colors.overlay25, fontSize: 9, fontWeight: "700", letterSpacing: 1 }, piTitle: { color: colors.primaryFg, fontSize: 17, fontWeight: "700", marginTop: 2 }, headerActions: { flexDirection: "row", alignItems: "center", gap: 10 }, bell: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.overlay20, alignItems: "center", justifyContent: "center" }, unread: { position: "absolute", top: -2, right: -2, minWidth: 15, height: 15, borderRadius: 8, backgroundColor: colors.destructive, alignItems: "center", justifyContent: "center" }, unreadText: { color: colors.white, fontSize: 9, fontWeight: "700" }, headerAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.overlay20, alignItems: "center", justifyContent: "center" }, headerAvatarText: { color: colors.primaryFg, fontSize: 11, fontWeight: "700" },
+  content: { padding: spacing.md, paddingBottom: 104 }, controlRow: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 10 }, search: { flex: 1, height: 40, paddingHorizontal: 12, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, flexDirection: "row", alignItems: "center", gap: 8 }, searchInput: { flex: 1, color: colors.foreground, paddingVertical: 0, fontSize: 12 }, filterIcon: { height: 40, width: 40, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, alignItems: "center", justifyContent: "center" }, filterIconActive: { backgroundColor: colors.primary, borderColor: colors.primary }, addTrial: { height: 40, borderRadius: radii.lg, paddingHorizontal: 11, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.primary }, addTrialText: { color: colors.primaryFg, fontSize: 12, fontWeight: "700" }, phasePanel: { marginBottom: 10, padding: 10, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }, phasePanelTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 7 }, statusRow: { gap: 7, paddingBottom: 12 }, filterChip: { paddingHorizontal: 11, paddingVertical: 6, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }, filterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary }, buttonInner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, state: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: spacing.sm }, stateCard: { minHeight: 150, alignItems: "center", justifyContent: "center", marginTop: spacing.md },
+  trialCard: { flexDirection: "row", overflow: "hidden", marginBottom: spacing.md, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, shadowColor: "#3f1d2e", shadowOpacity: 0.08, shadowRadius: 8, elevation: 2 }, trialCardPressed: { opacity: 0.86, transform: [{ scale: 0.99 }] }, trialStripe: { width: 5, backgroundColor: colors.accent }, trialContent: { flex: 1, padding: spacing.md }, trialTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }, protocol: { fontFamily: "monospace" as any, backgroundColor: colors.secondary, overflow: "hidden", paddingHorizontal: 9, paddingVertical: 4, borderRadius: radii.pill }, stateAction: { flexDirection: "row", alignItems: "center", gap: 6 }, statusPill: { maxWidth: 92, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radii.pill }, arrow: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }, trialTitle: { fontSize: 16, lineHeight: 21, marginTop: 10 }, tags: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }, tag: { maxWidth: "100%", paddingHorizontal: 9, paddingVertical: 4, borderRadius: radii.pill, backgroundColor: colors.surface }, detailGrid: { flexDirection: "row", flexWrap: "wrap", rowGap: 11, paddingTop: 11, marginTop: 12, borderTopWidth: 1, borderColor: colors.border }, detailItem: { width: "50%", paddingRight: 8 }, detailLabel: { color: colors.mutedFg, opacity: 0.72, fontSize: 9 }, detailValue: { fontSize: 11, marginTop: 3 },
 });

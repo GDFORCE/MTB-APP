@@ -1,20 +1,48 @@
-import React, { useEffect, useRef } from "react";
-import { View, Text, StyleSheet, Animated, Easing } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { View, Text, StyleSheet, Animated, Easing, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle, Defs, LinearGradient as SvgGrad, Stop, Line } from "react-native-svg";
 import { Check } from "lucide-react-native";
 import { colors, spacing, radii, fonts, dawnGradient } from "@/src/theme/tokens";
-import { Eyebrow, Body } from "@/src/components/ui";
+import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
+import { useAuth } from "@/src/auth/AuthContext";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const ARC_LEN = 300; // >= actual path length; sweeps the stroke in on mount
 
 export default function RegisterSuccess() {
   const router = useRouter();
+  const { applySession } = useAuth();
+  const { session } = useLocalSearchParams<{ session?: string }>();
+  const [opening, setOpening] = useState(false);
+  const [sessionError, setSessionError] = useState("");
+  const createdSession = useMemo(() => {
+    try {
+      const parsed = JSON.parse(session || "");
+      return parsed?.access_token && parsed?.refresh_token && parsed?.user ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [session]);
+
+  const continueToApp = async () => {
+    if (!createdSession) {
+      router.replace("/(auth)/sign-in");
+      return;
+    }
+    setOpening(true);
+    setSessionError("");
+    try {
+      await applySession(createdSession);
+    } catch {
+      setSessionError("Your account was created, but automatic sign-in failed. Please sign in normally.");
+      setOpening(false);
+    }
+  };
 
   // Sunrise choreography: the arc sweeps in, then the sun (the check) rises at its crest.
   const arc = useRef(new Animated.Value(0)).current;
@@ -90,14 +118,19 @@ export default function RegisterSuccess() {
         </Rise>
         <Rise delay={420}>
           <Body color={colors.mutedFg} style={{ marginTop: 12, textAlign: "center", lineHeight: 22, maxWidth: 260 }}>
-            Your account has been created successfully. Sign in to open your trial board.
+            Your account has been created successfully. Continue to open your trial board.
           </Body>
         </Rise>
+        {!!sessionError && <Small color={colors.destructive} style={{ marginTop: 12, textAlign: "center" }}>{sessionError}</Small>}
       </View>
 
       <Rise delay={520} style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.lg }}>
-        <Springy onPress={() => router.replace("/(auth)/sign-in")} style={[s.cta, { backgroundColor: colors.primary }]}>
-          <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: colors.primaryFg }}>Go to Sign In</Text>
+        <Springy onPress={continueToApp} disabled={opening} style={[s.cta, { backgroundColor: colors.primary }]}>
+          {opening
+            ? <ActivityIndicator color={colors.primaryFg} />
+            : <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: colors.primaryFg }}>
+                {createdSession ? "Open My Trial Board" : "Go to Sign In"}
+              </Text>}
         </Springy>
       </Rise>
     </SafeAreaView>

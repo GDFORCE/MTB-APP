@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { Eye, EyeOff, ArrowLeft } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Small, Button } from "@/src/components/ui";
+import { MtbLogo } from "@/src/components/MtbLogo";
 import { useAuth } from "@/src/auth/AuthContext";
 
 export default function SignIn() {
@@ -29,7 +30,7 @@ export default function SignIn() {
         <ScrollView contentContainerStyle={s.container} keyboardShouldPersistTaps="handled">
           <Pressable onPress={() => router.back()} hitSlop={12} style={s.back}><ArrowLeft size={22} color={colors.foreground} /></Pressable>
           <View style={{ alignItems: "center", marginTop: spacing.md }}>
-            <View style={s.logo} />
+            <MtbLogo size={64} />
             <Eyebrow color={colors.accent} style={{ marginTop: spacing.md }}>My Trial Board</Eyebrow>
             <H1 style={{ marginTop: 6 }}>Welcome back.</H1>
             <Small style={{ marginTop: 6 }}>Sign in to open your trial board</Small>
@@ -75,7 +76,6 @@ export default function SignIn() {
 const s = StyleSheet.create({
   container: { padding: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xxl, flexGrow: 1 },
   back: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  logo: { width: 64, height: 64, borderRadius: 16, backgroundColor: colors.primary },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground },
   eye: { position: "absolute", right: 12, top: 12 },
   demoBox: { marginTop: spacing.xl, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },

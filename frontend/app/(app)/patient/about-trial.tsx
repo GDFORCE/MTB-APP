@@ -97,6 +97,23 @@ function formatTime(value?: string): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+function scheduleDuration(visits: any[]): string {
+  const dates = visits
+    .map((visit) => new Date(visit?.scheduled_date))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (dates.length < 2) return "";
+  const days = Math.max(1, Math.ceil(
+    (dates[dates.length - 1].getTime() - dates[0].getTime()) / 86_400_000,
+  ));
+  if (days >= 60) {
+    const months = Math.max(1, Math.round(days / 30.44));
+    return `${months} month${months === 1 ? "" : "s"}`;
+  }
+  const weeks = Math.max(1, Math.ceil(days / 7));
+  return `${weeks} week${weeks === 1 ? "" : "s"}`;
+}
+
 function roleLabel(contact: Contact): string {
   if (text(contact.designation)) return text(contact.designation);
   const role = text(contact.role).toLowerCase();
@@ -228,6 +245,11 @@ export default function AboutTrial() {
   const emergencyLabel = text(trial?.emergency_contact?.name || trial?.emergency_contact_name);
   const emergencyInstructions = text(trial?.emergency_contact?.instructions);
   const protocol = text(trial?.protocol_id) || "Your study";
+  const duration = text(trial?.duration) || scheduleDuration(sortedVisits);
+  const medicationSummary = text(trial?.drug) || Array.from(new Set(
+    activeMedications.map((medication) => text(medication.name)).filter(Boolean),
+  )).join(", ");
+  const recruitment = text(trial?.recruitment_status) || text(trial?.status);
 
   const renderOverview = () => (
     <View style={s.sectionStack}>
@@ -250,7 +272,7 @@ export default function AboutTrial() {
       <View style={s.factRow}>
         <Card style={s.factCard}>
           <Clock3 size={18} color={colors.accent} />
-          <Body weight="700" style={s.factValue}>{text(trial?.duration) || "Not provided"}</Body>
+          <Body weight="700" style={s.factValue}>{duration || "Not provided"}</Body>
           <Small>Duration</Small>
         </Card>
         <Card style={s.factCard}>
@@ -265,8 +287,8 @@ export default function AboutTrial() {
         {[
           ["Phase", text(trial?.phase)],
           ["Condition", text(trial?.condition)],
-          ["Study medication", text(trial?.drug)],
-          ["Recruitment", text(trial?.recruitment_status)],
+          ["Study medication", medicationSummary],
+          ["Recruitment", recruitment],
           ["Site", text(care.site)],
         ].map(([label, value], index) => (
           <View key={label} style={[s.detailRow, index > 0 && s.divider]}>
@@ -525,7 +547,12 @@ export default function AboutTrial() {
         </View>
       ) : (
         <>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.sectionTabs}>
+          <ScrollView
+            horizontal
+            style={s.sectionTabsScroller}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.sectionTabs}
+          >
             {SECTION_META.map((item) => {
               const Icon = item.icon;
               const active = section === item.id;
@@ -537,7 +564,7 @@ export default function AboutTrial() {
               );
             })}
           </ScrollView>
-          <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+          <ScrollView style={s.bodyScroller} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
             {partialErrors.length > 0 && (
               <View style={s.partialBanner}>
                 <AlertCircle size={17} color={colors.warning} />
@@ -581,14 +608,24 @@ const s = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   sectionTabs: {
+    alignItems: "center",
     paddingHorizontal: spacing.md,
     paddingVertical: 12,
     gap: 8,
     backgroundColor: colors.surface,
   },
+  sectionTabsScroller: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: 62,
+    backgroundColor: colors.surface,
+  },
+  bodyScroller: { flex: 1 },
   sectionTab: {
+    height: 38,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,

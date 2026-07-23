@@ -12,14 +12,14 @@ type Item = {
   id: PatientTab;
   label: string;
   icon: LucideIcon;
-  href: "/(app)/patient/dashboard" | "/(app)/patient/my-trial" | "/(app)/patient/messages" | "/(app)/patient/calendar" | "/(app)/patient/profile";
+  href: "/(app)/patient/dashboard" | "/(app)/patient/my-trial" | "/(app)/chat" | "/(app)/patient/calendar" | "/(app)/patient/profile";
   testID: string;
 };
 
 const ITEMS: Item[] = [
   { id: "home", label: "Home", icon: Home, href: "/(app)/patient/dashboard", testID: "patient-tab-home" },
   { id: "visits", label: "My Trial", icon: FlaskConical, href: "/(app)/patient/my-trial", testID: "patient-tab-trial" },
-  { id: "messages", label: "Messages", icon: MessageCircle, href: "/(app)/patient/messages", testID: "patient-tab-messages" },
+  { id: "messages", label: "Messages", icon: MessageCircle, href: "/(app)/chat", testID: "patient-tab-messages" },
   { id: "calendar", label: "Calendar", icon: Calendar, href: "/(app)/patient/calendar", testID: "patient-tab-calendar" },
   { id: "me", label: "Me", icon: User, href: "/(app)/patient/profile", testID: "patient-tab-me" },
 ];

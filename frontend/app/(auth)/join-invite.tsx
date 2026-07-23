@@ -219,11 +219,11 @@ export default function JoinInvite() {
                   <View style={s.fieldGrid}>
                     <EditableField label="User name" icon={UserRound} value={draft.fullName} onChangeText={updateDraft("fullName")} editing={editingField === "fullName"} onEdit={() => setEditingField("fullName")} onDone={() => setEditingField(null)} />
                     {!isPatientInvite ? <EditableField label="Designation" icon={BriefcaseBusiness} value={draft.designation} onChangeText={updateDraft("designation")} editing={editingField === "designation"} onEdit={() => setEditingField("designation")} onDone={() => setEditingField(null)} /> : null}
-                    <EditableField label="Role" icon={ShieldCheck} value={draft.role} onChangeText={updateDraft("role")} editing={editingField === "role"} onEdit={() => setEditingField("role")} onDone={() => setEditingField(null)} />
+                    <EditableField label="Role" icon={ShieldCheck} value={draft.role} editable={false} />
                     <EditableField label="Phone number" icon={Phone} value={draft.phone} onChangeText={updateDraft("phone")} keyboardType="phone-pad" editing={editingField === "phone"} onEdit={() => setEditingField("phone")} onDone={() => setEditingField(null)} />
                     <EditableField label="Email ID" icon={Mail} value={invite.email} editable={false} />
                   </View>
-                  <Small style={s.editHint}>Tap a value to edit it. Email ID is fixed by the invitation.</Small>
+                  <Small style={s.editHint}>You can update your name, designation and phone. Role and email are fixed by the invitation.</Small>
                 </View>
 
                 <View style={s.inviterCard}>
@@ -239,25 +239,27 @@ export default function JoinInvite() {
           )}
         </ScrollView>
 
-        <View style={s.footer}>
-          {isAccepted ? (
+        {(isPending || isAccepted) && (
+          <View style={s.footer}>
+            {isAccepted ? (
             <Springy onPress={() => router.push("/(auth)/sign-in")} style={[s.cta, { backgroundColor: colors.primary }]}>
               <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: colors.primaryFg }}>Go to sign in</Text>
               <ArrowRight size={16} color={colors.primaryFg} />
             </Springy>
-          ) : (
-            <Springy onPress={accept} disabled={!isPending || accepting} style={[s.cta, isPending ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
+            ) : (
+            <Springy onPress={accept} disabled={accepting} style={[s.cta, { backgroundColor: colors.primary }]}>
               {accepting ? (
                 <ActivityIndicator size="small" color={colors.primaryFg} />
               ) : (
                 <>
-                  <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: isPending ? colors.primaryFg : colors.mutedFg }}>Accept & continue</Text>
-                  {isPending && <ArrowRight size={16} color={colors.primaryFg} />}
+                  <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: colors.primaryFg }}>Accept & continue</Text>
+                  <ArrowRight size={16} color={colors.primaryFg} />
                 </>
               )}
             </Springy>
-          )}
-        </View>
+            )}
+          </View>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

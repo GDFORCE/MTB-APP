@@ -165,7 +165,7 @@ export default function SponsorTrialsScreen() {
             return (
               <Rise key={trial.id} delay={Math.min(index, 8) * 55}>
                 <Pressable
-                  onPress={() => router.push({ pathname: "/(app)/sponsor/trial-detail", params: { id: trial.id } } as never)}
+                  onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } } as never)}
                   style={({ pressed }) => [s.card, pressed && s.pressed]}
                 >
                 <LinearGradient colors={dawnGradient as any} style={s.accentRail} />

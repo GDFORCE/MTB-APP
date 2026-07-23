@@ -376,7 +376,7 @@ export default function VisitScheduleEditor() {
 
   const goToTrial = () => {
     setSaved(false);
-    router.replace({ pathname: "/(app)/sponsor/trial-detail", params: { id } });
+    router.replace({ pathname: "/(app)/clinical/trial-summary", params: { id } });
   };
 
   const pendingCount = rows.filter((row) => (

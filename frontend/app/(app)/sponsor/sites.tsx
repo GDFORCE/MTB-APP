@@ -189,7 +189,7 @@ function SiteDetail({ site, onBack }: { site: SponsorSite; onBack: () => void })
             <Pressable
               key={trial.id}
               onPress={() => router.push({
-                pathname: "/(app)/sponsor/trial-detail",
+                pathname: "/(app)/clinical/trial-summary",
                 params: { id: trial.id },
               })}
               style={({ pressed }) => [styles.trialPanel, pressed && styles.pressed]}

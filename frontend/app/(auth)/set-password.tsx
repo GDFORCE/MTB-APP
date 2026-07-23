@@ -9,11 +9,6 @@ import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
 import { api } from "@/src/api/client";
-import {
-  peekPendingVerificationDoc,
-  setPendingVerificationDoc,
-  uploadFile,
-} from "@/src/lib/upload";
 
 const RULES: { label: string; test: (p: string) => boolean }[] = [
   { label: "8+ characters", test: (p) => p.length >= 8 },
@@ -25,7 +20,7 @@ const RULES: { label: string; test: (p: string) => boolean }[] = [
 
 export default function SetPassword() {
   const router = useRouter();
-  const { registration_id, role } = useLocalSearchParams<{ registration_id: string; role: string }>();
+  const { registration_id, role } = useLocalSearchParams<{ registration_id: string; role: string; invited?: string }>();
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -33,7 +28,6 @@ export default function SetPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-  const [createdSession, setCreatedSession] = useState<any | null>(null);
 
   const metRules = RULES.filter((r) => r.test(password)).length;
   const strengthPct = (metRules / RULES.length) * 100;
@@ -57,25 +51,6 @@ export default function SetPassword() {
     });
   };
 
-  const uploadVerificationDocument = async (session: any) => {
-    const pendingDoc = peekPendingVerificationDoc();
-    const documentRequired = (role || "patient") !== "patient";
-    if (!pendingDoc) {
-      if (documentRequired) {
-        throw new Error("A verification document is required. Go back and attach it before continuing.");
-      }
-      return;
-    }
-    if (!session?.access_token) {
-      throw new Error("Your account was created, but the document upload session is unavailable.");
-    }
-    await uploadFile(pendingDoc, {
-      scopeType: "user",
-      token: session.access_token,
-    });
-    setPendingVerificationDoc(null);
-  };
-
   // Strength bar fills itself as rules are met (design's animate-fill-bar).
   const fill = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -86,21 +61,7 @@ export default function SetPassword() {
     if (!canContinue) return;
     setLoading(true); setErr("");
     try {
-      const data = createdSession
-        || (await api.post("/auth/register/complete", { registration_id, password })).data;
-      if (!createdSession) setCreatedSession(data);
-      // Registration is pre-auth, so upload the selected document after account
-      // creation supplies a token. Keep both the session and document for retry.
-      try {
-        await uploadVerificationDocument(data);
-      } catch (uploadError: any) {
-        setErr(
-          uploadError?.response?.data?.detail
-          || uploadError?.message
-          || "Your account was created, but the verification document could not be uploaded. Please retry.",
-        );
-        return;
-      }
+      const data = (await api.post("/auth/register/complete", { registration_id, password })).data;
       finishRegistration(data);
     } catch (e: any) {
       setErr(e?.response?.data?.detail || "Could not create your account. Please try again.");
@@ -184,8 +145,8 @@ export default function SetPassword() {
           <Springy onPress={createAccount} disabled={!canContinue} style={[s.cta, canContinue ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
             <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: canContinue ? colors.primaryFg : colors.mutedFg }}>
               {loading
-                ? createdSession ? "Uploading document…" : "Creating account…"
-                : createdSession ? "Retry document upload" : "Create Account"}
+                ? "Creating account…"
+                : "Create Account"}
             </Text>
           </Springy>
         </View>

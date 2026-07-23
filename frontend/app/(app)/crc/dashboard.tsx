@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, ActivityIndicator } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, ActivityIndicator, Modal } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -8,7 +8,7 @@ import {
   Bell, Sun, FileText, Building2, Stethoscope, ArrowUpRight,
   FilePlus2, UserPlus, ListTodo, AlertTriangle, ChevronRight,
   Clock, Home, Users, MessageCircle, Calendar as CalIcon, User, ShieldCheck,
-  Check, ClipboardCheck, RefreshCcw,
+  Check, ClipboardCheck, RefreshCcw, X,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -36,6 +36,13 @@ const C = {
   w10: "rgba(255,255,255,0.10)", w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w25: "rgba(255,255,255,0.25)", w55: "rgba(255,255,255,0.55)", w65: "rgba(255,255,255,0.65)", w70: "rgba(255,255,255,0.70)", w80: "rgba(255,255,255,0.80)",
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
+const VISIT_OUTCOMES = [
+  { value: "completed", label: "Completed" },
+  { value: "screen_fail", label: "Screen Failure" },
+  { value: "dropout", label: "Dropout" },
+  { value: "withdrawn", label: "Withdrawn" },
+] as const;
+type VisitOutcome = typeof VISIT_OUTCOMES[number]["value"];
 
 // GET /api/tasks item — action queue computed server-side for site staff.
 type Task = ClinicalDashboardTask;
@@ -60,6 +67,10 @@ export default function CrcDashboard() {
   const [taskTotal, setTaskTotal] = useState(0);
   const [completedTaskCount, setCompletedTaskCount] = useState(0);
   const [taskError, setTaskError] = useState("");
+  const [outcomeTask, setOutcomeTask] = useState<Task | null>(null);
+  const [selectedOutcome, setSelectedOutcome] = useState<VisitOutcome | null>(null);
+  const [savingOutcome, setSavingOutcome] = useState(false);
+  const [outcomeError, setOutcomeError] = useState("");
   const [dashboard, setDashboard] = useState<ClinicalDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -89,7 +100,7 @@ export default function CrcDashboard() {
 
   const trialById = useMemo(() => Object.fromEntries(trials.map((t: any) => [t.id, t])), [trials]);
   const patientById = useMemo(() => Object.fromEntries(patients.map((p: any) => [p.id, p])), [patients]);
-  const visitsToday = useMemo(() => tasks.filter(t => t.type === "visit_today"), [tasks]);
+  const visitTasksToday = useMemo(() => tasks.filter(t => t.type === "visit_today"), [tasks]);
   const overdueVisits = useMemo(() => tasks.filter(t => t.type === "overdue_visit"), [tasks]);
   const rankedTasks = useMemo(() => {
     const rank = { high: 0, medium: 1, low: 2 };
@@ -106,7 +117,7 @@ export default function CrcDashboard() {
   const todayLabel = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
   const completedToday = dashboard?.today.completed
     ?? todayVisits.filter(v => v.status === "completed").length;
-  const totalToday = dashboard?.today.total ?? (todayVisits.length || visitsToday.length);
+  const totalToday = dashboard?.today.total ?? (todayVisits.length || visitTasksToday.length);
   const dayProgress = loading || totalToday === 0 ? 0 : completedToday / totalToday;
 
   const openTask = (task: Task) => {
@@ -132,21 +143,28 @@ export default function CrcDashboard() {
   };
 
   const actOnTask = async (task: Task) => {
-    if (task.type !== "visit_today" && task.type !== "overdue_visit") {
+    const isVisitAlert = task.type === "visit_today"
+      || task.type === "window_closes_today"
+      || task.type === "overdue_visit";
+    if (isVisitAlert) {
+      setOutcomeError("");
+      setSelectedOutcome(null);
+      setOutcomeTask(task);
+      return;
+    }
+    if (task.type !== "admin_task") {
       openTask(task);
       return;
     }
-    const instanceId = task.id.split(":").slice(1).join(":");
-    if (!instanceId || completingTask) return;
+    const instanceId = task.visit_instance_id;
+    const workflowTaskId = task.workflow_task_id;
+    if (!instanceId || !workflowTaskId || completingTask) return;
     setTaskError("");
     setCompletingTask(task.id);
     try {
-      await api.patch(`/visit-instances/${instanceId}`, { status: "completed" });
+      await api.patch(`/visit-instances/${instanceId}/tasks/${workflowTaskId}`, { completed: true });
       setTasks(current => current.filter(item => item.id !== task.id));
       setCompletedTaskCount(current => current + 1);
-      setTodayVisits(current => current.map(visit =>
-        visit.id === instanceId ? { ...visit, status: "completed" } : visit
-      ));
     } catch (error: any) {
       setTaskError(error?.response?.data?.detail || "Couldn't complete this task. Please try again.");
     } finally {
@@ -154,10 +172,57 @@ export default function CrcDashboard() {
     }
   };
 
+  const closeOutcomeSheet = () => {
+    if (savingOutcome) return;
+    setOutcomeTask(null);
+    setSelectedOutcome(null);
+    setOutcomeError("");
+  };
+
+  const saveVisitOutcome = async () => {
+    const instanceId = outcomeTask?.visit_instance_id;
+    if (!outcomeTask || !instanceId || !selectedOutcome || savingOutcome) return;
+    setSavingOutcome(true);
+    setOutcomeError("");
+    try {
+      await api.patch(`/visit-instances/${instanceId}`, { status: selectedOutcome });
+      const resolvedTask = outcomeTask;
+      setTasks(current => current.filter(task =>
+        task.visit_instance_id !== instanceId
+      ));
+      setTodayVisits(current => current.filter(visit => visit.id !== instanceId));
+      setCompletedTaskCount(current => current + 1);
+      setDashboard(current => current ? {
+        ...current,
+        today: {
+          ...current.today,
+          total: Math.max(0, current.today.total - 1),
+          pending: Math.max(0, current.today.pending - 1),
+          completed: current.today.completed + (selectedOutcome === "completed" ? 1 : 0),
+          overdue: Math.max(
+            0,
+            current.today.overdue - (resolvedTask.type === "overdue_visit" ? 1 : 0),
+          ),
+        },
+      } : current);
+      setOutcomeTask(null);
+      setSelectedOutcome(null);
+    } catch (error: any) {
+      setOutcomeError(error?.response?.data?.detail || "Couldn't update this visit. Please try again.");
+    } finally {
+      setSavingOutcome(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <StatusBar barStyle="light-content" backgroundColor={C.primaryDeep} />
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 110 }}
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+      >
         {/* ── Hero with dawn gradient + concentric arcs ── */}
         <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.hero}>
           {/* Plum overlay top → transparent bottom for legibility */}
@@ -208,7 +273,7 @@ export default function CrcDashboard() {
                 <Text style={st.eyebrowLight}>{todayLabel.toUpperCase()}</Text>
                 <Text style={st.heroSubtitle}>Your day at the site</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                  <View style={st.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : (dashboard?.today.pending ?? visitsToday.length)} visits pending</Text></View>
+                  <View style={st.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : (dashboard?.today.pending ?? todayVisits.length)} visits pending</Text></View>
                   <View style={[st.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
                     <AlertTriangle size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : (dashboard?.today.overdue ?? overdueVisits.length)} overdue</Text>
                   </View>
@@ -295,17 +360,18 @@ export default function CrcDashboard() {
             </View>
           )}
           {!loading && rankedTasks.length > 0 && (
-            <View style={{ gap: 8 }}>
+            <SectionScroller count={rankedTasks.length} threshold={3} maxHeight={274}>
               {rankedTasks.map((task, index) => (
                 <DashboardReveal key={task.id} delay={60 + index * 45}>
                   <TaskCard
                     task={task}
                     busy={completingTask === task.id}
-                    onPress={() => actOnTask(task)}
+                    onComplete={() => actOnTask(task)}
+                    onOpen={() => openTask(task)}
                   />
                 </DashboardReveal>
               ))}
-            </View>
+            </SectionScroller>
           )}
           {!!taskError && (
             <View style={st.taskError}>
@@ -318,20 +384,20 @@ export default function CrcDashboard() {
           )}
 
           {/* Today's Visits */}
-          <SectionLabel label="TODAY'S VISITS" action={!loading ? <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{visitsToday.length} PENDING</Text> : undefined} />
+          <SectionLabel label="TODAY'S VISITS" action={!loading ? <Text style={{ fontSize: 11, fontWeight: "700", color: C.muted, fontVariant: ["tabular-nums"] }}>{todayVisits.filter(visit => visit.status !== "completed").length} PENDING</Text> : undefined} />
           {loading && <LoadingCard />}
-          {!loading && visitsToday.length === 0 && <EmptyCard text="No visits scheduled for today — you're all clear" />}
-          {!loading && (
-            <View>
-              {visitsToday.map((v, i) => {
+          {!loading && todayVisits.length === 0 && <EmptyCard text="No visits scheduled for today — you're all clear" />}
+          {!loading && todayVisits.length > 0 && (
+            <SectionScroller count={todayVisits.length} threshold={3} maxHeight={340}>
+              {todayVisits.map((v, i) => {
                 const isNext = i === 0;
-                const last = i === visitsToday.length - 1;
+                const last = i === todayVisits.length - 1;
                 const trial = v.trial_id ? trialById[v.trial_id] : null;
                 const patient = v.patient_id ? patientById[v.patient_id] : null;
                 const assignedPi = patient?.pi_id
                   ? (dashboard as any)?.team?.find((member: any) => member.id === patient.pi_id)?.full_name
                   : "";
-                const visitName = v.title.replace(/^Today: /, "");
+                const visitName = v.name || "Visit";
                 return (
                   <View key={v.id} style={{ flexDirection: "row", gap: 12 }}>
                     <View style={{ alignItems: "center", paddingTop: 4 }}>
@@ -347,7 +413,7 @@ export default function CrcDashboard() {
                       <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                         <View style={{ flex: 1, minWidth: 0 }}>
                           <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                            <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subtitle}</Text>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subject_label || "Subject"}</Text>
                             {patient?.avatar_initials ? <Text style={{ fontSize: 12, color: C.muted }}>· {patient.avatar_initials}</Text> : null}
                             {isNext && (
                               <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
@@ -360,7 +426,7 @@ export default function CrcDashboard() {
                           {assignedPi ? <Text style={{ fontSize: 11, color: C.info, marginTop: 4, fontWeight: "600" }}>Principal Investigator: {assignedPi}</Text> : null}
                           <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 6, flexWrap: "wrap" }}>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.surface, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
-                              <Clock size={11} color={C.muted} /><Text style={{ fontSize: 11, fontFamily: "monospace" as any, fontWeight: "600", color: C.fg }}>{fmtTime(v.due)}</Text>
+                              <Clock size={11} color={C.muted} /><Text style={{ fontSize: 11, fontFamily: "monospace" as any, fontWeight: "600", color: C.fg }}>{fmtTime(v.scheduled_date || null)}</Text>
                             </View>
                             <Text style={{ fontSize: 11, color: C.muted }}>{visitName}</Text>
                           </View>
@@ -375,7 +441,7 @@ export default function CrcDashboard() {
                   </View>
                 );
               })}
-            </View>
+            </SectionScroller>
           )}
 
           {/* Overdue */}
@@ -386,24 +452,26 @@ export default function CrcDashboard() {
                   <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 10 }}>{overdueVisits.length}</Text>
                 </View>
               } />
-              {overdueVisits.map(v => (
-                <View key={v.id} style={st.overdueCard}>
-                  <View style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6, backgroundColor: C.destructive }} />
-                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, padding: 16, paddingLeft: 20 }}>
-                    <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" }}>
-                      <AlertTriangle size={20} color={C.destructive} />
+              <SectionScroller count={overdueVisits.length} threshold={2} maxHeight={292}>
+                {overdueVisits.map(v => (
+                  <View key={v.id} style={st.overdueCard}>
+                    <View style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6, backgroundColor: C.destructive }} />
+                    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, padding: 16, paddingLeft: 20 }}>
+                      <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" }}>
+                        <AlertTriangle size={20} color={C.destructive} />
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subtitle}</Text>
+                        <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{v.title.replace(/^Overdue: /, "")}{v.trial_id && trialById[v.trial_id] ? ` · ${trialById[v.trial_id].protocol_id}` : ""}</Text>
+                        <Text style={{ fontSize: 12, color: C.destructive, marginTop: 4, fontWeight: "600" }}>{daysLate(v.due)} {daysLate(v.due) === 1 ? "day" : "days"} overdue · Was due {fmtDate(v.due)}</Text>
+                      </View>
+                      <Pressable testID={`review-${v.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: v.patient_id || "" } })} style={{ backgroundColor: C.destructive, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 }}>
+                        <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 12 }}>Review</Text>
+                      </Pressable>
                     </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subtitle}</Text>
-                      <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{v.title.replace(/^Overdue: /, "")}{v.trial_id && trialById[v.trial_id] ? ` · ${trialById[v.trial_id].protocol_id}` : ""}</Text>
-                      <Text style={{ fontSize: 12, color: C.destructive, marginTop: 4, fontWeight: "600" }}>{daysLate(v.due)} {daysLate(v.due) === 1 ? "day" : "days"} overdue · Was due {fmtDate(v.due)}</Text>
-                    </View>
-                    <Pressable testID={`review-${v.id}`} onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: v.patient_id || "" } })} style={{ backgroundColor: C.destructive, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 }}>
-                      <Text style={{ color: C.primaryFg, fontWeight: "700", fontSize: 12 }}>Review</Text>
-                    </Pressable>
                   </View>
-                </View>
-              ))}
+                ))}
+              </SectionScroller>
             </>
           )}
         </View>
@@ -417,6 +485,102 @@ export default function CrcDashboard() {
         <TabItem icon={CalIcon} label="Calendar" onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "crc" } } as any)} testID="tab-calendar" />
         <TabItem icon={User} label="Me" onPress={() => router.push("/(app)/clinical/profile")} testID="tab-me" />
       </View>
+
+      <Modal
+        visible={!!outcomeTask}
+        transparent
+        animationType="slide"
+        onRequestClose={closeOutcomeSheet}
+      >
+        <View style={st.outcomeBackdrop}>
+          <Pressable
+            accessibilityLabel="Close visit outcome"
+            style={StyleSheet.absoluteFill}
+            onPress={closeOutcomeSheet}
+          />
+          <View style={st.outcomeSheet}>
+            <View style={st.outcomeHandle} />
+            <View style={st.outcomeHeader}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={st.outcomeEyebrow}>UPDATE VISIT</Text>
+                <Text style={st.outcomeTitle}>Select an outcome</Text>
+                <Text style={st.outcomeSubtitle} numberOfLines={2}>
+                  {outcomeTask ? `${outcomeTask.subtitle} · ${outcomeTask.visit_name || "Visit"}` : ""}
+                </Text>
+              </View>
+              <Pressable
+                testID="outcome-close"
+                accessibilityLabel="Close"
+                onPress={closeOutcomeSheet}
+                disabled={savingOutcome}
+                style={st.outcomeClose}
+              >
+                <X size={19} color={C.muted} />
+              </Pressable>
+            </View>
+
+            <View style={st.outcomeGrid}>
+              {VISIT_OUTCOMES.map(option => {
+                const selected = selectedOutcome === option.value;
+                return (
+                  <Pressable
+                    key={option.value}
+                    testID={`outcome-${option.value}`}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    onPress={() => setSelectedOutcome(option.value)}
+                    disabled={savingOutcome}
+                    style={[st.outcomeOption, selected && st.outcomeOptionSelected]}
+                  >
+                    <View style={[st.outcomeRadio, selected && st.outcomeRadioSelected]}>
+                      {selected ? <Check size={13} color={C.primaryFg} strokeWidth={3} /> : null}
+                    </View>
+                    <Text style={[st.outcomeOptionText, selected && st.outcomeOptionTextSelected]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {!!outcomeError && (
+              <View style={st.outcomeError}>
+                <AlertTriangle size={15} color={C.destructive} />
+                <Text style={st.outcomeErrorText}>{outcomeError}</Text>
+              </View>
+            )}
+
+            <View style={st.outcomeActions}>
+              <Pressable
+                testID="outcome-cancel"
+                onPress={closeOutcomeSheet}
+                disabled={savingOutcome}
+                style={st.outcomeCancel}
+              >
+                <Text style={st.outcomeCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                testID="outcome-save"
+                accessibilityState={{ disabled: !selectedOutcome || savingOutcome }}
+                onPress={saveVisitOutcome}
+                disabled={!selectedOutcome || savingOutcome}
+                style={{ flex: 1 }}
+              >
+                <LinearGradient
+                  colors={selectedOutcome ? DAWN as any : [C.border, C.border] as any}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={st.outcomeSave}
+                >
+                  {savingOutcome
+                    ? <ActivityIndicator size="small" color={C.primaryFg} />
+                    : <Text style={st.outcomeSaveText}>Save outcome</Text>}
+                </LinearGradient>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -424,6 +588,41 @@ export default function CrcDashboard() {
 // ── Sub-components ──────────────────────────────────────────────────────────
 function Text(props: any) {
   return <RNText {...props} style={[{ color: C.fg }, props.style]} />;
+}
+
+function SectionScroller({
+  children,
+  count,
+  threshold,
+  maxHeight,
+}: {
+  children: React.ReactNode;
+  count: number;
+  threshold: number;
+  maxHeight: number;
+}) {
+  if (count <= threshold) {
+    return <View style={{ gap: 8 }}>{children}</View>;
+  }
+
+  return (
+    <View style={[st.sectionScrollFrame, { maxHeight }]}>
+      <ScrollView
+        nestedScrollEnabled
+        showsVerticalScrollIndicator
+        persistentScrollbar
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={st.sectionScrollContent}
+      >
+        {children}
+      </ScrollView>
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(251,242,232,0)", C.bg] as any}
+        style={st.sectionScrollFade}
+      />
+    </View>
+  );
 }
 
 function LoadingCard() {
@@ -532,36 +731,49 @@ function QuickAction({ icon: Icon, bgGradient, bgColor, iconColor, label, onPres
   );
 }
 
-function TaskCard({ task, busy, onPress }: { task: Task; busy: boolean; onPress: () => void }) {
+function TaskCard({
+  task,
+  busy,
+  onComplete,
+  onOpen,
+}: {
+  task: Task;
+  busy: boolean;
+  onComplete: () => void;
+  onOpen: () => void;
+}) {
   const meta = {
     high: { fg: C.destructive, bg: "rgba(192,57,43,0.12)" },
     medium: { fg: C.warning, bg: "rgba(216,154,60,0.15)" },
     low: { fg: C.info, bg: "rgba(123,107,184,0.12)" },
   }[task.priority];
-  const isVisit = task.type === "visit_today" || task.type === "overdue_visit";
+  const isAdminTask = task.type === "admin_task";
+  const isVisitAlert = task.type === "visit_today"
+    || task.type === "window_closes_today"
+    || task.type === "overdue_visit";
   const Icon = task.type === "unread_messages"
     ? MessageCircle
     : task.type === "schedule_review"
       ? ClipboardCheck
       : Clock;
-  const action = isVisit ? "Complete" : task.type === "unread_messages" ? "Reply" : "Open";
+  const action = task.due_label || (task.type === "unread_messages" ? "Reply" : "Open");
 
   return (
     <View style={st.taskCard}>
       <View style={[st.taskRail, { backgroundColor: meta.fg }]} />
       <Pressable
         testID={`task-action-${task.id}`}
-        onPress={onPress}
+        onPress={isAdminTask || isVisitAlert ? onComplete : onOpen}
         disabled={busy}
         style={[st.taskOrb, { backgroundColor: meta.bg }]}
       >
         {busy
           ? <ActivityIndicator size="small" color={meta.fg} />
-          : isVisit
+          : isAdminTask || isVisitAlert
             ? <Check size={19} color={meta.fg} strokeWidth={3} />
             : <Icon size={18} color={meta.fg} />}
       </Pressable>
-      <Pressable onPress={onPress} disabled={busy} style={{ flex: 1, minWidth: 0 }}>
+      <Pressable onPress={onOpen} disabled={busy} style={{ flex: 1, minWidth: 0 }}>
         <Text style={st.taskTitle} numberOfLines={2}>{task.title}</Text>
         <Text style={st.taskSubtitle} numberOfLines={1}>{task.subtitle || "Open task details"}</Text>
       </Pressable>
@@ -671,6 +883,9 @@ const st = StyleSheet.create({
   priorityPill: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
   priorityText: { fontSize: 9, fontWeight: "700", letterSpacing: 0.7 },
   taskActionText: { fontSize: 10, fontWeight: "700" },
+  sectionScrollFrame: { position: "relative", overflow: "hidden", borderRadius: 18 },
+  sectionScrollContent: { gap: 8, paddingRight: 5, paddingBottom: 18 },
+  sectionScrollFade: { position: "absolute", left: 0, right: 5, bottom: 0, height: 24 },
   caughtUpCard: { alignItems: "center", backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 22 },
   caughtUpIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
   caughtUpTitle: { color: C.fg, fontSize: 16, fontWeight: "700", marginTop: 10 },
@@ -685,5 +900,27 @@ const st = StyleSheet.create({
   visitCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   updateBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
   overdueCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: "rgba(192,57,43,0.30)", overflow: "hidden", position: "relative", marginBottom: 12 },
+  outcomeBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(46,27,51,0.42)" },
+  outcomeSheet: { backgroundColor: C.card, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30, borderWidth: 1, borderBottomWidth: 0, borderColor: C.border },
+  outcomeHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: C.border, alignSelf: "center", marginBottom: 16 },
+  outcomeHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  outcomeEyebrow: { fontSize: 9, fontWeight: "800", letterSpacing: 1.4, color: C.primary },
+  outcomeTitle: { fontSize: 20, lineHeight: 26, fontWeight: "700", color: C.fg, marginTop: 3 },
+  outcomeSubtitle: { fontSize: 12, color: C.muted, marginTop: 3 },
+  outcomeClose: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },
+  outcomeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 20 },
+  outcomeOption: { width: "48%", minHeight: 52, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 16, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, paddingHorizontal: 12 },
+  outcomeOptionSelected: { borderColor: C.primary, backgroundColor: C.secondary },
+  outcomeRadio: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: C.border, alignItems: "center", justifyContent: "center" },
+  outcomeRadioSelected: { borderColor: C.primary, backgroundColor: C.primary },
+  outcomeOptionText: { flex: 1, fontSize: 12, fontWeight: "700", color: C.muted },
+  outcomeOptionTextSelected: { color: C.primaryDeep },
+  outcomeError: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, borderWidth: 1, borderColor: "rgba(192,57,43,0.30)", backgroundColor: "rgba(192,57,43,0.08)", padding: 11, marginTop: 14 },
+  outcomeErrorText: { flex: 1, fontSize: 12, fontWeight: "600", color: C.destructive },
+  outcomeActions: { flexDirection: "row", gap: 10, marginTop: 20 },
+  outcomeCancel: { flex: 1, height: 50, borderRadius: 16, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" },
+  outcomeCancelText: { fontSize: 13, fontWeight: "700", color: C.muted },
+  outcomeSave: { height: 50, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  outcomeSaveText: { fontSize: 13, fontWeight: "700", color: C.primaryFg },
   tabBar: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border, paddingTop: 8, paddingBottom: 24, paddingHorizontal: 8 },
 });

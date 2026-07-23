@@ -2,10 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { Check, ClipboardCheck, ShieldCheck, FileText, Building2, Mail, Phone, ChevronDown, Paperclip, X } from "lucide-react-native";
-import * as DocumentPicker from "expo-document-picker";
+import { Check, ClipboardCheck, ShieldCheck, FileText, Building2, Mail, Phone, ChevronDown } from "lucide-react-native";
 import { api } from "@/src/api/client";
-import { setPendingVerificationDoc, peekPendingVerificationDoc, PickedAsset } from "@/src/lib/upload";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { AuthHeader } from "@/src/components/AuthHeader";
@@ -39,20 +37,18 @@ function variantFor(role?: string): RegistrationVariant {
   if (role === "patient") return "patient";
   return "sponsor";
 }
-// Demo prefills — convenient while developing, but must NOT ship in production
-// builds. `initFields` returns these only under __DEV__; otherwise empty fields.
-const DEMO_FIELDS: Record<string, Record<string, string>> = {
+// These objects define each form's field shape only. Registration always starts
+// blank; real invitation values are applied separately from route parameters.
+const FIELD_SHAPES: Record<string, Record<string, string>> = {
   site: { fullName: "Dr. Rajesh Kumar", designation: "Principal Investigator", email: "r.kumar@apollo.com", phone: "98100 12345", orgName: "Apollo Hospitals Mumbai", orgAddress: "", hospitalType: "Private", role: "PI", department: "" },
   smo: { fullName: "Dr. Rajesh Kumar", designation: "SMO Manager", email: "r.kumar@smo.com", phone: "98100 12345", orgName: "MedSites SMO Pvt Ltd", orgAddress: "" },
   patient: { fullName: "Priya Kapoor", phone: "98765 43210", email: "", dob: "1985-06-15", gender: "", language: "English" },
   sponsor: { fullName: "John Doe", designation: "Clinical Research Manager", email: "john.doe@pharmaco.com", phone: "98765 43210", orgName: "PharmaCo Ltd", orgAddress: "21 Business Park, Mumbai 400001" },
 };
 function initFields(variant: string): Record<string, string> {
-  const shape = DEMO_FIELDS[variant] || DEMO_FIELDS.sponsor;
-  if (__DEV__) return { ...shape };
-  // Production: same field keys, but blank — no demo data leaks into the build.
+  const shape = FIELD_SHAPES[variant] || FIELD_SHAPES.sponsor;
   const empty: Record<string, string> = {};
-  for (const k of Object.keys(shape)) empty[k] = k === "hospitalType" ? "Private" : k === "role" ? "PI" : "";
+  for (const key of Object.keys(shape)) empty[key] = "";
   return empty;
 }
 
@@ -61,7 +57,6 @@ const registrationInstructions = [
   "The Authorized Signatory / Responsible person of the organization should fill this form.",
   "All fields marked with an asterisk (*) are mandatory.",
   "After submitting, check your registered email for verification before signing in.",
-  "Uploaded documents must be self-attested with the company stamp and seal.",
   "You are responsible for the accuracy and authenticity of all information provided.",
 ];
 
@@ -189,6 +184,8 @@ export default function Register() {
   }>();
   const variant = variantFor(role);
   const isPatient = variant === "patient";
+  const isInvite = !!inviteToken;
+  const inviteEmailLocked = isInvite && !!emailParam;
   const orgNoun = variant === "site" ? "site" : variant === "smo" ? "SMO" : "organization";
   const entityLabel = labelMap[role as string] || "Sponsor";
 
@@ -211,7 +208,7 @@ export default function Register() {
 
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
-  const [showInstructions, setShowInstructions] = useState(() => !isPatient);
+  const [showInstructions, setShowInstructions] = useState(() => !isPatient && !isInvite);
   const [showDeclaration, setShowDeclaration] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [termsScrolled, setTermsScrolled] = useState(false);
@@ -219,27 +216,6 @@ export default function Register() {
   // True while Continue performs the authoritative org/contact lookup.
   const [checkingOrg, setCheckingOrg] = useState(false);
   const [err, setErr] = useState("");
-
-  // Verification doc: selected here (pre-auth) and held in a module store so it
-  // survives the multi-screen flow, then uploaded from set-password once a token
-  // exists (POST /files needs auth — see task 5.2 report).
-  const [verificationDoc, setVerificationDoc] = useState<PickedAsset | null>(() => peekPendingVerificationDoc());
-  const [docErr, setDocErr] = useState("");
-  const pickVerificationDoc = async () => {
-    setDocErr("");
-    try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ["application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
-        copyToCacheDirectory: true, multiple: false,
-      });
-      if (res.canceled || !res.assets?.length) return;
-      const a = res.assets[0];
-      const picked: PickedAsset = { uri: a.uri, name: a.name || "verification", mimeType: a.mimeType, file: (a as any).file };
-      setVerificationDoc(picked);
-      setPendingVerificationDoc(picked);
-    } catch { setDocErr("Couldn't open the file picker."); }
-  };
-  const clearVerificationDoc = () => { setVerificationDoc(null); setPendingVerificationDoc(null); };
 
   // ── Live org directory lookup (debounced) ─────────────────────────────────
   const [orgMatches, setOrgMatches] = useState<Org[]>([]);
@@ -249,7 +225,7 @@ export default function Register() {
   // Continue to detect when the latest results are stale vs. the typed org name.
   const lastSearchedQuery = useRef("");
   useEffect(() => {
-    if (isPatient) return;
+    if (isPatient || isInvite) return;
     const q = (fld.orgName || "").trim();
     if (q.length < 2) { setOrgMatches([]); setOrgSearching(false); return; }
     setOrgSearching(true);
@@ -272,7 +248,7 @@ export default function Register() {
       }
     }, 300);
     return () => { ignore = true; clearTimeout(t); };
-  }, [fld.orgName, role, isPatient]);
+  }, [fld.orgName, role, isInvite, isPatient]);
 
   // ── Terms & Conditions content (fetched when the modal opens) ─────────────
   const [termsBlocks, setTermsBlocks] = useState<{ heading: string; body: string }[] | null>(null);
@@ -288,13 +264,16 @@ export default function Register() {
       .finally(() => setTermsLoading(false));
   }, [showTerms, termsBlocks, termsLoading]);
 
-  const validation = useMemo(
-    () => validateRegistration(variant, {
-      ...fld,
-      verificationDoc: verificationDoc?.name || "",
-    }),
-    [fld, variant, verificationDoc],
-  );
+  const validation = useMemo(() => {
+    const result = validateRegistration(variant, fld);
+    if (!isInvite) return result;
+    const errors = { ...result.errors };
+    delete errors.orgName;
+    delete errors.orgAddress;
+    delete errors.hospitalType;
+    delete errors.role;
+    return { ...result, errors, valid: Object.keys(errors).length === 0 };
+  }, [fld, isInvite, variant]);
   const canContinue = agreedToTerms && declarationAccepted && validation.valid;
   const fieldError = (key: keyof RegistrationErrors) =>
     submitted || touched[key] ? validation.errors[key] : undefined;
@@ -309,13 +288,23 @@ export default function Register() {
   };
 
   const proceed = () => {
+    const effectiveRole = role === "site"
+      ? fld.role === "PI" ? "pi" : "crc"
+      : role || "patient";
+    const registrationPayload = { ...validation.normalized };
+    if (isInvite) {
+      delete registrationPayload.orgAddress;
+      delete registrationPayload.hospitalType;
+      delete registrationPayload.role;
+      delete registrationPayload.department;
+    }
     router.push({
       pathname: "/(auth)/security-questions",
       params: {
-        role: role || "patient",
+        role: effectiveRole,
         variant,
         payload: JSON.stringify({
-          ...validation.normalized,
+          ...registrationPayload,
           inviteToken: inviteToken || "",
         }),
       },
@@ -326,7 +315,7 @@ export default function Register() {
     setSubmitted(true);
     setErr("");
     if (!canContinue || checkingOrg) return;
-    if (isPatient) { proceed(); return; }
+    if (isPatient || isInvite) { proceed(); return; }
     setShowOrgSuggestions(false);
     const q = (fld.orgName || "").trim();
 
@@ -398,7 +387,18 @@ export default function Register() {
             {isPatient ? (
               <>
                 <Field label="Phone Number" required error={fieldError("phone")}><PhoneInput value={fld.phone} onChangeText={up("phone")} error={!!fieldError("phone")} /></Field>
-                <Field label="Email ID" required error={fieldError("email")}><Input value={fld.email} onChangeText={up("email")} keyboardType="email-address" autoCapitalize="none" placeholder="patient@example.com" style={fieldError("email") && f.inputError} /></Field>
+                <Field label="Email ID" required error={fieldError("email")}>
+                  <Input
+                    value={fld.email}
+                    onChangeText={inviteEmailLocked ? undefined : up("email")}
+                    editable={!inviteEmailLocked}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    placeholder="patient@example.com"
+                    style={[inviteEmailLocked && f.readOnlyInput, fieldError("email") && f.inputError]}
+                  />
+                  {inviteEmailLocked && <Small color={colors.mutedFg} style={f.lockedHint}>Fixed by your invitation.</Small>}
+                </Field>
                 <View style={{ flexDirection: "row", gap: 12 }}>
                   <View style={{ flex: 1 }}>
                     <Field label="Date of Birth" required error={fieldError("dob")}><Input value={fld.dob} onChangeText={up("dob")} keyboardType="numbers-and-punctuation" placeholder="YYYY-MM-DD" style={fieldError("dob") && f.inputError} /></Field>
@@ -420,13 +420,31 @@ export default function Register() {
               </>
             ) : (
               <>
-                <Field label="Email ID" required error={fieldError("email")}><Input value={fld.email} onChangeText={up("email")} keyboardType="email-address" autoCapitalize="none" style={fieldError("email") && f.inputError} /></Field>
+                <Field label="Email ID" required error={fieldError("email")}>
+                  <Input
+                    value={fld.email}
+                    onChangeText={inviteEmailLocked ? undefined : up("email")}
+                    editable={!inviteEmailLocked}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    style={[inviteEmailLocked && f.readOnlyInput, fieldError("email") && f.inputError]}
+                  />
+                  {inviteEmailLocked && <Small color={colors.mutedFg} style={f.lockedHint}>Fixed by your invitation.</Small>}
+                </Field>
                 <Field label="Phone Number" required error={fieldError("phone")}><PhoneInput value={fld.phone} onChangeText={up("phone")} error={!!fieldError("phone")} /></Field>
 
                 <SectionRow title="Organization" />
                 <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required error={fieldError("orgName")}>
-                  <Input value={fld.orgName} onChangeText={onOrgNameChange} onFocus={() => setShowOrgSuggestions(true)} placeholder={`Search or type your ${orgNoun} name`} style={fieldError("orgName") && f.inputError} />
-                  {showOrgSuggestions && (fld.orgName || "").trim().length >= 2 && !matchedOrg && (orgSearching || orgMatches.length > 0) && (
+                  <Input
+                    value={fld.orgName}
+                    onChangeText={isInvite ? undefined : onOrgNameChange}
+                    onFocus={isInvite ? undefined : () => setShowOrgSuggestions(true)}
+                    editable={!isInvite}
+                    placeholder={`Search or type your ${orgNoun} name`}
+                    style={[isInvite && f.readOnlyInput, fieldError("orgName") && f.inputError]}
+                  />
+                  {isInvite && <Small color={colors.mutedFg} style={f.lockedHint}>Assigned by your invitation.</Small>}
+                  {!isInvite && showOrgSuggestions && (fld.orgName || "").trim().length >= 2 && !matchedOrg && (orgSearching || orgMatches.length > 0) && (
                     <View style={f.suggestBox}>
                       {orgSearching && orgMatches.length === 0 ? (
                         <View style={f.suggestRow}>
@@ -447,37 +465,22 @@ export default function Register() {
                     </View>
                   )}
                 </Field>
-                <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required error={fieldError("orgAddress")}>
-                  <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
-                </Field>
-
-                {variant === "site" && (
+                {!isInvite && (
                   <>
-                    <Field label="Hospital Type" required error={fieldError("hospitalType")}><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
-                    <Field label="Role" required error={fieldError("role")}><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team"]} onChange={up("role")} /></Field>
-                    {fld.role === "PI" && <Field label="Department"><Select value={fld.department} placeholder="Select department" options={departmentOptions} onChange={up("department")} /></Field>}
+                    <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required error={fieldError("orgAddress")}>
+                      <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
+                    </Field>
+
+                    {variant === "site" && (
+                      <>
+                        <Field label="Hospital Type" required error={fieldError("hospitalType")}><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
+                        <Field label="Role" required error={fieldError("role")}><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team"]} onChange={up("role")} /></Field>
+                        {fld.role === "PI" && <Field label="Department"><Select value={fld.department} placeholder="Select department" options={departmentOptions} onChange={up("department")} /></Field>}
+                      </>
+                    )}
+
                   </>
                 )}
-
-                <Field label="Verification Document" required error={fieldError("verificationDoc")}>
-                  {verificationDoc ? (
-                    <View style={f.docChip}>
-                      <View style={f.docIcon}><FileText size={16} color={colors.primary} /></View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Body weight="700" numberOfLines={1} style={{ fontSize: 14 }}>{verificationDoc.name}</Body>
-                        <Small color={colors.mutedFg}>Uploaded right after your account is created.</Small>
-                      </View>
-                      <Pressable onPress={clearVerificationDoc} hitSlop={8} style={f.docRemove}><X size={15} color={colors.mutedFg} /></Pressable>
-                    </View>
-                  ) : (
-                    <Pressable onPress={pickVerificationDoc} style={f.docPick}>
-                      <Paperclip size={16} color={colors.primary} />
-                      <Small color={colors.primary} weight="700">Attach self-attested document</Small>
-                    </Pressable>
-                  )}
-                  <Small color={colors.mutedFg} style={{ marginTop: 6, fontSize: 12 }}>Required for staff and organization registrations — PDF, PNG, JPG or DOCX (max 10 MB).</Small>
-                  {docErr ? <Small color={colors.destructive} style={{ marginTop: 4 }}>{docErr}</Small> : null}
-                </Field>
               </>
             )}
 
@@ -637,6 +640,8 @@ const f = StyleSheet.create({
   entityLabel: { marginTop: 1, fontFamily: fonts.heading, fontSize: 17, color: colors.foreground },
   label: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, marginBottom: 6 },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },
+  readOnlyInput: { color: colors.mutedFg, backgroundColor: colors.surface },
+  lockedHint: { marginTop: 5, fontSize: 12 },
   inputError: { borderColor: colors.destructive, backgroundColor: colors.destructive + "08" },
   fieldError: { marginTop: 5, lineHeight: 17 },
   prefix: { paddingHorizontal: 14, justifyContent: "center", borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
@@ -662,8 +667,4 @@ const f = StyleSheet.create({
   banner: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radii.md },
   adminCard: { borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 14 },
   adminAvatar: { width: 40, height: 40, borderRadius: 999, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
-  docPick: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: radii.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.primary + "66", backgroundColor: colors.primary + "0A" },
-  docChip: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  docIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  docRemove: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
 });
