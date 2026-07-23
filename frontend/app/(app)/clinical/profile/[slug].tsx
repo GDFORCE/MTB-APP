@@ -16,6 +16,8 @@ import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 
 // ── Password strength rules (mirrors patient profile) ─────────────────────────
 const passwordRules = [
@@ -458,20 +460,6 @@ function ChangePassword() {
                   <Small>Password strength: <Small color={colors.foreground} weight="700">{passLabel}</Small></Small>
                 </View>
               )}
-              {key === "next" && (
-                <View style={[p.card, { marginBottom: spacing.md }]}>
-                  <Eyebrow color={colors.mutedFg} style={{ marginBottom: 8 }}>Requirements</Eyebrow>
-                  {passwordRules.map(r => {
-                    const met = r.test(pw.next);
-                    return (
-                      <View key={r.label} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                        <View style={[p.ruleDot, met ? { backgroundColor: colors.success + "26" } : { backgroundColor: colors.surface }]}>{met ? <Check size={11} color={colors.success} strokeWidth={3} /> : <X size={11} color={colors.mutedFg + "80"} />}</View>
-                        <Small color={met ? colors.foreground : colors.mutedFg}>{r.label}</Small>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
               {key === "confirm" && pw.confirm.length > 0 && (
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: spacing.sm }}>
                   {passMatch ? <Check size={14} color={colors.success} /> : <X size={14} color={colors.destructive} />}
@@ -480,6 +468,16 @@ function ChangePassword() {
               )}
             </Rise>
           ))}
+          <View style={[p.card, { marginBottom: spacing.md }]}>
+            <Eyebrow color={colors.mutedFg} style={{ marginBottom: 8 }}>Requirements</Eyebrow>
+            {passwordRules.map(r => {
+              const met = r.test(pw.next);
+              return <View key={r.label} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <View style={[p.ruleDot, met ? { backgroundColor: colors.success + "26" } : { backgroundColor: colors.surface }]}>{met ? <Check size={11} color={colors.success} strokeWidth={3} /> : <X size={11} color={colors.mutedFg + "80"} />}</View>
+                <Small color={met ? colors.foreground : colors.mutedFg}>{r.label}</Small>
+              </View>;
+            })}
+          </View>
           {err ? <Small color={colors.destructive}>{err}</Small> : null}
         </ScrollView>
         <View style={p.footer}>
@@ -591,6 +589,7 @@ type RoleReport = {
   id: string; type: string; name?: string; format?: string; rows?: number;
   created_at?: string; download_url?: string;
 };
+type ReportTrial = { id: string; label: string };
 
 const REPORT_B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 function reportBufferToBase64(buffer: ArrayBuffer): string {
@@ -622,6 +621,11 @@ function Reports() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [trials, setTrials] = useState<ReportTrial[]>([]);
+  const [configuring, setConfiguring] = useState<RoleReportType | null>(null);
+  const [selectedTrialIds, setSelectedTrialIds] = useState<string[]>([]);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const loadRecent = async () => {
     setLoadError(false);
@@ -631,14 +635,27 @@ function Reports() {
     } catch { setLoadError(true); }
     finally { setLoading(false); }
   };
-  useEffect(() => { loadRecent(); }, []);
+  const loadOptions = async () => {
+    try {
+      const res = await api.get<ReportTrial[]>("/reports/options");
+      setTrials(Array.isArray(res.data) ? res.data : []);
+    } catch { setTrials([]); }
+  };
+  useEffect(() => { void loadRecent(); void loadOptions(); }, []);
 
   const generate = async (type: RoleReportType) => {
     setGenerating(type); setNotice(null);
     try {
-      const res = await api.post("/reports/generate", { type, format });
+      if ((dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) || (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo))) {
+        throw new Error("Use YYYY-MM-DD for the reporting dates.");
+      }
+      if (dateFrom && dateTo && dateFrom > dateTo) throw new Error("Start date must be on or before end date.");
+      const res = await api.post("/reports/generate", {
+        type, format, trial_ids: selectedTrialIds, date_from: dateFrom || null, date_to: dateTo || null,
+      });
       setNotice({ kind: "ok", text: `Generated ${res.data?.name || "report"} · ${res.data?.rows ?? 0} rows` });
       await loadRecent();
+      setConfiguring(null);
     } catch (e: any) {
       setNotice({ kind: "err", text: e?.response?.data?.detail || "Couldn't generate the report. Please try again." });
     } finally { setGenerating(null); }
@@ -661,9 +678,12 @@ function Reports() {
         g.URL.revokeObjectURL(url);
       } else {
         const res = await api.get(`/reports/${rep.id}/download`, { responseType: "arraybuffer" });
-        const uri = `data:${mime};base64,${reportBufferToBase64(res.data as ArrayBuffer)}`;
-        if (!await Linking.canOpenURL(uri)) throw new Error("No app on this device can open this report format.");
-        await Linking.openURL(uri);
+        const uri = `${FileSystem.cacheDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(uri, reportBufferToBase64(res.data as ArrayBuffer), {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        if (!await Sharing.isAvailableAsync()) throw new Error("Sharing is not available on this device.");
+        await Sharing.shareAsync(uri, { mimeType: mime, dialogTitle: `Open or save ${filename}` });
       }
       setNotice({ kind: "ok", text: `Downloaded ${filename}` });
     } catch (e: any) {
@@ -706,7 +726,7 @@ function Reports() {
           <Rise key={r.key} delay={40 + i * 60}>
             <Pressable
               testID={`report-generate-${r.key}`}
-              onPress={generating ? undefined : () => generate(r.key)}
+              onPress={generating ? undefined : () => setConfiguring((current) => current === r.key ? null : r.key)}
               style={[p.card, { marginBottom: spacing.sm, flexDirection: "row", alignItems: "center", gap: 12, opacity: generating && generating !== r.key ? 0.55 : 1 }]}
             >
               <View style={[p.iconTile, { backgroundColor: r.tint + "1A" }]}><BarChart2 size={20} color={r.tint} /></View>
@@ -720,6 +740,59 @@ function Reports() {
             </Pressable>
           </Rise>
         ))}
+
+        {configuring ? (
+          <Rise delay={20}>
+            <View style={[p.card, { marginTop: spacing.xs, marginBottom: spacing.sm }]}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.md }}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Body weight="700">Configure report</Body>
+                  <Small style={{ marginTop: 2 }}>Select multiple trials and an optional date range.</Small>
+                </View>
+                <Pressable onPress={() => setConfiguring(null)} hitSlop={8}><X size={18} color={colors.mutedFg} /></Pressable>
+              </View>
+
+              <Text style={p.fieldLabel}>Trials</Text>
+              <Pressable
+                onPress={() => setSelectedTrialIds((current) => current.length === trials.length ? [] : trials.map((trial) => trial.id))}
+                style={{ alignSelf: "flex-start", marginBottom: 8 }}
+              >
+                <Small weight="700" color={colors.primary}>{selectedTrialIds.length === trials.length && trials.length ? "Clear all" : "Select all"}</Small>
+              </Pressable>
+              {trials.length ? trials.map((trial) => {
+                const selected = selectedTrialIds.includes(trial.id);
+                return (
+                  <Pressable
+                    key={trial.id}
+                    testID={`report-trial-${trial.id}`}
+                    onPress={() => setSelectedTrialIds((current) => selected ? current.filter((id) => id !== trial.id) : [...current, trial.id])}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 8 }}
+                  >
+                    <View style={{ width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.primary : colors.card, alignItems: "center", justifyContent: "center" }}>
+                      {selected ? <Check size={13} color={colors.primaryFg} /> : null}
+                    </View>
+                    <Small weight={selected ? "700" : "400"}>{trial.label}</Small>
+                  </Pressable>
+                );
+              }) : <Small color={colors.mutedFg}>No accessible trials found. The report will use all permitted data.</Small>}
+
+              <Text style={[p.fieldLabel, { marginTop: spacing.sm }]}>Date range <Text style={{ color: colors.mutedFg, fontFamily: fonts.regular }}>(optional)</Text></Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <TextInput testID="report-date-from" value={dateFrom} onChangeText={setDateFrom} placeholder="Start: YYYY-MM-DD" placeholderTextColor={colors.mutedFg} style={[p.input, { flex: 1 }]} />
+                <TextInput testID="report-date-to" value={dateTo} onChangeText={setDateTo} placeholder="End: YYYY-MM-DD" placeholderTextColor={colors.mutedFg} style={[p.input, { flex: 1 }]} />
+              </View>
+              <Small color={colors.mutedFg} style={{ marginTop: 6 }}>Leave dates blank to include all available data.</Small>
+
+              <Springy
+                testID="report-generate-configured"
+                onPress={generating ? undefined : () => generate(configuring)}
+                style={[p.cta, { marginTop: spacing.md, backgroundColor: colors.primaryDeep, opacity: generating ? 0.65 : 1 }]}
+              >
+                {generating === configuring ? <ActivityIndicator color={colors.primaryFg} /> : <Text style={p.ctaText}>Generate {format === "pdf" ? "PDF" : "Excel"} report</Text>}
+              </Springy>
+            </View>
+          </Rise>
+        ) : null}
 
         {notice ? (
           <View style={[p.warn, { marginTop: spacing.xs, borderColor: (notice.kind === "ok" ? colors.success : colors.destructive) + "44", backgroundColor: (notice.kind === "ok" ? colors.success : colors.destructive) + "0F" }]} accessibilityLiveRegion="polite">
@@ -1095,7 +1168,7 @@ const h = StyleSheet.create({
 
 const p = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  body: { padding: spacing.md, paddingBottom: spacing.xxl },
+  body: { padding: spacing.md, paddingBottom: spacing.xxl + 72 },
   card: { backgroundColor: colors.card, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
   iconTile: { width: 40, height: 40, borderRadius: radii.md, alignItems: "center", justifyContent: "center" },
   iconCircle: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
@@ -1114,7 +1187,7 @@ const p = StyleSheet.create({
   successCircle: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.success + "26", alignItems: "center", justifyContent: "center" },
   ticketIdBox: { backgroundColor: colors.card, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 20, paddingVertical: 12, alignItems: "center" },
   statusTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  footer: { paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
+  footer: { paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: Platform.OS === "android" ? spacing.xl : spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
   cta: { paddingVertical: 15, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
   ctaText: { fontFamily: fonts.bold, fontSize: 15, color: colors.primaryFg },
   dialogOverlay: { flex: 1, backgroundColor: colors.black + "80", alignItems: "center", justifyContent: "center", padding: spacing.xl },

@@ -21,6 +21,7 @@ export type SponsorTrial = {
   createdByName?: string;
   createdByRole?: string;
   createdAt?: string;
+  recruitment?: RecruitmentFunnel;
 };
 
 export type RecruitmentFunnel = {
@@ -130,6 +131,8 @@ export type SponsorSiteTrial = {
   condition?: string;
   drug?: string;
   status?: string;
+  recruitmentStatus?: string;
+  piName?: string;
 };
 
 export type SponsorSite = {

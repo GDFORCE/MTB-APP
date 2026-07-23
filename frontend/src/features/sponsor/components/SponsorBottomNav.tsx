@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, FlaskConical, LayoutGrid, MessageCircle, UserRound } from "lucide-react-native";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
@@ -8,7 +9,7 @@ import { colors, fonts, shadows } from "@/src/theme/tokens";
 // existing `active="sites"` prop still type-checks — Sites is no longer a
 // persistent tab (replaced by Messages) but stays reachable from Dashboard /
 // trial detail, so nothing gets highlighted while viewing it.
-export type SponsorTab = "dashboard" | "trials" | "chat" | "notifs" | "me" | "sites";
+export type SponsorTab = "dashboard" | "trials" | "chat" | "notifs" | "me" | "sites" | "patients";
 
 const tabs = [
   { key: "dashboard", label: "Dashboard", icon: LayoutGrid, route: "/(app)/sponsor/dashboard" },
@@ -28,8 +29,10 @@ export function SponsorBottomNav({
   unreadMessages?: number;
 }) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 10);
   return (
-    <View style={styles.shell}>
+    <View style={[styles.shell, { height: 58 + bottomInset, paddingBottom: bottomInset }]}>
       {tabs.map((tab) => {
         const selected = active === tab.key;
         const Icon = tab.icon;
@@ -64,10 +67,8 @@ export function SponsorBottomNav({
 
 const styles = StyleSheet.create({
   shell: {
-    height: 66,
     paddingHorizontal: 6,
     paddingTop: 7,
-    paddingBottom: 5,
     flexDirection: "row",
     backgroundColor: colors.card,
     borderTopWidth: 1,

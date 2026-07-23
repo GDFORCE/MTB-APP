@@ -17,7 +17,7 @@ from pymongo import ReturnDocument, UpdateOne
 import os, re, json, logging, uuid, asyncio, hashlib
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional, Dict, Literal
+from typing import Any, List, Optional, Dict, Literal
 from datetime import datetime, date, timezone, timedelta
 from passlib.context import CryptContext
 import jwt
@@ -1452,6 +1452,7 @@ async def sponsor_dashboard(user=Depends(current_user)):
 
     counts: Dict[str, int] = {}
     randomized_counts: Dict[str, int] = {}
+    trial_recruitment: Dict[str, dict] = {}
     recruitment = {
         'screened': 0,
         'screen_fail': 0,
@@ -1463,8 +1464,19 @@ async def sponsor_dashboard(user=Depends(current_user)):
         'completed': 0,
     }
     for patient in patients:
-        counts[patient['trial_id']] = counts.get(patient['trial_id'], 0) + 1
+        trial_id = patient['trial_id']
+        counts[trial_id] = counts.get(trial_id, 0) + 1
         bucket = _recruitment_bucket(patient.get('status'))
+        funnel = trial_recruitment.setdefault(trial_id, {
+            'screened': 0, 'screen_fail': 0, 'randomized': 0,
+            'active': 0, 'withdrawn': 0, 'dropout': 0,
+            'follow_up': 0, 'completed': 0,
+        })
+        funnel['screened'] += 1
+        if bucket in funnel and bucket != 'screened':
+            funnel[bucket] += 1
+        elif bucket not in ('screen_fail', 'withdrawn', 'dropout', 'completed'):
+            funnel['active'] += 1
         if bucket in recruitment:
             recruitment[bucket] += 1
         else:
@@ -1488,6 +1500,11 @@ async def sponsor_dashboard(user=Depends(current_user)):
             'recruitment_status': trial.get('recruitment_status') or '',
             'enrolled_count': enrolled,
             'randomized_count': randomized_counts.get(trial['id'], 0),
+            'recruitment': trial_recruitment.get(trial['id'], {
+                'screened': 0, 'screen_fail': 0, 'randomized': 0,
+                'active': 0, 'withdrawn': 0, 'dropout': 0,
+                'follow_up': 0, 'completed': 0,
+            }),
             'target_enrollment': target,
             'site_count': 0,
             'created_by': trial.get('created_by'),
@@ -1548,6 +1565,7 @@ async def sponsor_dashboard(user=Depends(current_user)):
             group['hospital_type'] = site.get('hospital_type') or ''
             group['department'] = site.get('department') or ''
             group['access_type'] = site.get('access_type') or 'full'
+            group['status'] = site.get('status') or 'active'
             group['trial_targets'] = site.get('trial_targets') or {}
             group['trial_ids'].update(site.get('trial_ids') or [])
             if not group.get('pi') and site.get('pi_name'):
@@ -1598,6 +1616,17 @@ async def sponsor_dashboard(user=Depends(current_user)):
     for index, (site_name, group) in enumerate(sorted(site_groups.items())):
         linked_trials = [trial_by_id[trial_id] for trial_id in group['trial_ids']
                          if trial_id in trial_by_id]
+        linked_statuses = {
+            (trial.get('status') or 'active').lower()
+            for trial in linked_trials
+        }
+        stored_status = (group.get('status') or '').lower()
+        site_status = (
+            'completed' if linked_statuses == {'completed'} else
+            'terminated' if linked_statuses == {'terminated'} else
+            stored_status if stored_status in {'active', 'completed', 'terminated'} else
+            'active'
+        )
         enrolled = len(group['patient_ids'])
         group_patient_ids = set(group['patient_ids'])
         site_funnel = {
@@ -1644,7 +1673,7 @@ async def sponsor_dashboard(user=Depends(current_user)):
             'hospital_type': group.get('hospital_type') or '',
             'department': group.get('department') or '',
             'access_type': group.get('access_type') or 'full',
-            'status': 'active',
+            'status': site_status,
             'pi_name': pi.get('full_name') or '',
             'pi_id': pi.get('id') or '',
             'pi_email': pi.get('email') or '',
@@ -1666,6 +1695,8 @@ async def sponsor_dashboard(user=Depends(current_user)):
                 'condition': trial.get('condition') or '',
                 'drug': trial.get('drug') or '',
                 'status': trial.get('status') or 'active',
+                'recruitment_status': trial.get('recruitment_status') or '',
+                'pi_name': pi.get('full_name') or '',
             } for trial in linked_trials],
         })
 
@@ -3339,10 +3370,33 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
     if user['role'] in ('smo', 'site'):
         if not user.get('org_admin'):
             raise HTTPException(403, 'Organization-admin access is required to enroll patients')
-        if not body.pi_id:
-            raise HTTPException(400, 'Select the PI responsible for this patient')
     pi_id = user['id'] if user['role'] == 'pi' else body.pi_id
     crc_id = user['id'] if user['role'] == 'crc' else body.crc_id
+
+    async def default_trial_staff(role: str, field: str) -> Optional[str]:
+        """Prefer the staff already handling this trial, then an active
+        organisation colleague. This gives new patients a sensible trial-team
+        default without replacing the patient-level assignment."""
+        existing = await db.patients.find_one(
+            {'trial_id': body.trial_id, field: {'$exists': True, '$ne': None}},
+            {'_id': 0, field: 1}, sort=[('created_at', -1)])
+        if existing and existing.get(field):
+            return existing[field]
+        if caller_org:
+            colleague = await db.users.find_one(
+                {'role': role, 'organization': caller_org,
+                 'status': {'$nin': ['Inactive', 'Removed', 'Suspended']}},
+                {'_id': 0, 'id': 1}, sort=[('created_at', 1)])
+            if colleague:
+                return colleague['id']
+        return None
+
+    if not pi_id:
+        pi_id = await default_trial_staff('pi', 'pi_id')
+    if not crc_id:
+        crc_id = await default_trial_staff('crc', 'crc_id')
+    if user['role'] in ('smo', 'site') and not pi_id:
+        raise HTTPException(400, 'Select the PI responsible for this patient')
     for staff_id, expected_role, label in (
         (pi_id, 'pi', 'PI'), (crc_id, 'crc', 'CRC'),
     ):
@@ -4060,6 +4114,42 @@ async def list_team(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 's
         },
         {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0, 'reset_otp': 0}
     ).to_list(500)
+    # Supply the compact team directory with the trials each person is involved
+    # in, so the mobile client can reveal them on demand without an extra call.
+    member_ids = {member['id'] for member in members}
+    member_trials: Dict[str, set] = {member_id: set() for member_id in member_ids}
+    if member_ids:
+        async for trial in db.trials.find(
+            {}, {'_id': 0, 'id': 1, 'protocol_id': 1, 'title': 1, 'created_by': 1, 'sponsor_name': 1}
+        ):
+            trial_id = trial.get('id')
+            if not trial_id:
+                continue
+            creator_id = trial.get('created_by')
+            if creator_id in member_trials:
+                member_trials[creator_id].add(trial_id)
+            sponsor_name = (trial.get('sponsor_name') or '').strip()
+            if sponsor_name:
+                for member in members:
+                    if (member.get('organization') or '').strip() == sponsor_name:
+                        member_trials[member['id']].add(trial_id)
+
+        async for patient in db.patients.find(
+            {'$or': [{'pi_id': {'$in': list(member_ids)}}, {'crc_id': {'$in': list(member_ids)}}]},
+            {'_id': 0, 'trial_id': 1, 'pi_id': 1, 'crc_id': 1},
+        ):
+            for key in ('pi_id', 'crc_id'):
+                member_id = patient.get(key)
+                if member_id in member_trials and patient.get('trial_id'):
+                    member_trials[member_id].add(patient['trial_id'])
+
+    trial_labels: Dict[str, str] = {}
+    assigned_trial_ids = {trial_id for trial_ids in member_trials.values() for trial_id in trial_ids}
+    if assigned_trial_ids:
+        async for trial in db.trials.find(
+            {'id': {'$in': list(assigned_trial_ids)}}, {'_id': 0, 'id': 1, 'protocol_id': 1, 'title': 1}
+        ):
+            trial_labels[trial['id']] = trial.get('protocol_id') or trial.get('title') or 'Trial'
     return [
         {
             **member,
@@ -4072,6 +4162,10 @@ async def list_team(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 's
                 'can_edit': _can_manage_team_member(user, member),
                 'can_remove': _can_manage_team_member(user, member),
             },
+            'trials': [
+                {'id': trial_id, 'label': trial_labels.get(trial_id, 'Trial')}
+                for trial_id in sorted(member_trials.get(member['id'], set()), key=lambda item: trial_labels.get(item, item))
+            ],
         }
         for member in members if member['id'] != user['id']
     ]
@@ -5169,9 +5263,10 @@ async def team_calendar(from_: Optional[str] = Query(None, alias='from'),
     }, {'_id': 0}).sort([('scheduled_date', 1), ('seq', 1)]).to_list(2000)
 
     # Joins: one query per collection, not per row.
-    pi_ids = sorted({p['pi_id'] for p in patients if p.get('pi_id')})
-    pi_map = {u['id']: u async for u in db.users.find(
-        {'id': {'$in': pi_ids}}, {'_id': 0, 'id': 1, 'full_name': 1, 'organization': 1})}
+    staff_ids = sorted({staff_id for patient in patients
+                         for staff_id in (patient.get('pi_id'), patient.get('crc_id')) if staff_id})
+    staff_map = {u['id']: u async for u in db.users.find(
+        {'id': {'$in': staff_ids}}, {'_id': 0, 'id': 1, 'full_name': 1, 'organization': 1})}
     trial_ids = sorted({p['trial_id'] for p in patients if p.get('trial_id')}
                        | {i['trial_id'] for i in insts if i.get('trial_id')})
     trial_map = {tr['id']: tr async for tr in db.trials.find(
@@ -5181,7 +5276,8 @@ async def team_calendar(from_: Optional[str] = Query(None, alias='from'),
     for i in insts:
         p = pmap.get(i['patient_id'], {})
         tr = trial_map.get(i.get('trial_id') or p.get('trial_id'), {})
-        assigned_pi = pi_map.get(p.get('pi_id'), {})
+        assigned_pi = staff_map.get(p.get('pi_id'), {})
+        assigned_crc = staff_map.get(p.get('crc_id'), {})
         initials = p.get('avatar_initials') \
             or ''.join(w[0].upper() for w in (p.get('full_name') or '').split()[:2]) or 'P'
         out.append({
@@ -5202,6 +5298,7 @@ async def team_calendar(from_: Optional[str] = Query(None, alias='from'),
             'protocol_id': tr.get('protocol_id', ''),
             'condition': tr.get('condition', ''),
             'pi_name': assigned_pi.get('full_name', ''),
+            'crc_name': assigned_crc.get('full_name', ''),
             'site': assigned_pi.get('organization', ''),
         })
     return out
@@ -6165,7 +6262,7 @@ async def _scope_audit_logs(user: dict, rows: list) -> list:
         return [r for r in rows
                 if r.get('user_id') == user['id']
                 or (own_pid and r.get('patient_id') == own_pid)]
-    if role not in ('pi', 'crc', 'sponsor', 'cro'):
+    if role not in ('pi', 'crc', 'sponsor', 'cro', 'smo', 'site'):
         return []
 
     pcache: Dict[str, Optional[dict]] = {}
@@ -6178,8 +6275,11 @@ async def _scope_audit_logs(user: dict, rows: list) -> list:
 
     async def _trial_ok(tid):
         if tid not in tcache:
-            if role in ('sponsor', 'cro'):
+            if user.get('org_admin'):
                 tcache[tid] = await _trial_in_caller_org(user, tid)
+            elif role in ('sponsor', 'cro'):
+                trial = await db.trials.find_one({'id': tid}, {'_id': 0, 'created_by': 1})
+                tcache[tid] = bool(trial) and trial.get('created_by') == user['id']
             else:                              # pi/crc: PI-ownership tie to trial
                 trial = await db.trials.find_one({'id': tid}, {'_id': 0})
                 tcache[tid] = bool(trial) and await _pi_owns_trial(user, trial)
@@ -6189,7 +6289,12 @@ async def _scope_audit_logs(user: dict, rows: list) -> list:
     for r in rows:
         pid, tid = r.get('patient_id'), r.get('trial_id')
         patient = await _patient(pid) if pid else None
-        allowed = r.get('user_id') == user['id']          # own action
+        # Organisation admins also receive account-level activity from their
+        # organisation; non-admins remain restricted to an assigned trial.
+        allowed = bool(user.get('org_admin') and (r.get('org') or '').strip()
+                       == (user.get('organization') or '').strip())
+        if not allowed:
+            allowed = r.get('user_id') == user['id'] and bool(tid)
         if not allowed and patient is not None:
             allowed = await _can_access_patient(user, patient)
         if not allowed and tid:
@@ -6315,17 +6420,46 @@ ROLE_REPORT_ROLES = ('sponsor', 'cro', 'smo', 'site', 'pi', 'crc')
 class RoleReportIn(BaseModel):
     type: Literal['enrolment-summary', 'visit-compliance', 'patient-status']
     format: Literal['pdf', 'xlsx'] = 'pdf'
+    trial_ids: List[str] = []
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
 
-async def _role_report_scope(user) -> list:
+async def _role_report_scope(user, trial_ids: Optional[List[str]] = None) -> list:
     trials = await db.trials.find({}, {'_id': 0}).to_list(500)
-    return [t for t in trials if await _can_access_trial(user, t)]
+    scoped = [t for t in trials if await _can_access_trial(user, t)]
+    if not trial_ids:
+        return scoped
+    allowed_ids = {trial['id'] for trial in scoped}
+    requested_ids = set(trial_ids)
+    if not requested_ids.issubset(allowed_ids):
+        raise HTTPException(403, 'One or more selected trials are outside your access scope')
+    return [trial for trial in scoped if trial['id'] in requested_ids]
 
-async def _role_report_rows(user, rtype: str):
-    trials = await _role_report_scope(user)
+def _report_date_in_range(value: Any, date_from: Optional[date], date_to: Optional[date]) -> bool:
+    """Compare stored ISO/date/datetime values against an optional inclusive range."""
+    if not date_from and not date_to:
+        return True
+    if isinstance(value, datetime):
+        value = value.date()
+    elif isinstance(value, str):
+        try:
+            value = date.fromisoformat(value[:10])
+        except ValueError:
+            return False
+    if not isinstance(value, date):
+        return False
+    return (date_from is None or value >= date_from) and (date_to is None or value <= date_to)
+
+async def _role_report_rows(user, rtype: str, trial_ids: Optional[List[str]] = None,
+                            date_from: Optional[date] = None, date_to: Optional[date] = None):
+    trials = await _role_report_scope(user, trial_ids)
     trial_ids = [t['id'] for t in trials]
     by_trial = {t['id']: t for t in trials}
     patients = await db.patients.find(
         {'trial_id': {'$in': trial_ids}}, {'_id': 0}).to_list(10000) if trial_ids else []
+    if date_from or date_to:
+        patients = [patient for patient in patients if _report_date_in_range(
+            patient.get('enrolled_date'), date_from, date_to)]
     deidentified = user['role'] in ('sponsor', 'cro')
 
     if rtype == 'enrolment-summary':
@@ -6353,6 +6487,9 @@ async def _role_report_rows(user, rtype: str):
             {'trial_id': {'$in': trial_ids}},
             {'_id': 0, 'trial_id': 1, 'status': 1, 'scheduled_date': 1},
         ).to_list(20000) if trial_ids else []
+        if date_from or date_to:
+            instances = [instance for instance in instances if _report_date_in_range(
+                instance.get('scheduled_date'), date_from, date_to)]
         per: Dict[str, Dict[str, int]] = {}
         for inst in instances:
             tid = inst.get('trial_id')
@@ -6397,7 +6534,10 @@ async def _role_report_rows(user, rtype: str):
 async def role_generate_report(body: RoleReportIn,
                                user=Depends(require_roles(*ROLE_REPORT_ROLES))):
     import admin_routes as _admin  # deferred: admin_routes imports server at startup
-    headers, rows = await _role_report_rows(user, body.type)
+    if body.date_from and body.date_to and body.date_from > body.date_to:
+        raise HTTPException(422, 'Start date must be on or before end date')
+    headers, rows = await _role_report_rows(
+        user, body.type, body.trial_ids, body.date_from, body.date_to)
     n = now()
     title = f"{body.type.replace('-', ' ').title()} report"
     data, content_type, extension = _admin._report_bytes(title, headers, rows, body.format)
@@ -6410,6 +6550,9 @@ async def role_generate_report(body: RoleReportIn,
         'key': key, 'size': len(data), 'rows': len(rows),
         'created_by': user['id'], 'created_by_name': user.get('full_name', ''),
         'role': user['role'], 'deidentified': user['role'] in ('sponsor', 'cro'),
+        'trial_ids': body.trial_ids,
+        'date_from': body.date_from.isoformat() if body.date_from else None,
+        'date_to': body.date_to.isoformat() if body.date_to else None,
         'created_at': n,
     }
     await db.role_reports.insert_one(doc)
@@ -6417,6 +6560,15 @@ async def role_generate_report(body: RoleReportIn,
                       f"Generated {body.type} {extension.upper()} report ({len(rows)} rows)",
                       target_id=doc['id'])
     return {**serialize(doc), 'download_url': f"/api/reports/{doc['id']}/download"}
+
+@api.get('/reports/options')
+async def role_report_options(user=Depends(require_roles(*ROLE_REPORT_ROLES))):
+    """Trials the current user may include in a report filter."""
+    trials = await _role_report_scope(user)
+    return [
+        {'id': trial['id'], 'label': trial.get('protocol_id') or trial.get('title') or 'Untitled trial'}
+        for trial in sorted(trials, key=lambda row: (row.get('protocol_id') or row.get('title') or '').lower())
+    ]
 
 @api.get('/reports/recent')
 async def role_recent_reports(user=Depends(require_roles(*ROLE_REPORT_ROLES))):

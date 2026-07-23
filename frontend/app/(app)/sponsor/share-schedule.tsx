@@ -5,6 +5,7 @@ import {
   Linking,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -308,6 +309,7 @@ export default function ShareSchedule() {
   if (done) {
     return (
       <View style={s.page}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
         <SafeAreaView edges={["top"]} style={s.header}>
           <Pressable onPress={() => router.replace("/(app)/sponsor/dashboard" as never)} hitSlop={10}>
             <ArrowLeft size={20} color={colors.white} />
@@ -360,6 +362,7 @@ export default function ShareSchedule() {
 
   return (
     <View style={s.page}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SafeAreaView edges={["top"]} style={s.header}>
         <Pressable onPress={step === 2 ? () => setStep(1) : requestClose} hitSlop={10}>
           <ArrowLeft size={20} color={colors.white} />

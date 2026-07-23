@@ -192,7 +192,7 @@ export default function PiDashboard() {
         <View style={{ marginTop: -40, paddingHorizontal: 16, paddingBottom: 24 }}>
           {!!loadError && <DashboardError message={loadError} onRetry={loadDashboard} />}
           {/* Stat tiles */}
-          <DashboardReveal delay={40} style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+          <DashboardReveal delay={40} style={{ flexDirection: "row", gap: 7 }}>
             <Stat compact icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
             <Stat compact icon={Stethoscope} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? null : sponsorCount} label="Sponsors" />
             <Stat compact icon={Users} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? null : patients.length} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} />
@@ -260,10 +260,15 @@ export default function PiDashboard() {
                                 : "",
                             ].filter(Boolean).join(" · ")}
                       </Text>
+                      {!isSmo && p.crc_name ? (
+                        <Text style={{ color: C.info, fontSize: 11, marginTop: 4, fontWeight: "600" }}>
+                          Responsible CRC: {p.crc_name}
+                        </Text>
+                      ) : null}
                     </View>
-                    <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: p.status === "completed" ? "rgba(92,154,110,0.18)" : "rgba(123,107,184,0.12)" }}>
-                      <Text style={{ color: p.status === "completed" ? C.success : C.info, fontSize: 11, fontWeight: "700" }}>
-                        {p.status === "completed" ? "Done" : "Upcoming"}
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: p.status === "completed" ? "rgba(92,154,110,0.18)" : p.scheduled_date?.slice(0, 10) === todayIso ? "rgba(230,155,92,0.20)" : "rgba(123,107,184,0.12)" }}>
+                      <Text style={{ color: p.status === "completed" ? C.success : p.scheduled_date?.slice(0, 10) === todayIso ? C.accentFg : C.info, fontSize: 11, fontWeight: "700" }}>
+                        {p.status === "completed" ? "Done" : p.scheduled_date?.slice(0, 10) === todayIso ? "Today" : "Upcoming"}
                       </Text>
                     </View>
                   </View>
@@ -389,37 +394,46 @@ export default function PiDashboard() {
 }
 
 function WeekLoadChart({ days }: { days: { label: string; count: number; today: boolean }[] }) {
-  const max = Math.max(1, ...days.map((day) => day.count));
   const total = days.reduce((sum, day) => sum + day.count, 0);
+  const todayIndex = Math.max(0, days.findIndex((day) => day.today));
+  const now = new Date();
+  const timeline = Array.from({ length: 21 }, (_, index) => {
+    // Start with the two preceding days, today, and the next four days.
+    // The remaining dates stay available by horizontal swipe.
+    const offset = index - 2;
+    const source = days[todayIndex + offset];
+    const date = new Date(now);
+    date.setDate(now.getDate() + offset);
+    return {
+      key: date.toISOString().slice(0, 10),
+      date,
+      count: source?.count || 0,
+      today: offset === 0,
+      label: date.toLocaleDateString("en-US", { weekday: "short" }),
+    };
+  });
   return (
     <View style={pi.weekCard}>
       <View style={pi.weekHeader}>
         <View>
-          <Text style={pi.weekTitle}>{total} scheduled item{total === 1 ? "" : "s"}</Text>
-          <Text style={pi.weekSubtitle}>Network and visit workload</Text>
+          <Text style={pi.weekTitle}>Site-wise schedule</Text>
+          <Text style={pi.weekSubtitle}>Busiest: {days.reduce((best, day) => day.count > best.count ? day : best, days[0])?.label || "—"}</Text>
         </View>
-        <CalIcon size={20} color={C.info} />
+        <View style={pi.visitPill}><Text style={pi.visitPillText}>{total} visit{total === 1 ? "" : "s"}</Text></View>
       </View>
-      <View style={pi.weekBars}>
-        {days.map((day) => (
-          <View key={day.label} style={pi.weekDay}>
-            <Text style={[pi.weekCount, day.today && { color: C.primary }]}>{day.count}</Text>
-            <View style={pi.weekTrack}>
-              <LinearGradient
-                colors={DAWN as any}
-                start={{ x: 0, y: 1 }}
-                end={{ x: 0, y: 0 }}
-                style={[
-                  pi.weekFill,
-                  { height: `${Math.max(day.count ? 20 : 5, (day.count / max) * 100)}%` },
-                  !day.today && { opacity: 0.62 },
-                ]}
-              />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={pi.weekStrip}>
+        {timeline.map((day) => {
+          return <View key={day.key} style={pi.scheduleDay}>
+            <View style={pi.scheduleIcon}>
+              <CalIcon size={13} color={C.accent} />
+              {day.today ? <View style={pi.scheduleTodayDot} /> : null}
             </View>
-            <Text style={[pi.weekLabel, day.today && pi.weekLabelToday]}>{day.label}</Text>
-          </View>
-        ))}
-      </View>
+            <Text style={[pi.scheduleCount, day.today && pi.scheduleCountToday]}>{day.count}</Text>
+            <Text style={[pi.scheduleDate, day.today && pi.scheduleDateToday]}>{day.date.getDate()}</Text>
+            <Text style={[pi.scheduleLabel, day.today && pi.scheduleLabelToday]}>{day.label}</Text>
+          </View>;
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -493,18 +507,16 @@ function Section({ label, action }: any) {
 
 function Stat({ icon: Icon, iconColor, iconBg, glow, value, label, compact, onPress }: any) {
   return (
-    <Pressable disabled={!onPress} onPress={onPress} style={[pi.statTile, compact && { flexBasis: "47%", flexGrow: 1 }]}>
-      <View style={{ position: "absolute", top: -24, right: -24, width: 64, height: 64, borderRadius: 32, backgroundColor: glow }} />
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+    <Pressable disabled={!onPress} onPress={onPress} style={[pi.statTile, compact && pi.statTileCompact]}>
+      <View style={{ alignItems: "center" }}>
         <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: iconBg, alignItems: "center", justifyContent: "center" }}>
-          <Icon size={18} color={iconColor} />
+          <Icon size={15} color={iconColor} />
         </View>
-        <ArrowUpRight size={14} color="rgba(123,95,115,0.45)" />
       </View>
       {value == null
         ? <Text style={{ fontSize: 30, fontWeight: "700", color: C.fg, marginTop: 8, lineHeight: 32 }}>–</Text>
-        : <AnimatedCount value={value} style={{ fontSize: 30, fontWeight: "700", color: C.fg, marginTop: 8, lineHeight: 32, fontVariant: ["tabular-nums"] }} />}
-      <Text style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{label}</Text>
+        : <AnimatedCount value={value} style={{ fontSize: 21, fontWeight: "700", color: C.fg, marginTop: 5, lineHeight: 24, fontVariant: ["tabular-nums"] }} />}
+      <Text numberOfLines={1} style={{ fontSize: 9, color: C.muted, marginTop: 2, textAlign: "center" }}>{label}</Text>
     </Pressable>
   );
 }
@@ -567,7 +579,8 @@ const pi = StyleSheet.create({
   dayDeck: { flexDirection: "row", alignItems: "center", marginTop: 20 },
   heroChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)" },
   heroChipText: { color: C.primaryFg, fontSize: 12, fontWeight: "700" },
-  statTile: { flex: 1, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 14, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  statTile: { flex: 1, minWidth: 0, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 9, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  statTileCompact: { minHeight: 82, alignItems: "center", paddingHorizontal: 4, paddingVertical: 9 },
   quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   orgEntry: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   orgEntryIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
@@ -575,13 +588,18 @@ const pi = StyleSheet.create({
   weekHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   weekTitle: { fontSize: 13, fontWeight: "700", color: C.fg },
   weekSubtitle: { marginTop: 2, fontSize: 10, color: C.muted },
-  weekBars: { height: 112, marginTop: 15, flexDirection: "row", alignItems: "flex-end", gap: 7 },
-  weekDay: { flex: 1, height: "100%", alignItems: "center" },
-  weekCount: { height: 17, fontSize: 9, fontWeight: "700", color: C.muted },
-  weekTrack: { flex: 1, width: "100%", overflow: "hidden", justifyContent: "flex-end", borderRadius: 8, backgroundColor: C.surface },
-  weekFill: { width: "100%", borderRadius: 8 },
-  weekLabel: { marginTop: 6, fontSize: 9.5, fontWeight: "600", color: C.muted },
-  weekLabelToday: { color: C.primary, fontWeight: "800" },
+  visitPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, backgroundColor: C.secondary },
+  visitPillText: { fontSize: 9, fontWeight: "700", color: C.primary },
+  weekStrip: { gap: 5, paddingTop: 13, paddingBottom: 2, paddingRight: 4 },
+  scheduleDay: { width: 40, alignItems: "center", paddingVertical: 7, borderRadius: 13 },
+  scheduleIcon: { width: 27, height: 27, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: C.surface },
+  scheduleTodayDot: { position: "absolute", top: -3, right: -3, width: 7, height: 7, borderRadius: 4, backgroundColor: C.destructive, borderWidth: 1, borderColor: C.card },
+  scheduleCount: { marginTop: 5, fontSize: 9, fontWeight: "700", color: C.muted },
+  scheduleCountToday: { color: C.primary },
+  scheduleDate: { marginTop: 1, fontSize: 11, fontWeight: "700", color: C.fg },
+  scheduleDateToday: { color: C.primary },
+  scheduleLabel: { marginTop: 2, fontSize: 8.5, fontWeight: "600", color: C.muted },
+  scheduleLabelToday: { color: C.primary, fontWeight: "800" },
   patientCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   reviewCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   errorCard: { marginBottom: 12, padding: 13, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(192,57,43,0.28)", backgroundColor: "rgba(192,57,43,0.08)" },

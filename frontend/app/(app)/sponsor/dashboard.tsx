@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -138,7 +137,6 @@ export default function SponsorDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showRecruitment, setShowRecruitment] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -246,7 +244,7 @@ export default function SponsorDashboard() {
             <View style={styles.statRow}>
               <StatTile icon={FlaskConical} color={C.info} tint="rgba(123,107,184,0.12)" value={dashboard.totals.trials} label="Total Trials" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/trials")} />
               <StatTile icon={MapPin} color={C.accent} tint="rgba(230,155,92,0.15)" value={dashboard.totals.sites} label="Total Sites" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
-              <StatTile icon={Users} color={C.violet} tint="rgba(142,91,180,0.12)" value={dashboard.totals.subjects} label="Total Patients" loading={loading} reducedMotion={reducedMotion} onPress={() => setShowRecruitment(true)} />
+              <StatTile icon={Users} color={C.violet} tint="rgba(142,91,180,0.12)" value={dashboard.totals.subjects} label="Total Patients" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/patients")} />
               <StatTile icon={UserCheck} color={C.success} tint="rgba(92,154,110,0.12)" value={dashboard.totals.pis} label="Total PIs" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
             </View>
           </MotionItem>
@@ -330,11 +328,6 @@ export default function SponsorDashboard() {
       </ScrollView>
 
       <SponsorBottomNav active="dashboard" unread={unread ?? 0} />
-      <RecruitmentSheet
-        visible={showRecruitment}
-        dashboard={dashboard}
-        onClose={() => setShowRecruitment(false)}
-      />
     </View>
   );
 }
@@ -673,79 +666,6 @@ function AnimatedProgress({
   );
 }
 
-function RecruitmentSheet({
-  visible,
-  dashboard,
-  onClose,
-}: {
-  visible: boolean;
-  dashboard: SponsorDashboardData;
-  onClose: () => void;
-}) {
-  const rows = [
-    ["Screened", dashboard.portfolio.recruitment.screened],
-    ["Screen failures", dashboard.portfolio.recruitment.screen_fail],
-    ["Randomized", dashboard.portfolio.recruitment.randomized],
-    ["Active", dashboard.portfolio.recruitment.active],
-    ["Follow-up", dashboard.portfolio.recruitment.follow_up],
-    ["Completed", dashboard.portfolio.recruitment.completed],
-    ["Withdrawn", dashboard.portfolio.recruitment.withdrawn],
-    ["Dropout", dashboard.portfolio.recruitment.dropout],
-  ] as const;
-  return (
-    <Modal
-      transparent
-      visible={visible}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <Pressable
-          accessibilityLabel="Close recruitment status"
-          style={StyleSheet.absoluteFill}
-          onPress={onClose}
-        />
-        <View style={styles.recruitmentSheet}>
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetTop}>
-            <View>
-              <Text style={styles.sheetEyebrow}>PORTFOLIO RECRUITMENT</Text>
-              <Text style={styles.sheetTitle}>Patient status</Text>
-            </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetClose}>
-              <Text style={styles.sheetCloseText}>Done</Text>
-            </Pressable>
-          </View>
-          <View style={styles.recruitmentSummary}>
-            <View>
-              <Text style={styles.recruitmentSummaryValue}>{dashboard.portfolio.enrolled}</Text>
-              <Text style={styles.recruitmentSummaryLabel}>ENROLLED</Text>
-            </View>
-            <View style={styles.recruitmentSummaryDivider} />
-            <View>
-              <Text style={styles.recruitmentSummaryValue}>{dashboard.portfolio.target || "—"}</Text>
-              <Text style={styles.recruitmentSummaryLabel}>TARGET</Text>
-            </View>
-            <View style={styles.recruitmentSummaryDivider} />
-            <View>
-              <Text style={styles.recruitmentSummaryValue}>{dashboard.portfolio.enrollmentPct}%</Text>
-              <Text style={styles.recruitmentSummaryLabel}>PROGRESS</Text>
-            </View>
-          </View>
-          <View style={styles.recruitmentGrid}>
-            {rows.map(([label, value]) => (
-              <View key={label} style={styles.recruitmentMetric}>
-                <Text style={styles.recruitmentMetricValue}>{value}</Text>
-                <Text style={styles.recruitmentMetricLabel}>{label}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 function notificationTone(type: string) {
   const normalized = type.toLowerCase();
   if (normalized.includes("milestone") || normalized.includes("recruit")) return { Icon: TrendingUp, bg: "rgba(92,154,110,0.14)", color: C.success };
@@ -926,22 +846,6 @@ const styles = StyleSheet.create({
   adminBadge: { paddingHorizontal: 5, height: 16, borderRadius: 999, justifyContent: "center", backgroundColor: W.w15, borderWidth: 1, borderColor: W.w20 },
   adminBadgeText: { color: C.primaryFg, fontFamily: fonts.bold, fontSize: 6, letterSpacing: 0.6 },
   orgDescription: { color: W.w70, fontFamily: fonts.regular, fontSize: 9, lineHeight: 12, marginTop: 2 },
-  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(35,18,30,0.48)" },
-  recruitmentSheet: { paddingHorizontal: 18, paddingTop: 9, paddingBottom: 30, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: C.background },
-  sheetHandle: { alignSelf: "center", width: 42, height: 4, borderRadius: 999, backgroundColor: C.border, marginBottom: 15 },
-  sheetTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  sheetEyebrow: { color: C.primary, fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 1.1 },
-  sheetTitle: { fontFamily: fonts.heading, fontSize: 20, marginTop: 2 },
-  sheetClose: { minWidth: 48, height: 34, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: C.secondary },
-  sheetCloseText: { color: C.primary, fontFamily: fonts.semibold, fontSize: 10 },
-  recruitmentSummary: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", marginTop: 16, paddingVertical: 14, borderRadius: 18, backgroundColor: C.primaryDeep },
-  recruitmentSummaryValue: { color: C.primaryFg, fontFamily: fonts.heading, fontSize: 19, textAlign: "center" },
-  recruitmentSummaryLabel: { color: W.w65, fontFamily: fonts.bold, fontSize: 7, letterSpacing: 0.9, textAlign: "center", marginTop: 2 },
-  recruitmentSummaryDivider: { width: 1, height: 30, backgroundColor: W.w20 },
-  recruitmentGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
-  recruitmentMetric: { width: "48%", minHeight: 61, justifyContent: "center", paddingHorizontal: 13, borderRadius: 15, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
-  recruitmentMetricValue: { fontFamily: fonts.heading, fontSize: 17 },
-  recruitmentMetricLabel: { color: C.mutedFg, fontFamily: fonts.medium, fontSize: 9, marginTop: 2 },
   pressed: { opacity: 0.8, transform: [{ scale: 0.985 }] },
   disabled: { opacity: 0.45 },
   disabledText: { color: C.border },

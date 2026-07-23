@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Modal, Platform,
-  Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View,
+  Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -230,6 +230,7 @@ export default function SponsorTrialDetail() {
 
   return (
     <View style={s.page}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SafeAreaView edges={["top"]} style={s.header}>
         <Pressable onPress={() => router.back()} hitSlop={10}><ArrowLeft size={20} color={colors.white} /></Pressable>
         <View style={s.headerCopy}>

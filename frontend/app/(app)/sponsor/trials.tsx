@@ -5,6 +5,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -79,6 +80,7 @@ export default function SponsorTrialsScreen() {
 
   return (
     <View style={s.page}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SafeAreaView edges={["top"]} style={s.header}>
         <View style={s.headerIdentity}>
           <Text style={s.headerEyebrow} numberOfLines={1}>{roleLabel}{organization ? ` · ${organization}` : ""}</Text>

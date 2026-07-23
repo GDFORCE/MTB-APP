@@ -43,6 +43,18 @@ export function normalizeTrial(raw: any): SponsorTrial {
     createdByName: text(raw?.createdByName || raw?.created_by_name),
     createdByRole: text(raw?.createdByRole || raw?.created_by_role),
     createdAt: text(raw?.createdAt || raw?.created_at),
+    recruitment: raw?.recruitment && typeof raw.recruitment === "object"
+      ? {
+          screened: num(raw.recruitment.screened),
+          screen_fail: num(raw.recruitment.screen_fail),
+          randomized: num(raw.recruitment.randomized),
+          active: num(raw.recruitment.active),
+          withdrawn: num(raw.recruitment.withdrawn),
+          dropout: num(raw.recruitment.dropout),
+          follow_up: num(raw.recruitment.follow_up),
+          completed: num(raw.recruitment.completed),
+        }
+      : undefined,
   };
 }
 
@@ -56,6 +68,8 @@ function normalizeSiteTrial(raw: any): SponsorSiteTrial {
     condition: trial.condition,
     drug: trial.drug,
     status: trial.status,
+    recruitmentStatus: text(raw?.recruitmentStatus || raw?.recruitment_status),
+    piName: text(raw?.piName || raw?.pi_name),
   };
 }
 

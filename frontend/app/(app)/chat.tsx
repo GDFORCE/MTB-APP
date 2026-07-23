@@ -11,10 +11,10 @@
 //   • send stays disabled without text; HTTP sending works even while the
 //     socket is down, so the offline banner never blocks output silently.
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert } from "react-native";
+import { View, ScrollView, TextInput, Pressable, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, Alert, StatusBar } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check, CheckCheck, ChevronDown, MoreVertical, ShieldCheck, Play, Pause } from "lucide-react-native";
+import { ChevronLeft, Send, WifiOff, RefreshCcw, AlertTriangle, Pin, BellOff, SquarePen, Users, X, Search, Archive, Paperclip, Camera as CameraIcon, Smile, FileText, Image as ImageIcon, Mic, Check, CheckCheck, MoreVertical, ShieldCheck, Play, Pause } from "lucide-react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { colors, spacing, radii, shadows, fonts } from "@/src/theme/tokens";
@@ -460,26 +460,29 @@ export default function Chat() {
     } finally { setFlagBusy(false); }
   };
 
-  // Back must always land somewhere: pop history when it exists, otherwise
-  // fall through to the caller's role dashboard (covers reload/deep-link
-  // entries where this screen is the first thing on the stack).
-  const goBack = () => {
-    if (router.canGoBack()) { router.back(); return; }
-    const role = user?.role;
-    if (role === "patient") router.replace("/(app)/patient/dashboard");
-    else if (role === "site") router.replace("/(app)/site/dashboard");
-    else if (role === "pi" || role === "smo") router.replace("/(app)/pi/dashboard");
-    else if (role === "crc") router.replace("/(app)/crc/dashboard");
-    else router.replace("/(app)/sponsor/dashboard");
+  const markAllRead = async () => {
+    const unread = convs.filter(c => (c.unread_count || 0) > 0);
+    setInboxMenuOpen(false);
+    if (!unread.length) return;
+    setConvs(prev => prev.map(c => ({ ...c, unread_count: 0 })));
+    try {
+      await Promise.all(unread.map(c => api.post(`/conversations/${c.id}/read`)));
+    } catch {
+      setError("Couldn't mark every conversation as read. Try again.");
+      loadDirectory(true);
+    }
   };
 
   const isPatient = user?.role === "patient";
   const isSponsorLike = user?.role === "sponsor" || user?.role === "cro";
+  const inboxRole = user?.role === "cro" ? "CRO" : (user?.role || "Secure inbox").toUpperCase();
+  const inboxEyebrow = user?.organization
+    ? `${inboxRole} · ${user.organization.toUpperCase()}`
+    : inboxRole;
 
   const unarchivedConvs = convs.filter(c => !c.archived);
   const archivedConvs = convs.filter(c => c.archived);
   const unreadTotal = unarchivedConvs.reduce((sum, c) => sum + (c.unread_count || 0), 0);
-  const groupTotal = unarchivedConvs.filter(c => c.is_group).length;
   const visibleConvs = (filter === "archived" ? archivedConvs : unarchivedConvs)
     .filter(c => filter === "all" || filter === "archived" ? true : filter === "unread" ? (c.unread_count || 0) > 0 : !!c.is_group)
     .slice()
@@ -497,11 +500,11 @@ export default function Chat() {
   // ── Conversation list view ──
   if (!active) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
+        <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
         <View style={s.header}>
-          <Pressable testID="chat-back" onPress={goBack} hitSlop={12}><ChevronLeft size={24} color={colors.primaryFg} /></Pressable>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Eyebrow color={colors.primaryFg + "8C"}>Secure inbox</Eyebrow>
+          <View style={{ flex: 1 }}>
+            <Eyebrow color={colors.primaryFg + "A3"} numberOfLines={1}>{inboxEyebrow}</Eyebrow>
             <H1 color={colors.primaryFg} style={{ fontSize: 20 }}>Messages</H1>
           </View>
           <Pressable testID="chat-compose" onPress={() => { setComposeQuery(""); setComposeOpen(true); }} hitSlop={10} style={s.headerIconBtn} accessibilityLabel="New message">
@@ -517,7 +520,7 @@ export default function Chat() {
             {([
               { key: "all", label: "All", count: 0 },
               { key: "unread", label: "Unread", count: unreadTotal },
-              ...(groupTotal > 0 ? [{ key: "groups", label: "Groups", count: 0 }] : []),
+              { key: "groups", label: "Groups", count: 0 },
             ] as { key: "all" | "unread" | "groups"; label: string; count: number }[]).map(f => {
               const on = filter === f.key;
               return (
@@ -528,16 +531,13 @@ export default function Chat() {
                 </Pressable>
               );
             })}
-            <Pressable testID="chat-filter-expand" onPress={() => Alert.alert("Coming soon", "More filters will be available in a future update.")} style={s.filterMoreBtn} accessibilityLabel="More filters">
-              <ChevronDown size={15} color={colors.mutedFg} />
-            </Pressable>
           </View>
         )}
-        {!loading && !loadError && archivedConvs.length > 0 && (
+        {!loading && !loadError && (
           <Pressable testID="chat-filter-archived" onPress={() => { animateNextLayout(); setFilter(filter === "archived" ? "all" : "archived"); }} style={s.archivedRow}>
-            <Archive size={20} color={colors.primary} />
-            <Body weight={filter === "archived" ? "700" : "400"} style={{ flex: 1, marginLeft: 20, fontSize: 14 }} color={filter === "archived" ? colors.primary : colors.foreground}>Archived</Body>
-            <Small color={colors.mutedFg} style={{ fontSize: 12 }}>{archivedConvs.length}</Small>
+            <Archive size={17} color={colors.primary} />
+            <Body weight={filter === "archived" ? "700" : "400"} style={{ flex: 1, marginLeft: 12, fontSize: 12.5 }} color={filter === "archived" ? colors.primary : colors.foreground}>Archived</Body>
+            <Small color={colors.mutedFg} style={{ fontSize: 10.5 }}>{archivedConvs.length}</Small>
           </Pressable>
         )}
         {loading ? (
@@ -584,23 +584,23 @@ export default function Chat() {
                 </View>
                 <View style={s.convRowContent}>
                   <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-                    <Body weight={isUnread ? "700" : "600"} style={{ flex: 1 }} numberOfLines={1}>{name}</Body>
-                    {timestamp ? <Small color={isUnread ? colors.primary : colors.mutedFg} style={{ fontSize: 11, fontFamily: isUnread ? fonts.bold : fonts.regular }}>{timestamp}</Small> : null}
+                    <Body weight={isUnread ? "700" : "600"} style={{ flex: 1, fontSize: 13.5 }} numberOfLines={1}>{name}</Body>
+                    {timestamp ? <Small color={isUnread ? colors.primary : colors.mutedFg} style={{ fontSize: 9.5, fontFamily: isUnread ? fonts.bold : fonts.regular }}>{timestamp}</Small> : null}
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                      {lastFromSelf && !!c.last_message && <CheckCheck size={14} color={c.last_read ? colors.accent : colors.mutedFg + "99"} />}
-                      <Small numberOfLines={1} color={isUnread ? colors.foreground + "BF" : colors.mutedFg} style={{ flexShrink: 1, fontFamily: isUnread ? fonts.medium : fonts.regular }}>
+                      {lastFromSelf && !!c.last_message && <CheckCheck size={12} color={c.last_read ? colors.accent : colors.mutedFg + "99"} />}
+                      <Small numberOfLines={1} color={isUnread ? colors.foreground + "BF" : colors.mutedFg} style={{ flexShrink: 1, fontSize: 10.5, fontFamily: isUnread ? fonts.medium : fonts.regular }}>
                         {prefix ? <Small color={colors.foreground + "A6"} style={{ fontFamily: fonts.medium }}>{prefix}</Small> : null}
                         {c.last_message || "Start chatting"}
                       </Small>
                     </View>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      {c.pinned ? <Pin size={14} color={colors.mutedFg + "99"} style={{ transform: [{ rotate: "-45deg" }] }} /> : null}
-                      {c.muted ? <BellOff size={14} color={colors.mutedFg} /> : null}
+                      {c.pinned ? <Pin size={11} color={colors.mutedFg + "99"} style={{ transform: [{ rotate: "-45deg" }] }} /> : null}
+                      {c.muted ? <BellOff size={11} color={colors.mutedFg} /> : null}
                       {c.unread_count > 0 && (
                         <View style={[s.badge, c.muted && { backgroundColor: colors.mutedFg }]}>
-                          <Small color={colors.primaryFg} style={{ fontSize: 11, fontFamily: fonts.bold }}>{c.unread_count}</Small>
+                          <Small color={colors.primaryFg} style={{ fontSize: 8.5, fontFamily: fonts.bold }}>{c.unread_count}</Small>
                         </View>
                       )}
                     </View>
@@ -624,7 +624,7 @@ export default function Chat() {
             <View style={s.menuCard}>
               <Pressable
                 testID="chat-menu-mark-read"
-                onPress={() => { setInboxMenuOpen(false); Alert.alert("Coming soon", "Mark all as read will be available in a future update."); }}
+                onPress={markAllRead}
                 style={s.menuRow}
               >
                 <Body weight="600">Mark all as read</Body>
@@ -719,6 +719,7 @@ export default function Chat() {
         {/* Compose: searchable authorized-recipient picker, with a group-creation mode */}
         <Modal visible={composeOpen} animationType="slide" onRequestClose={() => setComposeOpen(false)}>
           <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
+            <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
             <View style={s.header}>
               <Pressable testID="compose-close" onPress={() => setComposeOpen(false)} hitSlop={12}><ChevronLeft size={24} color={colors.primaryFg} /></Pressable>
               <View style={{ flex: 1, marginLeft: 16 }}>
@@ -853,6 +854,7 @@ export default function Chat() {
         : other?.is_online ? "online" : "offline";
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <View style={s.header}>
           <Pressable onPress={() => setActive(null)} hitSlop={12}><ChevronLeft size={24} color={colors.primaryFg} /></Pressable>
@@ -1082,24 +1084,23 @@ export default function Chat() {
 }
 
 const s = StyleSheet.create({
-  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, paddingVertical: 12, backgroundColor: colors.primaryDeep },
-  headerIconBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center", marginLeft: 4 },
+  header: { minHeight: 74, flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 9, backgroundColor: colors.primaryDeep },
+  headerIconBtn: { width: 32, height: 32, alignItems: "center", justifyContent: "center", marginLeft: 2 },
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  listAvatar: { width: 52, height: 52, borderRadius: 26, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  listAvatar: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   threadAvatar: { width: 40, height: 40, borderRadius: 20, marginLeft: 12, backgroundColor: colors.overlay20, borderWidth: 1, borderColor: colors.overlay25, alignItems: "center", justifyContent: "center" },
-  badge: { minWidth: 20, height: 20, paddingHorizontal: 6, borderRadius: 10, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", ...shadows.sm },
+  badge: { minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", ...shadows.sm },
   bubble: { maxWidth: "78%", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
   bubbleMine: { alignSelf: "flex-end", backgroundColor: colors.primary, borderTopRightRadius: 4 },
   bubbleOther: { alignSelf: "flex-start", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderTopLeftRadius: 4 },
   bubbleFailed: { opacity: 0.85, borderWidth: 1, borderColor: colors.destructive },
   offlineBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: spacing.md, paddingVertical: 8, backgroundColor: "rgba(216,154,60,0.12)", borderBottomWidth: 1, borderBottomColor: "rgba(216,154,60,0.25)" },
-  filterRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
+  filterRow: { flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 14, paddingVertical: 9, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
   filterChip: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: radii.pill, backgroundColor: colors.surface },
   filterChipOn: { backgroundColor: colors.primary },
-  filterMoreBtn: { padding: 6, borderRadius: radii.pill, backgroundColor: colors.surface },
-  archivedRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 12, backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
-  convRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 14, paddingRight: 12 },
-  convRowContent: { flex: 1, minWidth: 0, borderBottomWidth: 1, borderBottomColor: colors.border + "B3", paddingVertical: 12 },
+  archivedRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.background, borderBottomWidth: 1, borderBottomColor: colors.border },
+  convRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingLeft: 13, paddingRight: 11 },
+  convRowContent: { flex: 1, minWidth: 0, borderBottomWidth: 1, borderBottomColor: colors.border + "B3", paddingVertical: 10 },
   encryptedPill: { maxWidth: "82%", backgroundColor: colors.card + "E6", borderWidth: 1, borderColor: colors.border, borderRadius: radii.sm, paddingHorizontal: 12, paddingVertical: 6, ...shadows.sm },
   modalOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
   modalSheet: { backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.md, paddingBottom: spacing.xl },

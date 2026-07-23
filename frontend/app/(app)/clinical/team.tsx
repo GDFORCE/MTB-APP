@@ -10,7 +10,12 @@ import {
 import { useRouter } from "expo-router";
 import {
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  FlaskConical,
+  Mail,
   MessageCircle,
+  Phone,
   Search,
   ShieldCheck,
   UserPlus,
@@ -36,6 +41,7 @@ type TeamMember = {
   avatar_initials?: string;
   is_online?: boolean;
   status?: string;
+  trials?: { id: string; label: string }[];
   capabilities?: {
     can_edit?: boolean;
     can_remove?: boolean;
@@ -81,6 +87,7 @@ export default function Team() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [role, setRole] = useState<TeamRole | "all">("all");
+  const [expandedMember, setExpandedMember] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -250,15 +257,16 @@ export default function Team() {
         ) : (
           visible.map((member) => {
             const isYou = member.id === user?.id;
+            const trials = member.trials || [];
+            const isExpanded = expandedMember === member.id;
             return (
-              <Pressable
-                key={member.id}
-                testID={`team-${member.id}`}
-                disabled={isYou}
-                onPress={() => openMember(member)}
-                style={({ pressed }) => ({ opacity: pressed ? 0.82 : 1 })}
-              >
-                <Card style={[s.memberCard, isYou && s.youCard]}>
+              <Card key={member.id} style={[s.memberCard, isYou && s.youCard]}>
+                <Pressable
+                  testID={`team-${member.id}`}
+                  disabled={isYou}
+                  onPress={() => openMember(member)}
+                  style={({ pressed }) => [s.memberOverview, { opacity: pressed ? 0.82 : 1 }]}
+                >
                   <View style={s.avatarWrap}>
                     <View style={s.avatar}>
                       <Body weight="700" color={colors.primary}>{initials(member)}</Body>
@@ -301,8 +309,51 @@ export default function Team() {
                       <ChevronRight size={18} color={colors.mutedFg} />
                     </View>
                   ) : null}
-                </Card>
-              </Pressable>
+                </Pressable>
+
+                <View style={s.memberDetails}>
+                  {member.phone ? (
+                    <View style={s.contactRow}>
+                      <Phone size={13} color={colors.mutedFg} />
+                      <Small numberOfLines={1}>{member.phone}</Small>
+                    </View>
+                  ) : null}
+                  {member.email ? (
+                    <View style={s.contactRow}>
+                      <Mail size={13} color={colors.mutedFg} />
+                      <Small numberOfLines={1}>{member.email}</Small>
+                    </View>
+                  ) : null}
+                </View>
+
+                <Pressable
+                  testID={`team-trials-${member.id}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: isExpanded }}
+                  accessibilityLabel={`${isExpanded ? "Hide" : "Show"} trials for ${member.full_name || "team member"}`}
+                  onPress={() => setExpandedMember((current) => current === member.id ? null : member.id)}
+                  style={s.trialsToggle}
+                >
+                  <View style={s.trialsLabel}>
+                    <FlaskConical size={13} color={colors.primary} />
+                    <Small color={colors.primary}>
+                      {trials.length} trial{trials.length === 1 ? "" : "s"} involved
+                    </Small>
+                  </View>
+                  {isExpanded ? <ChevronUp size={16} color={colors.primary} /> : <ChevronDown size={16} color={colors.primary} />}
+                </Pressable>
+
+                {isExpanded ? (
+                  <View style={s.trialList}>
+                    {trials.length ? trials.map((trial) => (
+                      <View key={trial.id} style={s.trialRow}>
+                        <View style={s.trialBullet} />
+                        <Small style={s.trialName}>{trial.label}</Small>
+                      </View>
+                    )) : <Small style={s.noTrials}>No trials currently assigned.</Small>}
+                  </View>
+                ) : null}
+              </Card>
             );
           })
         )}
@@ -422,12 +473,11 @@ const s = StyleSheet.create({
   stateText: { marginTop: 4, textAlign: "center" },
   retry: { marginTop: 8, alignSelf: "stretch" },
   memberCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     marginBottom: 9,
     borderRadius: radii.lg,
+    padding: 12,
   },
+  memberOverview: { flexDirection: "row", alignItems: "center", gap: 12 },
   youCard: { borderColor: `${colors.accent}66` },
   avatarWrap: { position: "relative" },
   avatar: {
@@ -469,5 +519,29 @@ const s = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: `${colors.primary}10`,
   },
+  memberDetails: {
+    marginTop: 10,
+    paddingTop: 9,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    gap: 5,
+  },
+  contactRow: { flexDirection: "row", alignItems: "center", gap: 7, minWidth: 0 },
+  trialsToggle: {
+    marginTop: 10,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    borderRadius: radii.pill,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: `${colors.primary}0D`,
+  },
+  trialsLabel: { flexDirection: "row", alignItems: "center", gap: 6 },
+  trialList: { paddingHorizontal: 8, paddingTop: 9, gap: 7 },
+  trialRow: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
+  trialBullet: { width: 5, height: 5, borderRadius: 3, marginTop: 5, backgroundColor: colors.primary },
+  trialName: { flex: 1, lineHeight: 17 },
+  noTrials: { paddingBottom: 2, color: colors.mutedFg },
   inviteButton: { marginTop: spacing.md },
 });

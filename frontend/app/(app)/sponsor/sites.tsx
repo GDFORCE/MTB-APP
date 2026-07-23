@@ -6,6 +6,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -17,9 +18,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowUpRight,
-  Building2,
+  Bell,
   Check,
+  ChevronRight,
   FileCheck2,
   FileText,
   Mail,
@@ -32,10 +33,11 @@ import {
   UserRoundCheck,
   X,
 } from "lucide-react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { useOrgContext } from "@/src/components/org-admin-kit";
+import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
 import { getSponsorDashboard } from "@/src/features/sponsor/api";
 import type {
@@ -93,6 +95,7 @@ function SiteDetail({ site, onBack }: { site: SponsorSite; onBack: () => void })
     ?? accessOptions[0];
   return (
     <View style={styles.page}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SafeAreaView edges={["top"]} style={styles.compactHeader}>
         <Pressable onPress={onBack} hitSlop={10}><ArrowLeft size={20} color={colors.white} /></Pressable>
         <Text numberOfLines={1} style={styles.headerTitle}>{site.name}</Text>
@@ -330,9 +333,11 @@ function Progress({ value }: { value: number }) {
 }
 
 export default function SponsorSitesScreen() {
+  const insets = useSafeAreaInsets();
   const { siteId, add } = useLocalSearchParams<{ siteId?: string; add?: string }>();
   const { user } = useAuth();
   const { orgId } = useOrgContext();
+  const unread = useUnreadCount();
   const [sites, setSites] = useState<SponsorSite[]>([]);
   const [trials, setTrials] = useState<SponsorTrial[]>([]);
   const [loading, setLoading] = useState(true);
@@ -362,6 +367,10 @@ export default function SponsorSitesScreen() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const canAddSite = Boolean(user?.org_admin && orgId);
+  const roleLabel = user?.role === "cro" ? "CRO" : "Sponsor";
+  const organization = user?.organization || "";
+  const fullName = user?.full_name || "";
+  const initials = user?.avatar_initials || fullName.split(/\s+/).filter(Boolean).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "?";
 
   const load = useCallback(async () => {
     setError("");
@@ -548,16 +557,19 @@ export default function SponsorSitesScreen() {
 
   return (
     <View style={styles.page}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.primaryDeep} />
       <SafeAreaView edges={["top"]} style={styles.compactHeader}>
-        <View>
-          <Text style={styles.headerEyebrow}>SPONSOR / CRO</Text>
+        <View style={styles.headerIdentity}>
+          <Text style={styles.headerEyebrow} numberOfLines={1}>{roleLabel}{organization ? ` · ${organization}` : ""}</Text>
           <Text style={styles.headerTitle}>Sites</Text>
         </View>
-        {canAddSite && (
-          <Pressable onPress={() => setShowAdd(true)} style={styles.headerAction}>
-            <Plus size={17} color={colors.white} /><Text style={styles.headerActionText}>Add Site</Text>
-          </Pressable>
-        )}
+        <Pressable onPress={() => router.push("/(app)/sponsor/notifications" as never)} style={styles.iconButton} accessibilityLabel="Open notifications">
+          <Bell size={18} color={colors.primaryFg} />
+          {!!unread && unread > 0 && <View style={styles.notifBadge}><Text style={styles.notifBadgeText}>{Math.min(9, unread)}</Text></View>}
+        </Pressable>
+        <Pressable onPress={() => router.push("/(app)/sponsor/profile" as never)} style={styles.iconButton} accessibilityLabel="Open profile">
+          <Text style={styles.avatarText}>{initials}</Text>
+        </Pressable>
       </SafeAreaView>
 
       <View style={styles.searchRow}>
@@ -572,6 +584,11 @@ export default function SponsorSitesScreen() {
           />
           {!!query && <Pressable onPress={() => setQuery("")}><X size={16} color={colors.mutedFg} /></Pressable>}
         </View>
+        {canAddSite && (
+          <Pressable testID="sites-add" onPress={() => setShowAdd(true)} style={styles.addSiteButton}>
+            <Plus size={14} color={colors.white} /><Text style={styles.addSiteButtonText}>Add Site</Text>
+          </Pressable>
+        )}
       </View>
 
       <View>
@@ -581,7 +598,7 @@ export default function SponsorSitesScreen() {
             const active = filter === value;
             return (
               <Pressable key={value} onPress={() => setFilter(value)} style={[styles.filter, active && styles.filterActive]}>
-                <Text style={[styles.filterText, active && styles.filterTextActive]}>{value} {count}</Text>
+                <Text style={[styles.filterText, active && styles.filterTextActive]}>{value} ({count})</Text>
               </Pressable>
             );
           })}
@@ -604,32 +621,36 @@ export default function SponsorSitesScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primary} />}
         >
           {filtered.length ? filtered.map((site) => (
-            <Pressable key={site.id} onPress={() => setSelected(site)} style={({ pressed }) => [styles.siteCard, pressed && { transform: [{ scale: 0.99 }] }]}>
+            <Pressable key={site.id} onPress={() => setSelected(site)} style={({ pressed }) => [styles.siteCard, pressed && styles.pressed]}>
               <View style={styles.between}>
-                <View style={styles.siteIdentity}>
-                  <View style={styles.siteIcon}><Building2 size={19} color={colors.accent} /></View>
-                  <View style={{ flex: 1 }}>
-                    <Text numberOfLines={1} style={styles.siteName}>{site.name}</Text>
-                    <Text numberOfLines={1} style={styles.siteAddress}>
-                      {[site.hospital, site.address, site.city, site.state].filter(Boolean).join(", ") || "Address not provided"}
-                    </Text>
-                  </View>
-                </View>
+                <Text numberOfLines={1} style={styles.siteName}>{site.name}</Text>
                 <StatusBadge value={site.status} />
               </View>
-              <View style={styles.performanceHeader}>
-                <Text style={styles.performanceLabel}>ENROLLMENT PERFORMANCE</Text>
-                <Text style={styles.performanceValue}>{site.enrollmentPct}%</Text>
+              <View style={styles.locationRow}>
+                <MapPin size={11} color={colors.mutedFg} />
+                <Text numberOfLines={1} style={styles.siteAddress}>
+                  {[site.hospital, site.address, site.city, site.state].filter(Boolean).join(", ") || "Address not provided"}
+                </Text>
               </View>
-              <Progress value={site.enrollmentPct} />
-              <View style={styles.siteFooter}>
-                <View style={styles.piRow}>
-                  <UserRoundCheck size={14} color={colors.mutedFg} />
-                  <Text numberOfLines={1} style={styles.piText}>{site.pi || "PI not assigned"}</Text>
+              <Text style={styles.trialDetailsLabel}>TRIAL DETAILS</Text>
+              {site.trials.length ? site.trials.map((trial) => (
+                <View key={trial.id} style={styles.siteTrialPanel}>
+                  <View style={styles.trialPanelTop}>
+                    <Text numberOfLines={1} style={styles.siteProtocol}>{trial.protocolId}</Text>
+                    <View style={styles.trialTopRight}>
+                      <StatusBadge value={trial.status || "active"} />
+                      <ChevronRight size={13} color={colors.mutedFg} />
+                    </View>
+                  </View>
+                  <View style={styles.trialGrid}>
+                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>PHASE</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.phase || "—"}</Text></View>
+                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>DISEASE</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.condition || "—"}</Text></View>
+                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>DRUG</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.drug || "—"}</Text></View>
+                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>PI NAME</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.piName || site.pi || "Not assigned"}</Text></View>
+                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>RECRUITMENT STATUS</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.recruitmentStatus || "Recruiting"}</Text></View>
+                  </View>
                 </View>
-                <Text style={styles.trialCount}>{site.trials.length} trial{site.trials.length === 1 ? "" : "s"}</Text>
-                <ArrowUpRight size={16} color={colors.primary} />
-              </View>
+              )) : <Text style={styles.noTrials}>No trials assigned to this site.</Text>}
             </Pressable>
           )) : (
             <View style={styles.empty}>
@@ -646,7 +667,7 @@ export default function SponsorSitesScreen() {
       {showAdd && (
         <View style={styles.overlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAdd} />
-          <View style={styles.sheet}>
+          <View style={[styles.sheet, { paddingBottom: 20 + Math.max(insets.bottom, 16) }]}>
             <View style={styles.sheetHandle} />
             <View style={styles.between}>
               <View>
@@ -950,27 +971,45 @@ const styles = StyleSheet.create({
   compactHeader: {
     minHeight: 74, paddingHorizontal: 18, paddingBottom: 13, paddingTop: 8,
     backgroundColor: colors.primaryDeep, flexDirection: "row", alignItems: "center",
-    justifyContent: "space-between", gap: 12,
+    gap: 10,
   },
-  headerEyebrow: { fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.1, color: "rgba(255,255,255,0.65)" },
+  headerIdentity: { flex: 1, minWidth: 0 },
+  headerEyebrow: { fontFamily: fonts.semibold, fontSize: 9, letterSpacing: 1.1, color: "rgba(255,255,255,0.65)", textTransform: "uppercase" },
   headerTitle: { flex: 1, fontFamily: fonts.heading, fontSize: 19, color: colors.white },
+  iconButton: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
+  avatarText: { fontFamily: fonts.bold, fontSize: 12, color: colors.primaryFg },
+  notifBadge: { position: "absolute", top: -2, right: -2, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3, alignItems: "center", justifyContent: "center", backgroundColor: colors.destructive, borderWidth: 2, borderColor: colors.primaryDeep },
+  notifBadgeText: { fontFamily: fonts.bold, fontSize: 8, color: colors.white },
   headerAction: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, height: 36, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.14)" },
   headerActionText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.white },
-  searchRow: { paddingHorizontal: 16, paddingTop: 14 },
-  searchBox: { height: 44, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 9, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 16 },
+  searchRow: { paddingHorizontal: 16, paddingTop: 14, flexDirection: "row", alignItems: "center", gap: 8 },
+  searchBox: { flex: 1, height: 42, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 15 },
   searchInput: { flex: 1, fontFamily: fonts.regular, fontSize: 14, color: colors.foreground, outlineStyle: "none" } as any,
+  addSiteButton: { height: 42, paddingHorizontal: 12, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, backgroundColor: colors.primary, ...shadows.sm },
+  addSiteButtonText: { fontFamily: fonts.semibold, fontSize: 11, color: colors.white },
   filters: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
   filter: { paddingHorizontal: 13, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   filterActive: { borderColor: colors.primary, backgroundColor: colors.primary },
   filterText: { fontFamily: fonts.semibold, fontSize: 11, color: colors.mutedFg },
   filterTextActive: { color: colors.white },
-  list: { padding: 16, paddingTop: 2, paddingBottom: 28, gap: 12 },
-  siteCard: { padding: 15, borderRadius: 22, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
+  list: { padding: 16, paddingTop: 2, paddingBottom: 28, gap: 10 },
+  siteCard: { padding: 13, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
   between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   siteIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
   siteIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "rgba(230,155,92,0.13)" },
-  siteName: { fontFamily: fonts.semibold, fontSize: 14, color: colors.foreground },
-  siteAddress: { marginTop: 2, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
+  siteName: { flex: 1, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.foreground },
+  locationRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 4 },
+  siteAddress: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
+  trialDetailsLabel: { marginTop: 11, marginBottom: 7, fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.8, color: colors.mutedFg },
+  siteTrialPanel: { marginBottom: 8, padding: 11, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  trialPanelTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  siteProtocol: { flex: 1, fontFamily: fonts.semibold, fontSize: 10.5, color: colors.primary },
+  trialTopRight: { flexDirection: "row", alignItems: "center", gap: 5 },
+  trialGrid: { marginTop: 9, flexDirection: "row", flexWrap: "wrap", rowGap: 8 },
+  trialField: { width: "50%", paddingRight: 8 },
+  trialFieldLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.35, color: colors.mutedFg },
+  trialFieldValue: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9.5, color: colors.foreground },
+  noTrials: { paddingVertical: 10, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
   status: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 },
   statusOnDark: { backgroundColor: "rgba(255,255,255,0.16)", borderWidth: 1, borderColor: "rgba(255,255,255,0.22)" },
   statusText: { fontFamily: fonts.semibold, fontSize: 9.5, textTransform: "capitalize" },

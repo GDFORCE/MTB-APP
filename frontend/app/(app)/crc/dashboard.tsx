@@ -328,6 +328,9 @@ export default function CrcDashboard() {
                 const last = i === visitsToday.length - 1;
                 const trial = v.trial_id ? trialById[v.trial_id] : null;
                 const patient = v.patient_id ? patientById[v.patient_id] : null;
+                const assignedPi = patient?.pi_id
+                  ? (dashboard as any)?.team?.find((member: any) => member.id === patient.pi_id)?.full_name
+                  : "";
                 const visitName = v.title.replace(/^Today: /, "");
                 return (
                   <View key={v.id} style={{ flexDirection: "row", gap: 12 }}>
@@ -354,6 +357,7 @@ export default function CrcDashboard() {
                             )}
                           </View>
                           {trial ? <Text style={{ fontSize: 11, color: C.muted, marginTop: 2 }} numberOfLines={1}>{trial.protocol_id} · {trial.title}</Text> : null}
+                          {assignedPi ? <Text style={{ fontSize: 11, color: C.info, marginTop: 4, fontWeight: "600" }}>Principal Investigator: {assignedPi}</Text> : null}
                           <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 6, flexWrap: "wrap" }}>
                             <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.surface, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
                               <Clock size={11} color={C.muted} /><Text style={{ fontSize: 11, fontFamily: "monospace" as any, fontWeight: "600", color: C.fg }}>{fmtTime(v.due)}</Text>

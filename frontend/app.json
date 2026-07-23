@@ -18,6 +18,11 @@
       },
       "edgeToEdgeEnabled": true
     },
+    "androidNavigationBar": {
+      "backgroundColor": "#FEFAF1",
+      "barStyle": "dark-content",
+      "enforceContrast": false
+    },
     "web": {
       "bundler": "metro",
       "output": "single",
