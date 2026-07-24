@@ -245,6 +245,9 @@ export default function PiDashboard() {
             <Stat compact icon={Home} iconColor={C.success} iconBg="rgba(92,154,110,0.14)" glow="rgba(92,154,110,0.18)" value={loading ? null : siteTotal} label="Sites" onPress={() => router.push("/(app)/clinical/sites")} />
           </DashboardReveal>
 
+          {/* Org-admin console entry — normal dashboard stays intact. */}
+          {user?.org_admin && <OrgAdminEntry />}
+
           {/* Quick actions */}
           <Section label="QUICK ACTIONS" />
           <View style={{ flexDirection: "row", gap: 10 }}>
@@ -258,9 +261,6 @@ export default function PiDashboard() {
             />}
             {(isSmo || loading || dashboard?.capabilities.can_add_patient) && <QA icon={UserPlus} gradient label="Add Patient" onPress={() => router.push("/(app)/clinical/add-patient")} testID="qa-add-patient" />}
           </View>
-
-          {/* Org-admin console entry — only for organization admins */}
-          {user?.org_admin && <OrgAdminEntry />}
 
           <Section label="THIS WEEK" action={
             <Pressable onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "pi" } } as any)}>
@@ -670,20 +670,26 @@ function OrgAdminEntry() {
   const { orgType, orgName, loading, error } = useOrgContext();
   if (error) return null;
   const route = consoleRouteForType(orgType || undefined);
+  const isSmoAdmin = (orgType || "").toLowerCase() === "smo";
   return (
-    <>
-      <Section label="ORGANIZATION" />
-      <Pressable testID="org-admin-console" disabled={loading} onPress={() => router.push(route as any)} style={pi.orgEntry}>
-        <View style={pi.orgEntryIcon}><ShieldCheck size={22} color={C.primaryFg} /></View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ fontSize: 15, fontWeight: "700", color: C.fg }}>Org admin console</Text>
-          <Text style={{ fontSize: 12, color: C.muted, marginTop: 2 }} numberOfLines={1}>
-            {orgName ? `Manage ${orgName} — trials, team & audit` : "Manage trials, team & audit"}
-          </Text>
+    <Pressable testID="org-admin-console" disabled={loading} onPress={() => router.push(route as any)} style={pi.orgEntry}>
+      <View style={pi.orgEntryGlow} />
+      <View style={pi.orgEntryIcon}><ShieldCheck size={21} color={C.primaryFg} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={pi.orgEntryTitleRow}>
+          <Text style={pi.orgEntryTitle}>{isSmoAdmin ? "Network oversight" : "Site organization"}</Text>
+          <View style={pi.orgEntryBadge}>
+            <Text style={pi.orgEntryBadgeText}>{isSmoAdmin ? "SMO ADMIN" : "SITE ADMIN"}</Text>
+          </View>
         </View>
-        {loading ? <ActivityIndicator color={C.primary} /> : <ChevronRight size={20} color={C.muted} />}
-      </Pressable>
-    </>
+        <Text style={pi.orgEntryCopy} numberOfLines={2}>
+          {isSmoAdmin
+            ? `Sites, trials, team and audit across ${orgName || "your network"}.`
+            : `Trials, access keys, team and audit for ${orgName || "your site"}.`}
+        </Text>
+      </View>
+      {loading ? <ActivityIndicator color={C.primaryFg} /> : <ArrowUpRight size={19} color="rgba(255,255,255,0.70)" />}
+    </Pressable>
   );
 }
 
@@ -774,8 +780,14 @@ const pi = StyleSheet.create({
   statTile: { flex: 1, minWidth: 0, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 9, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   statTileCompact: { minHeight: 82, alignItems: "center", paddingHorizontal: 4, paddingVertical: 9 },
   quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  orgEntry: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  orgEntryIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+  orgEntry: { position: "relative", overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 13, marginTop: 16, padding: 14, borderRadius: 20, backgroundColor: C.primaryDeep, shadowColor: "#2E1B33", shadowOpacity: 0.16, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  orgEntryGlow: { position: "absolute", right: -22, top: -34, width: 100, height: 100, borderRadius: 50, backgroundColor: "rgba(142,91,180,0.24)" },
+  orgEntryIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.20)", alignItems: "center", justifyContent: "center" },
+  orgEntryTitleRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 },
+  orgEntryTitle: { color: C.primaryFg, fontSize: 15, fontWeight: "700" },
+  orgEntryBadge: { paddingHorizontal: 6, height: 17, borderRadius: 999, justifyContent: "center", backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.20)" },
+  orgEntryBadgeText: { color: C.primaryFg, fontSize: 7, fontWeight: "800", letterSpacing: 0.45 },
+  orgEntryCopy: { color: "rgba(255,255,255,0.70)", fontSize: 10, lineHeight: 14, marginTop: 3 },
   weekCard: { padding: 15, borderRadius: 21, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   weekHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   weekTitle: { fontSize: 13, fontWeight: "700", color: C.fg },

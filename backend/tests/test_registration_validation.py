@@ -147,3 +147,91 @@ def test_site_registration_creates_pi_or_crc_role_from_selected_site_role(monkey
                 {'id': {'$in': created}})
 
     run(flow())
+
+
+def test_first_registrant_is_org_admin_and_invitee_is_regular_member():
+    org_name = f'Ownership {RUN_ID} {uuid.uuid4().hex[:6]}'
+    created_user_ids = []
+
+    async def flow():
+        organization = None
+        try:
+            owner = await server._finalize_registration({
+                'full_name': 'Organization Owner',
+                'role': 'pi',
+                'email': f'owner-{uuid.uuid4().hex[:8]}@example.com',
+                'phone': '',
+                'organization': org_name,
+                'hashed_password': server.pwd_ctx.hash('Password1!'),
+                'profile': {'designation': 'Principal Investigator'},
+                'creates_organization': True,
+                'organization_type': 'site',
+                'email_verified': True,
+                'phone_verified': False,
+            })
+            created_user_ids.append(owner['user']['id'])
+            assert owner['user']['org_admin'] is True
+
+            organization = await server.find_organization_by_name(org_name)
+            assert organization and organization['type'] == 'site'
+
+            member = await server._finalize_registration({
+                'full_name': 'Invited CRC',
+                'role': 'crc',
+                'email': f'member-{uuid.uuid4().hex[:8]}@example.com',
+                'phone': '',
+                'organization': org_name,
+                'hashed_password': server.pwd_ctx.hash('Password1!'),
+                'profile': {'designation': 'CRC'},
+                'invitation_id': str(uuid.uuid4()),
+                'email_verified': True,
+                'phone_verified': False,
+            })
+            created_user_ids.append(member['user']['id'])
+            assert member['user']['org_admin'] is False
+        finally:
+            await server.db.users.delete_many({'id': {'$in': created_user_ids}})
+            if organization:
+                await server.db.organizations.delete_one({'id': organization['id']})
+                await server.db.audit_logs.delete_many(
+                    {'target_id': organization['id']})
+
+    run(flow())
+
+
+def test_normal_registration_rejects_existing_organization(monkeypatch):
+    org_name = f'Existing {RUN_ID} {uuid.uuid4().hex[:6]}'
+
+    async def no_delivery(*_args, **_kwargs):
+        return None
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', no_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        organization = None
+        try:
+            organization, created = await server.ensure_organization(org_name, 'site')
+            assert created is True
+            phone = f"+919{int(uuid.uuid4().hex[:8], 16) % 1_000_000_000:09d}"
+            async with make_client() as cli:
+                response = await cli.post('/api/auth/register/start', json={
+                    'full_name': 'Uninvited Member',
+                    'role': 'pi',
+                    'email': f'uninvited-{uuid.uuid4().hex[:8]}@example.com',
+                    'phone': phone,
+                    'organization': org_name,
+                    'profile': {'designation': 'PI'},
+                })
+            assert response.status_code == 409, response.text
+            assert 'invite' in response.json()['detail'].lower()
+        finally:
+            if organization:
+                await server.db.organizations.delete_one({'id': organization['id']})
+                await server.db.audit_logs.delete_many(
+                    {'target_id': organization['id']})
+
+    run(flow())

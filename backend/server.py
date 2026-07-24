@@ -14,6 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument, UpdateOne
+from pymongo.errors import DuplicateKeyError
 import os, re, json, logging, uuid, asyncio, hashlib
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
@@ -438,27 +439,63 @@ def org_type_for_role(role: str) -> str:
     else) work at a site."""
     return role if role in ORG_TYPES else 'site'
 
-async def ensure_organization(name: Optional[str], org_type: str = 'site', actor=None):
-    """Upsert an organization record the first time its name is seen
-    (e.g. when a user registers with an organization we don't know yet)."""
-    name = (name or '').strip()
-    if not name:
-        return
-    oid = str(uuid.uuid4())
-    res = await db.organizations.update_one(
-        {'name': name},
-        {'$setOnInsert': {
-            'id': oid, 'name': name,
-            'type': org_type if org_type in ORG_TYPES else 'site',
-            'address': '', 'contact': '', 'email': '', 'website': '',
-            'status': 'active', 'created_at': now(),
-        }},
-        upsert=True,
+def organization_name_key(name: Optional[str]) -> str:
+    return ' '.join((name or '').strip().split()).casefold()
+
+
+async def find_organization_by_name(name: Optional[str]) -> Optional[dict]:
+    key = organization_name_key(name)
+    if not key:
+        return None
+    organization = await db.organizations.find_one(
+        {'name_key': key}, {'_id': 0})
+    if organization:
+        return organization
+    normalized = ' '.join((name or '').strip().split())
+    return await db.organizations.find_one(
+        {'name': {'$regex': f'^{re.escape(normalized)}$', '$options': 'i'}},
+        {'_id': 0},
     )
-    if res.upserted_id is not None:
+
+
+async def ensure_organization(
+    name: Optional[str],
+    org_type: str = 'site',
+    actor=None,
+    details: Optional[Dict] = None,
+):
+    """Upsert an organization record the first time its name is seen
+    and return ``(organization, created)``."""
+    name = ' '.join((name or '').strip().split())
+    if not name:
+        return None, False
+    existing = await find_organization_by_name(name)
+    if existing:
+        return existing, False
+    details = details or {}
+    organization = {
+        'id': str(uuid.uuid4()), 'name': name,
+        'name_key': organization_name_key(name),
+        'type': org_type if org_type in ORG_TYPES else 'site',
+        'address': (details.get('orgAddress') or details.get('address') or '').strip(),
+        'hospital_type': (
+            details.get('hospitalType') or details.get('hospital_type') or '').strip(),
+        'contact': (details.get('phone') or '').strip(),
+        'email': (details.get('email') or '').strip().lower(),
+        'website': (details.get('website') or '').strip(),
+        'status': 'active', 'created_at': now(),
+    }
+    try:
+        await db.organizations.insert_one(organization)
+        created = True
+    except DuplicateKeyError:
+        organization = await find_organization_by_name(name)
+        created = False
+    if created:
         await write_audit(actor, 'organization.create',
                           f'Organization "{name}" auto-created at registration',
-                          target_id=oid)
+                          target_id=organization['id'])
+    return serialize({**organization}), created
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 @api.post('/auth/register')
@@ -487,7 +524,12 @@ async def register(body: RegisterIn):
         'is_online': False,
     }
     await db.users.insert_one(doc)
-    await ensure_organization(body.organization, org_type_for_role(body.role), actor=doc)
+    organization, created = await ensure_organization(
+        body.organization, org_type_for_role(body.role), actor=doc)
+    if organization:
+        doc['org_admin'] = bool(created and body.role != 'patient')
+        await db.users.update_one(
+            {'id': uid}, {'$set': {'org_admin': doc['org_admin']}})
     access = make_token(uid, body.role, 'access')
     refresh = make_token(uid, body.role, 'refresh')
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
@@ -796,6 +838,34 @@ async def _finalize_registration(pending: dict) -> dict:
     """Create the real user from a fully-verified pending registration + issue tokens."""
     uid = str(uuid.uuid4())
     name = pending['full_name']
+    organization = None
+    organization_created = False
+    organization_name = pending.get('organization') or ''
+    if organization_name:
+        organization, organization_created = await ensure_organization(
+            organization_name,
+            pending.get('organization_type') or org_type_for_role(pending['role']),
+            actor={'id': uid, 'full_name': name, 'role': pending['role']},
+            details={
+                **(pending.get('profile') or {}),
+                'email': pending.get('email') or '',
+                'phone': pending.get('phone') or '',
+            },
+        )
+    is_org_registration = bool(
+        pending.get('creates_organization') and pending['role'] != 'patient')
+    if is_org_registration and not organization_created:
+        raise HTTPException(
+            409,
+            'This organization was registered while you were signing up. '
+            'Ask its administrator to invite you.',
+        )
+    if pending.get('invitation_id') and (not organization or organization_created):
+        if organization_created and organization:
+            await db.organizations.delete_one({'id': organization['id']})
+        raise HTTPException(
+            409, 'The organization attached to this invitation is unavailable')
+
     doc = {
         'id': uid,
         'email': (pending.get('email') or '').lower(),
@@ -813,9 +883,16 @@ async def _finalize_registration(pending: dict) -> dict:
         'phone_verified': bool(pending.get('phone_verified')),
         'created_at': now(),
         'is_online': False,
+        'org_admin': is_org_registration and organization_created,
     }
-    await db.users.insert_one(doc)
-    await ensure_organization(doc['organization'], org_type_for_role(doc['role']), actor=doc)
+    if pending.get('site'):
+        doc['site'] = pending['site']
+    try:
+        await db.users.insert_one(doc)
+    except Exception:
+        if organization_created and organization:
+            await db.organizations.delete_one({'id': organization['id']})
+        raise
     access = make_token(uid, doc['role'], 'access')
     refresh = make_token(uid, doc['role'], 'refresh')
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
@@ -965,6 +1042,27 @@ async def register_start(body: RegisterStartIn):
     if phone and await db.users.find_one({'phone': phone}):
         raise HTTPException(400, 'Phone number already registered')
 
+    creates_organization = not invitation and effective_role != 'patient'
+    organization_record = None
+    if creates_organization:
+        if not organization:
+            raise HTTPException(
+                400, 'Organization name is required when registering an organization')
+        organization_record = await find_organization_by_name(organization)
+        if organization_record:
+            raise HTTPException(
+                409,
+                'This organization is already registered. '
+                'Ask its administrator to invite you.',
+            )
+    elif invitation:
+        if not organization:
+            raise HTTPException(400, 'This invitation is not linked to an organization')
+        organization_record = await find_organization_by_name(organization)
+        if not organization_record:
+            raise HTTPException(
+                409, 'The organization attached to this invitation is unavailable')
+
     # Throttle per identifier before we generate or send anything.
     if phone:
         await _enforce_rate_limit(phone)
@@ -1010,9 +1108,16 @@ async def register_start(body: RegisterStartIn):
         'created_at': now(),
         'expires_at': now() + timedelta(minutes=otp_service.OTP_TTL_MIN),
     }
+    if creates_organization:
+        doc['creates_organization'] = True
+        doc['organization_type'] = org_type_for_role(effective_role)
     if invitation:
         doc['invitation_id'] = invitation['id']
         doc['invite_token'] = normalize_invite_code(invitation['token'])
+        doc['organization_type'] = (
+            organization_record.get('type') or org_type_for_role(effective_role))
+        if invitation.get('site'):
+            doc['site'] = invitation['site']
 
     # Generate codes, store ONLY their hashes, then deliver. If a send fails we
     # raise — nothing is persisted, so the user is never told a code is on its way.
@@ -6978,6 +7083,10 @@ async def _ensure_indexes():
             [('medication_id', 1), ('date', 1), ('time', 1)], unique=True)
         # Adherence (GET /api/adherence) scans dose_logs by patient.
         await db.dose_logs.create_index('patient_id')
+        await db.organizations.create_index(
+            'name_key', unique=True,
+            partialFilterExpression={'name_key': {'$type': 'string', '$gt': ''}},
+        )
     except Exception as e:
         logging.warning('Index setup deferred (DB unreachable or existing duplicates?): %s', e)
 
@@ -6998,6 +7107,47 @@ async def _ensure_admin_seed():
     except Exception as e:
         logging.warning('Admin seed deferred (DB unreachable?): %s', e)
 
+async def _migrate_organization_ownership():
+    """Give pre-existing organizations an owner without changing dashboards."""
+    try:
+        organizations = await db.organizations.find(
+            {'status': {'$ne': 'merged'}}, {'_id': 0}).to_list(5000)
+        for organization in organizations:
+            name = (organization.get('name') or '').strip()
+            if not name:
+                continue
+            existing_admin = await db.users.find_one({
+                'organization': name,
+                'org_admin': True,
+                'role': {'$ne': 'patient'},
+                'status': {'$nin': ['Suspended', 'Deactivated']},
+            })
+            if existing_admin:
+                continue
+            owner = await db.users.find_one(
+                {
+                    'organization': name,
+                    'role': {'$nin': ['patient', 'admin']},
+                    'status': {'$nin': ['Suspended', 'Deactivated']},
+                },
+                {'_id': 0},
+                sort=[('created_at', 1)],
+            )
+            if not owner:
+                continue
+            result = await db.users.update_one(
+                {'id': owner['id'], 'org_admin': {'$ne': True}},
+                {'$set': {'org_admin': True}},
+            )
+            if result.modified_count:
+                await write_audit(
+                    owner, 'organization.owner_backfill',
+                    f'Assigned original registrant as administrator of "{name}"',
+                    target_id=organization['id'], org_id=organization['id'])
+    except Exception as e:
+        logging.warning(
+            'Organization ownership migration deferred (DB unreachable?): %s', e)
+
 @app.on_event('startup')
 async def startup():
     if DEV_OTP_MODE:
@@ -7008,6 +7158,8 @@ async def startup():
     asyncio.create_task(_migrate_visit_instances())
     # Make sure the platform-admin login exists (idempotent).
     asyncio.create_task(_ensure_admin_seed())
+    # Existing owners keep their normal dashboard and gain the admin-entry card.
+    asyncio.create_task(_migrate_organization_ownership())
     # Deliver due scheduled broadcasts exactly once (idempotent claim + fan-out).
     asyncio.create_task(admin_routes.broadcast_worker_loop())
 

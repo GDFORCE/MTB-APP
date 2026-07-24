@@ -116,6 +116,13 @@ class OrgInviteIn(BaseModel):
 class AssignSiteIn(BaseModel):
     site: str = Field(min_length=1)
 
+ORG_TEAM_ROLES = {
+    'sponsor': {'sponsor', 'cro', 'pi', 'crc'},
+    'cro': {'sponsor', 'cro', 'pi', 'crc'},
+    'smo': {'pi', 'crc'},
+    'site': {'pi', 'crc'},
+}
+
 
 @router.get('/{org_id}/members')
 async def org_members(ctx=Depends(org_admin_ctx)):
@@ -142,9 +149,21 @@ async def org_members(ctx=Depends(org_admin_ctx)):
 async def org_invite_member(body: OrgInviteIn, ctx=Depends(org_admin_ctx)):
     org, user = ctx['org'], ctx['user']
     email = body.email.lower()
+    allowed_roles = ORG_TEAM_ROLES.get((org.get('type') or '').lower(), set())
+    if body.role not in allowed_roles:
+        raise HTTPException(
+            400,
+            f'{body.role} cannot be invited to this {org.get("type") or ""} organization',
+        )
     existing = await db.users.find_one({'email': email}, {'_id': 0, 'organization': 1})
     if existing and (existing.get('organization') or '').strip() == org['name']:
         raise HTTPException(400, 'This person is already a member of the organization')
+    if existing:
+        raise HTTPException(409, 'This email already belongs to another organization')
+    pending = await db.invitations.find_one({
+        'email': email, 'org_id': org['id'], 'status': 'pending'})
+    if pending and _invitation_status(pending) == 'pending':
+        raise HTTPException(400, 'A pending invitation already exists for this email')
     token = uuid.uuid4().hex
     doc = {
         'id': str(uuid.uuid4()), 'token': token, 'email': email, 'phone': '',

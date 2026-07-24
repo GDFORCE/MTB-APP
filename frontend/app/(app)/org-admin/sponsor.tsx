@@ -253,8 +253,8 @@ export default function SponsorConsole() {
                 </Pressable>
                 <TeamRoster
                   members={members}
-                  roleFilters={["pi", "crc", "cro"]}
-                  inviteConfig={{ roles: ["pi", "crc", "cro"] }}
+                  roleFilters={["sponsor", "cro", "pi", "crc"]}
+                  inviteConfig={{ roles: ["sponsor", "cro", "pi", "crc"] }}
                   showToast={showToast}
                   onReload={loadAll}
                   onInvite={inviteMember}
