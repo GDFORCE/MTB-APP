@@ -56,17 +56,80 @@ def normalize_email(value: Optional[str]) -> Optional[str]:
     return clean or None
 
 
-def normalize_indian_phone(value: Optional[str]) -> Optional[str]:
-    """Canonicalize supported registration phones to Indian E.164."""
+# Calling codes are 1-4 digits and several are shared, so we only need the set of
+# valid prefixes to split a submitted number — not the country it belongs to.
+CALLING_CODES = frozenset({
+    '1', '7', '20', '27', '30', '31', '32', '33', '34', '36', '39', '40', '41', '43', '44',
+    '45', '46', '47', '48', '49', '51', '52', '53', '54', '55', '56', '57', '58', '60', '61',
+    '62', '63', '64', '65', '66', '81', '82', '84', '86', '90', '91', '92', '93', '94', '95',
+    '98', '211', '212', '213', '216', '218', '220', '221', '222', '223', '224', '225', '226',
+    '227', '228', '229', '230', '231', '232', '233', '234', '235', '236', '237', '238', '239',
+    '240', '241', '242', '243', '244', '245', '246', '248', '249', '250', '251', '252', '253',
+    '254', '255', '256', '257', '258', '260', '261', '262', '263', '264', '265', '266', '267',
+    '268', '269', '290', '291', '297', '298', '299', '350', '351', '352', '353', '354', '355',
+    '356', '357', '358', '359', '370', '371', '372', '373', '374', '375', '376', '377', '378',
+    '379', '380', '381', '382', '383', '385', '386', '387', '389', '420', '421', '423', '500',
+    '501', '502', '503', '504', '505', '506', '507', '508', '509', '590', '591', '592', '593',
+    '594', '595', '596', '597', '598', '599', '670', '672', '673', '674', '675', '676', '677',
+    '678', '679', '680', '681', '682', '683', '685', '686', '687', '688', '689', '690', '691',
+    '692', '850', '852', '853', '855', '856', '880', '886', '960', '961', '962', '963', '964',
+    '965', '966', '967', '968', '970', '971', '972', '973', '974', '975', '976', '977', '992',
+    '993', '994', '995', '996', '998',
+    '1242', '1246', '1264', '1268', '1284', '1340', '1345', '1441', '1473', '1649', '1664',
+    '1670', '1671', '1684', '1721', '1758', '1767', '1784', '1787', '1809', '1868', '1869',
+    '1876',
+})
+
+
+def _split_calling_code(digits: str) -> Optional[tuple]:
+    """Longest-first match of `digits` against the known calling codes."""
+    for size in (4, 3, 2, 1):
+        code = digits[:size]
+        if code in CALLING_CODES and len(digits) > size:
+            return code, digits[size:]
+    return None
+
+
+def normalize_phone(value: Optional[str]) -> Optional[str]:
+    """Canonicalize a registration phone to E.164, defaulting to India.
+
+    Numbers arrive from the client already in `+<code><national>` form. A bare
+    number with no `+` keeps the historical Indian interpretation so existing
+    clients and stored values stay valid.
+    """
     if value is None or not str(value).strip():
         return None
-    digits = re.sub(r'\D', '', str(value))
-    if digits.startswith('0091'):
-        digits = digits[4:]
-    elif digits.startswith('91') and len(digits) == 12:
-        digits = digits[2:]
-    elif digits.startswith('0') and len(digits) == 11:
+    raw = str(value).strip()
+    digits = re.sub(r'\D', '', raw)
+
+    if raw.startswith('+') or digits.startswith('00'):
+        if digits.startswith('00'):
+            digits = digits[2:]
+        parts = _split_calling_code(digits)
+        if not parts:
+            raise HTTPException(400, 'Enter a valid mobile number with its country code')
+        code, national = parts
+        national = national.lstrip('0') or national
+        if code == '91':
+            return _normalize_indian_national(national)
+        # NANP (+1 and its +1XXX territories) is always 10 digits after the code.
+        if code.startswith('1'):
+            valid = len(code) - 1 + len(national) == 10
+        else:
+            # E.164 caps a full number at 15 digits; 4 is the shortest subscriber part.
+            valid = 4 <= len(national) and len(code) + len(national) <= 15
+        if not valid:
+            raise HTTPException(400, 'Enter a valid mobile number for the selected country')
+        return f'+{code}{national}'
+
+    if digits.startswith('0') and len(digits) == 11:
         digits = digits[1:]
+    return _normalize_indian_national(digits)
+
+
+def _normalize_indian_national(digits: str) -> str:
+    if len(digits) == 12 and digits.startswith('91'):
+        digits = digits[2:]
     if not re.fullmatch(r'[6-9]\d{9}', digits):
         raise HTTPException(400, 'Enter a valid 10-digit Indian mobile number')
     return f'+91{digits}'
@@ -127,6 +190,10 @@ class RegisterStartIn(BaseModel):
     profile: Optional[Dict] = None   # extra role-specific fields (designation, dob, gender…)
 
     invite_token: Optional[str] = None
+
+class RegisterAvailabilityIn(BaseModel):
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 class RegisterVerifyIn(BaseModel):
     registration_id: str
@@ -503,7 +570,7 @@ async def register(body: RegisterIn):
     if body.role == 'admin':
         raise HTTPException(403, 'This role cannot self-register')
     email = normalize_email(body.email)
-    phone = normalize_indian_phone(body.phone)
+    phone = normalize_phone(body.phone)
     if await db.users.find_one({'email': email}):
         raise HTTPException(400, 'Email already registered')
     if phone and await db.users.find_one({'phone': phone}):
@@ -568,7 +635,7 @@ async def update_me(body: ProfileUpdateIn, user=Depends(current_user)):
         updates['full_name'] = name
         updates['avatar_initials'] = ''.join([w[0].upper() for w in name.split()[:2]]) or 'U'
     if body.phone is not None:
-        updates['phone'] = normalize_indian_phone(body.phone) or ''
+        updates['phone'] = normalize_phone(body.phone) or ''
     if body.email is not None:
         email = normalize_email(body.email)
         existing = await db.users.find_one({'email': email, 'id': {'$ne': user['id']}})
@@ -624,7 +691,7 @@ async def create_ticket(body: TicketIn, user=Depends(current_user)):
 @api.post('/auth/forgot')
 async def forgot(body: ForgotIn):
     email = normalize_email(body.email)
-    phone = normalize_indian_phone(body.phone)
+    phone = normalize_phone(body.phone)
     if bool(email) == bool(phone):
         raise HTTPException(400, 'Enter either your registered email or phone number')
     channel = 'email' if email else 'phone'
@@ -671,7 +738,7 @@ async def forgot(body: ForgotIn):
 @api.post('/auth/reset')
 async def reset(body: ResetIn):
     email = normalize_email(body.email)
-    phone = normalize_indian_phone(body.phone)
+    phone = normalize_phone(body.phone)
     if body.recovery_id:
         user = await db.users.find_one({'reset_recovery_id': body.recovery_id})
     elif bool(email) != bool(phone):
@@ -764,6 +831,9 @@ async def complete_password_reset_link(body: PasswordResetLinkIn):
 OTP_MAX_VERIFY_ATTEMPTS = 6      # wrong-code attempts before the pending is locked
 OTP_MAX_RESENDS = 3              # resend attempts allowed per channel
 OTP_RESEND_COOLDOWN_SEC = 30     # min gap between sends for one registration
+# After OTP verification, allow time to choose a strong password before the
+# temporary registration is removed by MongoDB's TTL index.
+REGISTER_COMPLETE_TTL_MIN = 10
 OTP_RATE_LIMIT = 5               # sends allowed per identifier (phone/email) …
 OTP_RATE_WINDOW_SEC = 3600       # … within this rolling window
 
@@ -778,7 +848,7 @@ DEV_OTP_CODE = os.environ.get('DEV_OTP_CODE', '000000').strip()
 
 def _channel_configured(channel: str) -> bool:
     if channel == 'email':
-        return bool(os.environ.get('SMTP_HOST'))
+        return bool(os.environ.get('BREVO_API_KEY') and os.environ.get('BREVO_FROM_EMAIL'))
     return bool(os.environ.get('MSG91_AUTHKEY') and os.environ.get('MSG91_TEMPLATE_ID'))
 
 def required_channels(role: str) -> List[str]:
@@ -887,6 +957,8 @@ async def _finalize_registration(pending: dict) -> dict:
     }
     if pending.get('site'):
         doc['site'] = pending['site']
+    if pending.get('supervising_pi_id'):
+        doc['supervising_pi_id'] = pending['supervising_pi_id']
     try:
         await db.users.insert_one(doc)
     except Exception:
@@ -924,6 +996,7 @@ async def _complete_registration(pending: dict) -> dict:
                 409, f'This invitation is {status} and can no longer be used')
 
     created_user_id = None
+    created_patient_id = None
     try:
         session = await _finalize_registration(pending)
         created_user_id = session['user']['id']
@@ -951,29 +1024,81 @@ async def _complete_registration(pending: dict) -> dict:
                 raise RuntimeError('Invitation acceptance could not be finalized')
 
             if invitation.get('role') == 'patient' and invitation.get('trial_id'):
-                contacts = []
-                if pending.get('email'):
-                    contacts.append({'email': pending['email']})
-                if pending.get('phone'):
-                    contacts.append({'phone': pending['phone']})
-                if contacts:
-                    await db.patients.update_one(
-                        {
-                            '$and': [
-                                {'trial_id': invitation['trial_id']},
-                                {'$or': contacts},
-                                {'$or': [
-                                    {'user_id': {'$exists': False}},
-                                    {'user_id': None},
-                                ]},
-                            ],
-                        },
-                        {'$set': {
-                            'user_id': created_user_id,
-                            'full_name': pending.get('full_name') or invitation.get('full_name', ''),
-                            'phone': pending.get('phone') or invitation.get('phone', ''),
-                        }},
+                patient_data = invitation.get('patient_data')
+                if patient_data:
+                    subject_id = patient_data.get('subject_id')
+                    if subject_id:
+                        duplicate = await db.patients.find_one(
+                            {'trial_id': invitation['trial_id'], 'subject_id': subject_id},
+                            {'_id': 0, 'id': 1})
+                        if duplicate:
+                            raise HTTPException(
+                                409,
+                                f'Subject ID {subject_id} is already enrolled in this trial',
+                            )
+                    patient_id = str(uuid.uuid4())
+                    patient_doc = {
+                        **patient_data,
+                        'id': patient_id,
+                        'trial_id': invitation['trial_id'],
+                        'user_id': created_user_id,
+                        'full_name': pending.get('full_name') or invitation.get('full_name', ''),
+                        'email': pending.get('email') or invitation.get('email', ''),
+                        'phone': pending.get('phone') or invitation.get('phone', ''),
+                        'created_by': invitation.get('invited_by'),
+                        'created_at': now(),
+                        'enrolled_date': now().date().isoformat(),
+                        'completed_visit_ids': [],
+                        'avatar_initials': ''.join(
+                            word[0].upper()
+                            for word in (pending.get('full_name') or invitation.get('full_name', '')).split()[:2]
+                        ) or 'P',
+                    }
+                    # Invitation values are prefills; preserve any final
+                    # profile changes the patient makes while registering.
+                    registration_profile = pending.get('profile') or {}
+                    for profile_key in ('dob', 'gender', 'language', 'age'):
+                        if registration_profile.get(profile_key) not in (None, ''):
+                            patient_doc[profile_key] = registration_profile[profile_key]
+                    await db.patients.insert_one(patient_doc)
+                    created_patient_id = patient_id
+                    created_visits = await materialize_visit_instances(patient_doc)
+                    await db.invitations.update_one(
+                        {'id': invitation['id'], 'status': 'accepted'},
+                        {'$set': {'patient_id': patient_id}},
                     )
+                    await write_audit(
+                        session['user'], 'patient.enroll',
+                        f"Accepted invitation and enrolled in trial {invitation['trial_id']} "
+                        f"({created_visits} visit instance(s) materialized)",
+                        target_id=patient_id, trial_id=invitation['trial_id'],
+                    )
+                else:
+                    # Legacy patient invitations link the account to a record that
+                    # was created before the invitation was sent.
+                    contacts = []
+                    if pending.get('email'):
+                        contacts.append({'email': pending['email']})
+                    if pending.get('phone'):
+                        contacts.append({'phone': pending['phone']})
+                    if contacts:
+                        await db.patients.update_one(
+                            {
+                                '$and': [
+                                    {'trial_id': invitation['trial_id']},
+                                    {'$or': contacts},
+                                    {'$or': [
+                                        {'user_id': {'$exists': False}},
+                                        {'user_id': None},
+                                    ]},
+                                ],
+                            },
+                            {'$set': {
+                                'user_id': created_user_id,
+                                'full_name': pending.get('full_name') or invitation.get('full_name', ''),
+                                'phone': pending.get('phone') or invitation.get('phone', ''),
+                            }},
+                        )
             await write_audit(
                 session['user'], 'invitation.accept',
                 f"Invitation for {invitation.get('email') or invitation.get('phone')} accepted",
@@ -981,6 +1106,8 @@ async def _complete_registration(pending: dict) -> dict:
         await db.pending_registrations.delete_one({'id': pending['id']})
         return session
     except Exception:
+        if created_patient_id:
+            await db.patients.delete_one({'id': created_patient_id})
         if created_user_id:
             await db.users.delete_one({'id': created_user_id})
         if invitation:
@@ -994,6 +1121,25 @@ async def _complete_registration(pending: dict) -> dict:
                  '$unset': {'registration_id': '', 'accepting_at': ''}},
             )
         raise
+
+
+@api.post('/auth/register/check-availability')
+async def register_check_availability(body: RegisterAvailabilityIn):
+    """Field-level duplicate check for the registration details screen.
+
+    The authoritative checks in ``register_start`` remain in place to protect
+    against races between this preview and submission.
+    """
+    email = normalize_email(body.email)
+    phone = normalize_phone(body.phone)
+    return {
+        'email': ({
+            'available': not bool(await db.users.find_one({'email': email}, {'_id': 1})),
+        } if email else None),
+        'phone': ({
+            'available': not bool(await db.users.find_one({'phone': phone}, {'_id': 1})),
+        } if phone else None),
+    }
 
 
 @api.post('/auth/register/start')
@@ -1015,14 +1161,16 @@ async def register_start(body: RegisterStartIn):
             effective_role = 'pi'
         elif selected_site_role in ('research team', 'crc'):
             effective_role = 'crc'
+        elif selected_site_role in ('administrative', 'administrator', 'admin'):
+            effective_role = 'site'
         else:
             raise HTTPException(
-                400, 'Select either PI or Research Team for Site registration')
+                400, 'Select PI, Research Team, or Administrative for Site registration')
     if effective_role == 'admin':
         raise HTTPException(403, 'This role cannot self-register')
     channels = required_channels(effective_role)
     email = normalize_email(body.email)
-    phone = normalize_indian_phone(body.phone)
+    phone = normalize_phone(body.phone)
     organization = (body.organization or '').strip() or None
     if invitation:
         invited_email = (invitation.get('email') or '').lower().strip() or None
@@ -1032,6 +1180,34 @@ async def register_start(body: RegisterStartIn):
         organization = (invitation.get('org') or '').strip()
 
     profile = normalize_registration_profile(effective_role, body.profile)
+    if not invitation and effective_role == 'smo':
+        raw_hospitals = profile.get('hospitals')
+        smo_roles = {'pi': 'PI', 'crc': 'CRC', 'administrative': 'Administrative'}
+        hospital_types = {'private': 'Private', 'government': 'Government'}
+        if not isinstance(raw_hospitals, list) or not raw_hospitals:
+            raise HTTPException(
+                400, 'Add at least one hospital or clinical trial site managed by the SMO')
+        hospitals = []
+        for hospital in raw_hospitals:
+            if not isinstance(hospital, dict):
+                raise HTTPException(400, 'Each SMO hospital entry must be an object')
+            name = str(hospital.get('name') or '').strip()
+            address = str(hospital.get('address') or '').strip()
+            hospital_type = str(hospital.get('type') or '').strip().lower()
+            hospital_role = str(hospital.get('role') or '').strip().lower()
+            if not name or not address:
+                raise HTTPException(400, 'Hospital / site name and location are required')
+            if hospital_type not in hospital_types:
+                raise HTTPException(400, 'Select a hospital type: Private or Government')
+            if hospital_role not in smo_roles:
+                raise HTTPException(400, 'Select a hospital role: PI, CRC, or Administrative')
+            hospitals.append({
+                'name': name,
+                'address': address,
+                'type': hospital_types[hospital_type],
+                'role': smo_roles[hospital_role],
+            })
+        profile['hospitals'] = hospitals
 
     if 'email' in channels and not email:
         raise HTTPException(400, 'Email is required for this role')
@@ -1114,6 +1290,8 @@ async def register_start(body: RegisterStartIn):
     if invitation:
         doc['invitation_id'] = invitation['id']
         doc['invite_token'] = normalize_invite_code(invitation['token'])
+        if invitation.get('supervising_pi_id'):
+            doc['supervising_pi_id'] = invitation['supervising_pi_id']
         doc['organization_type'] = (
             organization_record.get('type') or org_type_for_role(effective_role))
         if invitation.get('site'):
@@ -1174,7 +1352,13 @@ async def register_verify(body: RegisterVerifyIn):
     # pending record and let /register/complete create the account. Legacy callers that
     # supplied a password at /start are finalized immediately here.
     if not pending.get('hashed_password'):
-        await db.pending_registrations.update_one({'id': pending['id']}, {'$set': {'fully_verified': True}})
+        await db.pending_registrations.update_one(
+            {'id': pending['id']},
+            {'$set': {
+                'fully_verified': True,
+                'expires_at': now() + timedelta(minutes=REGISTER_COMPLETE_TTL_MIN),
+            }},
+        )
         return {'verified': True, 'pending_password': True}
 
     session = await _complete_registration(pending)
@@ -1187,6 +1371,9 @@ async def register_complete(body: RegisterCompleteIn):
     pending = await db.pending_registrations.find_one({'id': body.registration_id})
     if not pending:
         raise HTTPException(404, 'Registration not found or already completed')
+    if pending['expires_at'] < now():
+        await db.pending_registrations.delete_one({'id': pending['id']})
+        raise HTTPException(400, 'Your password setup session expired. Please restart registration.')
     if not all(pending.get(f'{ch}_verified') for ch in pending['channels']):
         raise HTTPException(400, 'Please verify your contact details before setting a password.')
     pending['hashed_password'] = pwd_ctx.hash(body.password)
@@ -2360,10 +2547,20 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
             'trial_id': trial_id, 'invited_by': user['id'],
             'org': site_name, 'organization': site_name,
             'status': 'pending', 'created_at': now(),
-            'expires_at': now() + timedelta(days=7),
+            'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
             'resend_count': 0,
         }
         await db.invitations.insert_one(invitation)
+        try:
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                invitation['email'],
+                _invite_link(invitation['token']),
+                invitation['full_name'],
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            await db.invitations.delete_one({'id': invitation['id']})
+            raise HTTPException(502, 'The PI invitation email could not be delivered.')
     await write_audit(
         user, 'trial.site_add',
         f'Added {site_name} to {trial.get("protocol_id") or trial_id} and shared with PI',
@@ -2638,6 +2835,13 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     except pe.ExtractionNotConfigured:
         raise HTTPException(503, 'Protocol extraction is not configured on the '
                             'server. Set ANTHROPIC_API_KEY and restart.')
+    except pe.ExtractionUnavailable as e:
+        # Provider reachable but refusing work (billing/quota/overload). This is
+        # an operations problem, not a problem with the sponsor's document —
+        # say so, so nobody wastes time re-uploading a perfectly good protocol.
+        raise HTTPException(503, f'Protocol extraction is temporarily unavailable: {e}. '
+                                 'Your document was not the problem — please retry later '
+                                 'or contact support.')
     except pe.ExtractionError as e:
         raise HTTPException(502, f'Could not extract the schedule: {e}')
 
@@ -2648,6 +2852,9 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     visits = []
     for visit in schedule.visits:
         row = visit.model_dump()
+        # An undated visit (Early Termination, Unscheduled) is real but has no
+        # day. The editor needs a number, so it lands on baseline — flagged for
+        # review so it is never saved as a genuine day-0 visit by accident.
         warning = row.get('day_offset') is None
         row['day_offset'] = row.get('day_offset') or 0
         row['clinical_tasks'] = row.get('activities') or []
@@ -2657,7 +2864,15 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         row['review_status'] = 'pending' if warning else 'ok'
         row['extracted_from_protocol'] = True
         visits.append(row)
-    return {'visits': visits}
+    return {
+        'visits': visits,
+        # Everything the reviewer needs to check the draft before saving:
+        # inferences the model made, cycle expansions the server bounded, and
+        # where in the document the schedule was read from.
+        'assumptions': schedule.assumptions,
+        'schedule_kind': schedule.schedule_kind,
+        'source_notes': schedule.source_notes,
+    }
 
 # ── Visit schedule ──────────────────────────────────────────────────────────
 @api.post('/visits')
@@ -3590,6 +3805,156 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
                       target_id=pid, trial_id=doc['trial_id'])
     return serialize(doc)
 
+
+@api.get('/patients/invite/check-availability',
+         dependencies=[Depends(require_roles('pi', 'crc', 'smo', 'site'))])
+async def check_patient_invitation_availability(
+    trial_id: str,
+    subject_id: Optional[str] = None,
+    email: Optional[str] = None,
+    user=Depends(current_user),
+):
+    """Validate patient invite identifiers before the staff member submits."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to enroll patients in this trial')
+
+    result = {'subject_id': None, 'email': None}
+    if subject_id and subject_id.strip():
+        normalized_subject = subject_id.strip()
+        patient_exists = await db.patients.find_one(
+            {'trial_id': trial_id, 'subject_id': normalized_subject}, {'_id': 0, 'id': 1})
+        invite_exists = await db.invitations.find_one(
+            {'trial_id': trial_id, 'status': {'$in': ['pending', 'accepting']},
+             'patient_data.subject_id': normalized_subject},
+            {'_id': 0, 'id': 1})
+        result['subject_id'] = {
+            'available': not bool(patient_exists or invite_exists),
+            'message': (
+                f'{normalized_subject} is already enrolled or has a pending invitation for this trial.'
+                if patient_exists or invite_exists else ''
+            ),
+        }
+    if email and email.strip():
+        normalized_email = email.strip().lower()
+        user_exists = await db.users.find_one({'email': normalized_email}, {'_id': 0, 'id': 1})
+        invite_exists = await db.invitations.find_one(
+            {'email': normalized_email, 'trial_id': trial_id,
+             'status': {'$in': ['pending', 'accepting']}},
+            {'_id': 0, 'id': 1})
+        result['email'] = {
+            'available': not bool(user_exists or invite_exists),
+            'message': (
+                'This email already belongs to an account or has a pending patient invitation.'
+                if user_exists or invite_exists else ''
+            ),
+        }
+    return result
+
+
+@api.post('/patients/invite', dependencies=[Depends(require_roles('pi', 'crc', 'smo', 'site'))])
+async def invite_patient_for_enrollment(body: PatientIn, user=Depends(current_user)):
+    """Invite a patient to register, then enrol them only after acceptance."""
+    trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to enroll patients in this trial')
+
+    caller_org = (user.get('organization') or '').strip()
+    if user['role'] in ('smo', 'site') and not user.get('org_admin'):
+        raise HTTPException(403, 'Organization-admin access is required to enroll patients')
+    pi_id = user['id'] if user['role'] == 'pi' else body.pi_id
+    crc_id = user['id'] if user['role'] == 'crc' else body.crc_id
+
+    async def default_trial_staff(role: str, field: str) -> Optional[str]:
+        existing = await db.patients.find_one(
+            {'trial_id': body.trial_id, field: {'$exists': True, '$ne': None}},
+            {'_id': 0, field: 1}, sort=[('created_at', -1)])
+        if existing and existing.get(field):
+            return existing[field]
+        if caller_org:
+            colleague = await db.users.find_one(
+                {'role': role, 'organization': caller_org,
+                 'status': {'$nin': ['Inactive', 'Removed', 'Suspended']}},
+                {'_id': 0, 'id': 1}, sort=[('created_at', 1)])
+            if colleague:
+                return colleague['id']
+        return None
+
+    if not pi_id:
+        pi_id = await default_trial_staff('pi', 'pi_id')
+    if not crc_id:
+        crc_id = await default_trial_staff('crc', 'crc_id')
+    if user['role'] in ('smo', 'site') and not pi_id:
+        raise HTTPException(400, 'Select the PI responsible for this patient')
+    for staff_id, expected_role, label in (
+        (pi_id, 'pi', 'PI'),
+        (crc_id, 'crc', 'CRC'),
+    ):
+        if not staff_id:
+            continue
+        staff = await db.users.find_one(
+            {'id': staff_id}, {'_id': 0, 'role': 1, 'organization': 1})
+        if not staff or staff.get('role') != expected_role:
+            raise HTTPException(400, f'Selected {label} is invalid')
+        if caller_org and (staff.get('organization') or '').strip() != caller_org:
+            raise HTTPException(403, f'Selected {label} must belong to your site')
+
+    if body.subject_id:
+        duplicate_patient = await db.patients.find_one(
+            {'trial_id': body.trial_id, 'subject_id': body.subject_id},
+            {'_id': 0, 'id': 1})
+        duplicate_invite = await db.invitations.find_one(
+            {'trial_id': body.trial_id, 'status': 'pending',
+             'patient_data.subject_id': body.subject_id},
+            {'_id': 0, 'id': 1})
+        if duplicate_patient or duplicate_invite:
+            raise HTTPException(409, f'Subject ID {body.subject_id} already exists or is awaiting registration in this trial')
+    existing_invite = await db.invitations.find_one(
+        {'email': body.email.lower(), 'trial_id': body.trial_id, 'role': 'patient',
+         'status': 'pending'},
+        {'_id': 0, 'id': 1})
+    if existing_invite:
+        raise HTTPException(409, 'A pending patient invitation already exists for this email and trial')
+
+    patient_data = body.dict()
+    patient_data['pi_id'] = pi_id
+    patient_data['crc_id'] = crc_id
+    token = new_invite_code()
+    invitation = {
+        'id': str(uuid.uuid4()), 'token': token,
+        'email': body.email.lower(), 'phone': body.phone or '',
+        'full_name': body.full_name, 'designation': '', 'role': 'patient',
+        'trial_id': body.trial_id, 'invited_by': user['id'],
+        'org': caller_org, 'site': '',
+        'status': 'pending', 'created_at': now(),
+        'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
+        'resend_count': 0, 'patient_data': patient_data,
+    }
+    await db.invitations.insert_one(invitation)
+    try:
+        await run_in_threadpool(
+            otp_service.send_invitation_email,
+            invitation['email'],
+            _invite_link(token),
+            invitation['full_name'],
+        )
+    except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+        await db.invitations.delete_one({'id': invitation['id']})
+        raise HTTPException(502, 'The patient invitation email could not be delivered.')
+    await write_audit(user, 'patient.invite',
+                      f"Invited {body.full_name} to register for trial {body.trial_id}",
+                      target_id=invitation['id'], trial_id=body.trial_id)
+    return {
+        **serialize(invitation),
+        'invite_link': _invite_link(token),
+        'message': 'Patient invitation sent. The patient will be enrolled after completing registration.',
+    }
+
+
 @api.get('/patients/{patient_id}')
 async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
     """Patient detail: the patient record + its trial + its visit instances."""
@@ -3627,37 +3992,46 @@ async def list_organizations(type: Optional[str] = None, search: Optional[str] =
     return organizations
 
 
-async def _public_org_admin_contact(organization: dict) -> Optional[dict]:
-    """Return designated-admin business contact data, never arbitrary staff."""
-    admin = await db.users.find_one(
-        {
-            'organization': organization.get('name'),
-            'org_admin': True,
-            'role': {'$ne': 'patient'},
-            'status': {'$ne': 'Suspended'},
-        },
-        {
-            '_id': 0, 'full_name': 1, 'email': 1, 'phone': 1,
-            'profile.designation': 1,
-        },
-        sort=[('created_at', 1)],
-    )
-    if admin:
-        profile = admin.get('profile') or {}
-        return {
-            'name': admin.get('full_name') or 'Organization Admin',
-            'designation': profile.get('designation') or 'Platform Contact Admin',
-            'email': admin.get('email') or '',
-            'phone': admin.get('phone') or '',
-        }
-    if organization.get('email') or organization.get('contact'):
-        return {
-            'name': organization.get('contact_name') or 'Organization Admin',
-            'designation': 'Platform Contact Admin',
-            'email': organization.get('email') or '',
-            'phone': organization.get('contact') or '',
-        }
-    return None
+async def _public_platform_admin_contact() -> Optional[dict]:
+    """Return the configured MTB Platform Administrator contact only.
+
+    Registration duplicate warnings must never disclose PI, CRC, investigator,
+    or organization-member details, even when that member is an org admin.
+    """
+    config = await app_config()
+    email = config.get('support_email') or ''
+    phone = config.get('support_phone') or ''
+    if not email and not phone:
+        return None
+    return {
+        'name': 'MTB Platform Support',
+        'designation': 'Platform Administrator',
+        'email': email,
+        'phone': phone,
+    }
+
+
+@api.get('/organizations/registration-check')
+async def organization_registration_check(name: str):
+    """Authoritative duplicate check used at the end of org registration.
+
+    Matching is case-insensitive and whitespace-normalized. Contact information
+    is always the configured MTB Platform Administrator, never organization
+    members such as PIs, CRCs, investigators, or organization admins.
+    """
+    organization = await find_organization_by_name(name)
+    if not organization:
+        return {'exists': False, 'organization': None, 'platform_contact': None}
+    public_organization = {
+        'id': organization.get('id') or '',
+        'name': organization.get('name') or '',
+        'type': organization.get('type') or '',
+    }
+    return {
+        'exists': True,
+        'organization': public_organization,
+        'platform_contact': await _public_platform_admin_contact(),
+    }
 
 
 @api.get('/organizations/{org_id}/platform-contact')
@@ -3676,7 +4050,7 @@ async def organization_platform_contact(org_id: str):
             'name': organization.get('name') or '',
             'type': organization.get('type') or '',
         },
-        'platform_contact': await _public_org_admin_contact(organization),
+        'platform_contact': await _public_platform_admin_contact(),
     }
 
 # ── Notifications ───────────────────────────────────────────────────────────
@@ -4241,6 +4615,14 @@ async def list_team(user=Depends(require_roles('pi', 'crc', 'sponsor', 'cro', 's
 
     # Collaborator user-ids on those trials.
     collaborator_ids: set = set()
+    # A CRC invited by a PI belongs to that PI's team even before either
+    # person is assigned to a patient.
+    if user.get('role') == 'pi':
+        async for member in db.users.find(
+                {'supervising_pi_id': user['id']}, {'_id': 0, 'id': 1}):
+            collaborator_ids.add(member['id'])
+    elif user.get('supervising_pi_id'):
+        collaborator_ids.add(user['supervising_pi_id'])
     if trial_ids:
         tid_list = list(trial_ids)
         async for t in db.trials.find({'id': {'$in': tid_list}}, {'_id': 0, 'created_by': 1}):
@@ -5912,7 +6294,7 @@ async def get_adherence(patient_id: Optional[str] = None,
     return await compute_adherence(p['id'])
 
 # ── Invitations (invite patient/team via email/SMS) ───────────────────────
-INVITE_TTL_DAYS = 7
+INVITE_TTL_DAYS = 3
 
 class InvitationIn(BaseModel):
     email: Optional[EmailStr] = None
@@ -5971,6 +6353,7 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
         'full_name': body.full_name or '', 'designation': body.designation or '',
         'role': body.role or 'patient',
         'trial_id': body.trial_id, 'invited_by': user['id'],
+        'supervising_pi_id': user['id'] if user.get('role') == 'pi' and (body.role or '').lower() == 'crc' else '',
         'org': (body.organization or user.get('organization') or '').strip(),
         'site': (body.site or '').strip(),
         'status': 'pending', 'created_at': now(),
@@ -5982,18 +6365,18 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
                       f"Invited {doc['email'] or doc['phone']} as {doc['role']}",
                       target_id=doc['id'])
     # Real email sending is wired via EMAIL_API_KEY env (Resend) — falls back to logging in dev.
-    api_key = os.environ.get('EMAIL_API_KEY')
     invite_link = _invite_link(token)
-    if api_key and body.email:
+    if body.email:
         try:
-            import httpx as _httpx
-            async with _httpx.AsyncClient(timeout=10) as cli:
-                await cli.post('https://api.resend.com/emails', headers={'Authorization': f'Bearer {api_key}'}, json={
-                    'from': 'My Trial Board <noreply@mytrialboard.app>',
-                    'to': [body.email], 'subject': "You're invited to My Trial Board",
-                    'html': f'<p>Hi {body.full_name or "there"},</p><p>You\'ve been invited to join a clinical trial on My Trial Board.</p><p><a href="{invite_link}">Accept the invitation</a></p>',
-                })
-        except Exception as e: logging.warning(f'Email send failed: {e}')
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                body.email,
+                invite_link,
+                body.full_name or '',
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            await db.invitations.delete_one({'id': doc['id']})
+            raise HTTPException(502, 'The invitation email could not be delivered.')
     logging.info(f'INVITATION: link={invite_link} email={body.email} phone={body.phone}')
     return {**serialize(doc), 'invite_link': invite_link}
 
@@ -6022,6 +6405,9 @@ async def resolve_invitation(token: str):
         {'id': inv.get('invited_by')},
         {'_id': 0, 'full_name': 1, 'organization': 1},
     )
+    # Patient invitations retain the profile entered by the research team.
+    # Return only registration-safe fields on this public endpoint.
+    patient_data = inv.get('patient_data') or {}
     return {
         'org': inv.get('org', ''), 'site': inv.get('site', ''),
         'role': inv.get('role'), 'inviter': (inviter or {}).get('full_name', ''),
@@ -6030,6 +6416,9 @@ async def resolve_invitation(token: str):
         'full_name': inv.get('full_name', ''),
         'designation': inv.get('designation', ''),
         'phone': inv.get('phone', ''),
+        'dob': patient_data.get('dob', ''),
+        'gender': patient_data.get('gender', ''),
+        'language': patient_data.get('language', ''),
         'email': inv.get('email', ''), 'status': _invitation_status(inv),
         'expires_at': iso(inv.get('expires_at')),
     }
@@ -6076,6 +6465,16 @@ async def resend_invitation(invitation_id: str, user=Depends(require_roles('pi',
         {'$set': {'status': 'pending', 'expires_at': new_exp, 'last_sent_at': now()},
          '$inc': {'resend_count': 1}})
     invite_link = _invite_link(inv['token'])
+    if inv.get('email'):
+        try:
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                inv['email'],
+                invite_link,
+                inv.get('full_name', ''),
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            raise HTTPException(502, 'The invitation email could not be delivered.')
     logging.info(f"INVITATION RESEND: link={invite_link} email={inv.get('email')} phone={inv.get('phone')}")
     await write_audit(user, 'invitation.resend',
                       f"Invitation for {inv.get('email') or inv.get('phone')} resent",

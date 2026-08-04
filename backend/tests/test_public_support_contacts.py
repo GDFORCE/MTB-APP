@@ -96,11 +96,12 @@ def test_support_contact_is_public_and_uses_config_contract():
     run(flow())
 
 
-def test_exact_organization_contact_returns_only_designated_admin():
+def test_exact_organization_contact_returns_only_platform_admin():
     async def flow():
         async with client() as cli:
             response = await cli.get(
                 f"/api/organizations/{ORG_ID}/platform-contact")
+            support_response = await cli.get("/api/support/contact")
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["organization"] == {
@@ -108,13 +109,45 @@ def test_exact_organization_contact_returns_only_designated_admin():
         }
         contact = payload["platform_contact"]
         assert contact == {
-            "name": "Registered Contact Admin",
-            "designation": "Site Platform Administrator",
-            "email": f"admin-{RUN_ID}@example.com",
-            "phone": "+91-99999-22222",
+            "name": "MTB Platform Support",
+            "designation": "Platform Administrator",
+            "email": support_response.json()["email"],
+            "phone": support_response.json()["phone"],
         }
         assert f"private-{RUN_ID}" not in response.text
+        assert f"admin-{RUN_ID}" not in response.text
+        assert "Registered Contact Admin" not in response.text
         assert "hashed_password" not in response.text
+
+    run(flow())
+
+
+def test_registration_check_is_exact_normalized_and_returns_admin_contact():
+    async def flow():
+        async with client() as cli:
+            existing = await cli.get(
+                "/api/organizations/registration-check",
+                params={"name": f"  {ORG_NAME.lower().replace(' ', '   ')}  "},
+            )
+            missing = await cli.get(
+                "/api/organizations/registration-check",
+                params={"name": f"Missing {RUN_ID}"},
+            )
+        assert existing.status_code == 200, existing.text
+        assert existing.json()["exists"] is True
+        assert existing.json()["organization"] == {
+            "id": ORG_ID, "name": ORG_NAME, "type": "site"
+        }
+        async with client() as cli:
+            support = await cli.get("/api/support/contact")
+        assert existing.json()["platform_contact"]["email"] == support.json()["email"]
+        assert f"admin-{RUN_ID}" not in existing.text
+        assert missing.status_code == 200, missing.text
+        assert missing.json() == {
+            "exists": False,
+            "organization": None,
+            "platform_contact": None,
+        }
 
     run(flow())
 

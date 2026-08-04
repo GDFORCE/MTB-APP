@@ -6,6 +6,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
+import pytest
+from fastapi import HTTPException
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -26,6 +28,103 @@ def make_client():
         transport=httpx.ASGITransport(app=server.app),
         base_url='http://testserver',
     )
+
+
+def test_phone_normalization_accepts_any_country_calling_code():
+    """Registration is open to every country, not only +91."""
+    valid = {
+        # Bare numbers keep the historical Indian interpretation.
+        '9876543210': '+919876543210',
+        '+91 98765-43210': '+919876543210',
+        '0091 9876543210': '+919876543210',
+        '+1 415 555 2671': '+14155552671',
+        '+44 7911 123456': '+447911123456',
+        # A national trunk "0" is dropped before the calling code is applied.
+        '+44 07911 123456': '+447911123456',
+        '+971 50 123 4567': '+971501234567',
+        '+65 8123 4567': '+6581234567',
+        '+81 90 1234 5678': '+819012345678',
+        '+27 82 123 4567': '+27821234567',
+        # NANP territories carry a four-digit code and a seven-digit local part.
+        '+1684 622 1234': '+16846221234',
+    }
+    for raw, expected in valid.items():
+        assert server.normalize_phone(raw) == expected, raw
+
+    for raw in ['12345', '+999 1', '+1', '+1 555 1234', '+44 1']:
+        with pytest.raises(HTTPException) as excinfo:
+            server.normalize_phone(raw)
+        assert excinfo.value.status_code == 400, raw
+
+    assert server.normalize_phone('') is None
+    assert server.normalize_phone(None) is None
+
+
+def test_registration_contact_availability_reports_field_duplicates():
+    user_id = str(uuid.uuid4())
+    email = f'availability-{RUN_ID}@example.com'
+    phone = f'+9198{int(RUN_ID, 16) % 100_000_000:08d}'
+
+    async def flow():
+        await server.db.users.insert_one({
+            'id': user_id,
+            'email': email,
+            'phone': phone,
+            'full_name': 'Availability Test',
+            'role': 'patient',
+        })
+        try:
+            async with make_client() as cli:
+                duplicate = await cli.post('/api/auth/register/check-availability', json={
+                    'email': email.upper(),
+                    'phone': phone,
+                })
+                available = await cli.post('/api/auth/register/check-availability', json={
+                    'email': f'new-{RUN_ID}@example.com',
+                    'phone': '+919700000001',
+                })
+            assert duplicate.status_code == 200, duplicate.text
+            assert duplicate.json()['email']['available'] is False
+            assert duplicate.json()['phone']['available'] is False
+            assert available.status_code == 200, available.text
+            assert available.json()['email']['available'] is True
+            assert available.json()['phone']['available'] is True
+        finally:
+            await server.db.users.delete_one({'id': user_id})
+
+    run(flow())
+
+
+def test_registration_start_accepts_a_foreign_phone_number(monkeypatch):
+    async def no_delivery(*_args, **_kwargs):
+        return None
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', no_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        async with make_client() as cli:
+            response = await cli.post('/api/auth/register/start', json={
+                'full_name': 'Overseas Patient',
+                'role': 'patient',
+                'email': f'overseas-{uuid.uuid4().hex[:8]}@example.com',
+                'phone': '+44 7911 123456',
+                'profile': {'dob': '1990-01-01', 'gender': 'Female'},
+                'security_questions': [],
+            })
+        assert response.status_code == 200, response.text
+        registration_id = response.json()['registration_id']
+        try:
+            pending = await server.db.pending_registrations.find_one(
+                {'id': registration_id}, {'_id': 0, 'phone': 1})
+            assert pending['phone'] == '+447911123456'
+        finally:
+            await server.db.pending_registrations.delete_one({'id': registration_id})
+
+    run(flow())
 
 
 def test_registration_normalizes_email_phone_dob_and_computed_age(monkeypatch):
@@ -110,7 +209,7 @@ def test_registration_rejects_invalid_phone_dob_future_and_age(monkeypatch):
     run(flow())
 
 
-def test_site_registration_creates_pi_or_crc_role_from_selected_site_role(monkeypatch):
+def test_site_registration_maps_selected_site_role(monkeypatch):
     async def no_delivery(*_args, **_kwargs):
         return None
 
@@ -127,6 +226,7 @@ def test_site_registration_creates_pi_or_crc_role_from_selected_site_role(monkey
                 for index, (selected, expected) in enumerate([
                     ('PI', 'pi'),
                     ('Research Team', 'crc'),
+                    ('Administrative', 'site'),
                 ]):
                     response = await cli.post('/api/auth/register/start', json={
                         'full_name': f'Site Member {index}',
@@ -195,6 +295,60 @@ def test_first_registrant_is_org_admin_and_invitee_is_regular_member():
                 await server.db.organizations.delete_one({'id': organization['id']})
                 await server.db.audit_logs.delete_many(
                     {'target_id': organization['id']})
+
+    run(flow())
+
+
+def test_smo_self_registration_requires_and_stores_hospitals(monkeypatch):
+    async def no_delivery(*_args, **_kwargs):
+        return None
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', no_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        registration_id = None
+        async with make_client() as cli:
+            missing = await cli.post('/api/auth/register/start', json={
+                'full_name': 'SMO User',
+                'role': 'smo',
+                'email': f'smo-missing-{uuid.uuid4().hex[:8]}@example.com',
+                'phone': '+919700000011',
+                'organization': f'SMO Missing {uuid.uuid4().hex[:8]}',
+                'profile': {'designation': 'SMO Manager'},
+            })
+            valid = await cli.post('/api/auth/register/start', json={
+                'full_name': 'SMO Administrative User',
+                'role': 'smo',
+                'email': f'smo-valid-{uuid.uuid4().hex[:8]}@example.com',
+                'phone': '+919700000012',
+                'organization': f'SMO Valid {uuid.uuid4().hex[:8]}',
+                'profile': {
+                    'designation': 'SMO Manager',
+                    'hospitals': [{
+                        'name': 'Apollo Hospitals Mumbai',
+                        'address': 'Bandra West, Mumbai',
+                        'type': 'private',
+                        'role': 'administrative',
+                    }],
+                },
+            })
+        assert missing.status_code == 400, missing.text
+        assert 'at least one hospital' in missing.json()['detail']
+        assert valid.status_code == 200, valid.text
+        registration_id = valid.json()['registration_id']
+        pending = await server.db.pending_registrations.find_one(
+            {'id': registration_id}, {'_id': 0, 'profile': 1})
+        assert pending['profile']['hospitals'] == [{
+            'name': 'Apollo Hospitals Mumbai',
+            'address': 'Bandra West, Mumbai',
+            'type': 'Private',
+            'role': 'Administrative',
+        }]
+        await server.db.pending_registrations.delete_one({'id': registration_id})
 
     run(flow())
 

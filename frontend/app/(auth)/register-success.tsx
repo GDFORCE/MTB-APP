@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, StyleSheet, Animated, Easing, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Animated, Easing, ActivityIndicator, Modal, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle, Defs, LinearGradient as SvgGrad, Stop, Line } from "react-native-svg";
-import { Check } from "lucide-react-native";
+import { Building2, Check } from "lucide-react-native";
 import { colors, spacing, radii, fonts, dawnGradient } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { Rise } from "@/src/components/Rise";
@@ -20,6 +20,7 @@ export default function RegisterSuccess() {
   const { session } = useLocalSearchParams<{ session?: string }>();
   const [opening, setOpening] = useState(false);
   const [sessionError, setSessionError] = useState("");
+  const [showOrganizationCreated, setShowOrganizationCreated] = useState(true);
   const createdSession = useMemo(() => {
     try {
       const parsed = JSON.parse(session || "");
@@ -133,6 +134,38 @@ export default function RegisterSuccess() {
               </Text>}
         </Springy>
       </Rise>
+
+      <Modal
+        visible={showOrganizationCreated && Boolean(createdSession?.user?.org_admin && createdSession?.user?.organization)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowOrganizationCreated(false)}
+      >
+        <View style={s.modalBackdrop}>
+          <View style={s.modalCard}>
+            <View style={s.modalIcon}>
+              <Building2 size={26} color={colors.primary} />
+            </View>
+            <Eyebrow color={colors.accent} style={s.modalEyebrow}>Registration complete</Eyebrow>
+            <Text style={s.modalTitle}>Organization Created</Text>
+            <Body color={colors.mutedFg} style={s.modalBody}>
+              {createdSession?.user?.organization} has been created successfully on the platform.
+            </Body>
+            <View style={s.modalNotice}>
+              <Small color={colors.foreground} style={s.modalNoticeText}>
+                You are now the Organization Admin and can invite authorized users and manage their access.
+              </Small>
+            </View>
+            <Pressable
+              testID="organization-created-continue"
+              onPress={() => setShowOrganizationCreated(false)}
+              style={s.modalButton}
+            >
+              <Text style={s.modalButtonText}>Continue</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -147,4 +180,14 @@ const s = StyleSheet.create({
   petalB: { position: "absolute", top: 40, left: 30, width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary + "33", zIndex: 2 },
   petalC: { position: "absolute", top: 14, left: 70, width: 6, height: 6, borderRadius: 3, backgroundColor: colors.dawnTo + "40", zIndex: 2 },
   cta: { paddingVertical: 15, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
+  modalBackdrop: { flex: 1, backgroundColor: colors.primaryDeep + "80", alignItems: "center", justifyContent: "center", padding: spacing.md },
+  modalCard: { width: "100%", maxWidth: 420, borderRadius: 28, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background, padding: spacing.lg, alignItems: "center", shadowColor: "#2E1B33", shadowOpacity: 0.2, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 },
+  modalIcon: { width: 50, height: 50, borderRadius: 17, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  modalEyebrow: { textAlign: "center", marginBottom: 5 },
+  modalTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 22, textAlign: "center" },
+  modalBody: { marginTop: 8, textAlign: "center", lineHeight: 21 },
+  modalNotice: { width: "100%", marginTop: spacing.md, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: spacing.md },
+  modalNoticeText: { textAlign: "center", lineHeight: 20 },
+  modalButton: { width: "100%", marginTop: spacing.lg, paddingVertical: 15, borderRadius: radii.pill, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  modalButtonText: { color: colors.primaryFg, fontFamily: fonts.bold, fontSize: 14 },
 });

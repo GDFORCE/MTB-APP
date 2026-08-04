@@ -6,6 +6,8 @@ import { ArrowLeft, CheckCircle2, Clock3, Eye, EyeOff, HelpCircle, Mail, Phone, 
 import { colors, fonts, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Button, Card } from "@/src/components/ui";
 import { api } from "@/src/api/client";
+import { splitE164 } from "@/src/data/countries";
+import { normalizePhone } from "@/src/features/auth/registration-validation";
 
 type Step = "contact" | "otp" | "password" | "success";
 const OTP_SECONDS = 120;
@@ -35,8 +37,9 @@ export default function ForgotPassword() {
   }, [seconds, step]);
 
   const normalizedEmail = email.trim().toLowerCase();
-  const phoneDigits = email.replace(/\D/g, "").replace(/^91(?=\d{10}$)/, "");
-  const normalizedPhone = /^[6-9]\d{9}$/.test(phoneDigits) ? `+91${phoneDigits}` : "";
+  // Accept any country: a typed "+<code>" picks the country, a bare number is Indian.
+  const typedPhone = splitE164(email);
+  const normalizedPhone = normalizePhone(typedPhone.national, typedPhone.country.code);
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
   const contactValid = email.includes("@") ? emailValid : !!normalizedPhone;
   const otpValid = /^\d{6}$/.test(otp);
@@ -127,7 +130,7 @@ export default function ForgotPassword() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   keyboardType="email-address"
-                  placeholder="Email or +91 phone number"
+                  placeholder="Email or phone (with country code)"
                   placeholderTextColor={colors.mutedFg}
                   style={s.input}
                 />

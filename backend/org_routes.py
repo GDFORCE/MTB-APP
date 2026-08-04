@@ -18,12 +18,15 @@ from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field
+from starlette.concurrency import run_in_threadpool
 
+import otp_service
 from server import (
     INVITE_TTL_DAYS,
     Role,
     _invitation_status,
     _invite_link,
+    new_invite_code,
     current_user,
     db,
     iso,
@@ -164,7 +167,7 @@ async def org_invite_member(body: OrgInviteIn, ctx=Depends(org_admin_ctx)):
         'email': email, 'org_id': org['id'], 'status': 'pending'})
     if pending and _invitation_status(pending) == 'pending':
         raise HTTPException(400, 'A pending invitation already exists for this email')
-    token = uuid.uuid4().hex
+    token = new_invite_code()
     doc = {
         'id': str(uuid.uuid4()), 'token': token, 'email': email, 'phone': '',
         'full_name': body.full_name or '', 'designation': body.designation or '',
@@ -174,6 +177,16 @@ async def org_invite_member(body: OrgInviteIn, ctx=Depends(org_admin_ctx)):
         'expires_at': now() + timedelta(days=INVITE_TTL_DAYS), 'resend_count': 0,
     }
     await db.invitations.insert_one(doc)
+    try:
+        await run_in_threadpool(
+            otp_service.send_invitation_email,
+            email,
+            _invite_link(token),
+            doc['full_name'],
+        )
+    except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+        await db.invitations.delete_one({'id': doc['id']})
+        raise HTTPException(502, 'The invitation email could not be delivered.')
     await write_audit(user, 'org.member_invite',
                       f"Invited {email} to {org['name']} as {body.role}",
                       target_id=doc['id'], org_id=org['id'])

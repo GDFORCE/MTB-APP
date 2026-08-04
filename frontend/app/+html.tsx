@@ -24,6 +24,17 @@ export default function Root({ children }: PropsWithChildren) {
               body > div:first-child { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; }
               [role="tablist"] [role="tab"] * { overflow: visible !important; }
               [role="heading"], [role="heading"] * { overflow: visible !important; }
+              input:-webkit-autofill,
+              input:-webkit-autofill:hover,
+              input:-webkit-autofill:focus,
+              input:-webkit-autofill:active {
+                -webkit-text-fill-color: #2E1B33 !important;
+                -webkit-box-shadow: 0 0 0 1000px #FEFAF1 inset !important;
+                box-shadow: 0 0 0 1000px #FEFAF1 inset !important;
+                caret-color: #A6213F !important;
+                transition: background-color 9999s ease-out 0s;
+              }
+              input::selection { background: rgba(166, 33, 63, 0.22); }
             `,
           }}
         />

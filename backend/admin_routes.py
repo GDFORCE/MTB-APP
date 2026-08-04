@@ -43,6 +43,7 @@ from server import (
     Role,
     _invitation_status,
     _invite_link,
+    new_invite_code,
     _parse_ymd,
     current_user,
     db,
@@ -244,7 +245,7 @@ async def admin_create_user(body: AdminUserCreate, admin=Depends(current_user)):
     invitation = None
     if body.send_invite:
         inv = {
-            'id': str(uuid.uuid4()), 'token': uuid.uuid4().hex, 'email': email,
+            'id': str(uuid.uuid4()), 'token': new_invite_code(), 'email': email,
             'phone': body.phone or '', 'full_name': body.full_name, 'role': body.role,
             'trial_id': None, 'invited_by': admin['id'],
             'org': (body.organization or '').strip(), 'site': '',
@@ -252,6 +253,17 @@ async def admin_create_user(body: AdminUserCreate, admin=Depends(current_user)):
             'expires_at': now() + timedelta(days=INVITE_TTL_DAYS), 'resend_count': 0,
         }
         await db.invitations.insert_one(inv)
+        try:
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                email,
+                _invite_link(inv['token']),
+                inv['full_name'],
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            await db.invitations.delete_one({'id': inv['id']})
+            await db.users.delete_one({'id': doc['id']})
+            raise HTTPException(502, 'The invitation email could not be delivered.')
         invitation = {**serialize(inv), 'invite_link': _invite_link(inv['token'])}
     try:
         password_setup = await _deliver_password_reset_link(doc, admin, 'account_setup')
@@ -606,7 +618,7 @@ async def admin_list_invitations(status: Optional[str] = None):
 async def admin_create_invitation(body: AdminInvitationIn, admin=Depends(current_user)):
     if not body.email and not body.phone:
         raise HTTPException(400, 'Email or phone required')
-    token = uuid.uuid4().hex
+    token = new_invite_code()
     doc = {
         'id': str(uuid.uuid4()), 'token': token,
         'email': (body.email or '').lower(), 'phone': body.phone or '',
@@ -618,6 +630,17 @@ async def admin_create_invitation(body: AdminInvitationIn, admin=Depends(current
         'expires_at': now() + timedelta(days=INVITE_TTL_DAYS), 'resend_count': 0,
     }
     await db.invitations.insert_one(doc)
+    if doc['email']:
+        try:
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                doc['email'],
+                _invite_link(doc['token']),
+                doc['full_name'],
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            await db.invitations.delete_one({'id': doc['id']})
+            raise HTTPException(502, 'The invitation email could not be delivered.')
     await write_audit(admin, 'admin.invitation_create',
                       f"Invited {doc['email'] or doc['phone']} as {doc['role']}",
                       target_id=doc['id'])
@@ -633,6 +656,16 @@ async def admin_resend_invitation(invitation_id: str, admin=Depends(current_user
     await db.invitations.update_one({'id': invitation_id}, {
         '$set': {'status': 'pending', 'expires_at': new_exp, 'last_sent_at': now()},
         '$inc': {'resend_count': 1}})
+    if inv.get('email'):
+        try:
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                inv['email'],
+                _invite_link(inv['token']),
+                inv.get('full_name', ''),
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            raise HTTPException(502, 'The invitation email could not be delivered.')
     await write_audit(admin, 'admin.invitation_resend',
                       f"Resent invitation for {inv.get('email') or inv.get('phone')}",
                       target_id=invitation_id)

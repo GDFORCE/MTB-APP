@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
+import { Alert, View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users } from "lucide-react-native";
@@ -27,10 +27,25 @@ function parseDate(s: string): Date | null {
   const t = s.trim();
   const dmy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (dmy) { const d = new Date(+dmy[3], +dmy[2] - 1, +dmy[1]); return isNaN(d.getTime()) ? null : d; }
+  const named = t.match(/^(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})$/);
+  if (named) {
+    const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+      .indexOf(named[2].slice(0, 3).toLowerCase());
+    if (month >= 0) {
+      const d = new Date(+named[3], month, +named[1]);
+      return d.getMonth() === month && d.getDate() === +named[1] ? d : null;
+    }
+  }
   const d = new Date(t);
   return isNaN(d.getTime()) ? null : d;
 }
 const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const formatDateInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
 
 function trialLabel(t: Trial) {
   const head = t.protocol_id || t.title || "Trial";
@@ -63,9 +78,12 @@ export default function AddPatient() {
   const [piLoadError, setPiLoadError] = useState<string | null>(null);
   const [piPermissionDenied, setPiPermissionDenied] = useState(false);
   const [baseline, setBaseline] = useState("5 May 2025");
+  const [scheduleGenerated, setScheduleGenerated] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [subjectDuplicate, setSubjectDuplicate] = useState<string | null>(null);
+  const [emailDuplicate, setEmailDuplicate] = useState<string | null>(null);
 
   const loadPis = useCallback(async () => {
     if (!needsPiSelection) {
@@ -127,19 +145,49 @@ export default function AddPatient() {
   const base = parseDate(baseline) || new Date();
   const visits = OFFSETS.map((o, i) => ({ num: i + 1, date: fmt(base, o) }));
   const visible = showAll ? visits : visits.slice(0, 5);
-  const canSubmit = !!fullName && !!trialId && (!needsPiSelection || !!piId) && !saving;
+  const phoneDigits = phone.replace(/\D/g, "");
+  const canSubmit = !!subjectId.trim()
+    && !!fullName.trim()
+    && !!parseDate(dob)
+    && phoneDigits.length === 10
+    && !!email.trim()
+    && !!trialId
+    && (!needsPiSelection || !!piId)
+    && !subjectDuplicate
+    && !emailDuplicate
+    && !saving;
+
+  const checkInvitationAvailability = async (field: "subject" | "email") => {
+    if (!trialId) return;
+    const value = field === "subject" ? subjectId.trim() : email.trim().toLowerCase();
+    if (!value) return;
+    try {
+      const response = await api.get("/patients/invite/check-availability", {
+        params: {
+          trial_id: trialId,
+          subject_id: field === "subject" ? `SUBJ-${value}` : undefined,
+          email: field === "email" ? value : undefined,
+        },
+      });
+      const result = field === "subject" ? response.data?.subject_id : response.data?.email;
+      const setMessage = field === "subject" ? setSubjectDuplicate : setEmailDuplicate;
+      setMessage(result?.available === false ? result.message : null);
+    } catch {
+      // Final validation remains server-side when the invitation is submitted.
+    }
+  };
 
   const submit = async () => {
-    if (!fullName || !trialId) return;
+    if (!canSubmit || !trialId) return;
     setError(null);
     setSaving(true);
     try {
       const parsedBaseline = parseDate(baseline);
       const parsedDob = parseDate(dob);
-      await api.post("/patients", {
-        full_name: fullName,
-        email: email || `${initials.toLowerCase() || "p"}@mtb.app`,
-        phone: `+91${phone}`,
+      await api.post("/patients/invite", {
+        full_name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: `+91${phoneDigits}`,
         trial_id: trialId,                                  // the SELECTED trial
         pi_id: needsPiSelection ? piId : undefined,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
@@ -149,7 +197,11 @@ export default function AddPatient() {
         baseline_date: parsedBaseline ? toISO(parsedBaseline) : undefined,
         enrolled_date: new Date().toISOString().slice(0, 10),
       });
-      router.back();
+      Alert.alert(
+        "Invitation sent",
+        "The patient will receive an email invitation. Their account, trial enrollment, and visit schedule will be created after they accept and complete registration.",
+        [{ text: "Done", onPress: () => router.back() }],
+      );
     } catch (e: any) {
       if (e?.response?.status === 409) {
         setError(e.response.data?.detail || `SUBJ-${subjectId} already exists in this trial.`);
@@ -181,32 +233,36 @@ export default function AddPatient() {
               <TextInput
                 testID="subject-id"
                 value={subjectId}
-                onChangeText={t => { setSubjectId(t); if (error) setError(null); }}
-                placeholder="001"
-                placeholderTextColor={C.muted}
-                style={[s.input, { flex: 1, fontFamily: "monospace" as any }]}
+                onChangeText={t => {
+                  setSubjectId(t);
+                  setSubjectDuplicate(null);
+                  if (error) setError(null);
+                }}
+                onBlur={() => void checkInvitationAvailability("subject")}
+                style={[s.input, { flex: 1, fontFamily: "monospace" as any }, subjectDuplicate && s.duplicateInput]}
               />
             </View>
+            {subjectDuplicate ? <InlineDuplicate message={subjectDuplicate} /> : null}
           </Field>
 
           <Field label="Subject Initials">
-            <TextInput testID="initials" value={initials} onChangeText={setInitials} placeholder="e.g., PK" placeholderTextColor={C.muted} style={s.input} />
+            <TextInput testID="initials" value={initials} onChangeText={setInitials} style={s.input} />
           </Field>
 
           <Field label="Full Name *">
-            <TextInput testID="full-name" value={fullName} onChangeText={setFullName} placeholder="Patient full name" placeholderTextColor={C.muted} style={s.input} />
+            <TextInput testID="full-name" value={fullName} onChangeText={setFullName} style={s.input} />
           </Field>
 
           <View style={{ flexDirection: "row", gap: 12 }}>
             <View style={{ flex: 1 }}>
               <Field label="Date of Birth *">
-                <TextInput testID="dob" value={dob} onChangeText={setDob} placeholder="DD/MM/YYYY" placeholderTextColor={C.muted} style={s.input} />
+                <TextInput testID="dob" value={dob} onChangeText={(value) => setDob(formatDateInput(value))} keyboardType="number-pad" maxLength={10} style={s.input} />
               </Field>
             </View>
             <View style={{ flex: 1 }}>
-              <Field label="Gender">
+              <Field label="Gender" active={genderOpen}>
                 <Pressable testID="gender-toggle" onPress={() => setGenderOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-                  <Text style={{ color: gender ? C.fg : C.muted, fontSize: 14 }}>{gender || "Select"}</Text>
+                  <Text numberOfLines={1} style={{ color: gender ? C.fg : C.muted, fontSize: 14, lineHeight: 20, flex: 1, paddingRight: 12 }}>{gender || "Select"}</Text>
                   <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
                 </Pressable>
                 {genderOpen && (
@@ -225,17 +281,26 @@ export default function AddPatient() {
           <Field label="Phone *">
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={s.prefix}><Text style={{ color: C.muted, fontSize: 14 }}>+91</Text></View>
-              <TextInput testID="phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="Enter phone number" placeholderTextColor={C.muted} style={[s.input, { flex: 1 }]} />
+              <TextInput testID="phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" style={[s.input, { flex: 1 }]} />
             </View>
           </Field>
 
-          <Field label="Email">
-            <TextInput testID="email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" placeholder="Enter email" placeholderTextColor={C.muted} style={s.input} />
+          <Field label="Email *">
+            <TextInput
+              testID="email"
+              value={email}
+              onChangeText={(value) => { setEmail(value); setEmailDuplicate(null); }}
+              onBlur={() => void checkInvitationAvailability("email")}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              style={[s.input, emailDuplicate && s.duplicateInput]}
+            />
+            {emailDuplicate ? <InlineDuplicate message={emailDuplicate} /> : null}
           </Field>
 
-          <Field label="Preferred Language">
+          <Field label="Preferred Language" active={langOpen}>
             <Pressable testID="lang-toggle" onPress={() => setLangOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-              <Text style={{ color: C.fg, fontSize: 14 }}>{lang}</Text>
+              <Text numberOfLines={1} style={{ color: C.fg, fontSize: 14, lineHeight: 20, flex: 1, paddingRight: 12 }}>{lang}</Text>
               <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
             </Pressable>
             {langOpen && (
@@ -249,12 +314,12 @@ export default function AddPatient() {
             )}
           </Field>
 
-          <Field label="Assign to Trial *">
+          <Field label="Assign to Trial *" active={trialOpen}>
             <Pressable testID="trial-toggle" disabled={trialsLoading || !trials.length} onPress={() => setTrialOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
               {trialsLoading ? (
                 <ActivityIndicator size="small" color={C.primary} />
               ) : (
-                <Text style={{ color: selectedTrial ? C.fg : C.muted, fontSize: 14 }} numberOfLines={1}>
+                <Text style={{ color: selectedTrial ? C.fg : C.muted, fontSize: 14, lineHeight: 20, flex: 1, paddingRight: 12 }} numberOfLines={1}>
                   {selectedTrial ? trialLabel(selectedTrial) : "No trials available"}
                 </Text>
               )}
@@ -272,7 +337,7 @@ export default function AddPatient() {
           </Field>
 
           {needsPiSelection && (
-            <Field label="Responsible PI *">
+            <Field label="Responsible PI *" active={piOpen}>
               <Pressable
                 testID="pi-toggle"
                 disabled={piLoading || !!piLoadError || !pis.length}
@@ -355,13 +420,38 @@ export default function AddPatient() {
 
           <Field label="Baseline Date *">
             <View style={{ position: "relative" }}>
-              <TextInput testID="baseline" value={baseline} onChangeText={setBaseline} style={[s.input, { paddingRight: 48, borderWidth: 2, borderColor: C.primary }]} />
+              <TextInput
+                testID="baseline"
+                value={baseline}
+                onChangeText={(value) => {
+                  setBaseline(/^[0-9/]*$/.test(value) ? formatDateInput(value) : value);
+                  setScheduleGenerated(false);
+                }}
+                style={[s.input, { paddingRight: 48, borderWidth: 2, borderColor: C.primary }]}
+              />
               <CalIcon size={20} color={C.primary} style={{ position: "absolute", right: 16, top: 14 }} />
             </View>
           </Field>
 
+          <Pressable
+            testID="generate-schedule"
+            onPress={() => {
+              if (!parseDate(baseline)) {
+                setError("Enter a valid baseline date before generating the schedule.");
+                return;
+              }
+              setError(null);
+              setShowAll(false);
+              setScheduleGenerated(true);
+            }}
+            style={s.generateSchedule}
+          >
+            <Sparkles size={16} color={C.primary} />
+            <Text style={s.generateScheduleText}>Generate Schedule</Text>
+          </Pressable>
+
           {/* Auto-calculated dates */}
-          <View style={s.autoCalc}>
+          {scheduleGenerated ? <View style={s.autoCalc}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <Sparkles size={20} color={C.primary} />
               <Text style={{ color: C.fg, fontWeight: "600", fontSize: 15 }}>Auto-calculated Dates</Text>
@@ -378,7 +468,7 @@ export default function AddPatient() {
               <Text style={{ color: C.accent, fontWeight: "600", fontSize: 13 }}>{showAll ? "Show Less" : `View All ${visits.length} Visits`}</Text>
               <ChevronRight size={16} color={C.accent} style={{ transform: [{ rotate: showAll ? "-90deg" : "90deg" }] }} />
             </Pressable>
-          </View>
+          </View> : null}
 
           {/* Error banner (server duplicate 409 or generic failure) */}
           {error && (
@@ -405,11 +495,20 @@ export default function AddPatient() {
   );
 }
 
-function Field({ label, children }: any) {
+function Field({ label, children, active = false }: any) {
   return (
-    <View>
+    <View style={{ position: "relative", zIndex: active ? 100 : 1, elevation: active ? 100 : 0 }}>
       <Text style={{ fontSize: 13, fontWeight: "500", color: "rgba(46,27,51,0.80)", marginBottom: 6 }}>{label}</Text>
       {children}
+    </View>
+  );
+}
+
+function InlineDuplicate({ message }: { message: string }) {
+  return (
+    <View style={s.inlineDuplicate}>
+      <AlertTriangle size={14} color={C.destructive} />
+      <Text style={s.inlineDuplicateText}>{message}</Text>
     </View>
   );
 }
@@ -421,7 +520,10 @@ const s = StyleSheet.create({
   input: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, color: C.fg, fontSize: 14 },
   prefix: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },
   dupWarn: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.05)", borderWidth: 1, borderColor: "rgba(192,57,43,0.20)" },
-  dropdown: { marginTop: 4, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, overflow: "hidden" },
+  duplicateInput: { borderColor: C.destructive, borderWidth: 2 },
+  inlineDuplicate: { marginTop: 6, flexDirection: "row", alignItems: "flex-start", gap: 6 },
+  inlineDuplicateText: { flex: 1, color: C.destructive, fontSize: 12, lineHeight: 17 },
+  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 30, elevation: 30, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, overflow: "hidden" },
   dropdownRow: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
   inlineState: { flexDirection: "row", alignItems: "center", gap: 8 },
   piStateCard: { marginTop: 8, flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.border },
@@ -430,5 +532,7 @@ const s = StyleSheet.create({
   stateActionText: { color: C.primary, fontSize: 12, fontWeight: "700" },
   infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(123,107,184,0.05)", borderWidth: 1, borderColor: "rgba(123,107,184,0.20)" },
   autoCalc: { backgroundColor: "rgba(123,107,184,0.05)", borderRadius: 16, padding: 16 },
+  generateSchedule: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "rgba(166,33,63,0.35)", backgroundColor: "rgba(166,33,63,0.06)", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  generateScheduleText: { color: C.primary, fontSize: 14, fontWeight: "700" },
   submit: { paddingVertical: 16, borderRadius: 999, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
 });

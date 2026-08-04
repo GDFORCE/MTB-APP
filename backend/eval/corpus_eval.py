@@ -32,6 +32,7 @@ sys.path.insert(0, _BACKEND)
 sys.path.insert(0, _EVAL)
 load_dotenv(os.path.join(_BACKEND, ".env"))
 
+import invariants as inv  # noqa: E402
 import protocol_extraction as pe  # noqa: E402
 import judge as jd  # noqa: E402
 
@@ -47,9 +48,23 @@ CONCURRENCY = int(os.getenv("EVAL_CONCURRENCY", "4"))
 NO_JUDGE = "--nojudge" in sys.argv
 
 # Corpus = top-level PDFs whose name starts with "<number>." — the 62 numbered
-# protocols. Subfolders (e.g. full_protocol/) and loose project docs are skipped.
-# No space required after the dot (file 4 is named "4.110_Protocol_...pdf").
+# protocols. No space required after the dot (file 4 is "4.110_Protocol_...pdf").
 _NUM_RE = re.compile(r"^(\d+)\.")
+
+# Full multi-hundred-page protocols live in a subfolder. They are the hardest
+# and most representative case — the Schedule of Assessments is an appendix and
+# the cycle length lives in prose dozens of pages earlier — so they belong in
+# the eval, not outside it. Skipped by number filters (they have no number).
+FULL_PROTOCOL_DIR = os.path.join(CORPUS_DIR, "full_protocol")
+
+# That folder is user-curated and also holds unrelated documents: a short CV and
+# some large scanned answer keys. Neither filter alone is enough — the CV is
+# small but innocuously named, the scans are big but recognisably named — so
+# require BOTH a full-protocol-sized file and a name that isn't obviously
+# something else. Override with PROTOCOL_FULL_FILES (comma-separated names).
+FULL_PROTOCOL_MIN_BYTES = 200 * 1024
+_NOT_A_PROTOCOL = re.compile(
+    r"(resume|\bcv\b|curriculum|proof|question|answer|invoice|receipt)", re.I)
 
 
 def discover(only: set[int] | None = None) -> list[str]:
@@ -63,6 +78,21 @@ def discover(only: set[int] | None = None) -> list[str]:
             continue
         files.append(p)
     files.sort(key=lambda p: int(_NUM_RE.match(os.path.basename(p)).group(1)))
+
+    if only is None and os.path.isdir(FULL_PROTOCOL_DIR):
+        override = [n.strip() for n in os.getenv("PROTOCOL_FULL_FILES", "").split(",")
+                    if n.strip()]
+        for n in sorted(os.listdir(FULL_PROTOCOL_DIR)):
+            p = os.path.join(FULL_PROTOCOL_DIR, n)
+            if not (n.lower().endswith(".pdf") and os.path.isfile(p)):
+                continue
+            if override:
+                if n in override:
+                    files.append(p)
+                continue
+            if (os.path.getsize(p) >= FULL_PROTOCOL_MIN_BYTES
+                    and not _NOT_A_PROTOCOL.search(n)):
+                files.append(p)
     return files
 
 
@@ -78,6 +108,13 @@ async def run_one(sem: asyncio.Semaphore, path: str) -> dict:
             visits = [v.model_dump() for v in sched.visits]
             rec["n_extracted"] = len(visits)
             rec["visits"] = visits
+            # Carry the reviewer-facing signals through to the scorecard.
+            rec["schedule_kind"] = sched.schedule_kind
+            rec["assumptions"] = sched.assumptions
+            rec["source_notes"] = sched.source_notes
+            # Free, offline structural check — runs on every extraction whether
+            # or not the paid judge does.
+            rec["invariants"] = inv.check_record(rec)
         except Exception as e:  # noqa: BLE001
             rec["error"] = f"extract: {type(e).__name__}: {e}"
             rec["secs"] = round(time.time() - t0, 1)
@@ -125,9 +162,15 @@ async def main() -> None:
     out_json = os.path.join(RESULTS_DIR, "results.json")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(recs, f, indent=2, ensure_ascii=False)
+    clean, viol_lines = inv.report(recs)
+    n_ok = sum(1 for r in recs if "error" not in r)
+    if viol_lines:
+        print("\n--- structural invariant violations ---")
+        print("\n".join(viol_lines))
+    print(f"\nstructurally clean: {clean}/{n_ok}")
+
     if NO_JUDGE:
-        n_ok = sum(1 for r in recs if "error" not in r)
-        print(f"\nExtracted {n_ok}/{len(recs)} (no paid judge). Results: {out_json}")
+        print(f"Extracted {n_ok}/{len(recs)} (no paid judge). Results: {out_json}")
         return
     write_scorecard(recs)
 

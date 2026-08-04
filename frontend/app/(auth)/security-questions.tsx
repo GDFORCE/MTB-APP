@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -17,7 +17,7 @@ const QUESTION_POOLS: string[][] = [
   ["What is your mother's maiden name?", "What is the name of your closest childhood friend?", "In what town did your parents meet?"],
 ];
 
-const CORE = new Set(["fullName", "email", "phone", "orgName", "inviteToken"]);
+const CORE = new Set(["fullName", "email", "phone", "phoneCountry", "orgName", "inviteToken"]);
 
 function QuestionSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -58,6 +58,8 @@ export default function SecurityQuestions() {
   const [revealed, setRevealed] = useState<boolean[]>([false, false, false]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  // Avoid creating two competing OTP sessions when Continue is tapped quickly.
+  const startingRef = useRef(false);
 
   const setQ = (i: number, v: string) => setQuestions((p) => p.map((x, idx) => (idx === i ? v : x)));
   const setA = (i: number, v: string) => setAnswers((p) => p.map((x, idx) => (idx === i ? v : x)));
@@ -68,15 +70,15 @@ export default function SecurityQuestions() {
   // Leaving this step sends the OTP: we start the pending registration (no password yet —
   // the password is set at step 5 via /register/complete after OTP is verified).
   const submit = async () => {
-    if (!allComplete) return;
+    if (!allComplete || startingRef.current) return;
+    startingRef.current = true;
     setLoading(true); setErr("");
     try {
-      const profile: Record<string, string> = {};
+      const profile: Record<string, any> = {};
       Object.keys(fld).forEach((k) => { if (!CORE.has(k) && fld[k]) profile[k] = fld[k]; });
-      const phoneDigits = fld.phone ? String(fld.phone).replace(/\D/g, "") : "";
-      const phone = phoneDigits
-        ? `+${phoneDigits.startsWith("91") ? phoneDigits : `91${phoneDigits}`}`
-        : undefined;
+      // Step 2 already normalized the number to E.164 against the chosen country,
+      // so pass it through untouched rather than re-guessing a calling code.
+      const phone = fld.phone ? String(fld.phone).trim() : undefined;
       const security_questions = questions.map((q, i) => ({ question: q, answer: answers[i] }));
       const body: any = {
         full_name: fld.fullName,
@@ -104,6 +106,7 @@ export default function SecurityQuestions() {
     } catch (e: any) {
       setErr(e?.response?.data?.detail || "Could not start verification. Please try again.");
     } finally {
+      startingRef.current = false;
       setLoading(false);
     }
   };

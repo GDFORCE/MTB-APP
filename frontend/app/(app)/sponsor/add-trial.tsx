@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   FileText,
   LockKeyhole,
+  ShieldCheck,
   UploadCloud,
   X,
 } from "lucide-react-native";
@@ -63,6 +64,12 @@ const STATUSES: { value: TrialStatus; label: string }[] = [
   { value: "completed", label: "Completed" },
   { value: "terminated", label: "Terminated" },
 ];
+const CREATE_TRIAL_RESPONSIBILITIES = [
+  "You are authorized by your organization to create and manage this trial.",
+  "You have completed the required training on applicable regulations, GCP, and platform usage.",
+  "You are a delegated member of the study team or an authorized organizational representative.",
+  "The information entered will be accurate and maintained in accordance with applicable regulatory requirements and your organization's SOPs.",
+];
 
 function normalized(raw: any): Details {
   return {
@@ -93,6 +100,7 @@ export default function AddTrial() {
   const [progress, setProgress] = useState(0);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showCreateConfirmation, setShowCreateConfirmation] = useState(true);
 
   const update = (patch: Partial<Details>) =>
     setDetails((current) => ({ ...current, ...patch }));
@@ -347,6 +355,57 @@ export default function AddTrial() {
       </KeyboardAvoidingView>
 
       <Modal
+        visible={showCreateConfirmation}
+        transparent
+        animationType="fade"
+        onRequestClose={() => router.back()}
+      >
+        <View style={s.modalBackdrop}>
+          <Card style={s.confirmCard}>
+            <View style={s.confirmIcon}>
+              <ShieldCheck size={26} color={colors.primary} />
+            </View>
+            <Text style={s.confirmTitle}>Create New Trial</Text>
+            <ScrollView
+              style={s.confirmScroll}
+              contentContainerStyle={s.confirmScrollContent}
+              showsVerticalScrollIndicator
+              persistentScrollbar
+              nestedScrollEnabled
+            >
+              <Text style={s.confirmIntro}>Before creating a trial, please confirm that:</Text>
+
+              <View style={s.confirmPoints}>
+                {CREATE_TRIAL_RESPONSIBILITIES.map((responsibility, index) => (
+                  <View key={responsibility} style={s.confirmPoint}>
+                    <View style={s.confirmNumber}>
+                      <Text style={s.confirmNumberText}>{index + 1}</Text>
+                    </View>
+                    <Small color={colors.foreground} style={s.confirmPointText}>{responsibility}</Small>
+                  </View>
+                ))}
+              </View>
+
+              <View style={s.confirmDeclaration}>
+                <Small color={colors.foreground} style={s.confirmDeclarationText}>
+                  By clicking &quot;I Confirm&quot;, you acknowledge the above responsibilities.
+                </Small>
+              </View>
+            </ScrollView>
+
+            <View style={s.confirmActions}>
+              <Pressable testID="cancel-create-trial" onPress={() => router.back()} style={[s.confirmButton, s.confirmCancel]}>
+                <Text style={s.confirmCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable testID="confirm-create-trial" onPress={() => setShowCreateConfirmation(false)} style={[s.confirmButton, s.confirmAccept]}>
+                <Text style={s.confirmAcceptText}>I Confirm &amp; Create Trial</Text>
+              </Pressable>
+            </View>
+          </Card>
+        </View>
+      </Modal>
+
+      <Modal
         visible={showUpload}
         transparent
         animationType="fade"
@@ -362,9 +421,9 @@ export default function AddTrial() {
                     <X size={21} color={colors.mutedFg} />
                   </Pressable>
                 </View>
-                <Text style={s.modalTitle}>Protocol not on record</Text>
+                <Text style={s.modalTitle}>Protocol not found</Text>
                 <Small style={s.modalCopy}>
-                  We couldn&apos;t find {protocolId.trim()}. Upload its protocol PDF and we&apos;ll extract the trial details before anything is created.
+                  Upload the latest approved protocol to auto-populate the trial details. Please review and verify all extracted information before saving the trial.
                 </Small>
                 <Pressable testID="upload-protocol" onPress={extract} style={s.dropZone}>
                   <View style={s.uploadIcon}><UploadCloud size={24} color={colors.primary} /></View>
@@ -490,6 +549,25 @@ const s = StyleSheet.create({
   submit: { marginTop: 4 },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(46,27,51,0.48)", justifyContent: "center", padding: 24 },
   modalCard: { width: "100%", maxWidth: 390, alignSelf: "center", padding: 20 },
+  confirmCard: { width: "100%", maxWidth: 430, maxHeight: "94%", alignSelf: "center", padding: 20 },
+  confirmIcon: { width: 50, height: 50, borderRadius: 17, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", alignSelf: "center", marginBottom: 12 },
+  confirmTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 22, textAlign: "center" },
+  confirmScroll: { flexShrink: 1 },
+  confirmScrollContent: { paddingTop: 6 },
+  confirmIntro: { color: colors.mutedFg, fontFamily: fonts.medium, fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 6, marginBottom: 18 },
+  confirmPoints: { gap: 12 },
+  confirmPoint: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  confirmNumber: { width: 23, height: 23, borderRadius: 12, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", marginTop: 1 },
+  confirmNumberText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 11 },
+  confirmPointText: { flex: 1, lineHeight: 19 },
+  confirmDeclaration: { marginTop: 18, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.background, padding: 12 },
+  confirmDeclarationText: { lineHeight: 19, fontFamily: fonts.semibold, textAlign: "center" },
+  confirmActions: { flexDirection: "row", gap: 10, marginTop: 18 },
+  confirmButton: { minHeight: 48, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  confirmCancel: { flex: 0.72, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  confirmAccept: { flex: 1.55, backgroundColor: colors.primary },
+  confirmCancelText: { color: colors.foreground, fontFamily: fonts.bold, fontSize: 13 },
+  confirmAcceptText: { color: colors.primaryFg, fontFamily: fonts.bold, fontSize: 13, textAlign: "center" },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   modalTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 20, marginBottom: 7 },
   modalCopy: { lineHeight: 18, marginBottom: 17 },

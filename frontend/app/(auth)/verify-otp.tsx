@@ -10,6 +10,7 @@ import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
 import { api } from "@/src/api/client";
+import { splitE164 } from "@/src/data/countries";
 
 const OTP_LEN = 6;
 const OTP_DURATION = 120; // 2 minutes
@@ -17,11 +18,10 @@ const MAX_RESEND = 3;
 
 // Keep the country code visible, mask the middle: "+91 ••••••3210".
 function maskPhone(full: string): string {
-  const digits = full.replace(/\D/g, "");
-  if (!digits) return full;
-  const local = full.includes("+91") && digits.length > 2 ? digits.slice(2) : digits;
-  const last4 = local.slice(-4);
-  return `+91 ${"•".repeat(Math.max(0, local.length - 4))}${last4}`;
+  if (!full.replace(/\D/g, "")) return full;
+  const { country, national } = splitE164(full);
+  const last4 = national.slice(-4);
+  return `+${country.dial} ${"•".repeat(Math.max(0, national.length - 4))}${last4}`;
 }
 // Keep first + last of the local part, domain visible: "j•••e@example.com".
 function maskEmail(email: string): string {
@@ -126,6 +126,7 @@ export default function VerifyOtp() {
   const [resending, setResending] = useState<"email" | "phone" | null>(null);
   const [resendResults, setResendResults] = useState<{ email?: string; phone?: string }>({});
   const [serverExpired, setServerExpired] = useState(false);
+  const [registrationMissing, setRegistrationMissing] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -160,7 +161,10 @@ export default function VerifyOtp() {
     } catch (e: any) {
       const detail = String(e?.response?.data?.detail || "");
       const normalized = detail.toLowerCase();
-      if (normalized.includes("expired") || normalized.includes("restart registration")) {
+      if (e?.response?.status === 404 || normalized.includes("registration not found")) {
+        setRegistrationMissing(true);
+        setErr("This verification session is no longer active. Restart registration to get a new code.");
+      } else if (normalized.includes("expired") || normalized.includes("restart registration")) {
         setServerExpired(true);
         setTimeLeft(0);
         setErr("These verification codes have expired. Restart registration to request new codes.");
@@ -213,17 +217,21 @@ export default function VerifyOtp() {
   };
 
   const channelSummary = needPhone && needEmail ? "your phone and email" : needPhone ? "your phone" : "your email";
-  const blocked = invalidChannels || isLocked || serverExpired;
+  const blocked = invalidChannels || isLocked || serverExpired || registrationMissing;
   const blockedTitle = invalidChannels
     ? "Verification unavailable"
-    : serverExpired
-      ? "Verification expired"
-      : "Account temporarily locked";
+    : registrationMissing
+      ? "Verification session ended"
+      : serverExpired
+        ? "Verification expired"
+        : "Account temporarily locked";
   const blockedCopy = invalidChannels
     ? "No valid verification channel was provided. Restart registration so we can securely verify your contact details."
-    : serverExpired
-      ? "These codes are no longer valid. Restart registration to request a fresh set."
-      : "Too many incorrect attempts were made. Restart registration to continue securely.";
+    : registrationMissing
+      ? "This OTP session is no longer active. Restart registration to request a new code."
+      : serverExpired
+        ? "These codes are no longer valid. Restart registration to request a fresh set."
+        : "Too many incorrect attempts were made. Restart registration to continue securely.";
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>

@@ -24,6 +24,9 @@ interface ResolvedInvite {
   full_name?: string;
   designation?: string;
   phone?: string;
+  dob?: string;
+  gender?: string;
+  language?: string;
   email: string;
   status: string; // pending | expired | cancelled | accepted
   expires_at: string;
@@ -122,6 +125,9 @@ export default function JoinInvite() {
           fullName: draft.fullName.trim(),
           designation: roleCode(invite.role) === "patient" ? "" : draft.designation.trim(),
           phone: draft.phone.trim(),
+          dob: invite.dob || "",
+          gender: invite.gender || "",
+          language: invite.language || "",
         },
       });
     } finally {
@@ -156,7 +162,7 @@ export default function JoinInvite() {
                 onChangeText={onCodeChange}
                 autoCapitalize="characters"
                 autoCorrect={false}
-                placeholder="MTB-XXXX-XXXX"
+                placeholder="Enter invitation code"
                 placeholderTextColor={colors.mutedFg + "66"}
                 style={s.codeInput}
               />

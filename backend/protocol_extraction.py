@@ -1,44 +1,137 @@
 """Protocol -> visit-schedule extraction.
 
-Reads a clinical-trial protocol PDF and returns its Schedule of Assessments as a
-structured list of visit templates that pre-fill the sponsor's visit-schedule
-editor. Extraction is provider-abstracted behind ``ProtocolExtractor`` so the
-default Claude backend can later be swapped for a self-hosted vision model
-without touching the API endpoint or the frontend.
+Reads a clinical-trial protocol (full protocol, synopsis, EC deck, or a bare
+Schedule-of-Assessments page) and returns its visit schedule as a flat list of
+visit templates that pre-fill the sponsor's visit-schedule editor. Extraction is
+provider-abstracted behind ``ProtocolExtractor`` so the default Claude backend
+can later be swapped for a self-hosted vision model without touching the API
+endpoint or the frontend.
 
-The default backend uses Anthropic's Claude with native PDF input and structured
-outputs (a Pydantic schema constrains the response), so a single call performs
-OCR, table understanding, and JSON shaping. No separate OCR pipeline is needed.
+DESIGN: declare structure, don't enumerate
+------------------------------------------
+Real protocols collapse repetition. The Schedule of Assessments prints columns
+like ``Cycle 2 & Next Cycles`` or ``every 8th week thereafter``, and the numbers
+needed to expand them (cycle length, cycle count, intra-cycle spacing) live in
+prose on *other pages* — in the PICN protocol the table is on p42 while the
+cycle length is on p15 and the expansion rule on p24.
 
-Schema note: the visit shape is a superset of the four fields the frontend editor
-reads today (name, day_offset, window_days, activities). The added fields
-(visit_type, day_end, window_before/after) are OPTIONAL and ignored by the
-current editor, so extraction can capture the full fidelity the ground-truth
-analysis expects (visit type, day-less ET/unscheduled visits, asymmetric windows,
-multi-day visits) without disturbing the frozen Add-Trial flow.
+Asking a model to emit an already-flattened list therefore asks it to do
+multi-page arithmetic in its head, silently, with no way to check the result.
+Instead the model emits the *structure* it read — repeating blocks with a cycle
+length and a member layout, relative anchors, conditional activities — and
+:func:`expand_schedule` does the arithmetic in Python, where it is deterministic
+and unit-testable without an API key.
+
+The model-facing schema is therefore richer than the frontend contract, and
+``extract()`` returns an already-expanded ``ExtractedSchedule.visits`` so callers
+(``POST /api/trials/{id}/extract-schedule``) keep consuming the same flat shape
+they always did.
+
+Every expansion that required an assumption (an open-ended "until progression"
+tail, an unresolvable relative anchor) is recorded on ``assumptions`` /
+``warnings`` so the sponsor reviews it before saving. Extraction is always a
+draft — nothing is written to the trial without human confirmation.
 """
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from typing import List, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-# Default model — Anthropic's most capable, with high-resolution vision that
-# handles dense assessment tables. Override via PROTOCOL_EXTRACTION_MODEL.
-DEFAULT_MODEL = "claude-opus-4-8"
+log = logging.getLogger(__name__)
+
+# Anthropic's current Opus. Adaptive thinking is ON by default on this model,
+# which is what makes cross-page reconstruction (find the cycle length in the
+# treatment section, apply it to the appendix table) reliable.
+DEFAULT_MODEL = "claude-opus-5"
 
 # Guardrail: refuse absurdly large uploads before they ever reach the model.
-MAX_PDF_BYTES = 25 * 1024 * 1024  # 25 MB (Claude's own hard limit is 32 MB)
+# Anthropic's own limits are 32 MB / 600 pages per PDF.
+MAX_PDF_BYTES = 25 * 1024 * 1024
+
+# Output cap. The declarative schema keeps responses small (a 6-cycle protocol
+# is ~8 rows + one repeating block, not 25 enumerated rows), so this is generous
+# even with adaptive thinking, and stays well under the SDK's non-streaming
+# timeout guard.
+MAX_OUTPUT_TOKENS = 16000
+
+# How far to expand a repetition the protocol leaves open-ended ("continue until
+# progression", "every 8th week thereafter"). Bounded so one vague protocol
+# cannot materialize thousands of visits per patient; always recorded as an
+# assumption for the reviewer.
+OPEN_ENDED_CYCLE_CAP = 12
+
+# Sanity ceiling on a single expansion, independent of the cap above.
+MAX_EXPANDED_VISITS = 400
+
+
+# ─────────────────────────── model-facing schema ───────────────────────────
+# Field descriptions double as extraction instructions — the model reads them
+# when producing structured output, so they carry real weight.
+
+class ConditionalActivity(BaseModel):
+    """An assessment that happens only in SOME repetitions of a cycle.
+
+    e.g. "imaging (CT/MRI) will be performed after cycles 2, 4 and 6" — the
+    visit recurs every cycle but this assessment does not.
+    """
+    name: str = Field(description="The assessment / procedure name.")
+    cycles: List[int] = Field(
+        default_factory=list,
+        description="The 1-based cycle numbers this assessment applies to, e.g. [2, 4, 6].")
+
+
+class RepeatMember(BaseModel):
+    """One visit inside a repeating cycle."""
+    name_template: str = Field(
+        description="Visit name with '{cycle}' where the cycle number belongs, e.g. "
+        "'Cycle {cycle} Day 1', 'Cycle {cycle} Intra-cycle Visit 2'.")
+    day_within_cycle: int = Field(
+        description="0-based day offset from the START of the cycle. The cycle's "
+        "first/dosing day is 0; a visit 7 days later is 7.")
+    visit_type: Optional[str] = Field(default=None, description="See ExtractedVisit.visit_type.")
+    window_days: int = Field(default=3, description="Visit window as +/- days.")
+    activities: List[str] = Field(
+        default_factory=list,
+        description="Assessments performed at this visit in EVERY cycle.")
+    conditional_activities: List[ConditionalActivity] = Field(
+        default_factory=list,
+        description="Assessments performed only in specific cycles.")
+
+
+class RepeatingBlock(BaseModel):
+    """A cycle the protocol prints once and tells you to repeat.
+
+    This is the single most important field in the schema. Use it whenever the
+    Schedule of Assessments collapses repetition — a column headed 'Cycle 2 &
+    Next Cycles', 'each subsequent cycle', 'Cycles 3-6', or prose like 'every
+    3 weeks for 6 cycles'. Do NOT enumerate those cycles as individual visits;
+    describe the block and the server will expand it exactly.
+    """
+    from_cycle: int = Field(description="First cycle number this block covers (1-based).")
+    to_cycle: Optional[int] = Field(
+        default=None,
+        description="Last cycle number covered. Use null ONLY when the protocol is "
+        "genuinely open-ended ('until disease progression', 'every 8th week "
+        "thereafter') — the server will expand a bounded number and flag it.")
+    cycle_length_days: int = Field(
+        description="Length of one cycle in days. Read from the treatment plan when "
+        "the schedule table does not state it (e.g. 'every 3 weekly' -> 21, "
+        "'q4w' -> 28, '28-day cycle' -> 28).")
+    first_cycle_start_day: int = Field(
+        description="ABSOLUTE study day (Day 1 = 0) on which cycle `from_cycle` STARTS. "
+        "e.g. if cycle 1 starts at baseline and cycles are 21 days, then a block "
+        "beginning at cycle 2 has first_cycle_start_day = 21.")
+    members: List[RepeatMember] = Field(
+        default_factory=list,
+        description="The visits that occur within each cycle of this block.")
 
 
 class ExtractedVisit(BaseModel):
-    """One scheduled visit / timepoint from the Schedule of Assessments.
-
-    Field descriptions double as extraction instructions — the model reads them
-    when producing the structured output.
-    """
+    """One scheduled visit / timepoint from the Schedule of Assessments."""
     name: str = Field(
         description="Self-describing visit name. Use the protocol's own label and make "
         "structure explicit: 'Visit 1 - Screening', 'Cycle 2 Day 1', 'Period 2 Day 1', "
@@ -56,16 +149,23 @@ class ExtractedVisit(BaseModel):
         "Screening / run-in visits before baseline are NEGATIVE. Convert Week N to "
         "(N*7) and Month N to (N*30) unless the protocol states an explicit day; for a "
         "calendar-date schedule, use the day count from the baseline/randomization date. "
-        "For cyclic schedules, Cycle C Day D with cycle length L days is (C-1)*L+(D-1); "
-        "for crossover, offsets run continuously across periods and washout. Use null "
-        "when the protocol genuinely does NOT specify a day for this visit (e.g. an "
-        "Early-Termination, Unscheduled, or Final/Follow-up visit defined only by its "
-        "activities) — keep the visit, just leave the day unknown.")
+        "Leave null when the visit's timing is expressed RELATIVE to another visit (use "
+        "relative_to instead) or when the protocol genuinely does not specify a day "
+        "(Early Termination, Unscheduled) — keep the visit either way.")
     day_end: Optional[int] = Field(
         default=None,
         description="For a visit that spans MULTIPLE consecutive days as a single entry "
         "(e.g. 'Day 14-17', a period's 'Check-in / Day 1 / Check-out'), the absolute end "
         "day (same Day 1 = 0 basis). null for single-day visits.")
+    hour_offset: Optional[float] = Field(
+        default=None,
+        description="For INTRA-DAY timepoints (PK sampling, hourly assessments), hours "
+        "from dosing/Hour 0. May be negative for pre-dose. Set this IN ADDITION to "
+        "day_offset. Only use when the protocol's schedule is genuinely hour-level.")
+    hour_end: Optional[float] = Field(
+        default=None,
+        description="End of an hour RANGE, e.g. 'Hour -4 to Hour 0' -> hour_offset=-4, "
+        "hour_end=0. null for a single timepoint.")
     window_days: int = Field(
         default=3,
         description="Visit window as a single +/- number of days (e.g. '+/- 3 days' -> 3). "
@@ -74,13 +174,29 @@ class ExtractedVisit(BaseModel):
     window_before: Optional[int] = Field(
         default=None,
         description="Days the visit may occur EARLY, when the protocol gives an asymmetric "
-        "window (e.g. a '+3 days only' window -> window_before=0, window_after=3; a "
-        "'-3 days only' window -> window_before=3, window_after=0). null when the window "
-        "is symmetric or unstated.")
+        "window (e.g. a '+3 days only' window -> window_before=0, window_after=3). null "
+        "when the window is symmetric or unstated.")
     window_after: Optional[int] = Field(
         default=None,
-        description="Days the visit may occur LATE for an asymmetric window (see "
-        "window_before). null when symmetric or unstated.")
+        description="Days the visit may occur LATE for an asymmetric window. null when "
+        "symmetric or unstated.")
+    relative_to: Optional[str] = Field(
+        default=None,
+        description="When the protocol times this visit against ANOTHER visit rather than "
+        "against baseline ('within 3 days after intra-cycle visit 3', '28 days after the "
+        "last dose'), put that other visit's exact `name` here and the gap in "
+        "relative_offset_days. The server resolves it to an absolute day.")
+    relative_offset_days: Optional[int] = Field(
+        default=None,
+        description="Days after the `relative_to` visit (negative for before).")
+    arm: Optional[str] = Field(
+        default=None,
+        description="Arm / cohort label when the protocol prints genuinely DIFFERENT "
+        "schedules per arm. null when all arms share one schedule.")
+    period: Optional[str] = Field(
+        default=None,
+        description="Period / phase label for crossover or multi-phase studies "
+        "('Period 1', 'Washout 1', 'Extension'). null when not applicable.")
     activities: List[str] = Field(
         default_factory=list,
         description="Assessments / procedures marked (X or a footnote symbol) in this "
@@ -89,7 +205,33 @@ class ExtractedVisit(BaseModel):
 
 
 class ExtractedSchedule(BaseModel):
-    visits: List[ExtractedVisit] = Field(default_factory=list)
+    """The model's reading of the protocol, before server-side expansion."""
+    schedule_kind: Optional[str] = Field(
+        default=None,
+        description="One of: 'linear' (fixed visit list), 'cyclic' (repeating cycles), "
+        "'crossover' (periods + washout), 'multi_arm' (different schedule per arm), "
+        "'intra_day' (hour-level timepoints only), 'none' (document has no schedule).")
+    visits: List[ExtractedVisit] = Field(
+        default_factory=list,
+        description="Explicitly-scheduled visits: screening, baseline, the visits of any "
+        "cycle printed in full, end-of-treatment, follow-up, Early Termination, "
+        "Unscheduled. Do NOT enumerate cycles covered by a repeating_block.")
+    repeating_blocks: List[RepeatingBlock] = Field(
+        default_factory=list,
+        description="Cycles the protocol collapsed instead of printing. See RepeatingBlock.")
+    total_cycles: Optional[int] = Field(
+        default=None,
+        description="Planned maximum number of treatment cycles, when stated anywhere in "
+        "the document (e.g. 'maximum 6 cycles').")
+    assumptions: List[str] = Field(
+        default_factory=list,
+        description="Any inference you had to make that a reviewer should verify — a cycle "
+        "length read from a different section, an open-ended tail you bounded, an "
+        "ambiguous arm structure. One short sentence each. Be honest and specific.")
+    source_notes: Optional[str] = Field(
+        default=None,
+        description="Where in the document the schedule came from (e.g. 'Appendix I, p42; "
+        "cycle length from section 2.5, p15'). Helps the reviewer check your work.")
 
 
 class ExtractedTrialDetails(BaseModel):
@@ -113,80 +255,283 @@ class ExtractionNotConfigured(ExtractionError):
     """No credentials/backend configured — surfaced to the caller as 503."""
 
 
-_SYSTEM_PROMPT = """You are a clinical-trial protocol analyst. From the attached \
-protocol PDF, extract the Schedule of Assessments / Schedule of Activities / Schedule of \
-Events — the visit-by-visit assessment matrix — as a FLAT, chronological list where every \
-scheduled visit/timepoint is ONE entry. Encode any cycle / arm / period structure by (a) \
-an ABSOLUTE day_offset from baseline on every entry that has a resolvable day and (b) a \
-self-describing name.
+class ExtractionUnavailable(ExtractionError):
+    """Provider reachable but refusing work (billing, quota, rate limit).
 
-DAY OFFSETS
-- day_offset is the ABSOLUTE study day with Day 1 = 0. Screening/run-in before baseline \
-is NEGATIVE. Week N -> N*7, Month N -> N*30 unless an explicit day is given. Cyclic: \
-Cycle C Day D at cycle length L -> (C-1)*L+(D-1). Crossover: continuous offsets across all \
-periods and washout. Calendar-date schedules: day_offset = (visit date - baseline/\
-randomization date) in days.
-- If a visit genuinely has NO specified day (many Early-Termination, Unscheduled, End-of-\
-Study, or Final/Follow-up visits are defined only by their activities), set day_offset to \
-null but STILL INCLUDE the visit. Never drop a real scheduled visit just because its day \
-is unspecified.
-- Multi-day visits: when one visit spans consecutive days (e.g. 'Day 14-17', or a period's \
-Check-in + Day 1 + Check-out treated as a single visit), set day_offset to the start day \
-and day_end to the end day.
+    Separated from ExtractionError so the API can tell the sponsor *why* the
+    button did nothing instead of a generic 'could not extract'.
+    """
 
-WHICH VISITS TO INCLUDE
-- Include Screening, Baseline, Randomization, every treatment/follow-up visit, End-of-\
-Treatment, End-of-Study, and also Early-Termination / Unscheduled / Withdrawal / Discontinuation \
-visits when the protocol lists them as columns with activities (day_offset null if no day).
-- Telephonic visits (phone calls, or a column marked only with a telephone icon): include \
-them as visits with visit_type 'Telephonic'.
-- Do NOT invent visits or activities. Return an EMPTY list if the document has no \
-assessment schedule at all (e.g. a GCP inspection checklist, a consent form, a generic \
-one-slide study overview, or a plain field/data-collection list) — an empty result is the \
-correct answer there.
 
-VISIT TYPE & WINDOWS
-- visit_type: fill from the protocol's 'Visit Type' row/column when present (including code \
-schemes like SS = study site, V = virtual, T/C = telephone); otherwise infer the phase \
-(Screening / Treatment / Follow-up / EOS / Early Termination / Unscheduled).
-- window_days: the +/- window in days. If the window is asymmetric (e.g. '+3 days' only, or \
-'-3 days' only), still set window_days to the larger side AND set window_before / window_after.
+# ──────────────────────────── expansion (pure) ────────────────────────────
+# Deterministic, no network, no API key — this is where all schedule arithmetic
+# lives so it can be unit-tested against real protocols offline.
 
-STRUCTURAL VARIETIES (handle all)
-- CYCLIC / oncology (repeating cycles, e.g. '6 cycles x 21 days'): enumerate EVERY visit in \
-EVERY defined cycle as its own entry; name each 'Cycle C Day D' (or 'Cycle C Week W'); \
-compute absolute day_offset via (C-1)*L+(D-1). If the cycle length or within-cycle day is \
-not given, still enumerate the named cycle visits with day_offset null.
-- MULTI-ARM / multi-cohort: if the arms share ONE schedule (same visit timing, only the \
-drug differs), emit each visit ONCE — do NOT duplicate per arm. If the arms have genuinely \
-DIFFERENT visit schedules (the protocol prints a separate table per arm), emit a separate \
-entry per arm and PREFIX the name with the arm (e.g. 'Arm B - Cycle 1 Day 1').
-- CROSSOVER / multi-period: enumerate visits across all periods and washout with continuous \
-absolute day_offsets; name them by the protocol's period labels ('Period 2 Day 1', \
-'Period 2 Check-in').
-- MULTI-PHASE (Core + Extension, Blinded + Open-label, Treatment + Follow-up phases): \
-enumerate the visits of every phase in order.
-- SURGICAL / admission schedules: include Screening, admission/procedure day, post-op days, \
-discharge, and follow-up visits as given.
+def _fill_template(template: str, cycle: int) -> str:
+    """Substitute the cycle number into a member name template.
 
-DOCUMENT FORMATS (handle all)
-- Standard assessment TABLE (procedures as rows, visits as columns) — the common case.
-- TEXT / prose schedules (visits described in sentences or bullets, not a grid).
-- DIAGRAM / timeline figures (visits on an arrow/timeline) — read the visits from the figure.
-- MULTIPLE schedules in one document: if there is a visit-level schedule AND an intra-visit \
-hourly sampling table (e.g. PK at Hour 0/2/6...), extract the VISIT-LEVEL schedule. But if \
-the study's ONLY schedule is intra-day (all timepoints are hours), extract those hourly \
-timepoints as the visits. Include genuinely separate schedules (e.g. a core phase and an \
-extension phase) together.
+    Uses explicit replacement rather than str.format so a stray brace in a
+    model-authored template can never raise.
+    """
+    out = template
+    for token in ("{cycle}", "{c}", "{n}", "{CYCLE}"):
+        out = out.replace(token, str(cycle))
+    if str(cycle) not in out:
+        # Template forgot the placeholder — disambiguate so cycles don't collide.
+        out = f"{out} (Cycle {cycle})"
+    return out
 
-When unsure whether arms share a schedule, prefer emitting each distinct visit once with a \
-clear name over duplicating or dropping visits. Extract only what the protocol contains."""
+
+def _expand_blocks(schedule: ExtractedSchedule,
+                   assumptions: List[str],
+                   warnings: List[str]) -> List[ExtractedVisit]:
+    """Turn each RepeatingBlock into concrete per-cycle visits."""
+    out: List[ExtractedVisit] = []
+    for block in schedule.repeating_blocks:
+        if block.cycle_length_days <= 0:
+            warnings.append(
+                f"Ignored a repeating block starting at cycle {block.from_cycle}: "
+                f"cycle length {block.cycle_length_days} is not a positive number of days.")
+            continue
+        if not block.members:
+            warnings.append(
+                f"Ignored a repeating block starting at cycle {block.from_cycle}: "
+                "it listed no visits.")
+            continue
+
+        to_cycle = block.to_cycle
+        if to_cycle is None:
+            to_cycle = block.from_cycle + OPEN_ENDED_CYCLE_CAP - 1
+            if schedule.total_cycles and schedule.total_cycles >= block.from_cycle:
+                to_cycle = schedule.total_cycles
+                assumptions.append(
+                    f"Cycles {block.from_cycle}-{to_cycle} were expanded using the "
+                    f"protocol's stated maximum of {schedule.total_cycles} cycles.")
+            else:
+                assumptions.append(
+                    f"The protocol leaves the schedule open-ended from cycle "
+                    f"{block.from_cycle}; expanded {OPEN_ENDED_CYCLE_CAP} cycles "
+                    f"(to cycle {to_cycle}). Confirm the real number before saving.")
+        if to_cycle < block.from_cycle:
+            warnings.append(
+                f"Ignored a repeating block: last cycle ({to_cycle}) is before the "
+                f"first ({block.from_cycle}).")
+            continue
+
+        for cycle in range(block.from_cycle, to_cycle + 1):
+            cycle_start = (block.first_cycle_start_day
+                           + (cycle - block.from_cycle) * block.cycle_length_days)
+            for member in block.members:
+                acts = list(member.activities)
+                for cond in member.conditional_activities:
+                    if cycle in (cond.cycles or []):
+                        acts.append(cond.name)
+                out.append(ExtractedVisit(
+                    name=_fill_template(member.name_template, cycle),
+                    visit_type=member.visit_type,
+                    day_offset=cycle_start + member.day_within_cycle,
+                    window_days=member.window_days,
+                    activities=acts,
+                ))
+    return out
+
+
+def _resolve_relative(visits: List[ExtractedVisit], warnings: List[str]) -> None:
+    """Resolve visits timed against another visit into absolute day offsets.
+
+    Runs to a fixed point so a chain (A -> B -> C) resolves, and stops rather
+    than looping when a cycle is present.
+    """
+    by_name = {v.name.strip().lower(): v for v in visits if v.name}
+    pending = [v for v in visits
+               if v.day_offset is None and v.relative_to and v.relative_offset_days is not None]
+    for _ in range(len(pending) + 1):
+        progressed = False
+        for v in list(pending):
+            target = by_name.get((v.relative_to or "").strip().lower())
+            if target is not None and target.day_offset is not None:
+                v.day_offset = target.day_offset + int(v.relative_offset_days or 0)
+                pending.remove(v)
+                progressed = True
+        if not pending or not progressed:
+            break
+    for v in pending:
+        warnings.append(
+            f"'{v.name}' is scheduled relative to '{v.relative_to}', which has no "
+            "resolvable date — set its day manually.")
+
+
+def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
+    """Expand declared structure into the flat visit list the app consumes.
+
+    Pure and deterministic: same input always yields the same visits. Returns a
+    NEW ExtractedSchedule; the input is not mutated.
+    """
+    assumptions: List[str] = list(schedule.assumptions)
+    warnings: List[str] = []
+
+    visits: List[ExtractedVisit] = [v.model_copy(deep=True) for v in schedule.visits]
+    visits.extend(_expand_blocks(schedule, assumptions, warnings))
+    _resolve_relative(visits, warnings)
+
+    # Drop exact duplicates — a model that both enumerated cycle 2 AND described
+    # it in a repeating block should not double-book the patient.
+    seen: set = set()
+    deduped: List[ExtractedVisit] = []
+    for v in visits:
+        key = (v.name.strip().lower(), v.day_offset, v.hour_offset)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(v)
+
+    if len(deduped) > MAX_EXPANDED_VISITS:
+        warnings.append(
+            f"Schedule expanded to {len(deduped)} visits; kept the first "
+            f"{MAX_EXPANDED_VISITS}. Check the cycle count before saving.")
+        deduped = deduped[:MAX_EXPANDED_VISITS]
+
+    # Chronological, with undated visits (ET / Unscheduled) last but preserved.
+    deduped.sort(key=lambda v: (
+        v.day_offset is None,
+        v.day_offset if v.day_offset is not None else 0,
+        v.hour_offset if v.hour_offset is not None else 0,
+    ))
+
+    return schedule.model_copy(update={
+        "visits": deduped,
+        "repeating_blocks": [],     # consumed
+        "assumptions": assumptions + warnings,
+    })
+
+
+# ──────────────────────────────── prompt ────────────────────────────────
+
+_SYSTEM_PROMPT = """You are a clinical-trial protocol analyst. Read the attached \
+document and extract its visit schedule — the Schedule of Assessments / Schedule of \
+Activities / Schedule of Events / study flow chart.
+
+You are producing a DRAFT that a sponsor will review before it is saved. Accuracy and \
+honesty matter more than completeness: record what the document says, use `assumptions` \
+for anything you inferred, and never invent a visit or an assessment.
+
+## THE MOST IMPORTANT RULE: declare repetition, do not enumerate it
+
+Real protocols collapse repeating cycles. A schedule table may print a column headed \
+"Cycle 2 & Next Cycles", "each subsequent cycle", "Cycles 3-6", or prose may say "every \
+3 weeks for a maximum of 6 cycles". When that happens, emit ONE `repeating_blocks` entry \
+describing the cycle — do NOT write out each cycle as its own visit. The server expands \
+blocks arithmetically, which is more reliable than you doing it in your head.
+
+Enumerate a cycle in `visits` ONLY when the protocol prints that cycle in full and it \
+differs from the repeating pattern (commonly Cycle 1, which often has extra baseline \
+assessments).
+
+## The numbers you need are usually NOT in the schedule table
+
+This is the single most common reason extractions are wrong. A Schedule of Assessments \
+appendix routinely omits the cycle length, the number of cycles, and the intra-cycle \
+spacing — those live in the treatment-plan / dosing / study-design sections, often dozens \
+of pages away. SEARCH THE WHOLE DOCUMENT for them before concluding a cycle is \
+unspecified. Typical phrasings: "infused every 3 weekly for maximum 6 cycles" (-> \
+cycle_length_days 21, total_cycles 6), "q4w", "28-day cycles", "subject will be scheduled \
+for the next visit 7 days after this visit" (-> intra-cycle spacing 7). Cite where you \
+found them in `source_notes`.
+
+## Day offsets
+
+- `day_offset` is the ABSOLUTE study day with Day 1 = 0. Screening/run-in before baseline \
+is NEGATIVE. Week N -> N*7, Month N -> N*30 unless an explicit day is given.
+- Inside a `repeating_blocks` member, use `day_within_cycle` (0-based from the cycle's \
+first day) and set the block's `first_cycle_start_day` to the absolute day that cycle \
+starts. Do not pre-compute per-cycle absolute days.
+- If a visit is timed against ANOTHER visit ("within 3 days after intra-cycle visit 3", \
+"28 days after the last dose"), leave `day_offset` null and set `relative_to` (the other \
+visit's exact name) plus `relative_offset_days`. The server resolves it.
+- If a visit genuinely has NO timing (many Early-Termination, Unscheduled, Withdrawal \
+visits), leave `day_offset` null and STILL INCLUDE the visit. Never drop a real visit just \
+because its day is unspecified.
+- Multi-day visits (e.g. "Day 14-17", a period's Check-in + Day 1 + Check-out treated as \
+one visit): set `day_offset` to the start and `day_end` to the end.
+
+## Structural varieties (handle all)
+
+- CYCLIC / oncology: use `repeating_blocks` (see above). If the cadence CHANGES partway \
+("every 6th week for Cycles 1-6 and every 8th week thereafter"), emit TWO blocks with \
+different `cycle_length_days` and ranges.
+- CONDITIONAL assessments: when a recurring visit performs an assessment only in some \
+cycles ("imaging after cycles 2, 4 and 6"), put it in that member's \
+`conditional_activities` with the cycle numbers — not in `activities`.
+- CROSSOVER / multi-period: enumerate visits across all periods and washouts with \
+continuous absolute day offsets; set `period` on each ("Period 1", "Washout 1", \
+"Period 2") and name them by the protocol's own labels.
+- MULTI-ARM: if the arms share ONE schedule (same timing, only the drug differs), emit \
+each visit ONCE and leave `arm` null. Only when the protocol prints a genuinely different \
+schedule per arm, set `arm` and repeat the visits per arm.
+- MULTI-PHASE (Core + Extension, Blinded + Open-label): enumerate every phase in order, \
+using `period` to label them.
+- INTRA-DAY / PK: if the study's schedule is hour-level ("Hour -4 to Hour 0", "Hour 26"), \
+set `hour_offset` (and `hour_end` for a range) alongside `day_offset`, and set \
+`schedule_kind` to 'intra_day'. If the document has BOTH a visit-level schedule and an \
+intra-visit hourly sampling table, extract the VISIT-level schedule.
+- SURGICAL / admission: screening, admission/procedure day, post-op days, discharge, \
+follow-up.
+
+## Visit type and windows
+
+- `visit_type`: use the protocol's own 'Visit Type' row when present (including codes like \
+SS = study site, V = virtual, T/C = telephone); otherwise infer the phase.
+- Telephonic visits (phone contacts, or a column marked only with a telephone icon) are \
+real visits — include them with visit_type 'Telephonic'.
+- `window_days`: the +/- window. If asymmetric ("+3 days only"), set `window_days` to the \
+larger side AND set `window_before` / `window_after`.
+
+## Documents that have no schedule
+
+Return an EMPTY `visits` list with `schedule_kind` 'none' when the document genuinely has \
+no visit schedule — a GCP inspection checklist, a consent form, an investigator CV, a \
+one-slide study overview, or a plain data-collection list. An empty result is the correct \
+and expected answer there. Never manufacture a plausible-looking schedule to fill the gap.
+
+## Scanned documents
+
+Many of these files are scanned images with no text layer. Read them from the page images. \
+If a table is too degraded to read reliably, extract what you can and say so in \
+`assumptions` rather than guessing at values."""
+
+
+_DETAILS_PROMPT = """Read the attached clinical-trial protocol and return only the
+trial-level metadata requested by the schema. Preserve the official study title,
+CTRI registration number, phase, disease/indications, investigational drug,
+planned duration, planned sample size/target enrollment, and the number of
+distinct protocol visits. Use empty strings/nulls when the document does not
+state a value; never invent one. Normalize status to active, completed, or
+terminated, defaulting to active when no status is stated."""
 
 
 @runtime_checkable
 class ProtocolExtractor(Protocol):
     async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
         ...
+
+
+def _classify_api_error(exc: Exception) -> ExtractionError:
+    """Map provider failures to the right error class.
+
+    A billing/quota failure is not a parsing failure — the sponsor needs to be
+    told the service is unavailable, not that their protocol was unreadable.
+    """
+    msg = str(exc)
+    low = msg.lower()
+    if any(s in low for s in ("credit balance", "billing", "quota", "insufficient funds",
+                              "payment", "plans & billing")):
+        return ExtractionUnavailable(
+            "the AI provider account has no available credit")
+    if "rate limit" in low or "429" in low:
+        return ExtractionUnavailable("the AI provider is rate limiting requests")
+    if any(s in low for s in ("overloaded", "529", "503", "502")):
+        return ExtractionUnavailable("the AI provider is temporarily overloaded")
+    return ExtractionError(f"model request failed: {msg}")
 
 
 class ClaudeProtocolExtractor:
@@ -200,78 +545,91 @@ class ClaudeProtocolExtractor:
     def configured(self) -> bool:
         return bool(self._api_key)
 
-    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+    def _client(self):
         if not self._api_key:
-            raise ExtractionNotConfigured(
-                "ANTHROPIC_API_KEY is not set on the server")
-
+            raise ExtractionNotConfigured("ANTHROPIC_API_KEY is not set on the server")
         import anthropic  # imported lazily so the app boots without the dep/key
+        return anthropic, anthropic.AsyncAnthropic(api_key=self._api_key)
 
-        client = anthropic.AsyncAnthropic(api_key=self._api_key)
-        b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
+    @staticmethod
+    def _document_block(pdf_bytes: bytes) -> dict:
+        """A cached document block.
+
+        Sponsors re-run extraction while iterating on a schedule; caching the
+        protocol makes every retry after the first ~10x cheaper on input.
+        """
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.standard_b64encode(pdf_bytes).decode("ascii"),
+            },
+            "cache_control": {"type": "ephemeral"},
+        }
+
+    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+        """Read a protocol and return its EXPANDED visit schedule."""
+        anthropic, client = self._client()
         try:
             resp = await client.messages.parse(
                 model=self._model,
-                max_tokens=8000,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                thinking={"type": "adaptive"},
                 system=_SYSTEM_PROMPT,
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "document",
-                         "source": {"type": "base64",
-                                    "media_type": "application/pdf",
-                                    "data": b64}},
+                        self._document_block(pdf_bytes),
                         {"type": "text",
-                         "text": "Extract the visit schedule as structured data."},
+                         "text": "Extract this protocol's visit schedule. Search the whole "
+                                 "document for cycle length and cycle count before "
+                                 "concluding a repeating block is unspecified."},
                     ],
                 }],
                 output_format=ExtractedSchedule,
             )
-        except anthropic.APIError as e:  # network / rate / upstream
-            raise ExtractionError(f"model request failed: {e}") from e
+        except anthropic.APIError as e:
+            raise _classify_api_error(e) from e
+
+        if resp.stop_reason == "refusal":
+            raise ExtractionError("the model declined to process this document")
 
         parsed = getattr(resp, "parsed_output", None)
         if parsed is None:
+            if resp.stop_reason == "max_tokens":
+                raise ExtractionError(
+                    "the schedule was too large to return in one response — "
+                    "try uploading only the Schedule of Assessments pages")
             raise ExtractionError("model did not return a parseable schedule")
-        return parsed
+
+        expanded = expand_schedule(parsed)
+        log.info(
+            "protocol extraction: kind=%s raw_visits=%d blocks=%d -> expanded=%d assumptions=%d",
+            parsed.schedule_kind, len(parsed.visits), len(parsed.repeating_blocks),
+            len(expanded.visits), len(expanded.assumptions),
+        )
+        return expanded
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         """Extract the trial-level metadata needed by the pre-creation form."""
-        if not self._api_key:
-            raise ExtractionNotConfigured(
-                "ANTHROPIC_API_KEY is not set on the server")
-
-        import anthropic
-
-        client = anthropic.AsyncAnthropic(api_key=self._api_key)
-        b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
-        prompt = """Read the attached clinical-trial protocol and return only the
-trial-level metadata requested by the schema. Preserve the official study title,
-CTRI registration number, phase, disease/indications, investigational drug,
-planned duration, planned sample size/target enrollment, and the number of
-distinct protocol visits. Use empty strings/nulls when the document does not
-state a value; never invent one. Normalize status to active, completed, or
-terminated, defaulting to active when no status is stated."""
+        anthropic, client = self._client()
         try:
             resp = await client.messages.parse(
                 model=self._model,
-                max_tokens=2500,
-                system=prompt,
+                max_tokens=4000,
+                system=_DETAILS_PROMPT,
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "document",
-                         "source": {"type": "base64",
-                                    "media_type": "application/pdf",
-                                    "data": b64}},
-                        {"type": "text",
-                         "text": "Extract the protocol's trial details."},
+                        self._document_block(pdf_bytes),
+                        {"type": "text", "text": "Extract the protocol's trial details."},
                     ],
                 }],
                 output_format=ExtractedTrialDetails,
             )
         except anthropic.APIError as e:
-            raise ExtractionError(f"model request failed: {e}") from e
+            raise _classify_api_error(e) from e
         parsed = getattr(resp, "parsed_output", None)
         if parsed is None:
             raise ExtractionError("model did not return parseable trial details")

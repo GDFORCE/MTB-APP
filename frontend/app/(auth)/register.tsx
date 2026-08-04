@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent } from "react-native";
+import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import { Check, ClipboardCheck, ShieldCheck, FileText, Building2, Mail, Phone, ChevronDown } from "lucide-react-native";
+import { Check, ClipboardCheck, ShieldCheck, Building2, Mail, ChevronDown } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { colors, spacing, radii, fonts } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small } from "@/src/components/ui";
 import { AuthHeader } from "@/src/components/AuthHeader";
 import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
+import { PhoneField } from "@/src/components/PhoneField";
+import { DEFAULT_COUNTRY_CODE, splitE164 } from "@/src/data/countries";
 import {
   RegistrationErrors,
   RegistrationVariant,
@@ -52,12 +54,30 @@ function initFields(variant: string): Record<string, string> {
   return empty;
 }
 
-// Responsibilities shown before an organization fills the form.
-const registrationInstructions = [
-  "The Authorized Signatory / Responsible person of the organization should fill this form.",
-  "All fields marked with an asterisk (*) are mandatory.",
-  "After submitting, check your registered email for verification before signing in.",
-  "You are responsible for the accuracy and authenticity of all information provided.",
+// Acknowledgement shown before an organization administrator fills the form.
+const organizationRegistrationInstructions = [
+  "The information provided about the organization must be accurate and complete.",
+  "You will become the Organization Admin after successful verification.",
+  "You are responsible for inviting only authorized users from your organization.",
+  "You must assign appropriate roles and access permissions based on each user's responsibilities.",
+  "You are responsible for reviewing, updating, or removing user access when a user's role changes or they leave the organization.",
+  "You must protect confidential, clinical trial, and patient-related information available through the platform.",
+  "You must not share your login credentials, password, or OTP with others.",
+  "Administrative activities performed through your account may be recorded for security and audit purposes.",
+];
+
+const smoRegistrationInstructions = [
+  "Register an organization, hospital, or clinical trial site only if you are authorized or have a legitimate professional relationship to manage its clinical trial activities on this platform.",
+  "The information provided during registration must be accurate and complete.",
+  "You will become the Organization Admin after successful verification.",
+  "An SMO Admin may register and administratively manage hospitals or clinical trial sites where the SMO supports investigators and/or clinical trial activities.",
+  "The SMO Admin is responsible for maintaining accurate site details and managing the platform access of users associated with the trials supported by the SMO.",
+  "Registering or managing a hospital/site on the platform does not imply ownership of the hospital or authority to act on behalf of the hospital beyond the activities for which the SMO is authorized.",
+  "Invite only authorized users and provide access based on their roles, responsibilities, site affiliation, and trial involvement.",
+  "Review, update, or remove user access when a user's role, site affiliation, or trial involvement changes.",
+  "Protect confidential, clinical trial, site, investigator, and patient-related information available through the platform.",
+  "Do not share your login credentials, password, or OTP with anyone.",
+  "Administrative activities performed through your account may be recorded for security and audit purposes.",
 ];
 
 // An organization from GET /api/organizations. Continue checks whether the typed
@@ -65,6 +85,7 @@ const registrationInstructions = [
 // while new org registrations proceed directly.
 interface PlatformContact { name: string; designation?: string; email?: string; phone?: string }
 interface Org { id: string; name: string; type: string; address?: string; contact?: string; email?: string; website?: string; status?: string; platform_contact?: PlatformContact }
+type SmoHospital = { name: string; address: string; type: string; role: string };
 // Map the selected role to the org `type` used to narrow the directory search.
 function orgTypeFor(role?: string): string | undefined {
   if (role === "sponsor") return "sponsor";
@@ -72,11 +93,6 @@ function orgTypeFor(role?: string): string | undefined {
   if (role === "smo") return "smo";
   if (role === "site" || role === "pi" || role === "crc") return "site";
   return undefined;
-}
-const orgTypeLabels: Record<string, string> = { sponsor: "Sponsor", cro: "CRO", smo: "SMO", site: "Site / Hospital" };
-function adminInitials(name: string) {
-  const parts = name.replace(/^(Dr\.|Mr\.|Ms\.|Mrs\.)\s+/i, "").trim().split(/\s+/);
-  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase();
 }
 // ── Shared primitives ───────────────────────────────────────────────────────
 function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: React.ReactNode }) {
@@ -89,15 +105,7 @@ function Field({ label, required, error, children }: { label: string; required?:
   );
 }
 function Input(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor={colors.mutedFg + "99"} {...props} style={[f.input, props.style]} />;
-}
-function PhoneInput({ value, onChangeText, error }: { value: string; onChangeText: (v: string) => void; error?: boolean }) {
-  return (
-    <View style={{ flexDirection: "row", gap: 8 }}>
-      <View style={f.prefix}><Text style={{ color: colors.mutedFg, fontFamily: fonts.semibold, fontSize: 15 }}>+91</Text></View>
-      <Input value={value} onChangeText={onChangeText} keyboardType="phone-pad" placeholder="98XXXXXXXX" style={[{ flex: 1 }, error && f.inputError]} />
-    </View>
-  );
+  return <TextInput autoComplete="off" importantForAutofill="no" textContentType="none" selectionColor={colors.primary} cursorColor={colors.primary} placeholderTextColor={colors.mutedFg + "99"} {...props} style={[f.input, props.style]} />;
 }
 function SectionRow({ title }: { title: string }) {
   return (
@@ -137,15 +145,15 @@ function Select({ value, placeholder, options, onChange }: { value: string; plac
 }
 
 // Centered modal card — the shared shell for responsibilities / declaration / terms / org-check.
-function ModalCard({ visible, onClose, children }: { visible: boolean; onClose: () => void; children: React.ReactNode }) {
+function ModalCard({ visible, onClose, dismissible = true, children }: { visible: boolean; onClose: () => void; dismissible?: boolean; children: React.ReactNode }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={f.cardOverlay}>
         {/* Full-screen backdrop catches taps to dismiss; the card sits above it as a
             plain View so the inner ScrollView keeps its scroll gesture (Android). */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        {dismissible && <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />}
         <View style={f.card}>
-          <Rise delay={0} distance={12} duration={320}>{children}</Rise>
+          <Rise delay={0} distance={12} duration={320} style={{ maxHeight: "100%" }}>{children}</Rise>
         </View>
       </View>
     </Modal>
@@ -172,6 +180,9 @@ export default function Register() {
     fullName: fullNameParam,
     designation: designationParam,
     phone: phoneParam,
+    dob: dobParam,
+    gender: genderParam,
+    language: languageParam,
     inviteToken,
   } = useLocalSearchParams<{
     role: string;
@@ -180,14 +191,23 @@ export default function Register() {
     fullName?: string;
     designation?: string;
     phone?: string;
+    dob?: string;
+    gender?: string;
+    language?: string;
     inviteToken?: string;
   }>();
   const variant = variantFor(role);
   const isPatient = variant === "patient";
   const isInvite = !!inviteToken;
+  const isSmoAdminRegistration = !isInvite && role === "smo";
+  const isOrganizationAdminRegistration = !isInvite && ["sponsor", "cro", "smo", "site"].includes(String(role));
+  const activeRegistrationInstructions = isSmoAdminRegistration
+    ? smoRegistrationInstructions
+    : organizationRegistrationInstructions;
   const inviteEmailLocked = isInvite && !!emailParam;
   const orgNoun = variant === "site" ? "site" : variant === "smo" ? "SMO" : "organization";
   const entityLabel = labelMap[role as string] || "Sponsor";
+  const needsSmoHospitals = variant === "smo" && !isInvite;
 
   const [fld, setFld] = useState<Record<string, string>>(() => {
     const base = initFields(variant);
@@ -196,23 +216,40 @@ export default function Register() {
     if (emailParam) base.email = String(emailParam);
     if (fullNameParam) base.fullName = String(fullNameParam);
     if (designationParam) base.designation = String(designationParam);
-    if (phoneParam) base.phone = String(phoneParam);
+    // An invited phone arrives as stored E.164 — show it under its own flag.
+    if (phoneParam) base.phone = splitE164(String(phoneParam)).national;
+    if (dobParam) base.dob = String(dobParam);
+    if (genderParam) base.gender = String(genderParam);
+    if (languageParam) base.language = String(languageParam);
     return base;
   });
+  // Dialling country for the phone field, kept beside `fld` because `initFields`
+  // blanks every shape key and this one needs a real default.
+  const [phoneCountry, setPhoneCountry] = useState(
+    () => (phoneParam ? splitE164(String(phoneParam)).country.code : DEFAULT_COUNTRY_CODE),
+  );
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [availabilityErrors, setAvailabilityErrors] = useState<RegistrationErrors>({});
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [smoHospitals, setSmoHospitals] = useState<SmoHospital[]>([
+    { name: "", address: "", type: "", role: "" },
+  ]);
   const up = (k: string) => (v: string) => {
     setFld((s) => ({ ...s, [k]: v }));
     setTouched((current) => ({ ...current, [k]: true }));
   };
+  // Switching country revalidates the typed number, so treat it as a phone edit.
+  const onPhoneCountryChange = (code: string) => {
+    setPhoneCountry(code);
+    setTouched((current) => ({ ...current, phone: true }));
+  };
 
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
-  const [showInstructions, setShowInstructions] = useState(() => !isPatient && !isInvite);
-  const [showDeclaration, setShowDeclaration] = useState(false);
-  const [showTerms, setShowTerms] = useState(false);
-  const [termsScrolled, setTermsScrolled] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(() => isOrganizationAdminRegistration);
+  const [showDeclaration, setShowDeclaration] = useState(() => !isOrganizationAdminRegistration);
   const [orgCheck, setOrgCheck] = useState<"exists" | null>(null);
+  const [orgContactError, setOrgContactError] = useState("");
   // True while Continue performs the authoritative org/contact lookup.
   const [checkingOrg, setCheckingOrg] = useState(false);
   const [err, setErr] = useState("");
@@ -251,21 +288,8 @@ export default function Register() {
   }, [fld.orgName, role, isInvite, isPatient]);
 
   // ── Terms & Conditions content (fetched when the modal opens) ─────────────
-  const [termsBlocks, setTermsBlocks] = useState<{ heading: string; body: string }[] | null>(null);
-  const [termsLoading, setTermsLoading] = useState(false);
-  const [termsError, setTermsError] = useState("");
-  useEffect(() => {
-    if (!showTerms || termsBlocks || termsLoading) return;
-    setTermsLoading(true);
-    setTermsError("");
-    api.get("/legal/terms")
-      .then((res) => setTermsBlocks(Array.isArray(res.data?.blocks) ? res.data.blocks : []))
-      .catch(() => setTermsError("Unable to load the latest terms right now. Please check your connection and try again."))
-      .finally(() => setTermsLoading(false));
-  }, [showTerms, termsBlocks, termsLoading]);
-
   const validation = useMemo(() => {
-    const result = validateRegistration(variant, fld);
+    const result = validateRegistration(variant, { ...fld, phoneCountry });
     if (!isInvite) return result;
     const errors = { ...result.errors };
     delete errors.orgName;
@@ -273,25 +297,68 @@ export default function Register() {
     delete errors.hospitalType;
     delete errors.role;
     return { ...result, errors, valid: Object.keys(errors).length === 0 };
-  }, [fld, isInvite, variant]);
-  const canContinue = agreedToTerms && declarationAccepted && validation.valid;
+  }, [fld, isInvite, phoneCountry, variant]);
+
+  // Check valid contact values while the user is still on this screen. The
+  // backend repeats the check at submission to protect against race conditions.
+  useEffect(() => {
+    const email = validation.errors.email ? "" : validation.normalized.email;
+    const phone = validation.errors.phone ? "" : validation.normalized.phone;
+    if (!email && !phone) {
+      setAvailabilityErrors({});
+      setCheckingAvailability(false);
+      return;
+    }
+    let ignore = false;
+    setCheckingAvailability(true);
+    setAvailabilityErrors({});
+    const timer = setTimeout(async () => {
+      try {
+        const response = await api.post("/auth/register/check-availability", {
+          email: email || undefined,
+          phone: phone || undefined,
+        });
+        if (ignore) return;
+        const next: RegistrationErrors = {};
+        if (email && response.data?.email?.available === false) next.email = "Email ID is already registered.";
+        if (phone && response.data?.phone?.available === false) next.phone = "Phone number is already registered.";
+        setAvailabilityErrors(next);
+      } catch {
+        // The authoritative submission check remains the fallback if this
+        // convenience request is interrupted by a temporary network error.
+      } finally {
+        if (!ignore) setCheckingAvailability(false);
+      }
+    }, 450);
+    return () => { ignore = true; clearTimeout(timer); };
+  }, [validation.errors.email, validation.errors.phone, validation.normalized.email, validation.normalized.phone]);
+
+  const smoHospitalsValid = !needsSmoHospitals || (
+    smoHospitals.length > 0
+    && smoHospitals.every((hospital) => hospital.name.trim() && hospital.address.trim() && hospital.type && hospital.role)
+  );
+  const canContinue = declarationAccepted && validation.valid && smoHospitalsValid && !checkingAvailability && !availabilityErrors.email && !availabilityErrors.phone;
   const fieldError = (key: keyof RegistrationErrors) =>
-    submitted || touched[key] ? validation.errors[key] : undefined;
-  const matchedOrg = orgMatches.find((o) => o.name.trim().toLowerCase() === (fld.orgName || "").trim().toLowerCase()) || null;
+    availabilityErrors[key] || (submitted || touched[key] ? validation.errors[key] : undefined);
+  const normalizeOrgName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+  const matchedOrg = orgMatches.find((o) => normalizeOrgName(o.name) === normalizeOrgName(fld.orgName || "")) || null;
   const declarationText = isPatient
     ? "I confirm that the information I have provided is true, accurate and complete, and I agree to comply with the platform's Terms of Use and Privacy Policy."
     : "I confirm that I am authorized to register and represent this organization, that the information provided is accurate, and I agree to comply with the platform's Terms of Use and Privacy Policy.";
 
-  const onTermsScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
-    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 8) setTermsScrolled(true);
-  };
-
   const proceed = () => {
     const effectiveRole = role === "site"
-      ? fld.role === "PI" ? "pi" : "crc"
+      ? fld.role === "PI" ? "pi" : fld.role === "Administrative" ? "site" : "crc"
       : role || "patient";
-    const registrationPayload = { ...validation.normalized };
+    const registrationPayload: Record<string, any> = { ...validation.normalized };
+    if (needsSmoHospitals) {
+      registrationPayload.hospitals = smoHospitals.map((hospital) => ({
+        name: hospital.name.trim(),
+        address: hospital.address.trim(),
+        type: hospital.type,
+        role: hospital.role,
+      }));
+    }
     if (isInvite) {
       delete registrationPayload.orgAddress;
       delete registrationPayload.hospitalType;
@@ -314,33 +381,41 @@ export default function Register() {
   const handleContinue = async () => {
     setSubmitted(true);
     setErr("");
+    setOrgContactError("");
     if (!canContinue || checkingOrg) return;
     if (isPatient || isInvite) { proceed(); return; }
     setShowOrgSuggestions(false);
     const q = (fld.orgName || "").trim();
 
-    // Continue performs an authoritative directory lookup, then fetches the
-    // public admin contact only for the exact organization selected/entered.
+    // Continue performs an authoritative, cross-category duplicate check. The
+    // backend normalizes case and whitespace and returns only a designated
+    // organization's public administrator contact.
     setCheckingOrg(true);
     try {
-      const params: Record<string, string> = { search: q };
-      const type = orgTypeFor(role);
-      if (type) params.type = type;
-      const res = await api.get("/organizations", { params });
-      const list: Org[] = Array.isArray(res.data) ? res.data : [];
-      setOrgMatches(list);
+      const res = await api.get("/organizations/registration-check", { params: { name: q } });
       lastSearchedQuery.current = q;
       setOrgSearching(false);
-      let fresh = list.find((o) => o.name.trim().toLowerCase() === q.toLowerCase()) || null;
-      if (fresh) {
-        try {
-          const contactResponse = await api.get(`/organizations/${fresh.id}/platform-contact`);
-          fresh = { ...fresh, platform_contact: contactResponse.data?.platform_contact || undefined };
-          setOrgMatches(current => current.map(org => org.id === fresh?.id ? fresh : org));
-        } catch {
-          // The modal still identifies the organization and provides MTB support
-          // fallback copy when no public organization contact is available.
+      if (res.data?.exists && res.data?.organization) {
+        let platformContact = res.data.platform_contact || undefined;
+        // Older organizations may not have a designated admin yet. Use the
+        // configured MTB support contact so access requests still have a route.
+        if (!platformContact?.email) {
+          try {
+            const supportResponse = await api.get("/support/contact");
+            if (supportResponse.data?.email) {
+              platformContact = {
+                name: supportResponse.data.name || "MTB Platform Support",
+                designation: "Platform Administrator",
+                email: supportResponse.data.email,
+                phone: supportResponse.data.phone || "",
+              };
+            }
+          } catch {
+            // The popup remains closable if no public contact is configured.
+          }
         }
+        const fresh: Org = { ...res.data.organization, platform_contact: platformContact };
+        setOrgMatches(current => [fresh, ...current.filter(org => org.id !== fresh.id)]);
         setOrgCheck("exists");
       } else {
         proceed();
@@ -361,6 +436,29 @@ export default function Register() {
     setFld((s) => ({ ...s, orgName: o.name, orgAddress: o.address || s.orgAddress }));
     setTouched((current) => ({ ...current, orgName: true, orgAddress: true }));
     setShowOrgSuggestions(false);
+  };
+  const updateSmoHospital = (index: number, patch: Partial<SmoHospital>) => {
+    setSmoHospitals((current) => current.map((hospital, i) => i === index ? { ...hospital, ...patch } : hospital));
+  };
+  const addSmoHospital = () => {
+    setSmoHospitals((current) => [...current, { name: "", address: "", type: "", role: "" }]);
+  };
+  const removeSmoHospital = (index: number) => {
+    setSmoHospitals((current) => current.filter((_, i) => i !== index));
+  };
+
+  const contactPlatformAdmin = async () => {
+    const email = matchedOrg?.platform_contact?.email?.trim();
+    if (!email) return;
+    const subject = encodeURIComponent(`Access request for ${matchedOrg?.name || "registered organization"}`);
+    const body = encodeURIComponent(
+      `Hello,\n\nI need assistance or access to the existing ${matchedOrg?.name || "organization"} account on MTB.\n\nThank you.`,
+    );
+    try {
+      await Linking.openURL(`mailto:${email}?subject=${subject}&body=${body}`);
+    } catch {
+      setOrgContactError(`Unable to open your email application. Please email ${email} directly.`);
+    }
   };
 
   return (
@@ -386,7 +484,15 @@ export default function Register() {
 
             {isPatient ? (
               <>
-                <Field label="Phone Number" required error={fieldError("phone")}><PhoneInput value={fld.phone} onChangeText={up("phone")} error={!!fieldError("phone")} /></Field>
+                <Field label="Phone Number" required error={fieldError("phone")}>
+                  <PhoneField
+                    value={fld.phone}
+                    onChangeText={up("phone")}
+                    countryCode={phoneCountry}
+                    onChangeCountry={onPhoneCountryChange}
+                    error={!!fieldError("phone")}
+                  />
+                </Field>
                 <Field label="Email ID" required error={fieldError("email")}>
                   <Input
                     value={fld.email}
@@ -404,7 +510,7 @@ export default function Register() {
                     <Field label="Date of Birth" required error={fieldError("dob")}><Input value={fld.dob} onChangeText={up("dob")} keyboardType="numbers-and-punctuation" placeholder="YYYY-MM-DD" style={fieldError("dob") && f.inputError} /></Field>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Field label="Age">
+                    <Field label="Age (auto-calculated)">
                       <View style={[f.input, { justifyContent: "center", backgroundColor: colors.surface }]}>
                         <Text style={{ color: colors.mutedFg, fontFamily: fonts.medium, fontSize: 15 }}>{validation.age === null ? "—" : `${validation.age} yrs`}</Text>
                       </View>
@@ -431,7 +537,15 @@ export default function Register() {
                   />
                   {inviteEmailLocked && <Small color={colors.mutedFg} style={f.lockedHint}>Fixed by your invitation.</Small>}
                 </Field>
-                <Field label="Phone Number" required error={fieldError("phone")}><PhoneInput value={fld.phone} onChangeText={up("phone")} error={!!fieldError("phone")} /></Field>
+                <Field label="Phone Number" required error={fieldError("phone")}>
+                  <PhoneField
+                    value={fld.phone}
+                    onChangeText={up("phone")}
+                    countryCode={phoneCountry}
+                    onChangeCountry={onPhoneCountryChange}
+                    error={!!fieldError("phone")}
+                  />
+                </Field>
 
                 <SectionRow title="Organization" />
                 <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required error={fieldError("orgName")}>
@@ -471,10 +585,44 @@ export default function Register() {
                       <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
                     </Field>
 
+                    {variant === "smo" && (
+                      <View style={f.hospitalsSection}>
+                        <SectionRow title="Hospitals" />
+                        <Small style={f.hospitalsHelp}>Add the hospital / site locations managed by this SMO.</Small>
+                        {smoHospitals.map((hospital, index) => (
+                          <View key={index} style={f.hospitalCard}>
+                            <View style={f.hospitalCardHead}>
+                              <Eyebrow color={colors.mutedFg}>Hospital {String(index + 1).padStart(2, "0")}</Eyebrow>
+                              {smoHospitals.length > 1 && (
+                                <Pressable onPress={() => removeSmoHospital(index)} hitSlop={8}>
+                                  <Small color={colors.destructive} style={{ fontFamily: fonts.semibold }}>Remove</Small>
+                                </Pressable>
+                              )}
+                            </View>
+                            <Field label="Hospital / Site Name" required error={submitted && !hospital.name.trim() ? "Hospital / site name is required." : undefined}>
+                              <Input value={hospital.name} onChangeText={(name) => updateSmoHospital(index, { name })} placeholder="Enter hospital or site name" />
+                            </Field>
+                            <Field label="Hospital / Site Location" required error={submitted && !hospital.address.trim() ? "Hospital / site location is required." : undefined}>
+                              <Input value={hospital.address} onChangeText={(address) => updateSmoHospital(index, { address })} placeholder="Area, City" />
+                            </Field>
+                            <Field label="Type of Hospital" required error={submitted && !hospital.type ? "Hospital type is required." : undefined}>
+                              <Select value={hospital.type} placeholder="Type of Hospital" options={["Private", "Government"]} onChange={(type) => updateSmoHospital(index, { type })} />
+                            </Field>
+                            <Field label="Role" required error={submitted && !hospital.role ? "Role is required." : undefined}>
+                              <Select value={hospital.role} placeholder="Role" options={["PI", "CRC", "Administrative"]} onChange={(hospitalRole) => updateSmoHospital(index, { role: hospitalRole })} />
+                            </Field>
+                          </View>
+                        ))}
+                        <Pressable onPress={addSmoHospital} style={f.addHospitalButton}>
+                          <Text style={f.addHospitalText}>+ Add another hospital</Text>
+                        </Pressable>
+                      </View>
+                    )}
+
                     {variant === "site" && (
                       <>
                         <Field label="Hospital Type" required error={fieldError("hospitalType")}><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
-                        <Field label="Role" required error={fieldError("role")}><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team"]} onChange={up("role")} /></Field>
+                        <Field label="Role" required error={fieldError("role")}><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team", "Administrative"]} onChange={up("role")} /></Field>
                         {fld.role === "PI" && <Field label="Department"><Select value={fld.department} placeholder="Select department" options={departmentOptions} onChange={up("department")} /></Field>}
                       </>
                     )}
@@ -483,26 +631,6 @@ export default function Register() {
                 )}
               </>
             )}
-
-            {/* Declaration checkbox */}
-            <Pressable onPress={() => (declarationAccepted ? setDeclarationAccepted(false) : setShowDeclaration(true))} style={f.checkRow}>
-              <View style={[f.checkbox, declarationAccepted && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-                {declarationAccepted && <Check size={12} color={colors.primaryFg} strokeWidth={3} />}
-              </View>
-              <Body color={colors.mutedFg} style={{ flex: 1, fontSize: 14, lineHeight: 20 }}>
-                I have read and accept the <Text style={{ color: colors.primary, fontFamily: fonts.semibold, textDecorationLine: "underline" }}>Declaration</Text>
-              </Body>
-            </Pressable>
-
-            {/* Terms checkbox */}
-            <Pressable onPress={() => (agreedToTerms ? (setAgreedToTerms(false), setTermsScrolled(false)) : setShowTerms(true))} style={f.checkRow}>
-              <View style={[f.checkbox, agreedToTerms && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-                {agreedToTerms && <Check size={12} color={colors.primaryFg} strokeWidth={3} />}
-              </View>
-              <Body color={colors.mutedFg} style={{ flex: 1, fontSize: 14, lineHeight: 20 }}>
-                I have read and agree to the <Text style={{ color: colors.primary, fontFamily: fonts.semibold, textDecorationLine: "underline" }}>Terms & Conditions</Text> and <Text style={{ color: colors.primary, fontFamily: fonts.semibold, textDecorationLine: "underline" }}>Privacy Policy</Text>
-              </Body>
-            </Pressable>
 
             {err ? <Small color={colors.destructive} style={{ marginTop: 8 }}>{err}</Small> : null}
           </Rise>
@@ -521,30 +649,46 @@ export default function Register() {
       </KeyboardAvoidingView>
 
       {/* Responsibilities — shown on entry for organizations */}
-      <ModalCard visible={showInstructions} onClose={() => setShowInstructions(false)}>
+      <ModalCard visible={showInstructions} dismissible={false} onClose={() => router.back()}>
         <ModalHead
           icon={<ClipboardCheck size={24} color={colors.primary} />}
           eyebrow="Before you register"
-          title="Your responsibilities"
-          subtitle="Please read the points below. You are registering on behalf of your organization."
+          title="Before You Register an Organization"
+          subtitle={isSmoAdminRegistration
+            ? "Please read the following before proceeding:"
+            : "Please proceed only if you are authorized or permitted to register this organization."}
         />
-        <View style={{ paddingHorizontal: spacing.lg }}>
-          {registrationInstructions.map((text, i) => (
+        <ScrollView
+          style={f.organizationNoticeScroll}
+          contentContainerStyle={f.organizationNoticeContent}
+          showsVerticalScrollIndicator
+          persistentScrollbar
+          nestedScrollEnabled
+        >
+          {!isSmoAdminRegistration && (
+            <Small color={colors.foreground} style={{ fontFamily: fonts.semibold, lineHeight: 20, marginBottom: spacing.md }}>
+              By continuing, you understand that:
+            </Small>
+          )}
+          {activeRegistrationInstructions.map((text, i) => (
             <View key={i} style={{ flexDirection: "row", gap: 12, marginBottom: 12 }}>
               <View style={f.numBadge}><Text style={{ fontFamily: fonts.heading, fontSize: 13, color: colors.primary }}>{i + 1}</Text></View>
               <Small style={{ flex: 1, lineHeight: 20 }}>{text}</Small>
             </View>
           ))}
-        </View>
-        <View style={{ padding: spacing.lg }}>
-          <Pressable onPress={() => setShowInstructions(false)} style={[f.cta, { backgroundColor: colors.primary }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg }}>Accept & Continue</Text>
+          <View style={f.quote}>
+            <Small color={colors.foreground} style={{ lineHeight: 21 }}>{declarationText}</Small>
+          </View>
+        </ScrollView>
+        <View style={f.organizationNoticeFooter}>
+          <Pressable onPress={() => { setDeclarationAccepted(true); setShowInstructions(false); }} style={[f.cta, { backgroundColor: colors.primary }]}>
+            <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg }}>I agree & continue</Text>
           </Pressable>
         </View>
       </ModalCard>
 
       {/* Declaration */}
-      <ModalCard visible={showDeclaration} onClose={() => setShowDeclaration(false)}>
+      <ModalCard visible={showDeclaration} dismissible={false} onClose={() => router.back()}>
         <ModalHead icon={<ShieldCheck size={24} color={colors.primary} />} eyebrow="Please confirm" title="Declaration" subtitle="Read and confirm the statement below to continue." />
         <View style={{ paddingHorizontal: spacing.lg }}>
           <View style={f.quote}><Small color={colors.foreground} style={{ lineHeight: 21 }}>{declarationText}</Small></View>
@@ -556,75 +700,44 @@ export default function Register() {
         </View>
       </ModalCard>
 
-      {/* Terms & Conditions */}
-      <ModalCard visible={showTerms} onClose={() => setShowTerms(false)}>
-        <ModalHead icon={<FileText size={24} color={colors.primary} />} eyebrow="Before you continue" title="Terms & Conditions" subtitle="Please scroll through and read all the terms below before accepting." />
-        <View style={{ paddingHorizontal: spacing.lg, marginBottom: 8 }}>
-          <View style={[f.banner, termsScrolled ? { backgroundColor: colors.success + "1A" } : { backgroundColor: colors.accent + "14" }]}>
-            <Small color={termsScrolled ? colors.success : colors.accent} style={{ fontFamily: fonts.semibold, textAlign: "center" }}>
-              {termsScrolled ? "✓ You have read all terms — you may now accept" : "↓ Scroll through all the terms to enable Accept"}
-            </Small>
-          </View>
-        </View>
-        <ScrollView style={{ maxHeight: 280 }} onScroll={onTermsScroll} scrollEventThrottle={16} onContentSizeChange={(_w, h) => { if (!termsLoading && h <= 280) setTermsScrolled(true); }} nestedScrollEnabled showsVerticalScrollIndicator persistentScrollbar keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: spacing.lg, gap: spacing.md, paddingBottom: 8 }}>
-          {termsLoading ? (
-            <View style={{ alignItems: "center", paddingVertical: spacing.lg, gap: 8 }}>
-              <ActivityIndicator color={colors.primary} />
-              <Small>Loading the latest terms…</Small>
-            </View>
-          ) : termsError ? (
-            <Small color={colors.destructive} style={{ lineHeight: 20 }}>{termsError}</Small>
-          ) : (
-            (termsBlocks || []).map((blk, i) => (
-              <View key={i} style={{ gap: 4 }}>
-                <Text style={{ fontFamily: fonts.heading, fontSize: 15, color: colors.foreground }}>{blk.heading}</Text>
-                <Small style={{ lineHeight: 20 }}>{blk.body}</Small>
-              </View>
-            ))
-          )}
-        </ScrollView>
-        <View style={{ padding: spacing.lg }}>
-          <Pressable disabled={!termsScrolled} onPress={() => { setAgreedToTerms(true); setShowTerms(false); }} style={[f.cta, termsScrolled ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: termsScrolled ? colors.primaryFg : colors.mutedFg }}>{termsScrolled ? "Accept & Continue" : "Scroll to read all terms"}</Text>
-          </Pressable>
-        </View>
-      </ModalCard>
-
       {/* Org-existence prompt */}
       <ModalCard visible={orgCheck !== null} onClose={() => setOrgCheck(null)}>
         {orgCheck === "exists" && matchedOrg ? (
           <>
-            <ModalHead icon={<Building2 size={24} color={colors.primary} />} eyebrow="Already registered" title={`This ${orgNoun} is already on MTB`} subtitle={`${matchedOrg.name} is already registered. Contact the platform admin below to request an invitation.`} />
+            <ModalHead
+              icon={<Building2 size={24} color={colors.primary} />}
+              eyebrow="Organization found"
+              title="Organization Already Registered"
+              subtitle={`${matchedOrg.name} is already registered on the platform.`}
+            />
             <View style={{ paddingHorizontal: spacing.lg }}>
               <View style={f.adminCard}>
-                <Eyebrow color={colors.mutedFg} style={{ marginBottom: 10 }}>Platform Contact Admin</Eyebrow>
-                {matchedOrg.platform_contact ? (
-                  <>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                      <View style={f.adminAvatar}><Text style={{ fontFamily: fonts.bold, color: colors.primary, fontSize: 14 }}>{adminInitials(matchedOrg.platform_contact.name)}</Text></View>
-                      <View style={{ flex: 1 }}>
-                        <Body weight="700" style={{ fontSize: 14 }}>{matchedOrg.platform_contact.name}</Body>
-                        <Small>{matchedOrg.platform_contact.designation || "Organization Admin"}</Small>
-                      </View>
-                    </View>
-                    {(matchedOrg.platform_contact.email || matchedOrg.platform_contact.phone) && (
-                      <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 }}>
-                        {matchedOrg.platform_contact.email ? <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><Mail size={15} color={colors.mutedFg} /><Small>{matchedOrg.platform_contact.email}</Small></View> : null}
-                        {matchedOrg.platform_contact.phone ? <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}><Phone size={15} color={colors.mutedFg} /><Small>{matchedOrg.platform_contact.phone}</Small></View> : null}
-                      </View>
-                    )}
-                  </>
-                ) : (
-                  <Small style={{ lineHeight: 20 }}>Admin contact details are not available yet. Please contact MTB support for help joining this organization.</Small>
-                )}
-                <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
-                  <Small color={colors.mutedFg}>{matchedOrg.name} · {orgTypeLabels[matchedOrg.type] || matchedOrg.type}</Small>
+                <Small color={colors.foreground} style={{ lineHeight: 20 }}>
+                  Please contact the Platform Administrator for assistance or to request access to the existing organization account.
+                </Small>
+                <View style={f.platformAdminEmailRow}>
+                  <Mail size={16} color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Eyebrow color={colors.mutedFg}>Platform Admin Email</Eyebrow>
+                    <Body weight="700" style={{ fontSize: 14, marginTop: 2 }}>
+                      {matchedOrg.platform_contact?.email || "Not available"}
+                    </Body>
+                  </View>
                 </View>
               </View>
+              {!!orgContactError && <Small color={colors.destructive} style={{ lineHeight: 18, marginTop: spacing.sm }}>{orgContactError}</Small>}
             </View>
-            <View style={{ padding: spacing.lg, gap: 8 }}>
-              <Pressable onPress={() => setOrgCheck(null)} style={[f.cta, { backgroundColor: colors.primary }]}><Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg }}>Okay, got it</Text></Pressable>
-              <Pressable onPress={() => setOrgCheck(null)} style={f.ghostBtn}><Text style={{ fontFamily: fonts.semibold, fontSize: 14, color: colors.mutedFg }}>Use a different name</Text></Pressable>
+            <View style={f.orgExistsActions}>
+              <Pressable onPress={() => { setOrgCheck(null); setOrgContactError(""); }} style={[f.cta, f.orgExistsClose]}>
+                <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.foreground }}>Close</Text>
+              </Pressable>
+              <Pressable
+                disabled={!matchedOrg.platform_contact?.email}
+                onPress={() => void contactPlatformAdmin()}
+                style={[f.cta, f.orgExistsContact, !matchedOrg.platform_contact?.email && { opacity: 0.45 }]}
+              >
+                <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg, textAlign: "center" }}>Contact Platform Admin</Text>
+              </Pressable>
             </View>
           </>
         ) : null}
@@ -644,10 +757,15 @@ const f = StyleSheet.create({
   lockedHint: { marginTop: 5, fontSize: 12 },
   inputError: { borderColor: colors.destructive, backgroundColor: colors.destructive + "08" },
   fieldError: { marginTop: 5, lineHeight: 17 },
-  prefix: { paddingHorizontal: 14, justifyContent: "center", borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   suggestBox: { marginTop: 6, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, overflow: "hidden" },
   suggestRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   suggestIcon: { width: 30, height: 30, borderRadius: 8, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
+  hospitalsSection: { marginTop: spacing.sm, marginBottom: spacing.md },
+  hospitalsHelp: { marginTop: -8, marginBottom: spacing.md, lineHeight: 18 },
+  hospitalCard: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, backgroundColor: colors.card, padding: spacing.md, marginBottom: 12 },
+  hospitalCardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md },
+  addHospitalButton: { minHeight: 46, borderWidth: 1, borderStyle: "dashed", borderColor: colors.primary + "70", borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary + "08" },
+  addHospitalText: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 13 },
   checkRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginTop: spacing.sm },
   checkbox: { width: 20, height: 20, borderRadius: 6, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, alignItems: "center", justifyContent: "center", marginTop: 2 },
   footer: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
@@ -659,12 +777,18 @@ const f = StyleSheet.create({
   selectOptions: { maxHeight: 420 },
   selectItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, paddingVertical: 14, borderRadius: radii.md },
   // Centered modal card
-  cardOverlay: { flex: 1, backgroundColor: colors.primaryDeep + "80", alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.lg },
-  card: { backgroundColor: colors.background, width: "100%", maxWidth: 400, borderRadius: 28, overflow: "hidden", ...({ shadowColor: "#2E1B33", shadowOpacity: 0.2, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }) },
+  cardOverlay: { flex: 1, backgroundColor: colors.primaryDeep + "80", alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md, paddingVertical: spacing.md },
+  card: { backgroundColor: colors.background, width: "100%", maxWidth: 440, maxHeight: "96%", borderRadius: 28, overflow: "hidden", ...({ shadowColor: "#2E1B33", shadowOpacity: 0.2, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 }) },
   iconBadge: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   numBadge: { width: 24, height: 24, borderRadius: 999, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
   quote: { borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: spacing.md },
+  organizationNoticeScroll: { flexShrink: 1 },
+  organizationNoticeContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  organizationNoticeFooter: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.background },
   banner: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radii.md },
   adminCard: { borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 14 },
-  adminAvatar: { width: 40, height: 40, borderRadius: 999, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
+  platformAdminEmailRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border },
+  orgExistsActions: { flexDirection: "row", gap: 10, padding: spacing.lg },
+  orgExistsClose: { flex: 0.75, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  orgExistsContact: { flex: 1.5, paddingHorizontal: spacing.sm, backgroundColor: colors.primary },
 });

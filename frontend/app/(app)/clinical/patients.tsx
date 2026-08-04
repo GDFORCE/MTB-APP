@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, ScrollView, TextInput, Pressable, StyleSheet, StatusBar, Text, ActivityIndicator, Animated, Easing } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Search, Bell, UserPlus, Send, Menu } from "lucide-react-native";
+import { Search, Bell, UserPlus, Menu } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 import { useAuth } from "@/src/auth/AuthContext";
@@ -123,7 +123,7 @@ export default function PatientList() {
       useNativeDriver: true,
     }).start();
   };
-  const openQuickAction = (path: "/(app)/clinical/add-patient" | "/(app)/clinical/invite-patient") => {
+  const openQuickAction = (path: "/(app)/clinical/add-patient") => {
     setQuickMenuOpen(false);
     quickMenuProgress.setValue(0);
     router.push(path);
@@ -265,15 +265,6 @@ export default function PatientList() {
             },
           ]}
         >
-          <Pressable
-            testID="patients-send-invite"
-            accessibilityRole="button"
-            onPress={() => openQuickAction("/(app)/clinical/invite-patient")}
-            style={({ pressed }) => [s.quickAction, pressed && s.quickActionPressed]}
-          >
-            <View style={s.quickActionIcon}><Send size={16} color={C.primary} /></View>
-            <Text style={s.quickActionText}>Send Invite</Text>
-          </Pressable>
           <Pressable
             testID="patients-add"
             accessibilityRole="button"
