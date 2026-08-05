@@ -318,7 +318,14 @@ class VisitIn(BaseModel):
     visit_number: int
     name: str
     day_offset: int
-    window_days: int = 3
+    window_days: int = Field(default=3, ge=0)
+    # Keep protocol timing semantics instead of flattening every visit to a
+    # symmetric, whole-day baseline offset.
+    hour_offset: float = 0
+    window_before: Optional[int] = Field(default=None, ge=0)
+    window_after: Optional[int] = Field(default=None, ge=0)
+    arm_label: Optional[str] = ''
+    source_day_label: Optional[str] = ''
     activities: List[str] = []
     procedures: List[Dict] = Field(default_factory=list)
     visit_type: Optional[str] = ''
@@ -340,7 +347,12 @@ class VisitUpdate(BaseModel):
     name: Optional[str] = None
     visit_number: Optional[int] = None
     day_offset: Optional[int] = None
-    window_days: Optional[int] = None
+    window_days: Optional[int] = Field(default=None, ge=0)
+    hour_offset: Optional[float] = None
+    window_before: Optional[int] = Field(default=None, ge=0)
+    window_after: Optional[int] = Field(default=None, ge=0)
+    arm_label: Optional[str] = None
+    source_day_label: Optional[str] = None
     activities: Optional[List[str]] = None
     procedures: Optional[List[Dict]] = None
     visit_type: Optional[str] = None
@@ -366,6 +378,10 @@ class PatientIn(BaseModel):
     gender: Optional[str] = None
     language: Optional[str] = None
     baseline_date: Optional[str] = None   # anchors visit-instance scheduling
+
+class SchedulePreviewIn(BaseModel):
+    baseline_date: str
+    arm_label: Optional[str] = ''
 
 class MessageIn(BaseModel):
     conversation_id: str
@@ -1567,6 +1583,8 @@ async def extract_protocol_details(file: UploadFile = File(...),
     except pe.ExtractionNotConfigured:
         raise HTTPException(
             503, 'Protocol extraction is not configured on the server')
+    except pe.ExtractionUnavailable as exc:
+        raise HTTPException(503, f'Protocol extraction is temporarily unavailable: {exc}')
     except pe.ExtractionError as exc:
         raise HTTPException(502, f'Could not extract protocol details: {exc}')
     details = extracted.dict()
@@ -2892,6 +2910,35 @@ async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro
     return serialize(doc)
 
 
+@api.post('/trials/{trial_id}/schedule-preview')
+async def preview_trial_schedule(trial_id: str, body: SchedulePreviewIn,
+                                 user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc', 'smo', 'site'))):
+    """Calculate the selected trial's real protocol schedule before enrollment.
+
+    This is intentionally read-only: staff must review the same template-based
+    dates that will be copied to the patient only after invitation acceptance.
+    """
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
+    try:
+        baseline = datetime.fromisoformat(body.baseline_date)
+    except ValueError:
+        raise HTTPException(400, 'baseline_date must be an ISO 8601 date or datetime')
+    if baseline.tzinfo is None:
+        baseline = baseline.replace(tzinfo=timezone.utc)
+    templates = await db.visits.find({'trial_id': trial_id}, {'_id': 0}) \
+                               .sort('visit_number', 1).to_list(500)
+    if not templates:
+        raise HTTPException(409, 'This trial has no published visit schedule yet')
+    preview = _build_schedule_preview(templates, baseline, body.arm_label)
+    if not preview:
+        raise HTTPException(409, 'No visit templates match the selected trial arm')
+    return {'baseline_date': iso(baseline), 'arm_label': body.arm_label or '', 'visits': preview}
+
+
 async def _require_schedule_owner(user: dict, trial: dict):
     """Trial-ownership gate shared by the schedule CRUD endpoints. sponsor/cro
     own via their org (_trial_in_caller_org); pi owns via _pi_owns_trial. Raises
@@ -3119,7 +3166,8 @@ async def my_visits(user=Depends(current_user)):
             'patient_id': patient['id'],
             'scheduled_date': scheduled.isoformat(),
             'checklist': v.get('checklist') or [],
-            'status': 'completed' if v['id'] in completed else ('upcoming' if scheduled >= now().replace(tzinfo=None) else 'missed'),
+            'status': 'completed' if v['id'] in completed else 'planned',
+            'operational_status': 'completed' if v['id'] in completed else 'planned',
         })
     return result
 
@@ -3181,6 +3229,61 @@ def _patient_visit_anchor(patient) -> datetime:
     return base
 
 
+def _schedule_window(template: dict, scheduled: datetime) -> tuple[datetime, datetime]:
+    """Return a protocol visit window, preserving asymmetric windows when set."""
+    symmetric = int(template.get('window_days', 3) or 0)
+    before = template.get('window_before')
+    after = template.get('window_after')
+    before_days = symmetric if before is None else int(before)
+    after_days = symmetric if after is None else int(after)
+    if before_days < 0 or after_days < 0:
+        raise ValueError('Visit windows cannot be negative')
+    return scheduled - timedelta(days=before_days), scheduled + timedelta(days=after_days)
+
+
+def _calculate_template_datetime(anchor: datetime, template: dict) -> datetime:
+    """Day 1 is offset 0; Day -1 is exactly one day before baseline."""
+    offset = template.get('day_offset')
+    if offset is None:
+        raise ValueError('Visit has no calculable day offset')
+    hours = float(template.get('hour_offset', 0) or 0)
+    return anchor + timedelta(days=int(offset), hours=hours)
+
+
+def _template_matches_arm(template: dict, arm_label: Optional[str]) -> bool:
+    template_arm = str(template.get('arm_label') or template.get('arm') or '').strip().lower()
+    selected_arm = str(arm_label or '').strip().lower()
+    return not template_arm or template_arm == selected_arm
+
+
+def _build_schedule_preview(templates: List[dict], baseline: datetime, arm_label: Optional[str] = '') -> List[dict]:
+    """Deterministically calculate a reviewable schedule without writing data."""
+    rows = []
+    for template in templates:
+        if not _template_matches_arm(template, arm_label):
+            continue
+        try:
+            scheduled = _calculate_template_datetime(baseline, template)
+            window_start, window_end = _schedule_window(template, scheduled)
+            status = 'planned'
+            warning = ''
+        except (TypeError, ValueError) as exc:
+            scheduled = window_start = window_end = None
+            status = 'manual_review'
+            warning = str(exc)
+        rows.append({
+            'visit_template_id': template.get('id'),
+            'visit_number': template.get('visit_number'),
+            'name': template.get('name') or 'Visit',
+            'scheduled_date': iso(scheduled),
+            'window_start': iso(window_start),
+            'window_end': iso(window_end),
+            'status': status,
+            'manual_review_reason': warning,
+        })
+    return rows
+
+
 def _visit_task_snapshot(template: dict, kind: str, tasks: list) -> list:
     """Create deterministic task rows for a per-patient visit instance.
 
@@ -3214,8 +3317,8 @@ def _visit_task_snapshot(template: dict, kind: str, tasks: list) -> list:
 
 def _effective_visit_status(instance: dict) -> str:
     """Return the approved display status without overwriting explicit history."""
-    status = instance.get('status') or 'scheduled'
-    if status not in ('scheduled', 'upcoming'):
+    status = instance.get('operational_status') or instance.get('status') or 'planned'
+    if status not in ('scheduled', 'upcoming', 'planned'):
         return status
     due = instance.get('window_end') or instance.get('scheduled_date')
     if isinstance(due, str):
@@ -3228,7 +3331,18 @@ def _effective_visit_status(instance: dict) -> str:
             due = due.replace(tzinfo=timezone.utc)
         if due < now():
             return 'overdue'
-    return status
+    window_start = instance.get('window_start') or instance.get('scheduled_date')
+    if isinstance(window_start, str):
+        try:
+            window_start = datetime.fromisoformat(window_start.replace('Z', '+00:00'))
+        except ValueError:
+            window_start = None
+    if isinstance(window_start, datetime):
+        if window_start.tzinfo is None:
+            window_start = window_start.replace(tzinfo=timezone.utc)
+        if window_start <= now():
+            return 'due'
+    return 'planned'
 
 
 async def _ensure_visit_instance_workflow(instance: dict) -> dict:
@@ -3272,11 +3386,18 @@ async def materialize_visit_instances(patient) -> int:
     if not templates:
         return 0
     base = _patient_visit_anchor(patient)
-    n = now()
     completed = set(patient.get('completed_visit_ids') or [])
     docs = []
     for t in templates:
-        sched = base + timedelta(days=t.get('day_offset', 0))
+        try:
+            sched = _calculate_template_datetime(base, t)
+            window_start, window_end = _schedule_window(t, sched)
+            operational_status = 'planned'
+            manual_review_reason = ''
+        except (TypeError, ValueError) as exc:
+            sched = window_start = window_end = None
+            operational_status = 'manual_review'
+            manual_review_reason = str(exc)
         wd = t.get('window_days', 3)
         clinical_tasks = _visit_task_snapshot(t, 'clinical', t.get('clinical_tasks') or [])
         admin_tasks = _visit_task_snapshot(t, 'admin', t.get('admin_tasks') or [])
@@ -3295,10 +3416,12 @@ async def materialize_visit_instances(patient) -> int:
             'location': t.get('location', ''),
             'window_days': wd,
             'scheduled_date': sched,
-            'window_start': sched - timedelta(days=wd),
-            'window_end': sched + timedelta(days=wd),
-            'status': 'completed' if t['id'] in completed
-                      else ('upcoming' if sched >= n else 'missed'),
+            'window_start': window_start,
+            'window_end': window_end,
+            # Never infer completion or a missed visit just because time passed.
+            'status': 'completed' if t['id'] in completed else operational_status,
+            'operational_status': 'completed' if t['id'] in completed else operational_status,
+            'manual_review_reason': manual_review_reason,
             'note': '',
             # Immutable per-patient copies of the approved template tasks.
             # Completion metadata is subsequently updated only on this instance.
@@ -3306,8 +3429,8 @@ async def materialize_visit_instances(patient) -> int:
             'admin_tasks': admin_tasks,
             'comments': [],
             'updated_by': None,
-            'updated_at': n,
-            'created_at': n,
+            'updated_at': now(),
+            'created_at': now(),
         })
     await db.visit_instances.insert_many(docs)
     return len(docs)
@@ -3354,7 +3477,8 @@ async def _materialize_new_template_for_enrolled(template) -> int:
             'scheduled_date': sched,
             'window_start': sched - timedelta(days=wd),
             'window_end': sched + timedelta(days=wd),
-            'status': 'upcoming' if sched >= n else 'missed',
+            'status': 'planned',
+            'operational_status': 'planned',
             'note': '',
             'clinical_tasks': _visit_task_snapshot(
                 template, 'clinical', template.get('clinical_tasks') or []),
@@ -3430,7 +3554,8 @@ async def _rematerialize_template_change(template) -> int:
             'scheduled_date': sched,
             'window_start': sched - timedelta(days=wd),
             'window_end': sched + timedelta(days=wd),
-            'status': 'upcoming' if sched >= n else 'missed',
+            'status': 'planned',
+            'operational_status': 'planned',
             'updated_at': n,
         }})
         updated += 1
@@ -5286,12 +5411,16 @@ async def patch_visit(visit_id: str, body: VisitPatch,
 # ── Visit-instance mutations (per-patient — never touches the template) ─────
 class VisitInstancePatch(BaseModel):
     status: Optional[Literal[
-        'scheduled', 'upcoming', 'completed', 'missed', 'overdue',
-        'screen_pass', 'screen_fail', 'withdrawn', 'dropout',
+        'planned', 'due', 'completed', 'missed', 'cancelled', 'rescheduled',
+        'manual_review', 'scheduled', 'upcoming', 'overdue', 'screen_pass',
+        'screen_fail', 'withdrawn', 'dropout',
     ]] = None
     scheduled_date: Optional[str] = None
     visit_type: Optional[Literal['Hospital', 'Phone', 'Remote', 'Home']] = None
     note: Optional[str] = Field(default=None, max_length=2000)
+    actual_visit_at: Optional[str] = None
+    missed_reason: Optional[str] = Field(default=None, max_length=2000)
+    cancelled_reason: Optional[str] = Field(default=None, max_length=2000)
 
 class VisitInstanceTaskPatch(BaseModel):
     completed: bool
@@ -5311,14 +5440,26 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
     upd: Dict = {}
     if body.status is not None:
         upd['status'] = body.status
+        upd['operational_status'] = body.status
         if body.status == 'completed':
             upd['completed_by'] = user['id']
             upd['completed_by_name'] = user.get('full_name') or ''
             upd['completed_at'] = now()
+            upd['actual_visit_at'] = upd['completed_at']
         elif inst.get('status') == 'completed':
             upd['completed_by'] = None
             upd['completed_by_name'] = None
             upd['completed_at'] = None
+    if body.actual_visit_at is not None:
+        try:
+            actual = datetime.fromisoformat(body.actual_visit_at.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(400, 'actual_visit_at must be an ISO 8601 date/datetime')
+        upd['actual_visit_at'] = actual if actual.tzinfo else actual.replace(tzinfo=timezone.utc)
+    if body.missed_reason is not None:
+        upd['missed_reason'] = body.missed_reason.strip()
+    if body.cancelled_reason is not None:
+        upd['cancelled_reason'] = body.cancelled_reason.strip()
     if body.note is not None:
         upd['note'] = body.note
     if body.visit_type is not None:
@@ -5334,6 +5475,9 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
         upd['scheduled_date'] = sched
         upd['window_start'] = sched - timedelta(days=wd)
         upd['window_end'] = sched + timedelta(days=wd)
+        upd['rescheduled_from'] = inst.get('scheduled_date')
+        upd['status'] = 'planned'
+        upd['operational_status'] = 'planned'
     if not upd:
         raise HTTPException(400, 'Nothing to update')
     changed = sorted(upd)

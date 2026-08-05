@@ -35,11 +35,12 @@ draft — nothing is written to the trial without human confirmation.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 from typing import List, Optional, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +101,17 @@ class RepeatMember(BaseModel):
     conditional_activities: List[ConditionalActivity] = Field(
         default_factory=list,
         description="Assessments performed only in specific cycles.")
+
+    @field_validator("window_days", mode="before")
+    @classmethod
+    def default_unknown_window(cls, value):
+        """Free-form model JSON often spells an unstated window as null.
+
+        An unknown visit window has always meant the application default (+/-3
+        days). Treat explicit JSON null the same as an omitted field instead of
+        rejecting an otherwise valid extracted schedule.
+        """
+        return 3 if value is None else value
 
 
 class RepeatingBlock(BaseModel):
@@ -202,6 +214,12 @@ class ExtractedVisit(BaseModel):
         description="Assessments / procedures marked (X or a footnote symbol) in this "
         "visit's column, using the protocol's own procedure names, deduplicated and "
         "concise (e.g. 'Vitals', 'ECG', 'PK sampling', 'Randomization').")
+
+    @field_validator("window_days", mode="before")
+    @classmethod
+    def default_unknown_window(cls, value):
+        """Accept a model's explicit null as the documented +/-3 day default."""
+        return 3 if value is None else value
 
 
 class ExtractedSchedule(BaseModel):
@@ -568,9 +586,95 @@ class ClaudeProtocolExtractor:
             "cache_control": {"type": "ephemeral"},
         }
 
+    @staticmethod
+    def _json_text(response) -> str:
+        """Extract the JSON text from a normal Messages API response."""
+        text = ''.join(
+            getattr(block, 'text', '') for block in (getattr(response, 'content', None) or [])
+            if getattr(block, 'type', '') == 'text'
+        ).strip()
+        if text.startswith('```'):
+            text = text.split('\n', 1)[1] if '\n' in text else text
+            if text.rstrip().endswith('```'):
+                text = text.rstrip()[:-3].rstrip()
+        # Models occasionally add a one-line preface despite the instruction.
+        # Keep the outer JSON object rather than rejecting usable extraction.
+        first, last = text.find('{'), text.rfind('}')
+        if first >= 0 and last > first:
+            text = text[first:last + 1]
+        return text
+
+    async def _extract_without_grammar(self, client, pdf_bytes: bytes, repair: bool = False) -> ExtractedSchedule:
+        """Fallback for provider grammar-compilation timeouts.
+
+        The structured parser is preferred, but complex Pydantic schemas can
+        exceed Anthropic's grammar compiler limit for a full PDF. Asking for
+        JSON and validating it locally preserves the same strict application
+        schema without discarding a usable protocol extraction.
+        """
+        response = await client.messages.create(
+            model=self._model,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            thinking={'type': 'adaptive'},
+            system=_SYSTEM_PROMPT + (
+                '\n\nReturn ONLY a valid JSON object with these top-level keys: '
+                'schedule_kind, visits, repeating_blocks, assumptions, source_notes. '
+                'Each visit must include name, visit_type, day_offset, day_end, '
+                'hour_offset, hour_end, window_days, window_before, window_after, '
+                'relative_to, relative_offset_days, arm, period, activities. '
+                'Use null only for unknown nullable fields and [] for unknown lists. '
+                'window_days must always be a non-negative integer; use 3 when the '
+                'protocol does not state a visit window.'
+            ),
+            messages=[{
+                'role': 'user',
+                'content': [
+                    self._document_block(pdf_bytes),
+                    {'type': 'text', 'text': (
+                        'Extract this protocol schedule as the requested JSON. '
+                        'Return JSON only—no explanation, markdown, or code fences.'
+                        if not repair else
+                        'Return a corrected, strictly valid JSON schedule now. JSON only; no markdown or explanation.'
+                    )},
+                ],
+            }],
+        )
+        raw = self._json_text(response)
+        try:
+            payload = json.loads(raw)
+            # Normalise the few harmless shape variations a free-form JSON
+            # response can make before Pydantic applies the strict schema.
+            if isinstance(payload, dict):
+                if isinstance(payload.get('source_notes'), list):
+                    payload['source_notes'] = ' '.join(
+                        str(note).strip() for note in payload['source_notes'] if str(note).strip())
+                if isinstance(payload.get('assumptions'), str):
+                    payload['assumptions'] = [payload['assumptions']]
+            return ExtractedSchedule.model_validate(payload)
+        except (json.JSONDecodeError, ValueError) as exc:
+            if not repair:
+                log.warning('Anthropic schedule JSON failed validation; requesting one corrected response: %s', exc)
+                return await self._extract_without_grammar(client, pdf_bytes, repair=True)
+            raise ExtractionError('the AI response was not valid schedule JSON') from exc
+
     async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
         """Read a protocol and return its EXPANDED visit schedule."""
         anthropic, client = self._client()
+        # Structured-output grammar compilation can time out for the nested
+        # clinical schedule schema. Use Anthropic's normal Messages API and
+        # enforce the same schema locally with Pydantic.
+        try:
+            parsed = await self._extract_without_grammar(client, pdf_bytes)
+        except anthropic.APIError as e:
+            raise _classify_api_error(e) from e
+        expanded = expand_schedule(parsed)
+        log.info(
+            'protocol extraction (JSON): kind=%s raw_visits=%d -> expanded=%d assumptions=%d',
+            parsed.schedule_kind, len(parsed.visits), len(expanded.visits),
+            len(expanded.assumptions),
+        )
+        return expanded
+
         try:
             resp = await client.messages.parse(
                 model=self._model,
@@ -590,6 +694,9 @@ class ClaudeProtocolExtractor:
                 output_format=ExtractedSchedule,
             )
         except anthropic.APIError as e:
+            if 'grammar compilation timed out' in str(e).lower():
+                log.warning('Anthropic structured-output grammar timed out; using JSON fallback')
+                return expand_schedule(await self._extract_without_grammar(client, pdf_bytes))
             raise _classify_api_error(e) from e
 
         if resp.stop_reason == "refusal":

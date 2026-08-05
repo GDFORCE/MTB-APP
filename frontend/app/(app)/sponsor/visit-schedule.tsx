@@ -221,8 +221,10 @@ export default function VisitScheduleEditor() {
     setExtracting(true);
     try {
       const response = await api.post(`/trials/${id}/extract-schedule`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120000,
+        // Do not set Content-Type manually: React Native/Axios must add its
+        // multipart boundary. Protocol analysis can take longer than a normal
+        // API request, especially for a full multi-page PDF.
+        timeout: 300000,
       });
       const visits: ExtractedVisit[] = response.data?.visits ?? [];
       if (!visits.length) {
@@ -246,7 +248,10 @@ export default function VisitScheduleEditor() {
       setNotice("Draft extracted. Review every flagged row before saving.");
     } catch (error: any) {
       const status = error?.response?.status;
-      setExtractErr(error?.response?.data?.detail
+      const timedOut = error?.code === "ECONNABORTED" || /timeout/i.test(String(error?.message || ""));
+      setExtractErr(timedOut
+        ? "Protocol analysis is taking longer than expected. Try a smaller PDF containing the Schedule of Assessments pages."
+        : error?.response?.data?.detail
         || (status === 503
           ? "AI extraction isn't configured on the server yet."
           : "Couldn't extract the schedule. Try again, or build it manually."));

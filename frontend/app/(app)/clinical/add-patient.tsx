@@ -12,15 +12,9 @@ const C = {
   accent: "#E69B5C", info: "#7B6BB8", destructive: "#C0392B",
 };
 
-const OFFSETS = [0, 14, 21, 28, 35, 49, 63, 77, 91];
-
 type Trial = { id: string; title?: string; protocol_id?: string; condition?: string; phase?: string };
 type PiOption = { id: string; full_name?: string; email?: string; role?: string };
-
-function fmt(base: Date, off: number) {
-  const d = new Date(base); d.setDate(d.getDate() + off);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-}
+type ScheduleVisit = { visit_template_id?: string; visit_number?: number; name: string; scheduled_date?: string; status: string; manual_review_reason?: string };
 
 // Accepts "5 May 2025", "2025-05-05" or "05/05/2025" → Date (or null).
 function parseDate(s: string): Date | null {
@@ -79,6 +73,8 @@ export default function AddPatient() {
   const [piPermissionDenied, setPiPermissionDenied] = useState(false);
   const [baseline, setBaseline] = useState("5 May 2025");
   const [scheduleGenerated, setScheduleGenerated] = useState(false);
+  const [scheduleVisits, setScheduleVisits] = useState<ScheduleVisit[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,9 +138,7 @@ export default function AddPatient() {
 
   const selectedTrial = trials.find(t => t.id === trialId);
   const selectedPi = pis.find(pi => pi.id === piId);
-  const base = parseDate(baseline) || new Date();
-  const visits = OFFSETS.map((o, i) => ({ num: i + 1, date: fmt(base, o) }));
-  const visible = showAll ? visits : visits.slice(0, 5);
+  const visible = showAll ? scheduleVisits : scheduleVisits.slice(0, 5);
   const phoneDigits = phone.replace(/\D/g, "");
   const canSubmit = !!subjectId.trim()
     && !!fullName.trim()
@@ -152,6 +146,8 @@ export default function AddPatient() {
     && phoneDigits.length === 10
     && !!email.trim()
     && !!trialId
+    && scheduleGenerated
+    && scheduleVisits.length > 0
     && (!needsPiSelection || !!piId)
     && !subjectDuplicate
     && !emailDuplicate
@@ -177,7 +173,33 @@ export default function AddPatient() {
     }
   };
 
+  const generateSchedule = async () => {
+    const parsedBaseline = parseDate(baseline);
+    if (!parsedBaseline || !trialId) {
+      setError("Select a trial and enter a valid baseline date before generating the schedule.");
+      return;
+    }
+    setScheduleLoading(true);
+    setError(null);
+    setShowAll(false);
+    try {
+      const response = await api.post(`/trials/${trialId}/schedule-preview`, {
+        baseline_date: toISO(parsedBaseline),
+      });
+      setScheduleVisits(response.data?.visits || []);
+      setScheduleGenerated(true);
+    } catch (e: any) {
+      setScheduleVisits([]);
+      setScheduleGenerated(false);
+      setError(e?.response?.data?.detail || "We couldn't generate this trial's schedule. Please review the protocol visit templates.");
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
   const submit = async () => {
+    // The schedule preview is deliberately generated from the selected
+    // protocol's templates; the form never falls back to demo offsets.
     if (!canSubmit || !trialId) return;
     setError(null);
     setSaving(true);
@@ -328,7 +350,7 @@ export default function AddPatient() {
             {trialOpen && trials.length > 0 && (
               <View style={s.dropdown}>
                 {trials.map(t => (
-                  <Pressable key={t.id} testID={`trial-opt-${t.id}`} onPress={() => { setTrialId(t.id); setTrialOpen(false); }} style={s.dropdownRow}>
+                  <Pressable key={t.id} testID={`trial-opt-${t.id}`} onPress={() => { setTrialId(t.id); setTrialOpen(false); setScheduleGenerated(false); setScheduleVisits([]); }} style={s.dropdownRow}>
                     <Text style={{ color: C.fg, fontSize: 14 }}>{trialLabel(t)}</Text>
                   </Pressable>
                 ))}
@@ -426,6 +448,7 @@ export default function AddPatient() {
                 onChangeText={(value) => {
                   setBaseline(/^[0-9/]*$/.test(value) ? formatDateInput(value) : value);
                   setScheduleGenerated(false);
+                  setScheduleVisits([]);
                 }}
                 style={[s.input, { paddingRight: 48, borderWidth: 2, borderColor: C.primary }]}
               />
@@ -435,19 +458,12 @@ export default function AddPatient() {
 
           <Pressable
             testID="generate-schedule"
-            onPress={() => {
-              if (!parseDate(baseline)) {
-                setError("Enter a valid baseline date before generating the schedule.");
-                return;
-              }
-              setError(null);
-              setShowAll(false);
-              setScheduleGenerated(true);
-            }}
+            onPress={() => void generateSchedule()}
+            disabled={scheduleLoading}
             style={s.generateSchedule}
           >
             <Sparkles size={16} color={C.primary} />
-            <Text style={s.generateScheduleText}>Generate Schedule</Text>
+            <Text style={s.generateScheduleText}>{scheduleLoading ? "Generating…" : "Generate Schedule"}</Text>
           </Pressable>
 
           {/* Auto-calculated dates */}
@@ -457,15 +473,15 @@ export default function AddPatient() {
               <Text style={{ color: C.fg, fontWeight: "600", fontSize: 15 }}>Auto-calculated Dates</Text>
             </View>
             <View style={{ gap: 8 }}>
-              {visible.map(v => (
-                <View key={v.num} style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <Text style={{ color: C.muted, fontSize: 13 }}>Visit {v.num}</Text>
-                  <Text style={{ color: C.fg, fontWeight: "600", fontSize: 13 }}>{v.date}</Text>
+              {visible.map((v, index) => (
+                <View key={v.visit_template_id || `${v.name}-${index}`} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+                  <Text style={{ color: C.muted, fontSize: 13, flex: 1 }} numberOfLines={1}>{v.name || `Visit ${v.visit_number || index + 1}`}</Text>
+                  <Text style={{ color: v.status === "manual_review" ? C.destructive : C.fg, fontWeight: "600", fontSize: 13 }}>{v.scheduled_date ? new Date(v.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "Needs review"}</Text>
                 </View>
               ))}
             </View>
             <Pressable testID="toggle-all-visits" onPress={() => setShowAll(a => !a)} style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 4 }}>
-              <Text style={{ color: C.accent, fontWeight: "600", fontSize: 13 }}>{showAll ? "Show Less" : `View All ${visits.length} Visits`}</Text>
+              <Text style={{ color: C.accent, fontWeight: "600", fontSize: 13 }}>{showAll ? "Show Less" : `View All ${scheduleVisits.length} Visits`}</Text>
               <ChevronRight size={16} color={C.accent} style={{ transform: [{ rotate: showAll ? "-90deg" : "90deg" }] }} />
             </Pressable>
           </View> : null}
