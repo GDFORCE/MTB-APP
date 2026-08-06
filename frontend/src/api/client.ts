@@ -8,19 +8,47 @@ const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 export const API_BASE = `${BASE}/api`;
 
 const isWeb = Platform.OS === 'web';
-const store = {
+const persistentStore = {
   get: (k: string) => isWeb ? AsyncStorage.getItem(k) : SecureStore.getItemAsync(k),
   set: (k: string, v: string) => isWeb ? AsyncStorage.setItem(k, v) : SecureStore.setItemAsync(k, v),
   del: (k: string) => isWeb ? AsyncStorage.removeItem(k) : SecureStore.deleteItemAsync(k),
 };
-export const tokenStore = store;
+
+// A non-remembered login remains usable for the lifetime of the current app
+// process, but its tokens are never left in device storage for the next launch.
+const memoryTokens = new Map<string, string>();
+let persistSession = true;
+export const tokenStore = {
+  async get(k: string) {
+    const inMemory = memoryTokens.get(k);
+    return inMemory !== undefined ? inMemory : persistentStore.get(k);
+  },
+  async set(k: string, v: string) {
+    memoryTokens.set(k, v);
+    if (persistSession) await persistentStore.set(k, v);
+    else await persistentStore.del(k);
+  },
+  async del(k: string) {
+    memoryTokens.delete(k);
+    await persistentStore.del(k);
+  },
+  async setPersistence(remember: boolean) {
+    persistSession = remember;
+    if (!remember) {
+      await Promise.all([
+        persistentStore.del('access_token'),
+        persistentStore.del('refresh_token'),
+      ]);
+    }
+  },
+};
 
 // Axios's default export is the documented factory object; the similarly named
 // type-level export makes the generic lint rule flag this valid usage.
 // eslint-disable-next-line import/no-named-as-default-member
 export const api = axios.create({ baseURL: API_BASE });
 api.interceptors.request.use(async (config) => {
-  const t = await store.get('access_token');
+  const t = await tokenStore.get('access_token');
   if (t) config.headers.Authorization = `Bearer ${t}`;
   return config;
 });
@@ -35,14 +63,14 @@ function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {
-        const rt = await store.get('refresh_token');
+        const rt = await tokenStore.get('refresh_token');
         if (!rt) return null;
         // Bare axios (not `api`) so this call bypasses both interceptors.
         const r = await axios.post(`${API_BASE}/auth/refresh`, { refresh_token: rt });
         const t: string | undefined = r.data?.access_token;
         if (!t) return null;
-        await store.set('access_token', t);
-        if (r.data?.refresh_token) await store.set('refresh_token', r.data.refresh_token);
+        await tokenStore.set('access_token', t);
+        if (r.data?.refresh_token) await tokenStore.set('refresh_token', r.data.refresh_token);
         return t;
       } catch {
         return null;
@@ -65,15 +93,15 @@ api.interceptors.response.use(
     if (error.response?.status !== 401 || !original || original._retry || isAuthRoute) throw error;
 
     original._retry = true;
-    const hadSession = !!(await store.get('refresh_token'));
+    const hadSession = !!(await tokenStore.get('refresh_token'));
     const token = await refreshAccessToken();
     if (token) {
       original.headers.Authorization = `Bearer ${token}`;
       return api(original);
     }
     // Refresh failed → hard sign-out; only route to session-timeout if a session existed.
-    await store.del('access_token');
-    await store.del('refresh_token');
+    await tokenStore.del('access_token');
+    await tokenStore.del('refresh_token');
     if (hadSession) {
       onSessionExpired?.();
       router.replace('/session-timeout');

@@ -186,12 +186,14 @@ export default function AddTrial() {
 
   const submit = async () => {
     const indications = details.indications.map((item) => item.trim()).filter(Boolean);
-    if (
-      !resolved || !protocolId.trim() || !details.ctri_number.trim() ||
-      !details.title.trim() || !details.phase || !indications.length ||
-      !details.duration.trim() || !details.target_enrollment || !details.total_visits
-    ) {
-      setErr("Complete all required trial details before saving.");
+    const missing = [
+      !resolved || !protocolId.trim() ? "Protocol ID lookup or PDF upload" : "",
+      !details.title.trim() ? "Study Title" : "",
+      !details.phase ? "Phase" : "",
+      !indications.length ? "Disease / Indication" : "",
+    ].filter(Boolean);
+    if (missing.length) {
+      setErr(`Please complete: ${missing.join(", ")}.`);
       return;
     }
     setLoading(true);
@@ -207,8 +209,8 @@ export default function AddTrial() {
         sponsor_name: "",
         drug: details.drug.trim(),
         duration: details.duration.trim(),
-        target_enrollment: Number(details.target_enrollment),
-        total_visits: Number(details.total_visits),
+        target_enrollment: details.target_enrollment ? Number(details.target_enrollment) : null,
+        total_visits: details.total_visits ? Number(details.total_visits) : null,
         ctri_number: details.ctri_number.trim(),
         status: details.status,
         recruitment_status: details.status === "active" ? "recruiting" : "closed",
@@ -303,7 +305,7 @@ export default function AddTrial() {
             accessibilityState={{ disabled: locked }}
             style={[s.details, locked && s.detailsLocked]}
           >
-            <Field testID="trial-ctri" label="CTRI Number *" value={details.ctri_number} onChange={(value) => update({ ctri_number: value })} disabled={locked} placeholder="Enter CTRI number" />
+            <Field testID="trial-ctri" label="CTRI Number" value={details.ctri_number} onChange={(value) => update({ ctri_number: value })} disabled={locked} placeholder="Enter CTRI number (optional)" />
             <Field testID="trial-title" label="Study Title *" value={details.title} onChange={(value) => update({ title: value })} disabled={locked} placeholder="Enter official study title" multiline />
 
             <Label text="Phase *" />
@@ -320,16 +322,16 @@ export default function AddTrial() {
               onChange={(value) => update({ indications: value.split(",").map((item) => item.trimStart()) })}
               disabled={locked}
               placeholder="e.g. Diabetes, Hypertension"
-              hint="Separate multiple indications with commas."
+              hint="One indication is enough. Use commas only when entering more than one."
             />
             <Field testID="trial-drug" label="Study Drug Name" value={details.drug} onChange={(value) => update({ drug: value })} disabled={locked} placeholder="Enter investigational drug" />
-            <Field testID="trial-duration" label="Duration of the Trial *" value={details.duration} onChange={(value) => update({ duration: value })} disabled={locked} placeholder="e.g. 18 months" />
+            <Field testID="trial-duration" label="Duration of the Trial" value={details.duration} onChange={(value) => update({ duration: value })} disabled={locked} placeholder="e.g. 18 months (optional)" />
             <View style={s.twoCol}>
               <View style={s.flex}>
-                <Field testID="trial-sample-size" label="Sample Size *" value={details.target_enrollment} onChange={(value) => update({ target_enrollment: value.replace(/\D/g, "") })} disabled={locked} placeholder="100" keyboardType="number-pad" />
+                <Field testID="trial-sample-size" label="Sample Size" value={details.target_enrollment} onChange={(value) => update({ target_enrollment: value.replace(/\D/g, "") })} disabled={locked} placeholder="Optional" keyboardType="number-pad" />
               </View>
               <View style={s.flex}>
-                <Field testID="trial-total-visits" label="Total Visits *" value={details.total_visits} onChange={(value) => update({ total_visits: value.replace(/\D/g, "") })} disabled={locked} placeholder="18" keyboardType="number-pad" />
+                <Field testID="trial-total-visits" label="Total Visits" value={details.total_visits} onChange={(value) => update({ total_visits: value.replace(/\D/g, "") })} disabled={locked} placeholder="Optional" keyboardType="number-pad" />
               </View>
             </View>
 

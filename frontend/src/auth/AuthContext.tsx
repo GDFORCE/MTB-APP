@@ -8,7 +8,7 @@ type Session = { access_token: string; refresh_token: string; user: User };
 interface Ctx {
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<User>;
+  signIn: (email: string, password: string, rememberMe?: boolean) => Promise<User>;
   signUp: (data: any) => Promise<User>;
   applySession: (data: Session) => Promise<User>;
   signOut: () => Promise<void>;
@@ -38,8 +38,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => setSessionExpiredHandler(null);
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, rememberMe = false) => {
     const r = await api.post('/auth/login', { email, password });
+    await tokenStore.setPersistence(rememberMe);
     await tokenStore.set('access_token', r.data.access_token);
     await tokenStore.set('refresh_token', r.data.refresh_token);
     setUser(r.data.user);
@@ -47,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
   const signUp = async (data: any) => {
     const r = await api.post('/auth/register', data);
+    await tokenStore.setPersistence(true);
     await tokenStore.set('access_token', r.data.access_token);
     await tokenStore.set('refresh_token', r.data.refresh_token);
     setUser(r.data.user);
@@ -54,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
   // Persist tokens + user from a server session payload (used by OTP-verified registration).
   const applySession = async (data: Session) => {
+    await tokenStore.setPersistence(true);
     await tokenStore.set('access_token', data.access_token);
     await tokenStore.set('refresh_token', data.refresh_token);
     setUser(data.user);

@@ -2378,6 +2378,9 @@ async def trial_recruitment(trial_id: str, user=Depends(current_user)):
         'sites': [{
             'id': site.get('id'),
             'name': site.get('name'),
+            'address': site.get('address') or '',
+            'city': site.get('city') or '',
+            'state': site.get('state') or '',
             'target_enrollment': site.get('target_enrollment'),
             'enrolled': site.get('enrolled', 0),
             'enrollment_pct': site.get('enrollment_pct', 0),
@@ -2386,6 +2389,7 @@ async def trial_recruitment(trial_id: str, user=Depends(current_user)):
             'pi_name': site.get('pi_name') or '',
             'pi_email': site.get('pi_email') or '',
             'pi_phone': site.get('pi_phone') or '',
+            'crc_name': site.get('crc_name') or '',
         } for site in payload['sites']],
     }
 

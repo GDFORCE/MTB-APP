@@ -22,7 +22,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   AlertTriangle,
   ArrowLeft,
-  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -37,7 +36,6 @@ import {
   RefreshCw,
   Share2,
   Target,
-  Stethoscope,
   Upload,
   UserPlus,
   UserRoundCheck,
@@ -100,6 +98,9 @@ type RecruitmentPayload = {
   sites: {
     id: string;
     name: string;
+    address?: string;
+    city?: string;
+    state?: string;
     target_enrollment?: number;
     enrolled: number;
     enrollment_pct: number;
@@ -107,6 +108,7 @@ type RecruitmentPayload = {
     pi_name?: string;
     pi_email?: string;
     pi_phone?: string;
+    crc_name?: string;
     recruitment?: RecruitmentFunnel;
   }[];
 };
@@ -134,13 +136,13 @@ const EMPTY_FUNNEL: RecruitmentFunnel = {
 };
 
 const FUNNEL: { key: keyof RecruitmentFunnel; label: string }[] = [
-  { key: "screened", label: "Total Screened" },
-  { key: "screen_fail", label: "Screen Failures" },
+  { key: "screened", label: "Screened" },
+  { key: "screen_fail", label: "Screen Fail" },
   { key: "randomized", label: "Randomized" },
-  { key: "follow_up", label: "Follow Up" },
-  { key: "completed", label: "Completed" },
   { key: "withdrawn", label: "Withdrawn" },
   { key: "dropout", label: "Dropout" },
+  { key: "follow_up", label: "Follow-up" },
+  { key: "completed", label: "Completed" },
 ];
 
 function useReducedMotion() {
@@ -259,17 +261,13 @@ export default function TrialSummary() {
 
   useEffect(() => { load(); }, [load]);
 
-  const enrolled = subjects.length;
+  const randomized = Number(recruitment.recruitment.randomized ?? 0);
   const target = Number(trial?.target_enrollment || 0);
-  const enrollmentPct = target > 0 ? Math.min(100, Math.round((enrolled / target) * 100)) : 0;
+  const enrollmentPct = target > 0 ? Math.min(100, Math.round((randomized / target) * 100)) : 0;
   const protocolDocument = useMemo(
     () => documents.find((document) => /protocol/i.test(document.name)) || documents[0],
     [documents],
   );
-  const siteNames = recruitment.sites.map((site) => site.name).filter(Boolean);
-  const primarySite = recruitment.sites[0];
-  const assignedPi = team.find((member) => member.role === "pi");
-  const assignedCrc = team.find((member) => member.role === "crc");
   const sponsorLike = user?.role === "sponsor" || user?.role === "cro";
   const canAddPatient = user?.role === "pi" || user?.role === "crc";
   const canEdit = sponsorLike || (user?.role === "pi" && trial?.created_by === user.id);
@@ -451,7 +449,6 @@ export default function TrialSummary() {
           <ArrowLeft size={20} color={colors.white} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={s.headerEyebrow}>TRIAL SUMMARY</Text>
           <Text numberOfLines={1} style={s.headerTitle}>{trial.protocol_id}</Text>
         </View>
         <Pressable
@@ -510,86 +507,54 @@ export default function TrialSummary() {
         )}
 
         <Entrance index={0} reduced={reducedMotion}>
-          <LinearGradient colors={dawnGradient as any} style={s.hero}>
+          <View style={s.hero}>
             <View style={s.between}>
               <View style={s.protocolPill}><Text style={s.protocol}>{trial.protocol_id}</Text></View>
               <View style={s.statusPill}>
+                <View style={s.statusDot} />
                 <Text style={s.statusText}>{trial.recruitment_status || trial.status || "Active"}</Text>
               </View>
             </View>
             <Text style={s.heroTitle}>{trial.title}</Text>
-            <View style={s.heroTags}>
-              {[trial.phase, trial.condition, trial.drug].filter(Boolean).map((tag) => (
-                <View key={tag} style={s.heroTag}><Text style={s.heroTagText}>{tag}</Text></View>
-              ))}
-            </View>
-            <View style={s.heroSponsor}>
-              <Building2 size={14} color="rgba(255,255,255,0.84)" />
-              <Text style={s.heroSponsorText}>
-                {trial.sponsor_name || "Sponsor not recorded"} · {trial.recruitment_status || trial.status || "Active"}
-              </Text>
-            </View>
             <View style={s.detailGrid}>
-              <Detail label="CTRI number" value={trial.ctri_number || "Not recorded"} />
-              <Detail label="Sponsor / CRO" value={trial.sponsor_name || "Not recorded"} />
-              <Detail label="Phase" value={trial.phase || "Not recorded"} />
-              <Detail label="Disease" value={trial.condition || "Not recorded"} />
-              <Detail label="Drug" value={trial.drug || "Not recorded"} />
-              <Detail label="Duration" value={trial.duration || "Not recorded"} />
-              <Detail label="Site" value={siteNames.join(", ") || user?.organization || "Not assigned"} />
-              <Detail label="Department" value={primarySite?.department || "Not recorded"} />
+              {!!trial.ctri_number && <Detail label="CTRI number" value={trial.ctri_number} />}
+              {!!trial.phase && <Detail label="Phase" value={trial.phase} />}
+              {!!trial.condition && <Detail label="Disease" value={trial.condition} />}
+              {!!trial.drug && <Detail label="Drug" value={trial.drug} />}
+              {!!trial.duration && <Detail label="Duration" value={trial.duration} />}
+              {!!trial.visits?.length && <Detail label="Total visits" value={String(trial.visits.length)} />}
             </View>
             <View style={s.heroFooter}>
               <UserRoundCheck size={14} color="rgba(255,255,255,0.8)" />
-              <Text style={s.heroFooterText}>
-                PI: {primarySite?.pi_name || assignedPi?.name || "Not assigned"}
-                {assignedCrc?.name ? ` · CRC: ${assignedCrc.name}` : ""}
-              </Text>
+              <Text style={s.heroFooterText}>Created by {trial.created_by_name || trial.sponsor_name || "Trial administrator"}{trial.created_by_role ? ` · ${trial.created_by_role}` : ""}</Text>
+              <Text style={s.heroFooterDate}>{dateLabel(trial.created_at)}</Text>
             </View>
-            <Text style={s.heroAudit}>
-              Created {dateLabel(trial.created_at)}
-              {trial.created_by_name ? ` by ${trial.created_by_name}` : ""}
-              {trial.updated_at ? ` · Updated ${dateLabel(trial.updated_at)}${trial.updated_by_name ? ` by ${trial.updated_by_name}` : ""}` : ""}
-            </Text>
-          </LinearGradient>
+          </View>
         </Entrance>
 
         <Entrance index={1} reduced={reducedMotion}>
-          <Section title="Trial Details" icon={FileText}>
-            <View style={s.trialDetailsGrid}>
-              <SummaryDetail icon={FileText} label="CTRI No." value={trial.ctri_number || "Not recorded"} wide />
-              <SummaryDetail icon={Building2} label="Sponsor Name" value={trial.sponsor_name || "Not recorded"} />
-              <SummaryDetail icon={MapPin} label="Site Name" value={siteNames.join(", ") || user?.organization || "Not assigned"} />
-              <SummaryDetail icon={UserRoundCheck} label="PI Name" value={primarySite?.pi_name || assignedPi?.name || "Not assigned"} />
-              <SummaryDetail icon={Stethoscope} label="Department" value={primarySite?.department || "Not recorded"} />
-            </View>
-          </Section>
-        </Entrance>
-
-        <Entrance index={2} reduced={reducedMotion}>
-          <Section title="Enrollment" icon={Target}>
+          <Section title="Recruitment · Across All Sites" icon={Target}>
             <View style={s.metrics}>
-              <Metric label="Sites" value={String(recruitment.sites.length)} />
-              <Metric label="Enrolled" value={String(enrolled)} />
-              <Metric label="Target" value={target ? String(target) : "—"} />
+              <Metric label="Total Sites" value={String(recruitment.sites.length)} />
+              <Metric label="Sample Size" value={target ? String(target) : "—"} />
             </View>
             <Funnel data={recruitment.recruitment} />
-            <Text style={s.smallCaps}>OVERALL ENROLLMENT</Text>
+            <Text style={s.smallCaps}>ENROLLMENT</Text>
             <Progress value={enrollmentPct} reduced={reducedMotion} />
-            <Text style={s.progressCopy}>{enrolled} / {target || "—"} enrolled{target ? ` · ${enrollmentPct}%` : ""}</Text>
+            <Text style={s.progressCopy}>{randomized} / {target || "—"} randomized{target ? ` (${enrollmentPct}%)` : ""}</Text>
           </Section>
         </Entrance>
 
         <Entrance index={2} reduced={reducedMotion}>
           <Section
-            title="Sites and investigators"
+            title="Sites · Recruitment Status"
             icon={MapPin}
             action={sponsorLike ? (
               <Pressable
                 onPress={() => router.push({ pathname: "/(app)/sponsor/sites", params: { trialId: trial.id } })}
                 style={s.inlineAction}
               >
-                <Text style={s.inlineActionText}>Manage Sites</Text>
+                <Text style={s.inlineActionText}>Add Site</Text>
               </Pressable>
             ) : undefined}
           >
@@ -598,14 +563,20 @@ export default function TrialSummary() {
                 <View style={s.between}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.siteName}>{site.name}</Text>
-                    <Text style={s.siteMeta}>
-                      {[site.pi_name ? `PI ${site.pi_name}` : "", site.department].filter(Boolean).join(" · ") || "PI not assigned"}
-                    </Text>
-                    <Text style={s.siteMeta}>{site.enrolled} / {site.target_enrollment || "—"} enrolled</Text>
+                    {!![site.address, site.city, site.state].filter(Boolean).length && (
+                      <View style={s.siteLocationRow}>
+                        <MapPin size={11} color={colors.mutedFg} />
+                        <Text style={s.siteMeta}>{[site.address, site.city, site.state].filter(Boolean).join(", ")}</Text>
+                      </View>
+                    )}
+                    <Text style={s.siteMeta}>PI: {site.pi_name || "Not assigned"}{site.department ? `        Dept: ${site.department}` : ""}</Text>
+                    {!!site.pi_email && <Text style={s.siteMeta}>{site.pi_email}</Text>}
                   </View>
-                  <Text style={s.percent}>{site.enrollment_pct}%</Text>
+                  {!![site.pi_name, site.crc_name].filter(Boolean).length && (
+                    <View style={s.sitePeoplePill}><Users size={11} color={colors.primaryDeep} /><Text style={s.sitePeopleText}>{[site.pi_name, site.crc_name].filter(Boolean).length}</Text></View>
+                  )}
                 </View>
-                <Progress value={site.enrollment_pct} reduced={reducedMotion} compact />
+                <Funnel data={site.recruitment || EMPTY_FUNNEL} compact />
               </View>
             )) : <Empty text="No trial sites are assigned yet." />}
           </Section>
@@ -788,19 +759,6 @@ export default function TrialSummary() {
           <Section
             title="Documents"
             icon={FileClock}
-            action={canUpload ? (
-              <Pressable
-                testID="upload-document"
-                onPress={uploadDocument}
-                disabled={uploading}
-                style={[s.inlineAction, uploading && s.disabled]}
-              >
-                {uploading
-                  ? <ActivityIndicator size="small" color={colors.info} />
-                  : <Upload size={13} color={colors.info} />}
-                <Text style={s.inlineActionText}>{uploading ? "Uploading…" : "Upload"}</Text>
-              </Pressable>
-            ) : undefined}
           >
             {documents.length ? documents.map((document) => (
               <Pressable
@@ -838,6 +796,19 @@ export default function TrialSummary() {
                 </View>
               </View>
             )) : <Empty text="No schedule versions have been shared yet." />}
+            {canUpload && (
+              <Pressable
+                testID="upload-document"
+                onPress={uploadDocument}
+                disabled={uploading}
+                style={[s.uploadButton, uploading && s.disabled]}
+              >
+                {uploading
+                  ? <ActivityIndicator size="small" color={colors.info} />
+                  : <Upload size={14} color={colors.info} />}
+                <Text style={s.uploadButtonText}>{uploading ? "Uploading…" : "+ Upload Document"}</Text>
+              </Pressable>
+            )}
           </Section>
         </Entrance>
 
@@ -1056,18 +1027,6 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SummaryDetail({ icon: Icon, label, value, wide = false }: { icon: any; label: string; value: string; wide?: boolean }) {
-  return (
-    <View style={[s.summaryDetail, wide && s.summaryDetailWide]}>
-      <Icon size={14} color={colors.mutedFg} style={{ marginTop: 1 }} />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={s.summaryDetailLabel}>{label}</Text>
-        <Text numberOfLines={2} style={s.summaryDetailValue}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
 function PatientField({ label, value }: { label: string; value: string }) {
   return (
     <View style={s.patientField}>
@@ -1086,7 +1045,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Funnel({ data }: { data: RecruitmentFunnel }) {
+function Funnel({ data, compact = false }: { data: RecruitmentFunnel; compact?: boolean }) {
   const tones: Record<string, { backgroundColor: string; color: string }> = {
     screened: { backgroundColor: colors.info + "1A", color: colors.info },
     screen_fail: { backgroundColor: colors.warning + "26", color: colors.warning },
@@ -1101,7 +1060,7 @@ function Funnel({ data }: { data: RecruitmentFunnel }) {
       {FUNNEL.map((field) => {
         const tone = tones[field.key] || tones.screened;
         return (
-        <View key={field.key} style={[s.funnelCell, { backgroundColor: tone.backgroundColor }]}>
+        <View key={field.key} style={[s.funnelCell, compact && s.funnelCellCompact, { backgroundColor: tone.backgroundColor }]}>
           <Text style={[s.funnelValue, { color: tone.color }]}>
             {Number(data?.[field.key] || 0)}
           </Text>
@@ -1167,67 +1126,68 @@ function Empty({ text }: { text: string }) {
 }
 
 const s = StyleSheet.create({
-  page: { flex: 1, backgroundColor: colors.background },
+  page: { flex: 1, backgroundColor: "#FFF8F0" },
   center: { flex: 1, padding: 28, alignItems: "center", justifyContent: "center", gap: 13, backgroundColor: colors.background },
   muted: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedFg },
   error: { textAlign: "center", fontFamily: fonts.regular, fontSize: 13, color: colors.destructive },
-  header: { minHeight: 73, paddingHorizontal: 17, paddingTop: 8, paddingBottom: 12, flexDirection: "row", alignItems: "center", gap: 13, backgroundColor: colors.primaryDeep },
+  header: { minHeight: 66, paddingHorizontal: 18, paddingTop: 7, paddingBottom: 11, flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: "#741847" },
   headerEyebrow: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 1.05, color: "rgba(255,255,255,0.62)" },
-  headerTitle: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 15, color: colors.white },
+  headerTitle: { fontFamily: fonts.bold, fontSize: 14, color: colors.white },
   headerAction: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17 },
-  content: { padding: 15, paddingBottom: 40, gap: 13 },
+  content: { padding: 14, paddingBottom: 42, gap: 14 },
   feedback: { minHeight: 44, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 15, borderWidth: 1 },
   feedbackSuccess: { borderColor: colors.success + "45", backgroundColor: colors.success + "12" },
   feedbackError: { borderColor: colors.destructive + "45", backgroundColor: colors.destructive + "0D" },
   feedbackText: { flex: 1, fontFamily: fonts.semibold, fontSize: 10.5 },
-  hero: { padding: 18, borderRadius: 24, ...shadows.md },
+  hero: { padding: 18, borderRadius: 16, backgroundColor: "#791B4E", ...shadows.sm },
   between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  protocolPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.16)" },
-  protocol: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.white },
-  statusPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.20)", backgroundColor: "rgba(255,255,255,0.16)" },
-  statusText: { fontFamily: fonts.semibold, fontSize: 9.5, color: colors.white, textTransform: "capitalize" },
-  heroTitle: { marginTop: 14, fontFamily: fonts.heading, fontSize: 19, lineHeight: 24, color: colors.white },
+  protocolPill: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.13)" },
+  protocol: { fontFamily: fonts.medium, fontSize: 9.5, color: colors.white },
+  statusPill: { paddingHorizontal: 9, paddingVertical: 4, flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.22)" },
+  statusDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#79C58D" },
+  statusText: { fontFamily: fonts.semibold, fontSize: 8.5, color: "#8FDA9F", textTransform: "capitalize" },
+  heroTitle: { marginTop: 15, fontFamily: fonts.heading, fontSize: 17, lineHeight: 24, color: colors.white },
   heroTags: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 12 },
   heroTag: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.16)" },
   heroTagText: { color: colors.white, fontFamily: fonts.semibold, fontSize: 8.5 },
   heroSponsor: { marginTop: 14, flexDirection: "row", alignItems: "center", gap: 6 },
   heroSponsorText: { flex: 1, fontFamily: fonts.medium, fontSize: 9.5, color: "rgba(255,255,255,0.88)" },
-  detailGrid: { display: "none", marginTop: 15, flexDirection: "row", flexWrap: "wrap", rowGap: 11 },
+  detailGrid: { marginTop: 17, flexDirection: "row", flexWrap: "wrap", rowGap: 12 },
   detail: { width: "50%", paddingRight: 9 },
-  detailLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.7, textTransform: "uppercase", color: "rgba(255,255,255,0.60)" },
-  detailValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 10.5, lineHeight: 14, color: colors.white },
-  heroFooter: { display: "none", marginTop: 14, paddingTop: 12, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
-  heroFooterText: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, color: "rgba(255,255,255,0.82)" },
+  detailLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.4, textTransform: "uppercase", color: "rgba(255,255,255,0.70)" },
+  detailValue: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 10.5, lineHeight: 14, color: colors.white },
+  heroFooter: { marginTop: 15, paddingTop: 12, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
+  heroFooterText: { flex: 1, fontFamily: fonts.regular, fontSize: 8.5, color: "rgba(255,255,255,0.84)" },
+  heroFooterDate: { width: 58, textAlign: "right", fontFamily: fonts.regular, fontSize: 8.5, color: "rgba(255,255,255,0.84)" },
   heroAudit: { display: "none", marginTop: 6, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: "rgba(255,255,255,0.62)" },
-  card: { padding: 15, gap: 12, borderRadius: 21, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
+  card: { padding: 14, gap: 12, borderRadius: 15, borderWidth: 1, borderColor: "#E5D5C8", backgroundColor: "#FFFCF7", ...shadows.sm },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   sectionIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: 7 },
-  sectionTitle: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
-  trialDetailsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 11 },
-  summaryDetail: { width: "47%", flexDirection: "row", alignItems: "flex-start", gap: 7 },
-  summaryDetailWide: { width: "100%" },
-  summaryDetailLabel: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.75, color: colors.mutedFg, textTransform: "uppercase" },
-  summaryDetailValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 10, lineHeight: 13, color: colors.foreground },
+  sectionTitle: { fontFamily: fonts.semibold, fontSize: 12, color: colors.foreground },
   inlineAction: { flexDirection: "row", alignItems: "center", gap: 4 },
   inlineActionText: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.info },
-  metrics: { display: "none", flexDirection: "row", gap: 7 },
-  metric: { flex: 1, padding: 10, alignItems: "center", borderRadius: 13, backgroundColor: colors.surface },
-  metricValue: { fontFamily: fonts.heading, fontSize: 18, color: colors.primaryDeep },
+  metrics: { flexDirection: "row", gap: 8 },
+  metric: { flex: 1, padding: 11, alignItems: "center", borderRadius: 12, backgroundColor: "#F8E9DC" },
+  metricValue: { fontFamily: fonts.heading, fontSize: 17, color: "#7B1D4E" },
   metricLabel: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
   funnel: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  funnelCell: { width: "31%", minHeight: 51, padding: 5, alignItems: "center", justifyContent: "center", borderRadius: 11 },
+  funnelCell: { width: "23%", minHeight: 51, padding: 5, alignItems: "center", justifyContent: "center", borderRadius: 11, borderWidth: 1, borderColor: "#E9D9CD" },
+  funnelCellCompact: { width: "23%", minHeight: 48 },
   funnelValue: { fontFamily: fonts.heading, fontSize: 14, color: colors.foreground },
   funnelLabel: { marginTop: 2, textAlign: "center", fontFamily: fonts.regular, fontSize: 7.5, color: colors.mutedFg },
   smallCaps: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.9, color: colors.mutedFg },
-  track: { height: 7, overflow: "hidden", borderRadius: 999, backgroundColor: colors.surface },
+  track: { height: 7, overflow: "hidden", borderRadius: 999, backgroundColor: "#F0E2D7" },
   progressFillWrap: { height: "100%", overflow: "hidden", borderRadius: 999 },
   progressCopy: { marginTop: -5, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
-  siteCard: { padding: 11, gap: 8, borderRadius: 15, backgroundColor: colors.surface },
+  siteCard: { padding: 12, gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "#E5D2C4", backgroundColor: "#FAEDE2" },
   siteName: { fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
-  siteMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9, color: colors.mutedFg },
+  siteMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: colors.mutedFg },
+  siteLocationRow: { marginTop: 2, flexDirection: "row", alignItems: "center", gap: 3 },
+  sitePeoplePill: { paddingHorizontal: 7, paddingVertical: 4, flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 999, borderWidth: 1, borderColor: "#DDBFC7", backgroundColor: "#FFF8F2" },
+  sitePeopleText: { fontFamily: fonts.mono, fontSize: 8, color: colors.primaryDeep },
   percent: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.primary },
-  teamCard: { padding: 11, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, backgroundColor: colors.surface },
-  avatar: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: colors.primaryDeep },
+  teamCard: { padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 16, borderWidth: 1, borderColor: "#E5D2C4", backgroundColor: "#FAEDE2" },
+  avatar: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17, backgroundColor: "#962552" },
   avatarText: { fontFamily: fonts.bold, fontSize: 10.5, color: colors.white },
   teamTop: { flexDirection: "row", alignItems: "center", gap: 8 },
   memberName: { flex: 1, fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
@@ -1258,7 +1218,7 @@ const s = StyleSheet.create({
   visitMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
   visitStatus: { fontFamily: fonts.semibold, fontSize: 8, color: colors.mutedFg, textTransform: "capitalize" },
   privacy: { padding: 10, borderRadius: 12, fontFamily: fonts.regular, fontSize: 9.5, lineHeight: 14, color: colors.mutedFg, backgroundColor: colors.surface },
-  documentRow: { padding: 10, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 14, backgroundColor: colors.surface },
+  documentRow: { paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 9, borderBottomWidth: 1, borderBottomColor: colors.border },
   documentIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: colors.card },
   documentName: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
   documentMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
@@ -1268,6 +1228,8 @@ const s = StyleSheet.create({
   versionBadgeText: { fontFamily: fonts.mono, fontSize: 9.5, color: colors.primary },
   versionTitle: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
   versionMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
+  uploadButton: { minHeight: 38, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderRadius: 999, borderWidth: 1, borderColor: colors.info, backgroundColor: colors.card },
+  uploadButtonText: { fontFamily: fonts.semibold, fontSize: 9.5, color: colors.info },
   empty: { paddingVertical: 14, alignItems: "center" },
   emptyText: { textAlign: "center", fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
   actions: { flexDirection: "row", gap: 9 },

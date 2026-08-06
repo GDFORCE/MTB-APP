@@ -558,8 +558,14 @@ function TrialCard({
   onPress: () => void;
   reducedMotion: boolean;
 }) {
-  const numerator = trial.enrolled;
+  const numerator = trial.randomized;
   const percentage = trial.target > 0 ? Math.min(100, Math.round((numerator / trial.target) * 100)) : 0;
+  const metadataTags = [
+    trial.phase?.trim(),
+    trial.condition?.trim(),
+    trial.drug?.trim(),
+    trial.sites > 0 ? `${trial.sites} ${trial.sites === 1 ? "site" : "sites"}` : "",
+  ].filter((tag): tag is string => Boolean(tag));
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.trialCard, pressed && styles.pressed]}>
       <LinearGradient colors={DAWN as any} style={styles.trialStripe} />
@@ -571,14 +577,16 @@ function TrialCard({
         </View>
       </View>
       <Text style={styles.trialTitle} numberOfLines={2}>{trial.title}</Text>
-      <View style={styles.tags}>
-        {[trial.phase, trial.condition, trial.drug, trial.sites ? `${trial.sites} sites` : ""].filter(Boolean).map((tag) => (
-          <View key={tag} style={styles.tag}><Text style={styles.tagText}>{tag}</Text></View>
-        ))}
-      </View>
+      {metadataTags.length > 0 ? (
+        <View style={styles.tags}>
+          {metadataTags.map((tag) => (
+            <View key={tag} style={styles.tag}><Text style={styles.tagText}>{tag}</Text></View>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.progressMeta}>
-        <Text style={styles.progressLabel}>Enrolled</Text>
-        <Text style={styles.progressValue}>{trial.target > 0 ? `${numerator}/${trial.target} · ${percentage}%` : `${numerator} enrolled`}</Text>
+        <Text style={styles.progressLabel}>Randomized</Text>
+        <Text style={styles.progressValue}>{trial.target > 0 ? `${numerator}/${trial.target} · ${percentage}%` : `${numerator} randomized`}</Text>
       </View>
       <View style={styles.progressTrack}>
         {trial.target > 0 ? <AnimatedProgress value={percentage} reducedMotion={reducedMotion} style={styles.progressFill} /> : null}
