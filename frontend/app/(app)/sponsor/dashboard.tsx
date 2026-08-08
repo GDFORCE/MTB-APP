@@ -128,6 +128,28 @@ function timeLabel(value: unknown) {
   return parsed.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
+function creatorRoleLabel(value?: string) {
+  if (!value?.trim()) return "Role not recorded";
+  if (value.trim().toLowerCase() === "cro") return "CRO";
+  return value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function createdAtLabel(value?: string) {
+  if (!value) return "Date & time not recorded";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export default function SponsorDashboard() {
   const router = useRouter();
   const { user } = useAuth();
@@ -591,6 +613,20 @@ function TrialCard({
       <View style={styles.progressTrack}>
         {trial.target > 0 ? <AnimatedProgress value={percentage} reducedMotion={reducedMotion} style={styles.progressFill} /> : null}
       </View>
+      <View style={styles.trialAttribution}>
+        <View style={styles.trialAttributionIcon}>
+          <UserCheck size={14} color={C.primary} />
+        </View>
+        <View style={styles.trialCreatorCopy}>
+          <Text style={styles.trialAttributionLabel}>CREATED BY</Text>
+          <Text style={styles.trialCreatorName} numberOfLines={1}>{trial.createdByName || "Unknown"}</Text>
+          <Text style={styles.trialCreatorRole} numberOfLines={1}>{creatorRoleLabel(trial.createdByRole)}</Text>
+        </View>
+        <View style={styles.trialCreatedAt}>
+          <Text style={styles.trialAttributionLabel}>DATE &amp; TIME</Text>
+          <Text style={styles.trialCreatedAtText}>{createdAtLabel(trial.createdAt)}</Text>
+        </View>
+      </View>
     </Pressable>
   );
 }
@@ -817,6 +853,14 @@ const styles = StyleSheet.create({
   progressValue: { fontFamily: fonts.mono, fontSize: 9 },
   progressTrack: { height: 6, borderRadius: 999, backgroundColor: C.surface, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 999 },
+  trialAttribution: { flexDirection: "row", alignItems: "center", gap: 9, marginTop: 12, paddingTop: 11, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border },
+  trialAttributionIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.secondary },
+  trialCreatorCopy: { flex: 1, minWidth: 0 },
+  trialAttributionLabel: { color: C.mutedFg, fontFamily: fonts.semibold, fontSize: 7, letterSpacing: 0.7 },
+  trialCreatorName: { fontFamily: fonts.medium, fontSize: 10.5, lineHeight: 14, marginTop: 1 },
+  trialCreatorRole: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 11 },
+  trialCreatedAt: { maxWidth: "42%", alignItems: "flex-end" },
+  trialCreatedAtText: { color: C.mutedFg, fontFamily: fonts.mono, fontSize: 8.5, lineHeight: 12, marginTop: 2, textAlign: "right" },
   performanceCard: { backgroundColor: C.card, borderRadius: 20, borderWidth: 1, borderColor: C.border, paddingHorizontal: 14, shadowColor: C.foreground, shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   siteRow: { paddingVertical: 12 },
   siteDivider: { borderBottomWidth: 1, borderBottomColor: C.border },
