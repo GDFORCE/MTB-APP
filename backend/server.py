@@ -6768,7 +6768,16 @@ async def _validate_share_site(user: dict, trial: dict, site: ShareSiteIn):
                 'org_id': org['id'],
                 'name': reviewer['organization'],
             }, {'_id': 0, 'id': 1})
-        if not assigned and not network_site:
+        portfolio_site = False
+        if (not assigned and not network_site and
+                user.get('role') in ('sponsor', 'cro')):
+            reviewer_trial_ids = await db.patients.distinct(
+                'trial_id', {'pi_id': reviewer['id']})
+            for reviewer_trial_id in reviewer_trial_ids:
+                if await _trial_in_caller_org(user, reviewer_trial_id):
+                    portfolio_site = True
+                    break
+        if not assigned and not network_site and not portfolio_site:
             raise HTTPException(403, f'{reviewer["full_name"]} is not linked to this trial network')
     else:
         sponsor_org = (user.get('organization') or '').strip()

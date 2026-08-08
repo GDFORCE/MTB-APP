@@ -116,11 +116,10 @@ export default function ShareSchedule() {
   const visibleSites = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return sites.filter((site) => {
-      const belongs = !site.trials.length || site.trials.some((trial) => trial.id === trialId);
       const searchable = [site.name, site.hospital, site.city, site.pi].filter(Boolean).join(" ").toLowerCase();
-      return belongs && (!needle || searchable.includes(needle));
+      return !needle || searchable.includes(needle);
     });
-  }, [query, sites, trialId]);
+  }, [query, sites]);
 
   const selectedSiteRows = useMemo(
     () => sites.filter((site) => selectedSites.has(site.id)),
@@ -416,7 +415,7 @@ export default function ShareSchedule() {
                   <View style={s.sectionHead}>
                     <View>
                       <Text style={s.eyebrow}>RECIPIENT SITES</Text>
-                      <Text style={s.sectionTitle}>Select sites</Text>
+                      <Text style={s.sectionTitle}>Select from all available sites</Text>
                     </View>
                     <Pressable onPress={toggleAllVisible} disabled={!visibleSites.length}>
                       <Text style={s.selectAll}>{allVisibleSelected ? "Deselect all" : "Select all"}</Text>
@@ -442,7 +441,7 @@ export default function ShareSchedule() {
                         </Pressable>
                       );
                     })}
-                    {!visibleSites.length && <View style={s.empty}><Text style={s.emptyText}>No linked sites are available for this trial yet.</Text></View>}
+                    {!visibleSites.length && <View style={s.empty}><Text style={s.emptyText}>No available sites match your search.</Text></View>}
                   </View>
                   {selectedSiteRows.length > 0 && (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>

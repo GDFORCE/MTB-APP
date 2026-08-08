@@ -294,6 +294,98 @@ def test_schedule_shares_pin_versions_snapshots_documents_and_real_diffs():
         run(cleanup())
 
 
+def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
+    async def flow():
+        sponsor_a, _, _, trial, foreign_trial, _, _, _ = await build_world()
+        portfolio_pi = {
+            "id": str(uuid.uuid4()),
+            "email": f"portfolio-pi-{RUN_ID}@example.com",
+            "full_name": "Dr Portfolio PI",
+            "role": "pi",
+            "organization": f"Portfolio Site {RUN_ID}",
+            "status": "Active",
+        }
+        foreign_pi = {
+            "id": str(uuid.uuid4()),
+            "email": f"foreign-pi-{RUN_ID}@example.com",
+            "full_name": "Dr Foreign PI",
+            "role": "pi",
+            "organization": f"Foreign Site {RUN_ID}",
+            "status": "Active",
+        }
+        portfolio_trial = {
+            "id": str(uuid.uuid4()),
+            "title": "Second Portfolio Trial",
+            "protocol_id": f"PORTFOLIO-{RUN_ID}",
+            "sponsor_name": sponsor_a["organization"],
+            "created_by": sponsor_a["id"],
+            "created_at": server.now(),
+            "status": "active",
+        }
+        patients = [
+            {
+                "id": str(uuid.uuid4()),
+                "trial_id": portfolio_trial["id"],
+                "subject_id": f"PORTFOLIO-SUBJ-{RUN_ID}",
+                "pi_id": portfolio_pi["id"],
+                "created_by": portfolio_pi["id"],
+                "status": "active",
+                "created_at": server.now(),
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "trial_id": foreign_trial["id"],
+                "subject_id": f"FOREIGN-SUBJ-{RUN_ID}",
+                "pi_id": foreign_pi["id"],
+                "created_by": foreign_pi["id"],
+                "status": "active",
+                "created_at": server.now(),
+            },
+        ]
+        await server.db.users.insert_many([portfolio_pi, foreign_pi])
+        await server.db.trials.insert_one(portfolio_trial)
+        await server.db.patients.insert_many(patients)
+        IDS["users"].extend([portfolio_pi["id"], foreign_pi["id"]])
+        IDS["trials"].append(portfolio_trial["id"])
+        IDS["patients"].extend(patient["id"] for patient in patients)
+
+        async with client() as cli:
+            shared = await cli.post(
+                "/api/shares",
+                headers=headers(sponsor_a),
+                json={
+                    "trial_id": trial["id"],
+                    "via": "in_app",
+                    "sites": [{
+                        "id": f"pi-{portfolio_pi['id']}",
+                        "name": portfolio_pi["organization"],
+                        "reviewer_id": portfolio_pi["id"],
+                    }],
+                },
+            )
+            assert shared.status_code == 200, shared.text
+
+            denied = await cli.post(
+                "/api/shares",
+                headers=headers(sponsor_a),
+                json={
+                    "trial_id": trial["id"],
+                    "via": "in_app",
+                    "sites": [{
+                        "id": f"pi-{foreign_pi['id']}",
+                        "name": foreign_pi["organization"],
+                        "reviewer_id": foreign_pi["id"],
+                    }],
+                },
+            )
+            assert denied.status_code == 403, denied.text
+
+    try:
+        run(flow())
+    finally:
+        run(cleanup())
+
+
 async def cleanup():
     if IDS["trials"]:
         await server.db.schedule_reviews.delete_many(
