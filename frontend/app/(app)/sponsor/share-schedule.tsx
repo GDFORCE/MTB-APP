@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Pressable,
   ScrollView,
   StatusBar,
@@ -20,8 +19,6 @@ import {
   CheckCircle2,
   ChevronRight,
   FileText,
-  Link as LinkIcon,
-  Mail,
   MapPin,
   Search,
   Share2,
@@ -30,13 +27,12 @@ import {
   X,
 } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { api, API_BASE } from "@/src/api/client";
+import { api } from "@/src/api/client";
 import { getSponsorDashboard } from "@/src/features/sponsor/api";
 import type { SponsorSite, SponsorTrial } from "@/src/features/sponsor/types";
 import { uploadFile } from "@/src/lib/upload";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
-type Via = "email" | "link" | "pdf";
 type TrialDocument = {
   id: string;
   name: string;
@@ -46,9 +42,6 @@ type TrialDocument = {
 };
 
 type ShareResult = {
-  link?: string;
-  pdf?: string;
-  recipientCount: number;
   siteNames: string[];
 };
 
@@ -65,10 +58,8 @@ export default function ShareSchedule() {
   const [trialId, setTrialId] = useState(id || "");
   const [selectedDocument, setSelectedDocument] = useState<TrialDocument | null>(null);
   const [selectedSites, setSelectedSites] = useState<Set<string>>(new Set());
-  const [extraEmails, setExtraEmails] = useState("");
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
-  const [via, setVia] = useState<Via>("email");
   const [loadingData, setLoadingData] = useState(true);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
@@ -136,24 +127,15 @@ export default function ShareSchedule() {
     [selectedSites, sites],
   );
   const pendingSites = useMemo(
-    () => selectedSiteRows.filter((site) => !site.piId || !site.piEmail),
+    () => selectedSiteRows.filter((site) => !site.piId),
     [selectedSiteRows],
   );
   const selectableVisibleIds = visibleSites.map((site) => site.id);
   const allVisibleSelected =
     selectableVisibleIds.length > 0 && selectableVisibleIds.every((siteId) => selectedSites.has(siteId));
 
-  const recipients = useMemo(() => {
-    const fromSites = selectedSiteRows.map((site) => site.piEmail).filter(Boolean) as string[];
-    const extra = extraEmails
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean);
-    return Array.from(new Set([...fromSites, ...extra]));
-  }, [extraEmails, selectedSiteRows]);
-
   const isDirty =
-    selectedSites.size > 0 || !!message.trim() || !!extraEmails.trim() || !!selectedDocument || step === 2;
+    selectedSites.size > 0 || !!message.trim() || !!selectedDocument || step === 2;
 
   const requestClose = () => {
     if (!isDirty) {
@@ -243,6 +225,10 @@ export default function ShareSchedule() {
       setErr("Select at least one site for review.");
       return;
     }
+    if (pendingSites.length > 0) {
+      setErr("Each selected site needs an assigned PI before the schedule can be sent in app.");
+      return;
+    }
     setErr("");
     setStep(2);
   };
@@ -253,10 +239,6 @@ export default function ShareSchedule() {
       setErr("Review the trial, document and selected sites.");
       return;
     }
-    if (via === "email" && recipients.length === 0) {
-      setErr("Enter an email or select a site with a PI email.");
-      return;
-    }
     setLoading(true);
     setErr("");
     try {
@@ -265,10 +247,10 @@ export default function ShareSchedule() {
         name: site.name,
         reviewer_id: site.piId || null,
       }));
-      const response = await api.post("/shares", {
+      await api.post("/shares", {
         trial_id: trialId,
-        via,
-        recipients,
+        via: "in_app",
+        recipients: [],
         sites: chosenSites,
         message: message.trim(),
         document_name: selectedDocument.name,
@@ -277,15 +259,8 @@ export default function ShareSchedule() {
           selectedDocument.version ||
           (selectedDocument.source === "schedule" ? "Current approved visit schedule" : "Document shared for PI review"),
       });
-      const pdf = response.data?.pdf_link ? `${API_BASE}${response.data.pdf_link}` : undefined;
       setDone({
-        link: response.data?.share_link,
-        pdf,
-        recipientCount: recipients.length,
         siteNames: selectedSiteRows.map((site) => site.name),
-      });
-      if (via === "pdf" && pdf) Linking.openURL(pdf).catch(() => {
-        setErr("The PDF was created, but couldn't be opened on this device.");
       });
     } catch (e: any) {
       setErr(e?.response?.data?.detail || "Couldn't share this schedule.");
@@ -299,10 +274,8 @@ export default function ShareSchedule() {
     setStep(1);
     setSelectedSites(new Set());
     setSelectedDocument(null);
-    setExtraEmails("");
     setMessage("");
     setQuery("");
-    setVia("email");
     setErr("");
   };
 
@@ -323,7 +296,7 @@ export default function ShareSchedule() {
           </View>
           <Text style={s.successTitle}>Sent for PI review</Text>
           <Text style={s.successText}>
-            {selectedDocument?.name} was securely shared with the selected trial sites.
+            {selectedDocument?.name} was sent directly to the assigned PIs in the app.
           </Text>
           <View style={s.successList}>
             <Text style={s.successListTitle}>SHARED WITH</Text>
@@ -335,19 +308,6 @@ export default function ShareSchedule() {
               </View>
             ))}
           </View>
-          {!!done.link && (
-            <View style={s.linkCard}>
-              <Text style={s.eyebrow}>SECURE LINK · EXPIRES IN 7 DAYS</Text>
-              <Text selectable numberOfLines={2} style={s.linkText}>{done.link}</Text>
-              <Text style={s.copyText}>Press and hold the link to copy it.</Text>
-            </View>
-          )}
-          {!!done.pdf && (
-            <Pressable onPress={() => Linking.openURL(done.pdf!)} style={s.secondaryButton}>
-              <FileText size={17} color={colors.primary} />
-              <Text style={s.secondaryButtonText}>Open Schedule PDF</Text>
-            </Pressable>
-          )}
           <Pressable onPress={shareAnother} style={s.primaryButton}>
             <Share2 size={16} color={colors.white} />
             <Text style={s.primaryButtonText}>Share Another Document</Text>
@@ -477,7 +437,6 @@ export default function ShareSchedule() {
                             <Text style={s.siteName}>{site.name}</Text>
                             <Text style={s.siteMeta}>
                               {site.pi ? `PI · ${site.pi}` : "PI assignment pending"}
-                              {site.piEmail ? ` · ${site.piEmail}` : ""}
                             </Text>
                           </View>
                         </Pressable>
@@ -499,23 +458,13 @@ export default function ShareSchedule() {
                     <View style={s.warning}>
                       <AlertTriangle size={17} color={colors.warning} />
                       <Text style={s.warningText}>
-                        {pendingSites.length} selected site{pendingSites.length === 1 ? "" : "s"} still {pendingSites.length === 1 ? "has" : "have"} a pending PI assignment or email. A review task will be created, but email delivery may wait.
+                        {pendingSites.length} selected site{pendingSites.length === 1 ? "" : "s"} still {pendingSites.length === 1 ? "has" : "have"} no assigned PI. Assign a PI before sending this schedule in app.
                       </Text>
                     </View>
                   )}
                 </View>
 
                 <View>
-                  <Text style={s.fieldLabel}>ADDITIONAL EMAILS · OPTIONAL</Text>
-                  <TextInput
-                    value={extraEmails}
-                    onChangeText={setExtraEmails}
-                    placeholder="pi@hospital.org, crc@hospital.org"
-                    placeholderTextColor={colors.mutedFg}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    style={s.emailInput}
-                  />
                   <Text style={s.fieldLabel}>MESSAGE TO SITES · OPTIONAL</Text>
                   <TextInput
                     value={message}
@@ -554,32 +503,18 @@ export default function ShareSchedule() {
                   ))}
                 </View>
                 {!!message.trim() && <ReviewRow label="Message" value={message.trim()} />}
-                <View>
-                  <Text style={s.eyebrow}>DELIVERY</Text>
-                  <Text style={s.sectionTitle}>Choose a secure format</Text>
-                  <View style={s.deliveryList}>
-                    {([
-                      { id: "email", icon: Mail, title: "Email recipients", text: "Send a secure schedule link to PI recipients." },
-                      { id: "link", icon: LinkIcon, title: "Generate secure link", text: "Create a link for an approved sharing channel." },
-                      { id: "pdf", icon: FileText, title: "Schedule PDF", text: "Generate and open a printable schedule PDF." },
-                    ] as const).map((option) => {
-                      const active = via === option.id;
-                      const Icon = option.icon;
-                      return (
-                        <Pressable key={option.id} onPress={() => setVia(option.id)} style={[s.delivery, active && s.deliveryActive]}>
-                          <View style={[s.deliveryIcon, active && s.deliveryIconActive]}><Icon size={18} color={active ? colors.white : colors.primary} /></View>
-                          <View style={s.flex}><Text style={s.deliveryTitle}>{option.title}</Text><Text style={s.deliveryText}>{option.text}</Text></View>
-                          <SelectionMark active={active} />
-                        </Pressable>
-                      );
-                    })}
+                <View style={s.reviewHero}>
+                  <View style={s.reviewIcon}><Share2 size={24} color={colors.primary} /></View>
+                  <View style={s.flex}>
+                    <Text style={s.reviewTitle}>In-app delivery</Text>
+                    <Text style={s.reviewCopy}>The assigned PIs will receive a notification and the schedule will appear in their review inbox.</Text>
                   </View>
                 </View>
               </>
             )}
             {!!err && <Text style={s.error}>{err}</Text>}
           </ScrollView>
-          <View style={s.footer}>
+          <SafeAreaView edges={["bottom"]} style={s.footer}>
             {step === 1 ? (
               <>
                 <View style={s.flex}>
@@ -597,11 +532,11 @@ export default function ShareSchedule() {
                   <Text style={s.footerBackText}>Back</Text>
                 </Pressable>
                 <Pressable onPress={share} disabled={loading} style={[s.shareButton, s.flex, loading && s.disabled]}>
-                  {loading ? <ActivityIndicator color={colors.white} /> : <><Share2 size={17} color={colors.white} /><Text style={s.shareButtonText}>Share for PI Review</Text></>}
+                  {loading ? <ActivityIndicator color={colors.white} /> : <><Share2 size={17} color={colors.white} /><Text style={s.shareButtonText}>Send in App</Text></>}
                 </Pressable>
               </>
             )}
-          </View>
+          </SafeAreaView>
         </>
       )}
     </View>

@@ -17,7 +17,6 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
-import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   AlertTriangle,
@@ -51,7 +50,7 @@ import type {
   SponsorTrialTeamMember,
 } from "@/src/features/sponsor/types";
 import { downloadFile, uploadFile, type UploadedFile } from "@/src/lib/upload";
-import { colors, dawnGradient, fonts, shadows } from "@/src/theme/tokens";
+import { colors, fonts, shadows } from "@/src/theme/tokens";
 
 type Trial = {
   id: string;
@@ -261,9 +260,7 @@ export default function TrialSummary() {
 
   useEffect(() => { load(); }, [load]);
 
-  const randomized = Number(recruitment.recruitment.randomized ?? 0);
   const target = Number(trial?.target_enrollment || 0);
-  const enrollmentPct = target > 0 ? Math.min(100, Math.round((randomized / target) * 100)) : 0;
   const protocolDocument = useMemo(
     () => documents.find((document) => /protocol/i.test(document.name)) || documents[0],
     [documents],
@@ -539,9 +536,6 @@ export default function TrialSummary() {
               <Metric label="Sample Size" value={target ? String(target) : "—"} />
             </View>
             <Funnel data={recruitment.recruitment} />
-            <Text style={s.smallCaps}>ENROLLMENT</Text>
-            <Progress value={enrollmentPct} reduced={reducedMotion} />
-            <Text style={s.progressCopy}>{randomized} / {target || "—"} randomized{target ? ` (${enrollmentPct}%)` : ""}</Text>
           </Section>
         </Entrance>
 
@@ -1071,38 +1065,6 @@ function Funnel({ data, compact = false }: { data: RecruitmentFunnel; compact?: 
   );
 }
 
-function Progress({
-  value,
-  reduced,
-  compact = false,
-}: {
-  value: number;
-  reduced: boolean;
-  compact?: boolean;
-}) {
-  const animated = useRef(new Animated.Value(reduced ? value : 0)).current;
-  useEffect(() => {
-    Animated.timing(animated, {
-      toValue: value,
-      duration: reduced ? 0 : 650,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [animated, reduced, value]);
-  const width = animated.interpolate({
-    inputRange: [0, 100],
-    outputRange: ["0%", "100%"],
-    extrapolate: "clamp",
-  });
-  return (
-    <View style={[s.track, compact && { height: 5 }]}>
-      <Animated.View style={[s.progressFillWrap, { width }]}>
-        <LinearGradient colors={dawnGradient as any} style={StyleSheet.absoluteFill} />
-      </Animated.View>
-    </View>
-  );
-}
-
 function EditField({
   label,
   multiline,
@@ -1176,9 +1138,6 @@ const s = StyleSheet.create({
   funnelValue: { fontFamily: fonts.heading, fontSize: 14, color: colors.foreground },
   funnelLabel: { marginTop: 2, textAlign: "center", fontFamily: fonts.regular, fontSize: 7.5, color: colors.mutedFg },
   smallCaps: { fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.9, color: colors.mutedFg },
-  track: { height: 7, overflow: "hidden", borderRadius: 999, backgroundColor: "#F0E2D7" },
-  progressFillWrap: { height: "100%", overflow: "hidden", borderRadius: 999 },
-  progressCopy: { marginTop: -5, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
   siteCard: { padding: 12, gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "#E5D2C4", backgroundColor: "#FAEDE2" },
   siteName: { fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
   siteMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: colors.mutedFg },

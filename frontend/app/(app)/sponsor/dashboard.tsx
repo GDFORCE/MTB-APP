@@ -245,7 +245,7 @@ export default function SponsorDashboard() {
               <StatTile icon={FlaskConical} color={C.info} tint="rgba(123,107,184,0.12)" value={dashboard.totals.trials} label="Total Trials" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/trials")} />
               <StatTile icon={MapPin} color={C.accent} tint="rgba(230,155,92,0.15)" value={dashboard.totals.sites} label="Total Sites" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
               <StatTile icon={Users} color={C.violet} tint="rgba(142,91,180,0.12)" value={dashboard.totals.subjects} label="Total Patients" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/patients")} />
-              <StatTile icon={UserCheck} color={C.success} tint="rgba(92,154,110,0.12)" value={dashboard.totals.pis} label="Total PIs" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
+              <StatTile icon={UserCheck} color={C.success} tint="rgba(92,154,110,0.12)" value={dashboard.totals.pis} label="Total PIs" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/principal-investigators")} />
             </View>
           </MotionItem>
 

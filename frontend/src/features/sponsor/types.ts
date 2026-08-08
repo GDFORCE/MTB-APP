@@ -143,6 +143,7 @@ export type SponsorSiteTrial = {
   status?: string;
   recruitmentStatus?: string;
   piName?: string;
+  department?: string;
 };
 
 export type SponsorSite = {

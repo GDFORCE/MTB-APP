@@ -70,6 +70,7 @@ function normalizeSiteTrial(raw: any): SponsorSiteTrial {
     status: trial.status,
     recruitmentStatus: text(raw?.recruitmentStatus || raw?.recruitment_status),
     piName: text(raw?.piName || raw?.pi_name),
+    department: text(raw?.department),
   };
 }
 

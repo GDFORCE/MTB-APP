@@ -62,6 +62,7 @@ type SiteImportSummary = {
   failed: number;
   results: SiteImportResult[];
 };
+type PiLookupStatus = "idle" | "checking" | "found" | "not_found" | "error";
 
 const accessOptions: { value: SiteAccess; label: string; copy: string }[] = [
   {
@@ -359,6 +360,8 @@ export default function SponsorSitesScreen() {
   const [department, setDepartment] = useState("");
   const [piEmail, setPiEmail] = useState("");
   const [piPhone, setPiPhone] = useState("");
+  const [piLookupStatus, setPiLookupStatus] = useState<PiLookupStatus>("idle");
+  const [matchedPiEmail, setMatchedPiEmail] = useState("");
   const [targetEnrollment, setTargetEnrollment] = useState("");
   const [accessType, setAccessType] = useState<SiteAccess>("full");
   const [uploadAsset, setUploadAsset] = useState<PickedAsset | null>(null);
@@ -426,6 +429,8 @@ export default function SponsorSitesScreen() {
     setDepartment("");
     setPiEmail("");
     setPiPhone("");
+    setPiLookupStatus("idle");
+    setMatchedPiEmail("");
     setTargetEnrollment("");
     setAccessType("full");
     setUploadAsset(null);
@@ -545,6 +550,41 @@ export default function SponsorSitesScreen() {
     } finally { setSaving(false); }
   };
 
+  const changePiEmail = (value: string) => {
+    const normalizedEmail = value.trim().toLowerCase();
+    if (matchedPiEmail && normalizedEmail !== matchedPiEmail) {
+      setPiName("");
+      setDepartment("");
+      setPiPhone("");
+      setMatchedPiEmail("");
+    }
+    setPiEmail(value);
+    setPiLookupStatus("idle");
+  };
+
+  const lookupPi = async () => {
+    const email = piEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+    setPiLookupStatus("checking");
+    try {
+      const response = await api.get("/sponsor/pi-lookup", { params: { email } });
+      if (!response.data?.found) {
+        setMatchedPiEmail("");
+        setPiLookupStatus("not_found");
+        return;
+      }
+      const pi = response.data.pi || {};
+      setPiName(pi.full_name || "");
+      setDepartment(pi.department || "");
+      setPiPhone(pi.phone || "");
+      setSiteName((current) => current.trim() ? current : (pi.organization || ""));
+      setMatchedPiEmail(email);
+      setPiLookupStatus("found");
+    } catch {
+      setPiLookupStatus("error");
+    }
+  };
+
   const selectedTrial = trials.find((trial) => trial.id === selectedTrialId);
   const canSaveSite = Boolean(
     selectedTrialId
@@ -632,6 +672,11 @@ export default function SponsorSitesScreen() {
                   {[site.hospital, site.address, site.city, site.state].filter(Boolean).join(", ") || "Address not provided"}
                 </Text>
               </View>
+              {!!site.hospitalType && (
+                <View style={styles.hospitalTypeBadge}>
+                  <Text style={styles.hospitalTypeText}>{site.hospitalType}</Text>
+                </View>
+              )}
               <Text style={styles.trialDetailsLabel}>TRIAL DETAILS</Text>
               {site.trials.length ? site.trials.map((trial) => (
                 <View key={trial.id} style={styles.siteTrialPanel}>
@@ -647,7 +692,10 @@ export default function SponsorSitesScreen() {
                     <View style={styles.trialField}><Text style={styles.trialFieldLabel}>DISEASE</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.condition || "—"}</Text></View>
                     <View style={styles.trialField}><Text style={styles.trialFieldLabel}>DRUG</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.drug || "—"}</Text></View>
                     <View style={styles.trialField}><Text style={styles.trialFieldLabel}>PI NAME</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.piName || site.pi || "Not assigned"}</Text></View>
-                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>RECRUITMENT STATUS</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.recruitmentStatus || "Recruiting"}</Text></View>
+                    <View style={[styles.trialField, styles.departmentField]}>
+                      <Text style={[styles.trialFieldLabel, styles.departmentText]}>DEPARTMENT</Text>
+                      <Text numberOfLines={1} style={[styles.trialFieldValue, styles.departmentText]}>{trial.department || site.department || "Not provided"}</Text>
+                    </View>
                   </View>
                 </View>
               )) : <Text style={styles.noTrials}>No trials assigned to this site.</Text>}
@@ -897,16 +945,35 @@ export default function SponsorSitesScreen() {
                   </View>
 
                   <Text style={styles.panelLabel}>PRINCIPAL INVESTIGATOR</Text>
-                  <FormField label="PI NAME *" value={piName} onChangeText={setPiName} placeholder="Dr. First Last" />
-                  <FormField label="DEPARTMENT" value={department} onChangeText={setDepartment} placeholder="Endocrinology" />
                   <FormField
                     label="PI EMAIL *"
                     value={piEmail}
-                    onChangeText={setPiEmail}
+                    onChangeText={changePiEmail}
+                    onBlur={lookupPi}
                     placeholder="pi@hospital.com"
                     keyboardType="email-address"
                     autoCapitalize="none"
                   />
+                  {piLookupStatus !== "idle" && (
+                    <View style={[
+                      styles.piLookupMessage,
+                      piLookupStatus === "found" && styles.piLookupFound,
+                      piLookupStatus === "not_found" && styles.piLookupNotFound,
+                    ]}>
+                      {piLookupStatus === "checking" && <ActivityIndicator size="small" color={colors.info} />}
+                      <Text style={styles.piLookupText}>
+                        {piLookupStatus === "checking"
+                          ? "Checking PI registration…"
+                          : piLookupStatus === "found"
+                            ? "Registered PI found. Available profile details were filled automatically."
+                            : piLookupStatus === "not_found"
+                              ? "This PI is not registered. Fill the details manually; an invitation will be sent."
+                              : "PI lookup is temporarily unavailable. You can continue by entering the details manually."}
+                      </Text>
+                    </View>
+                  )}
+                  <FormField label="PI NAME *" value={piName} onChangeText={setPiName} placeholder="Dr. First Last" />
+                  <FormField label="DEPARTMENT" value={department} onChangeText={setDepartment} placeholder="Endocrinology" />
                   <FormField label="PI PHONE" value={piPhone} onChangeText={setPiPhone} placeholder="+91 98765 43210" keyboardType="phone-pad" />
                   <FormField
                     label="TARGET ALLOCATION"
@@ -1000,6 +1067,8 @@ const styles = StyleSheet.create({
   siteName: { flex: 1, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.foreground },
   locationRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 4 },
   siteAddress: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
+  hospitalTypeBadge: { alignSelf: "flex-start", marginTop: 7, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.secondary },
+  hospitalTypeText: { fontFamily: fonts.semibold, fontSize: 8.5, color: colors.secondaryFg },
   trialDetailsLabel: { marginTop: 11, marginBottom: 7, fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.8, color: colors.mutedFg },
   siteTrialPanel: { marginBottom: 8, padding: 11, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   trialPanelTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
@@ -1007,6 +1076,8 @@ const styles = StyleSheet.create({
   trialTopRight: { flexDirection: "row", alignItems: "center", gap: 5 },
   trialGrid: { marginTop: 9, flexDirection: "row", flexWrap: "wrap", rowGap: 8 },
   trialField: { width: "50%", paddingRight: 8 },
+  departmentField: { width: "100%", paddingRight: 0, alignItems: "center", transform: [{ translateX: -42 }] },
+  departmentText: { textAlign: "center" },
   trialFieldLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.35, color: colors.mutedFg },
   trialFieldValue: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9.5, color: colors.foreground },
   noTrials: { paddingVertical: 10, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
@@ -1102,6 +1173,10 @@ const styles = StyleSheet.create({
   trialOptionProtocol: { fontFamily: fonts.mono, fontSize: 10, color: colors.primary },
   trialOptionTitle: { marginTop: 2, fontFamily: fonts.regular, fontSize: 10.5, color: colors.foreground },
   fieldRow: { flexDirection: "row", gap: 9 },
+  piLookupMessage: { marginTop: -3, marginBottom: 2, padding: 10, flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, backgroundColor: colors.info + "12" },
+  piLookupFound: { backgroundColor: colors.success + "16" },
+  piLookupNotFound: { backgroundColor: colors.warning + "18" },
+  piLookupText: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, lineHeight: 13, color: colors.mutedFg },
   fieldHalf: { flex: 1 },
   choiceRow: { flexDirection: "row", gap: 8 },
   choice: { flex: 1, minHeight: 40, borderRadius: 13, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, alignItems: "center", justifyContent: "center" },

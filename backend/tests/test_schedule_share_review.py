@@ -102,8 +102,8 @@ def test_share_creates_site_reviews_and_decisions_are_isolated():
         async with client() as cli:
             shared = await cli.post("/api/shares", headers=headers(sponsor), json={
                 "trial_id": trial["id"],
-                "via": "link",
-                "recipients": [pi_a["email"], pi_b["email"]],
+                "via": "in_app",
+                "recipients": [],
                 "sites": [
                     {"id": f"pi-{pi_a['id']}", "name": pi_a["organization"], "reviewer_id": pi_a["id"]},
                     {"id": f"pi-{pi_b['id']}", "name": pi_b["organization"], "reviewer_id": pi_b["id"]},
@@ -113,6 +113,8 @@ def test_share_creates_site_reviews_and_decisions_are_isolated():
                 "version_note": "Visit 2 window updated",
             })
             assert shared.status_code == 200, shared.text
+            assert shared.json()["via"] == "in_app"
+            assert shared.json()["recipients"] == []
             assert len(shared.json()["review_ids"]) == 2
             assert shared.json()["document_id"] == shared_document["id"]
 

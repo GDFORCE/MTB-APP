@@ -1842,7 +1842,7 @@ async def sponsor_dashboard(user=Depends(current_user)):
     staff_rows = await db.users.find(
         {'id': {'$in': list(staff_ids)}} if staff_ids else {'id': {'$in': []}},
         {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'phone': 1,
-         'organization': 1, 'role': 1}).to_list(2000)
+         'organization': 1, 'role': 1, 'profile.department': 1}).to_list(2000)
     staff = {row['id']: row for row in staff_rows}
     for card in trial_cards:
         creator = staff.get(card.get('created_by')) or {}
@@ -1874,6 +1874,25 @@ async def sponsor_dashboard(user=Depends(current_user)):
     if organization:
         network_sites = await db.org_sites.find(
             {'org_id': organization['id']}, {'_id': 0}).sort('name', 1).to_list(500)
+        site_pi_ids = [site.get('user_id') for site in network_sites
+                       if site.get('user_id')]
+        site_pi_emails = [str(site.get('pi_email') or '').lower().strip()
+                          for site in network_sites if site.get('pi_email')]
+        site_pi_filters = []
+        if site_pi_ids:
+            site_pi_filters.append({'id': {'$in': site_pi_ids}})
+        if site_pi_emails:
+            site_pi_filters.append({'email': {'$in': site_pi_emails}})
+        site_pi_rows = await db.users.find(
+            {'$or': site_pi_filters} if site_pi_filters else {'id': {'$in': []}},
+            {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'phone': 1,
+             'organization': 1, 'role': 1, 'profile.department': 1},
+        ).to_list(1000)
+        site_pis_by_id = {row['id']: row for row in site_pi_rows}
+        site_pis_by_email = {
+            str(row.get('email') or '').lower(): row for row in site_pi_rows
+            if row.get('email')
+        }
         for site in network_sites:
             group = site_groups.setdefault(site.get('name') or 'Unnamed site', {
                 'patient_ids': [], 'trial_ids': set(), 'pi': {}, 'crc': {}})
@@ -1887,13 +1906,20 @@ async def sponsor_dashboard(user=Depends(current_user)):
             group['status'] = site.get('status') or 'active'
             group['trial_targets'] = site.get('trial_targets') or {}
             group['trial_ids'].update(site.get('trial_ids') or [])
-            if not group.get('pi') and site.get('pi_name'):
+            linked_pi = (
+                site_pis_by_id.get(site.get('user_id')) or
+                site_pis_by_email.get(str(site.get('pi_email') or '').lower())
+            )
+            if linked_pi:
+                group['pi'] = linked_pi
+            elif not group.get('pi') and site.get('pi_name'):
                 group['pi'] = {
                     'full_name': site.get('pi_name') or '',
                     'email': site.get('pi_email') or '',
                     'phone': site.get('pi_phone') or '',
                     'role': 'pi',
                     'organization': site.get('name') or '',
+                    'profile': {'department': site.get('department') or ''},
                 }
 
     instances = []
@@ -1990,7 +2016,8 @@ async def sponsor_dashboard(user=Depends(current_user)):
             'city': group.get('city') or '',
             'state': group.get('state') or '',
             'hospital_type': group.get('hospital_type') or '',
-            'department': group.get('department') or '',
+            'department': ((pi.get('profile') or {}).get('department') or
+                           group.get('department') or ''),
             'access_type': group.get('access_type') or 'full',
             'status': site_status,
             'pi_name': pi.get('full_name') or '',
@@ -2016,6 +2043,8 @@ async def sponsor_dashboard(user=Depends(current_user)):
                 'status': trial.get('status') or 'active',
                 'recruitment_status': trial.get('recruitment_status') or '',
                 'pi_name': pi.get('full_name') or '',
+                'department': ((pi.get('profile') or {}).get('department') or
+                               group.get('department') or ''),
             } for trial in linked_trials],
         })
 
@@ -2045,7 +2074,11 @@ async def sponsor_dashboard(user=Depends(current_user)):
         min(100, enrollment_pct) + compliance_pct + adherence_pct
     ) / 3) if trials else 0
 
-    pi_ids = {patient.get('pi_id') for patient in patients if patient.get('pi_id')}
+    pi_keys = {
+        site.get('pi_id') or (site.get('pi_email') or '').lower()
+        for site in site_cards
+        if site.get('pi_id') or site.get('pi_email')
+    }
     return serialize({
         'portfolio': {
             'health_score': health_score,
@@ -2068,7 +2101,7 @@ async def sponsor_dashboard(user=Depends(current_user)):
             'trials': len(trials),
             'sites': len(site_cards),
             'subjects': len(patients),
-            'pis': len(pi_ids),
+            'pis': len(pi_keys),
         },
         'trials': trial_cards,
         'sites': site_cards,
@@ -2473,6 +2506,32 @@ async def sponsor_trial_detail(trial_id: str, user=Depends(current_user)):
     return await _sponsor_trial_detail_payload(trial, user)
 
 
+@api.get('/sponsor/pi-lookup',
+         dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_pi_lookup(email: EmailStr, user=Depends(current_user)):
+    """Resolve an exact PI email for an organization-admin site assignment."""
+    if not user.get('org_admin'):
+        raise HTTPException(403, 'Only an organization admin can look up PIs')
+    pi = await db.users.find_one(
+        {'email': str(email).lower(), 'role': 'pi'},
+        {'_id': 0, 'id': 1, 'email': 1, 'full_name': 1, 'phone': 1,
+         'organization': 1, 'profile.department': 1},
+    )
+    if not pi:
+        return {'found': False}
+    return {
+        'found': True,
+        'pi': {
+            'id': pi['id'],
+            'email': pi.get('email') or '',
+            'full_name': pi.get('full_name') or '',
+            'phone': pi.get('phone') or '',
+            'organization': pi.get('organization') or '',
+            'department': (pi.get('profile') or {}).get('department') or '',
+        },
+    }
+
+
 @api.get('/sponsor/trials/{trial_id}/subjects',
          dependencies=[Depends(require_roles('sponsor', 'cro'))])
 async def sponsor_trial_subjects(trial_id: str,
@@ -2516,6 +2575,11 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
         raise HTTPException(400, 'Your organization could not be resolved')
 
     site_name = body.name.strip()
+    registered_pi = await db.users.find_one(
+        {'email': str(body.pi_email).lower(), 'role': 'pi'},
+        {'_id': 0, 'id': 1, 'email': 1, 'full_name': 1, 'phone': 1,
+         'organization': 1, 'profile.department': 1},
+    )
     existing = await db.org_sites.find_one(
         {'org_id': organization['id'], 'name': site_name}, {'_id': 0})
     fields = {
@@ -2523,15 +2587,18 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
         'city': (body.city or '').strip(),
         'state': (body.state or '').strip(),
         'hospital_type': body.hospital_type or 'Private',
-        'department': (body.department or '').strip(),
-        'pi_name': body.pi_name.strip(),
+        'department': ((registered_pi or {}).get('profile') or {}).get('department')
+                      or (body.department or '').strip(),
+        'pi_name': (registered_pi or {}).get('full_name') or body.pi_name.strip(),
         'pi_email': str(body.pi_email).lower(),
-        'pi_phone': (body.pi_phone or '').strip(),
+        'pi_phone': (registered_pi or {}).get('phone') or (body.pi_phone or '').strip(),
         'access_type': body.access_type,
         'status': 'active',
         'updated_at': now(),
         'updated_by': user['id'],
     }
+    if registered_pi:
+        fields['user_id'] = registered_pi['id']
     target_path = f'trial_targets.{trial_id}'
     if existing:
         update_set = dict(fields)
@@ -2558,8 +2625,20 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
     # assignment. Reuse a still-pending invite rather than sending duplicates.
     invitation = await db.invitations.find_one({
         'email': str(body.pi_email).lower(), 'trial_id': trial_id,
-        'role': 'pi', 'status': 'pending',
+        'role': 'pi',
+        'status': {'$in': ['pending', 'accepted']} if registered_pi else 'pending',
     }, {'_id': 0})
+    if registered_pi and invitation and invitation.get('status') != 'accepted':
+        await db.invitations.update_one(
+            {'id': invitation['id']},
+            {'$set': {
+                'status': 'accepted',
+                'accepted_user_id': registered_pi['id'],
+                'accepted_at': now(),
+            }},
+        )
+        invitation = {**invitation, 'status': 'accepted',
+                      'accepted_user_id': registered_pi['id']}
     if not invitation:
         token = uuid.uuid4().hex
         invitation = {
@@ -2568,21 +2647,25 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
             'full_name': body.pi_name.strip(), 'role': 'pi',
             'trial_id': trial_id, 'invited_by': user['id'],
             'org': site_name, 'organization': site_name,
-            'status': 'pending', 'created_at': now(),
+            'status': 'accepted' if registered_pi else 'pending',
+            'accepted_user_id': registered_pi.get('id') if registered_pi else None,
+            'accepted_at': now() if registered_pi else None,
+            'created_at': now(),
             'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
             'resend_count': 0,
         }
         await db.invitations.insert_one(invitation)
-        try:
-            await run_in_threadpool(
-                otp_service.send_invitation_email,
-                invitation['email'],
-                _invite_link(invitation['token']),
-                invitation['full_name'],
-            )
-        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
-            await db.invitations.delete_one({'id': invitation['id']})
-            raise HTTPException(502, 'The PI invitation email could not be delivered.')
+        if not registered_pi:
+            try:
+                await run_in_threadpool(
+                    otp_service.send_invitation_email,
+                    invitation['email'],
+                    _invite_link(invitation['token']),
+                    invitation['full_name'],
+                )
+            except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+                await db.invitations.delete_one({'id': invitation['id']})
+                raise HTTPException(502, 'The PI invitation email could not be delivered.')
     await write_audit(
         user, 'trial.site_add',
         f'Added {site_name} to {trial.get("protocol_id") or trial_id} and shared with PI',
@@ -6652,7 +6735,7 @@ class ShareSiteIn(BaseModel):
 
 class ShareIn(BaseModel):
     trial_id: str
-    via: Literal['email', 'link', 'pdf'] = 'link'
+    via: Literal['email', 'link', 'pdf', 'in_app'] = 'in_app'
     recipients: List[EmailStr] = []
     sites: List[ShareSiteIn] = []
     message: Optional[str] = Field(default='', max_length=300)
@@ -6783,6 +6866,10 @@ async def create_share(body: ShareIn, user=Depends(current_user)):
     validated_sites = []
     for site in body.sites:
         validated_sites.append((site, await _validate_share_site(user, trial, site)))
+    if body.via == 'in_app' and (
+        not validated_sites or any(reviewer is None for _, reviewer in validated_sites)
+    ):
+        raise HTTPException(400, 'Select at least one site with an assigned PI for in-app sharing')
 
     visit_snapshot = await db.visits.find(
         {'trial_id': body.trial_id}, {'_id': 0},
