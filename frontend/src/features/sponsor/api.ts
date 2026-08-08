@@ -82,6 +82,7 @@ export function normalizeSite(raw: any): SponsorSite {
     target > 0 ? Math.round((enrolled / target) * 100) : 0,
   );
   const rawTrials = Array.isArray(raw?.trials) ? raw.trials : [];
+  const rawPis = Array.isArray(raw?.pis) ? raw.pis : [];
   const rawRecruitment = raw?.recruitment;
   const accessType = text(raw?.accessType || raw?.access_type, "full");
   return {
@@ -101,6 +102,15 @@ export function normalizeSite(raw: any): SponsorSite {
     piId: text(raw?.piId || raw?.pi_id),
     piEmail: text(raw?.piEmail || raw?.pi_email),
     piPhone: text(raw?.piPhone || raw?.pi_phone),
+    pis: rawPis
+      .filter((pi: any) => pi && typeof pi === "object")
+      .map((pi: any) => ({
+        id: text(pi?.id),
+        name: text(pi?.name || pi?.full_name, "Unnamed PI"),
+        email: text(pi?.email),
+        phone: text(pi?.phone),
+        department: text(pi?.department),
+      })),
     crc: text(raw?.crc || raw?.crc_name),
     enrolled,
     target,

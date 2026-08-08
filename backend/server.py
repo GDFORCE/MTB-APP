@@ -1893,6 +1893,21 @@ async def sponsor_dashboard(user=Depends(current_user)):
             str(row.get('email') or '').lower(): row for row in site_pi_rows
             if row.get('email')
         }
+        linked_pi_orgs = sorted({
+            str(row.get('organization') or '').strip()
+            for row in site_pi_rows if row.get('organization')
+        })
+        organization_pi_rows = await db.users.find(
+            {
+                'role': 'pi',
+                'organization': {'$in': linked_pi_orgs},
+            } if linked_pi_orgs else {'id': {'$in': []}},
+            {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'phone': 1,
+             'organization': 1, 'role': 1, 'profile.department': 1},
+        ).to_list(2000)
+        site_pis_by_org: Dict[str, List[dict]] = {}
+        for pi_row in organization_pi_rows:
+            site_pis_by_org.setdefault(pi_row.get('organization') or '', []).append(pi_row)
         for site in network_sites:
             group = site_groups.setdefault(site.get('name') or 'Unnamed site', {
                 'patient_ids': [], 'trial_ids': set(), 'pi': {}, 'crc': {}})
@@ -1912,8 +1927,19 @@ async def sponsor_dashboard(user=Depends(current_user)):
             )
             if linked_pi:
                 group['pi'] = linked_pi
-            elif not group.get('pi') and site.get('pi_name'):
-                group['pi'] = {
+                related_pis = [linked_pi, *site_pis_by_org.get(
+                    linked_pi.get('organization') or '', [])]
+                deduplicated_pis = []
+                seen_pi_ids = set()
+                for related_pi in related_pis:
+                    identity = related_pi.get('id') or str(
+                        related_pi.get('email') or '').strip().lower()
+                    if identity and identity not in seen_pi_ids:
+                        seen_pi_ids.add(identity)
+                        deduplicated_pis.append(related_pi)
+                group['pis'] = deduplicated_pis
+            elif site.get('pi_name'):
+                configured_pi = {
                     'full_name': site.get('pi_name') or '',
                     'email': site.get('pi_email') or '',
                     'phone': site.get('pi_phone') or '',
@@ -1921,6 +1947,8 @@ async def sponsor_dashboard(user=Depends(current_user)):
                     'organization': site.get('name') or '',
                     'profile': {'department': site.get('department') or ''},
                 }
+                group['pi'] = configured_pi
+                group['pis'] = [configured_pi]
 
     instances = []
     patient_ids = [patient['id'] for patient in patients]
@@ -2008,6 +2036,7 @@ async def sponsor_dashboard(user=Depends(current_user)):
             min(100, enrollment_pct) + compliance + adherence
         ) / 3)
         pi, crc = group.get('pi') or {}, group.get('crc') or {}
+        site_pis = group.get('pis') or ([pi] if pi else [])
         site_cards.append({
             'id': group.get('id') or (f"pi-{pi['id']}" if pi.get('id') else f'site-{index + 1}'),
             'name': site_name,
@@ -2024,6 +2053,13 @@ async def sponsor_dashboard(user=Depends(current_user)):
             'pi_id': pi.get('id') or '',
             'pi_email': pi.get('email') or '',
             'pi_phone': pi.get('phone') or '',
+            'pis': [{
+                'id': site_pi.get('id') or '',
+                'name': site_pi.get('full_name') or '',
+                'email': site_pi.get('email') or '',
+                'phone': site_pi.get('phone') or '',
+                'department': ((site_pi.get('profile') or {}).get('department') or ''),
+            } for site_pi in site_pis if site_pi.get('full_name')],
             'crc_name': crc.get('full_name') or '',
             'enrolled': enrolled,
             'target_enrollment': target or None,
@@ -6763,11 +6799,21 @@ async def _validate_share_site(user: dict, trial: dict, site: ShareSiteIn):
         org = await db.organizations.find_one(
             {'name': sponsor_org}, {'_id': 0, 'id': 1}) if sponsor_org else None
         network_site = None
-        if org and reviewer.get('organization'):
+        if org:
             network_site = await db.org_sites.find_one({
                 'org_id': org['id'],
-                'name': reviewer['organization'],
-            }, {'_id': 0, 'id': 1})
+                'id': site.id,
+            }, {'_id': 0, 'id': 1, 'user_id': 1, 'pi_email': 1})
+            if network_site:
+                linked_user_id = network_site.get('user_id')
+                linked_email = str(network_site.get('pi_email') or '').strip().lower()
+                reviewer_email = str(reviewer.get('email') or '').strip().lower()
+                reviewer_matches = (
+                    (linked_user_id and linked_user_id == reviewer['id']) or
+                    (linked_email and reviewer_email and linked_email == reviewer_email)
+                )
+                if not reviewer_matches:
+                    network_site = None
         portfolio_site = False
         if (not assigned and not network_site and
                 user.get('role') in ('sponsor', 'cro')):

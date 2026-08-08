@@ -146,6 +146,14 @@ export type SponsorSiteTrial = {
   department?: string;
 };
 
+export type SponsorSitePi = {
+  id?: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  department?: string;
+};
+
 export type SponsorSite = {
   id: string;
   name: string;
@@ -161,6 +169,7 @@ export type SponsorSite = {
   piId?: string;
   piEmail?: string;
   piPhone?: string;
+  pis?: SponsorSitePi[];
   crc?: string;
   enrolled: number;
   target: number;

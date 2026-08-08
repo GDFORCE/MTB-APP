@@ -313,6 +313,22 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
             "organization": f"Foreign Site {RUN_ID}",
             "status": "Active",
         }
+        network_pi = {
+            "id": str(uuid.uuid4()),
+            "email": f"network-pi-{RUN_ID}@example.com",
+            "full_name": "Dr Network PI",
+            "role": "pi",
+            "organization": f"Network Hospitals {RUN_ID}",
+            "status": "Active",
+        }
+        network_pi_two = {
+            "id": str(uuid.uuid4()),
+            "email": f"network-pi-two-{RUN_ID}@example.com",
+            "full_name": "Dr Second Network PI",
+            "role": "pi",
+            "organization": network_pi["organization"],
+            "status": "Active",
+        }
         portfolio_trial = {
             "id": str(uuid.uuid4()),
             "title": "Second Portfolio Trial",
@@ -342,14 +358,41 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
                 "created_at": server.now(),
             },
         ]
-        await server.db.users.insert_many([portfolio_pi, foreign_pi])
+        await server.db.users.insert_many([
+            portfolio_pi, foreign_pi, network_pi, network_pi_two,
+        ])
         await server.db.trials.insert_one(portfolio_trial)
         await server.db.patients.insert_many(patients)
-        IDS["users"].extend([portfolio_pi["id"], foreign_pi["id"]])
+        organization = await server.db.organizations.find_one(
+            {"name": sponsor_a["organization"]}, {"_id": 0, "id": 1})
+        network_site = {
+            "id": str(uuid.uuid4()),
+            "org_id": organization["id"],
+            "name": f"Network Hospital {RUN_ID}",
+            "pi_name": network_pi["full_name"],
+            "pi_email": network_pi["email"],
+            "trial_ids": [],
+        }
+        await server.db.org_sites.insert_one(network_site)
+        IDS["users"].extend([
+            portfolio_pi["id"], foreign_pi["id"], network_pi["id"],
+            network_pi_two["id"],
+        ])
         IDS["trials"].append(portfolio_trial["id"])
         IDS["patients"].extend(patient["id"] for patient in patients)
+        IDS["sites"].append(network_site["id"])
 
         async with client() as cli:
+            dashboard = await cli.get(
+                "/api/sponsor/dashboard", headers=headers(sponsor_a))
+            assert dashboard.status_code == 200, dashboard.text
+            dashboard_site = next(
+                row for row in dashboard.json()["sites"]
+                if row["id"] == network_site["id"])
+            assert {pi["id"] for pi in dashboard_site["pis"]} == {
+                network_pi["id"], network_pi_two["id"],
+            }
+
             shared = await cli.post(
                 "/api/shares",
                 headers=headers(sponsor_a),
@@ -364,6 +407,21 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
                 },
             )
             assert shared.status_code == 200, shared.text
+
+            network_shared = await cli.post(
+                "/api/shares",
+                headers=headers(sponsor_a),
+                json={
+                    "trial_id": trial["id"],
+                    "via": "in_app",
+                    "sites": [{
+                        "id": network_site["id"],
+                        "name": network_site["name"],
+                        "reviewer_id": network_pi["id"],
+                    }],
+                },
+            )
+            assert network_shared.status_code == 200, network_shared.text
 
             denied = await cli.post(
                 "/api/shares",

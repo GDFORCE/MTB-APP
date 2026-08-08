@@ -92,6 +92,9 @@ const statusTone = (value: string) => {
 
 function SiteDetail({ site, onBack }: { site: SponsorSite; onBack: () => void }) {
   const location = [site.hospital, site.address, site.city, site.state].filter(Boolean).join(", ");
+  const principalInvestigators = site.pis?.length
+    ? site.pis
+    : [{ name: site.pi || "Not assigned", phone: site.piPhone, email: site.piEmail }];
   const access = accessOptions.find((option) => option.value === site.accessType)
     ?? accessOptions[0];
   return (
@@ -113,12 +116,15 @@ function SiteDetail({ site, onBack }: { site: SponsorSite; onBack: () => void })
         </LinearGradient>
 
         <View style={styles.contactGrid}>
-          <ContactCard
-            title="Principal Investigator"
-            name={site.pi || "Not assigned"}
-            phone={site.piPhone}
-            email={site.piEmail}
-          />
+          {principalInvestigators.map((pi, index) => (
+            <ContactCard
+              key={pi.id || pi.email || `${pi.name}-${index}`}
+              title={principalInvestigators.length > 1 ? `Principal Investigator ${index + 1}` : "Principal Investigator"}
+              name={pi.name}
+              phone={pi.phone}
+              email={pi.email}
+            />
+          ))}
           <ContactCard title="Coordinator" name={site.crc || "Not assigned"} />
         </View>
 
@@ -691,7 +697,7 @@ export default function SponsorSitesScreen() {
                     <View style={styles.trialField}><Text style={styles.trialFieldLabel}>PHASE</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.phase || "—"}</Text></View>
                     <View style={styles.trialField}><Text style={styles.trialFieldLabel}>DISEASE</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.condition || "—"}</Text></View>
                     <View style={styles.trialField}><Text style={styles.trialFieldLabel}>DRUG</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.drug || "—"}</Text></View>
-                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>PI NAME</Text><Text numberOfLines={1} style={styles.trialFieldValue}>{trial.piName || site.pi || "Not assigned"}</Text></View>
+                    <View style={styles.trialField}><Text style={styles.trialFieldLabel}>PI NAMES</Text><Text numberOfLines={2} style={styles.trialFieldValue}>{site.pis?.map((pi) => pi.name).filter(Boolean).join(", ") || trial.piName || site.pi || "Not assigned"}</Text></View>
                     <View style={[styles.trialField, styles.departmentField]}>
                       <Text style={[styles.trialFieldLabel, styles.departmentText]}>DEPARTMENT</Text>
                       <Text numberOfLines={1} style={[styles.trialFieldValue, styles.departmentText]}>{trial.department || site.department || "Not provided"}</Text>
@@ -1106,8 +1112,8 @@ const styles = StyleSheet.create({
   siteHero: { padding: 18, borderRadius: 24, ...shadows.md },
   siteHeroTitle: { fontFamily: fonts.heading, fontSize: 19, color: colors.white },
   siteHeroMeta: { marginTop: 6, maxWidth: 230, fontFamily: fonts.regular, fontSize: 11, color: "rgba(255,255,255,0.82)" },
-  contactGrid: { flexDirection: "row", gap: 10 },
-  contactCard: { flex: 1, padding: 13, minHeight: 118, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  contactGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  contactCard: { flexGrow: 1, width: "47%", padding: 13, minHeight: 118, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   contactLabel: { fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
   contactName: { marginTop: 5, fontFamily: fonts.semibold, fontSize: 12.5, color: colors.foreground },
   contactActions: { flexDirection: "row", gap: 7, marginTop: "auto" },
