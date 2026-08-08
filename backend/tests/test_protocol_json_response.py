@@ -9,7 +9,13 @@ from types import SimpleNamespace
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from protocol_extraction import ClaudeProtocolExtractor, ExtractedSchedule  # noqa: E402
+from protocol_extraction import (  # noqa: E402
+    ClaudeProtocolExtractor,
+    ExtractedSchedule,
+    GeminiProtocolExtractor,
+    get_details_extractor,
+    get_extractor,
+)
 
 
 def test_explicit_null_visit_window_uses_documented_default():
@@ -92,3 +98,65 @@ def test_json_extractor_does_not_retry_valid_schedule_with_null_windows():
     assert messages.calls == 1
     assert len(schedule.visits) == 18
     assert {visit.window_days for visit in schedule.visits} == {3}
+
+
+def test_gemini_extractor_uses_native_pdf_and_structured_response():
+    payload = {
+        "schedule_kind": "linear",
+        "visits": [{
+            "name": "Screening",
+            "day_offset": -14,
+            "window_days": 3,
+            "activities": ["Informed consent"],
+        }],
+        "repeating_blocks": [],
+        "assumptions": [],
+        "source_notes": "Schedule of Assessments",
+    }
+    response = SimpleNamespace(parsed=payload, text=json.dumps(payload))
+
+    class Models:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_content(self, **kwargs):
+            self.calls.append(kwargs)
+            return response
+
+    class AsyncClient:
+        def __init__(self):
+            self.models = Models()
+
+        async def aclose(self):
+            return None
+
+    async_client = AsyncClient()
+    client = SimpleNamespace(aio=async_client, close=lambda: None)
+    fake_types = SimpleNamespace(
+        Part=SimpleNamespace(from_bytes=lambda **kwargs: kwargs),
+        GenerateContentConfig=lambda **kwargs: kwargs,
+    )
+    extractor = GeminiProtocolExtractor(api_key="test")
+    extractor._client = lambda: (
+        SimpleNamespace(APIError=RuntimeError), fake_types, client)
+
+    schedule = asyncio.run(extractor.extract(b"%PDF-test"))
+
+    assert len(async_client.models.calls) == 1
+    call = async_client.models.calls[0]
+    assert call["model"] == "gemini-3.6-flash"
+    assert call["contents"][0]["mime_type"] == "application/pdf"
+    assert call["config"]["response_schema"] is ExtractedSchedule
+    assert schedule.visits[0].name == "Screening"
+
+
+def test_provider_switch_selects_gemini(monkeypatch):
+    monkeypatch.setenv("PROTOCOL_EXTRACTION_PROVIDER", "gemini")
+    assert isinstance(get_extractor(), GeminiProtocolExtractor)
+    assert isinstance(get_details_extractor(), GeminiProtocolExtractor)
+
+
+def test_provider_switch_selects_claude(monkeypatch):
+    monkeypatch.setenv("PROTOCOL_EXTRACTION_PROVIDER", "claude")
+    assert isinstance(get_extractor(), ClaudeProtocolExtractor)
+    assert isinstance(get_details_extractor(), ClaudeProtocolExtractor)

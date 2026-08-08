@@ -11,7 +11,7 @@ Run from backend/:
   ./.venv/Scripts/python.exe eval/corpus_eval.py 1 2 30     # only files 1, 2, 30
 
 Env:
-  ANTHROPIC_API_KEY        required (in backend/.env)
+  GEMINI_API_KEY           required (in backend/.env)
   PROTOCOL_CORPUS_DIR      corpus folder (default: the Patient Visit Schedules dir)
   EVAL_CONCURRENCY         parallel files (default 4)
 """

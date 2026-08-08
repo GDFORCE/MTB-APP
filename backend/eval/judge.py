@@ -1,25 +1,24 @@
 """LLM-as-judge grader for protocol -> visit-schedule extraction.
 
 Given the *source* protocol PDF and the extractor's JSON output, an independent
-grader (Claude Opus 4.8 by default, prompted purely as a QA reviewer) scores the
+grader (Gemini 3.6 Flash by default, prompted purely as a QA reviewer) scores the
 extraction against a fixed rubric and returns pass / partial / fail. The grader
 reads the source document, so it grades against ground truth rather than against
 the extractor's own reasoning; no per-file expected output is hand-authored, so
 the eval generalizes to any future protocol.
 
 Env:
-  ANTHROPIC_API_KEY            required
-  EXTRACTION_JUDGE_MODEL       override grader model (default claude-opus-4-8)
+  GEMINI_API_KEY               required
+  EXTRACTION_JUDGE_MODEL       override grader model (default gemini-3.6-flash)
 """
 from __future__ import annotations
 
-import base64
 import os
 from typing import List, Literal
 
 from pydantic import BaseModel, Field
 
-JUDGE_MODEL = os.getenv("EXTRACTION_JUDGE_MODEL", "claude-opus-4-8")
+JUDGE_MODEL = os.getenv("EXTRACTION_JUDGE_MODEL", "gemini-3.6-flash")
 
 
 class Grade(BaseModel):
@@ -101,31 +100,36 @@ draft after at most trivial edits."""
 
 async def grade(pdf_bytes: bytes, extraction_json: str, *, model: str | None = None) -> Grade:
     """Grade one extraction against its source PDF. Raises on API / parse failure."""
-    import anthropic  # lazy import so the module loads without the dep
+    from google import genai
+    from google.genai import types
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
-    client = anthropic.AsyncAnthropic(api_key=api_key)
-    b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    client = genai.Client(api_key=api_key)
+    async_client = client.aio
     user_text = (
         "Grade the extractor output below against the attached protocol PDF.\n\n"
         "EXTRACTOR OUTPUT (JSON):\n" + extraction_json)
-    resp = await client.messages.parse(
-        model=model or JUDGE_MODEL,
-        max_tokens=6000,
-        system=_JUDGE_SYSTEM,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "document",
-                 "source": {"type": "base64", "media_type": "application/pdf", "data": b64}},
-                {"type": "text", "text": user_text},
+    try:
+        resp = await async_client.models.generate_content(
+            model=model or JUDGE_MODEL,
+            contents=[
+                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                user_text,
             ],
-        }],
-        output_format=Grade,
-    )
-    parsed = getattr(resp, "parsed_output", None)
+            config=types.GenerateContentConfig(
+                system_instruction=_JUDGE_SYSTEM,
+                max_output_tokens=6000,
+                temperature=0.1,
+                response_mime_type="application/json",
+                response_schema=Grade,
+            ),
+        )
+    finally:
+        await async_client.aclose()
+        client.close()
+    parsed = getattr(resp, "parsed", None)
     if parsed is None:
         raise RuntimeError("grader returned no parseable grade")
-    return parsed
+    return parsed if isinstance(parsed, Grade) else Grade.model_validate(parsed)

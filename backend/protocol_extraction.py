@@ -3,7 +3,7 @@
 Reads a clinical-trial protocol (full protocol, synopsis, EC deck, or a bare
 Schedule-of-Assessments page) and returns its visit schedule as a flat list of
 visit templates that pre-fill the sponsor's visit-schedule editor. Extraction is
-provider-abstracted behind ``ProtocolExtractor`` so the default Claude backend
+provider-abstracted behind ``ProtocolExtractor`` so the default Gemini backend
 can later be swapped for a self-hosted vision model without touching the API
 endpoint or the frontend.
 
@@ -44,13 +44,14 @@ from pydantic import BaseModel, Field, field_validator
 
 log = logging.getLogger(__name__)
 
-# Anthropic's current Opus. Adaptive thinking is ON by default on this model,
-# which is what makes cross-page reconstruction (find the cycle length in the
-# treatment section, apply it to the appendix table) reliable.
-DEFAULT_MODEL = "claude-opus-5"
+# Google's newest stable multimodal model supports native PDF input and
+# schema-constrained output for cross-page protocol reconstruction.
+DEFAULT_MODEL = "gemini-3.6-flash"
+LEGACY_CLAUDE_MODEL = "claude-opus-5"
+DEFAULT_PROVIDER = "gemini"
 
 # Guardrail: refuse absurdly large uploads before they ever reach the model.
-# Anthropic's own limits are 32 MB / 600 pages per PDF.
+# Gemini accepts inline PDFs up to 50 MB; keep the app's stricter limit.
 MAX_PDF_BYTES = 25 * 1024 * 1024
 
 # Output cap. The declarative schema keeps responses small (a 6-cycle protocol
@@ -557,7 +558,11 @@ class ClaudeProtocolExtractor:
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        self._model = model or os.getenv("PROTOCOL_EXTRACTION_MODEL") or DEFAULT_MODEL
+        self._model = (
+            model
+            or os.getenv("CLAUDE_PROTOCOL_EXTRACTION_MODEL")
+            or LEGACY_CLAUDE_MODEL
+        )
 
     @property
     def configured(self) -> bool:
@@ -743,11 +748,121 @@ class ClaudeProtocolExtractor:
         return parsed
 
 
+class GeminiProtocolExtractor:
+    """Google Gemini backend with native PDF input and structured output."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None):
+        self._api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self._model = (
+            model
+            or os.getenv("GEMINI_PROTOCOL_EXTRACTION_MODEL")
+            or os.getenv("PROTOCOL_EXTRACTION_MODEL")
+            or DEFAULT_MODEL
+        )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._api_key)
+
+    def _client(self):
+        if not self._api_key:
+            raise ExtractionNotConfigured("GEMINI_API_KEY is not set on the server")
+        from google import genai  # lazy import keeps non-AI routes independent
+        from google.genai import errors, types
+        return errors, types, genai.Client(api_key=self._api_key)
+
+    async def _generate(
+        self,
+        pdf_bytes: bytes,
+        prompt: str,
+        schema,
+        *,
+        system_instruction: str,
+        max_tokens: int,
+    ):
+        errors, types, client = self._client()
+        async_client = client.aio
+        try:
+            response = await async_client.models.generate_content(
+                model=self._model,
+                contents=[
+                    types.Part.from_bytes(
+                        data=pdf_bytes,
+                        mime_type="application/pdf",
+                    ),
+                    prompt,
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    max_output_tokens=max_tokens,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                ),
+            )
+        except errors.APIError as exc:
+            raise _classify_api_error(exc) from exc
+        finally:
+            await async_client.aclose()
+            client.close()
+
+        parsed = getattr(response, "parsed", None)
+        if isinstance(parsed, schema):
+            return parsed
+        if parsed is not None:
+            return schema.model_validate(parsed)
+        raw = (getattr(response, "text", None) or "").strip()
+        if not raw:
+            raise ExtractionError("model did not return a parseable structured response")
+        try:
+            return schema.model_validate_json(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ExtractionError("the AI response was not valid structured JSON") from exc
+
+    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+        parsed = await self._generate(
+            pdf_bytes,
+            "Extract this protocol's visit schedule. Search the whole document "
+            "for cycle length and cycle count before concluding a repeating "
+            "block is unspecified.",
+            ExtractedSchedule,
+            system_instruction=_SYSTEM_PROMPT,
+            max_tokens=MAX_OUTPUT_TOKENS,
+        )
+        expanded = expand_schedule(parsed)
+        log.info(
+            "Gemini protocol extraction: kind=%s raw_visits=%d blocks=%d "
+            "expanded=%d assumptions=%d",
+            parsed.schedule_kind,
+            len(parsed.visits),
+            len(parsed.repeating_blocks),
+            len(expanded.visits),
+            len(expanded.assumptions),
+        )
+        return expanded
+
+    async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
+        return await self._generate(
+            pdf_bytes,
+            "Extract the protocol's trial-level metadata.",
+            ExtractedTrialDetails,
+            system_instruction=_DETAILS_PROMPT,
+            max_tokens=4000,
+        )
+
+
 def get_extractor() -> ProtocolExtractor:
     """Factory — swap the returned implementation to change backends."""
-    return ClaudeProtocolExtractor()
+    provider = os.getenv(
+        "PROTOCOL_EXTRACTION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
+    if provider in ("gemini", "google"):
+        return GeminiProtocolExtractor()
+    if provider in ("claude", "anthropic"):
+        return ClaudeProtocolExtractor()
+    raise ExtractionNotConfigured(
+        "PROTOCOL_EXTRACTION_PROVIDER must be 'gemini' or 'claude'")
 
 
-def get_details_extractor() -> ClaudeProtocolExtractor:
+def get_details_extractor():
     """Factory kept separate so focused tests/providers can replace it alone."""
-    return ClaudeProtocolExtractor()
+    return get_extractor()

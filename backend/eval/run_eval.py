@@ -6,7 +6,7 @@ extracted flat visit list so you can eyeball correctness (absolute day offsets,
 names, windows, activities, cyclic enumeration, multi-arm disambiguation).
 
 Run from backend/:  ./.venv/Scripts/python.exe eval/run_eval.py
-Requires ANTHROPIC_API_KEY in backend/.env and `pip install fpdf2`.
+Requires GEMINI_API_KEY in backend/.env and `pip install fpdf2`.
 """
 import asyncio
 import os
@@ -93,7 +93,7 @@ CASES = {
 async def main() -> None:
     ex = pe.get_extractor()
     if not getattr(ex, "configured", True):
-        print("ANTHROPIC_API_KEY not set — extraction disabled. Aborting.")
+        print("GEMINI_API_KEY not set — extraction disabled. Aborting.")
         return
     for name, data in CASES.items():
         r = await ex.extract(data)

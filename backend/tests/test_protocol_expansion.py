@@ -2,7 +2,7 @@
 
 These tests are modelled on the real protocols in the reference corpus and run
 fully offline — no API key, no database, no network. `protocol_extraction`
-imports `anthropic` lazily, so importing it here is safe.
+imports the Google SDK lazily, so importing it here is safe.
 
 Corpus cases represented below:
   * PICN (CLR_10_13)      — 'Cycle 2 & Next Cycles' collapsed column, cycle

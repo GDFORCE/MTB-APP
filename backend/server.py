@@ -1580,9 +1580,9 @@ async def extract_protocol_details(file: UploadFile = File(...),
         raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
     try:
         extracted = await pe.get_details_extractor().extract_details(data)
-    except pe.ExtractionNotConfigured:
+    except pe.ExtractionNotConfigured as exc:
         raise HTTPException(
-            503, 'Protocol extraction is not configured on the server')
+            503, f'Protocol extraction is not configured on the server: {exc}')
     except pe.ExtractionUnavailable as exc:
         raise HTTPException(503, f'Protocol extraction is temporarily unavailable: {exc}')
     except pe.ExtractionError as exc:
@@ -2973,9 +2973,9 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
 
     try:
         schedule = await pe.get_extractor().extract(data)
-    except pe.ExtractionNotConfigured:
+    except pe.ExtractionNotConfigured as exc:
         raise HTTPException(503, 'Protocol extraction is not configured on the '
-                            'server. Set ANTHROPIC_API_KEY and restart.')
+                            f'server: {exc}. Set the selected provider API key and restart.')
     except pe.ExtractionUnavailable as e:
         # Provider reachable but refusing work (billing/quota/overload). This is
         # an operations problem, not a problem with the sponsor's document —
