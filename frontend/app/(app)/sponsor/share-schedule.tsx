@@ -28,7 +28,7 @@ import {
 } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
-import { getSponsorDashboard } from "@/src/features/sponsor/api";
+import { getSponsorDashboard, normalizeSite } from "@/src/features/sponsor/api";
 import type { SponsorSite, SponsorTrial } from "@/src/features/sponsor/types";
 import { uploadFile } from "@/src/lib/upload";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
@@ -45,6 +45,13 @@ type ShareResult = {
   siteNames: string[];
 };
 
+type ShareSite = SponsorSite & {
+  directoryOrgId?: string;
+  inNetwork?: boolean;
+  assignedToTrial?: boolean;
+  canReceiveSchedule?: boolean;
+};
+
 const fileName = (value: any) =>
   String(value?.original_name || value?.file_name || value?.filename || value?.name || "Trial document");
 
@@ -53,7 +60,10 @@ export default function ShareSchedule() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const [step, setStep] = useState<1 | 2>(1);
   const [trials, setTrials] = useState<SponsorTrial[]>([]);
-  const [sites, setSites] = useState<SponsorSite[]>([]);
+  const [sites, setSites] = useState<ShareSite[]>([]);
+  const [directorySites, setDirectorySites] = useState<ShareSite[]>([]);
+  const [loadingDirectory, setLoadingDirectory] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
   const [documents, setDocuments] = useState<TrialDocument[]>([]);
   const [trialId, setTrialId] = useState(id || "");
   const [selectedDocument, setSelectedDocument] = useState<TrialDocument | null>(null);
@@ -71,7 +81,7 @@ export default function ShareSchedule() {
     getSponsorDashboard()
       .then((dashboard) => {
         setTrials(dashboard.trials);
-        setSites(dashboard.sites);
+        setSites(dashboard.sites.map((site) => ({ ...site, inNetwork: true })));
         if (!id && dashboard.trials[0]) setTrialId(dashboard.trials[0].id);
       })
       .catch((e: any) => setErr(e?.response?.data?.detail || "Couldn't load trials and sites."))
@@ -79,6 +89,40 @@ export default function ShareSchedule() {
   }, [id]);
 
   const selectedTrial = trials.find((trial) => trial.id === trialId);
+
+  useEffect(() => {
+    if (!trialId) {
+      setDirectorySites([]);
+      return;
+    }
+    let active = true;
+    setLoadingDirectory(true);
+    setDirectoryError("");
+    api
+      .get("/sponsor/share-site-directory", { params: { trial_id: trialId } })
+      .then((response) => {
+        if (!active) return;
+        const rows = Array.isArray(response.data) ? response.data : [];
+        setDirectorySites(rows.map((row: any) => ({
+          ...normalizeSite(row),
+          directoryOrgId: String(row.organization_id || ""),
+          inNetwork: Boolean(row.in_network),
+          assignedToTrial: Boolean(row.assigned_to_trial),
+          canReceiveSchedule: Boolean(row.can_receive_schedule),
+        })));
+      })
+      .catch((error: any) => {
+        if (!active) return;
+        setDirectorySites([]);
+        setDirectoryError(error?.response?.data?.detail || "Couldn't load the application site directory.");
+      })
+      .finally(() => {
+        if (active) setLoadingDirectory(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [trialId]);
 
   useEffect(() => {
     if (!trialId) {
@@ -113,23 +157,44 @@ export default function ShareSchedule() {
     };
   }, [trialId]);
 
+  const availableSites = useMemo(() => {
+    const byName = new Map<string, ShareSite>();
+    sites.forEach((site) => byName.set(site.name.trim().toLocaleLowerCase(), site));
+    directorySites.forEach((directorySite) => {
+      const key = directorySite.name.trim().toLocaleLowerCase();
+      const networkSite = byName.get(key);
+      byName.set(key, networkSite ? {
+        ...directorySite,
+        ...networkSite,
+        directoryOrgId: directorySite.directoryOrgId,
+        inNetwork: true,
+        assignedToTrial: directorySite.assignedToTrial,
+        canReceiveSchedule: Boolean(networkSite.piId || directorySite.piId),
+        pi: networkSite.pi || directorySite.pi,
+        piId: networkSite.piId || directorySite.piId,
+        piEmail: networkSite.piEmail || directorySite.piEmail,
+      } : directorySite);
+    });
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [directorySites, sites]);
+
   const visibleSites = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return sites.filter((site) => {
-      const searchable = [site.name, site.hospital, site.city, site.pi].filter(Boolean).join(" ").toLowerCase();
+    return availableSites.filter((site) => {
+      const searchable = [site.name, site.hospital, site.city, site.state, site.pi].filter(Boolean).join(" ").toLowerCase();
       return !needle || searchable.includes(needle);
     });
-  }, [query, sites]);
+  }, [availableSites, query]);
 
   const selectedSiteRows = useMemo(
-    () => sites.filter((site) => selectedSites.has(site.id)),
-    [selectedSites, sites],
+    () => availableSites.filter((site) => selectedSites.has(site.id)),
+    [availableSites, selectedSites],
   );
   const pendingSites = useMemo(
     () => selectedSiteRows.filter((site) => !site.piId),
     [selectedSiteRows],
   );
-  const selectableVisibleIds = visibleSites.map((site) => site.id);
+  const selectableVisibleIds = visibleSites.filter((site) => site.piId).map((site) => site.id);
   const allVisibleSelected =
     selectableVisibleIds.length > 0 && selectableVisibleIds.every((siteId) => selectedSites.has(siteId));
 
@@ -245,6 +310,7 @@ export default function ShareSchedule() {
         id: site.id,
         name: site.name,
         reviewer_id: site.piId || null,
+        organization_id: site.directoryOrgId || null,
       }));
       await api.post("/shares", {
         trial_id: trialId,
@@ -417,7 +483,7 @@ export default function ShareSchedule() {
                       <Text style={s.eyebrow}>RECIPIENT SITES</Text>
                       <Text style={s.sectionTitle}>Select from all available sites</Text>
                     </View>
-                    <Pressable onPress={toggleAllVisible} disabled={!visibleSites.length}>
+                    <Pressable onPress={toggleAllVisible} disabled={!selectableVisibleIds.length}>
                       <Text style={s.selectAll}>{allVisibleSelected ? "Deselect all" : "Select all"}</Text>
                     </Pressable>
                   </View>
@@ -426,17 +492,41 @@ export default function ShareSchedule() {
                     <TextInput value={query} onChangeText={setQuery} placeholder="Search sites..." placeholderTextColor={colors.mutedFg} style={s.searchInput} />
                   </View>
                   <View style={s.siteList}>
+                    {loadingDirectory && (
+                      <View style={s.directoryState}>
+                        <ActivityIndicator size="small" color={colors.primary} />
+                        <Text style={s.directoryStateText}>Loading all registered sites…</Text>
+                      </View>
+                    )}
+                    {!!directoryError && (
+                      <View style={s.warning}>
+                        <AlertTriangle size={17} color={colors.warning} />
+                        <Text style={s.warningText}>{directoryError} Existing network sites are still available.</Text>
+                      </View>
+                    )}
                     {visibleSites.map((site) => {
                       const active = selectedSites.has(site.id);
+                      const unavailable = !site.piId;
                       return (
-                        <Pressable key={site.id} onPress={() => toggleSite(site.id)} style={[s.siteRow, active && s.siteRowActive]}>
-                          <View style={[s.checkbox, active && s.checkboxActive]}>{active && <Check size={13} color={colors.white} />}</View>
+                        <Pressable
+                          key={site.id}
+                          disabled={unavailable}
+                          onPress={() => toggleSite(site.id)}
+                          style={[s.siteRow, active && s.siteRowActive, unavailable && s.siteRowDisabled]}
+                        >
+                          <View style={[s.checkbox, active && s.checkboxActive, unavailable && s.checkboxDisabled]}>{active && <Check size={13} color={colors.white} />}</View>
                           <View style={s.siteIcon}><MapPin size={16} color={colors.accent} /></View>
                           <View style={s.flex}>
-                            <Text style={s.siteName}>{site.name}</Text>
+                            <View style={s.siteNameRow}>
+                              <Text style={s.siteName}>{site.name}</Text>
+                              {site.inNetwork === false && <View style={s.newSiteBadge}><Text style={s.newSiteBadgeText}>NEW SITE</Text></View>}
+                            </View>
                             <Text style={s.siteMeta}>
-                              {site.pi ? `PI · ${site.pi}` : "PI assignment pending"}
+                              {site.pi ? `PI · ${site.pi}` : "No registered PI available"}
                             </Text>
+                            {site.inNetwork === false && site.piId && (
+                              <Text style={s.networkHint}>Will be added to your network when shared</Text>
+                            )}
                           </View>
                         </Pressable>
                       );
@@ -496,6 +586,7 @@ export default function ShareSchedule() {
                       <View style={s.flex}>
                         <Text style={s.siteName}>{site.name}</Text>
                         <Text style={s.siteMeta}>{site.pi ? `PI · ${site.pi}` : "PI assignment pending"}</Text>
+                        {site.inNetwork === false && <Text style={s.networkHint}>Will join your trial network</Text>}
                       </View>
                       <Text style={s.pendingText}>Pending</Text>
                     </View>
@@ -599,11 +690,19 @@ const s = StyleSheet.create({
   siteList: { gap: 9, marginTop: 10 },
   siteRow: { minHeight: 65, padding: 11, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 17, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   siteRowActive: { borderColor: colors.primary, backgroundColor: "rgba(166,33,63,0.035)" },
+  siteRowDisabled: { opacity: 0.58 },
   checkbox: { width: 21, height: 21, borderRadius: 7, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   checkboxActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  checkboxDisabled: { backgroundColor: colors.border, borderColor: colors.mutedFg },
   siteIcon: { width: 35, height: 35, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(230,155,92,0.13)" },
+  siteNameRow: { flexDirection: "row", alignItems: "center", gap: 7, flexWrap: "wrap" },
   siteName: { fontFamily: fonts.semibold, fontSize: 12, color: colors.foreground },
   siteMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
+  networkHint: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 8.5, color: colors.info },
+  newSiteBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.12)" },
+  newSiteBadgeText: { fontFamily: fonts.bold, fontSize: 7, letterSpacing: 0.5, color: colors.info },
+  directoryState: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, backgroundColor: colors.card },
+  directoryStateText: { fontFamily: fonts.regular, fontSize: 10, color: colors.mutedFg },
   chips: { paddingTop: 10, gap: 7 },
   chip: { maxWidth: 180, height: 29, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 999, backgroundColor: colors.secondary },
   chipText: { maxWidth: 145, fontFamily: fonts.semibold, fontSize: 9.5, color: colors.primary },

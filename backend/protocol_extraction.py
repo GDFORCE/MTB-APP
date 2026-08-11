@@ -34,11 +34,15 @@ draft — nothing is written to the trial without human confirmation.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import hashlib
+import io
 import json
 import logging
 import os
-from typing import List, Optional, Protocol, runtime_checkable
+from pathlib import Path
+from typing import List, Literal, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -48,7 +52,17 @@ log = logging.getLogger(__name__)
 # schema-constrained output for cross-page protocol reconstruction.
 DEFAULT_MODEL = "gemini-3.6-flash"
 LEGACY_CLAUDE_MODEL = "claude-opus-5"
+DEFAULT_OPENROUTER_MODEL = "~deepseek/deepseek-v4-flash-latest"
+DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_PROVIDER = "gemini"
+DEFAULT_OLLAMA_MODEL = "qwen3-vl:4b-instruct-q4_K_M"
+DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+
+# Keep vision batches and the KV cache small on an 8 GB development machine.
+# Large PDFs are processed sequentially and checkpointed after every batch.
+OLLAMA_CONTEXT_TOKENS = 8192
+OLLAMA_PAGES_PER_BATCH = 2
+OLLAMA_FINAL_EVIDENCE_CHARS = 48000
 
 # Guardrail: refuse absurdly large uploads before they ever reach the model.
 # Gemini accepts inline PDFs up to 50 MB; keep the app's stricter limit.
@@ -251,6 +265,11 @@ class ExtractedSchedule(BaseModel):
         default=None,
         description="Where in the document the schedule came from (e.g. 'Appendix I, p42; "
         "cycle length from section 2.5, p15'). Helps the reviewer check your work.")
+    verification_status: Literal["not_run", "verified", "needs_review"] = "not_run"
+    verification_confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    verification_iterations: int = Field(default=0, ge=0)
+    verification_issues: List[str] = Field(default_factory=list)
+    verification_scores: dict[str, Optional[float]] = Field(default_factory=dict)
 
 
 class ExtractedTrialDetails(BaseModel):
@@ -777,10 +796,12 @@ class GeminiProtocolExtractor:
         prompt: str,
         schema,
         *,
-        system_instruction: str,
+        system_instruction: str | None,
         max_tokens: int,
     ):
         errors, types, client = self._client()
+        if system_instruction is None:
+            system_instruction = _SYSTEM_PROMPT
         async_client = client.aio
         try:
             response = await async_client.models.generate_content(
@@ -820,24 +841,24 @@ class GeminiProtocolExtractor:
             raise ExtractionError("the AI response was not valid structured JSON") from exc
 
     async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
-        parsed = await self._generate(
+        from protocol_agent import run_schedule_extraction_agent
+
+        max_refinements = int(os.getenv(
+            "PROTOCOL_EXTRACTION_MAX_REFINEMENTS", "2"))
+        expanded = await run_schedule_extraction_agent(
             pdf_bytes,
-            "Extract this protocol's visit schedule. Search the whole document "
-            "for cycle length and cycle count before concluding a repeating "
-            "block is unspecified.",
-            ExtractedSchedule,
-            system_instruction=_SYSTEM_PROMPT,
-            max_tokens=MAX_OUTPUT_TOKENS,
+            self._generate,
+            max_refinements=max_refinements,
         )
-        expanded = expand_schedule(parsed)
         log.info(
-            "Gemini protocol extraction: kind=%s raw_visits=%d blocks=%d "
-            "expanded=%d assumptions=%d",
-            parsed.schedule_kind,
-            len(parsed.visits),
-            len(parsed.repeating_blocks),
+            "Gemini agent extraction: kind=%s expanded=%d assumptions=%d "
+            "verification=%s confidence=%s refinements=%d",
+            expanded.schedule_kind,
             len(expanded.visits),
             len(expanded.assumptions),
+            expanded.verification_status,
+            expanded.verification_confidence,
+            expanded.verification_iterations,
         )
         return expanded
 
@@ -851,6 +872,393 @@ class GeminiProtocolExtractor:
         )
 
 
+class OpenRouterProtocolExtractor:
+    """OpenRouter backend using its OpenAI-compatible chat/PDF endpoint."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None,
+                 url: str | None = None):
+        self._api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self._model = (
+            model
+            or os.getenv("OPENROUTER_PROTOCOL_EXTRACTION_MODEL")
+            or DEFAULT_OPENROUTER_MODEL
+        )
+        self._url = (
+            url or os.getenv("OPENROUTER_API_URL") or DEFAULT_OPENROUTER_URL
+        ).rstrip("/")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._api_key)
+
+    @staticmethod
+    def _response_text(payload: dict) -> str:
+        try:
+            content = payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ExtractionError(
+                "OpenRouter did not return a model response") from exc
+        if isinstance(content, list):
+            content = "".join(
+                str(part.get("text", ""))
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        text = str(content or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3].rstrip()
+        first, last = text.find("{"), text.rfind("}")
+        return text[first:last + 1] if first >= 0 and last > first else text
+
+    def _request(self, pdf_bytes: bytes, prompt: str, schema, max_tokens: int) -> dict:
+        if not self._api_key:
+            raise ExtractionNotConfigured(
+                "OPENROUTER_API_KEY is not set on the server")
+
+        import requests
+
+        data_url = "data:application/pdf;base64," + base64.b64encode(
+            pdf_bytes).decode("ascii")
+        body = {
+            "model": self._model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": _DETAILS_PROMPT if schema is ExtractedTrialDetails else _SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "protocol.pdf",
+                                "file_data": data_url,
+                            },
+                        },
+                    ],
+                },
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "strict": True,
+                    "schema": schema.model_json_schema(),
+                },
+            },
+            "temperature": 0,
+            "max_tokens": max_tokens,
+        }
+        pdf_engine = os.getenv("OPENROUTER_PDF_ENGINE", "").strip()
+        if pdf_engine:
+            body["plugins"] = [{
+                "id": "file-parser",
+                "pdf": {"engine": pdf_engine},
+            }]
+
+        try:
+            response = requests.post(
+                self._url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                    "X-Title": "My Trial Board protocol extraction",
+                },
+                json=body,
+                timeout=(30, 20 * 60),
+            )
+        except requests.RequestException as exc:
+            raise _classify_api_error(exc) from exc
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise ExtractionError(
+                f"OpenRouter returned HTTP {response.status_code} without JSON") from exc
+        if not response.ok:
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            message = error.get("message") if isinstance(error, dict) else None
+            if response.status_code in (401, 403):
+                raise ExtractionNotConfigured(
+                    "OpenRouter rejected OPENROUTER_API_KEY")
+            raise _classify_api_error(RuntimeError(
+                message or f"OpenRouter returned HTTP {response.status_code}"))
+        return payload
+
+    async def _generate(self, pdf_bytes: bytes, prompt: str, schema,
+                        max_tokens: int):
+        payload = await asyncio.to_thread(
+            self._request, pdf_bytes, prompt, schema, max_tokens)
+        raw = self._response_text(payload)
+        try:
+            return schema.model_validate_json(raw)
+        except ValueError as exc:
+            raise ExtractionError(
+                "the OpenRouter response was not valid structured JSON") from exc
+
+    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+        parsed = await self._generate(
+            pdf_bytes,
+            "Extract this protocol's visit schedule. Search the whole document "
+            "for cycle length and cycle count before concluding a repeating "
+            "block is unspecified.",
+            ExtractedSchedule,
+            MAX_OUTPUT_TOKENS,
+        )
+        expanded = expand_schedule(parsed)
+        log.info(
+            "OpenRouter protocol extraction: model=%s kind=%s raw_visits=%d "
+            "blocks=%d expanded=%d assumptions=%d",
+            self._model, parsed.schedule_kind, len(parsed.visits),
+            len(parsed.repeating_blocks), len(expanded.visits),
+            len(expanded.assumptions),
+        )
+        return expanded
+
+    async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
+        return await self._generate(
+            pdf_bytes,
+            "Extract the protocol's trial-level metadata.",
+            ExtractedTrialDetails,
+            4000,
+        )
+
+
+class OllamaProtocolExtractor:
+    """Local Qwen-VL backend served by Ollama; intended for offline development.
+
+    PDF pages are rendered to JPEGs on this machine, then passed to the local
+    vision model. Nothing is uploaded to a third-party AI provider.
+    """
+
+    def __init__(self, model: str | None = None, host: str | None = None):
+        self._model = model or os.getenv("OLLAMA_PROTOCOL_EXTRACTION_MODEL") or DEFAULT_OLLAMA_MODEL
+        self._host = (host or os.getenv("OLLAMA_HOST") or DEFAULT_OLLAMA_HOST).rstrip("/")
+        self._batch_size = max(1, int(os.getenv(
+            "OLLAMA_PDF_BATCH_PAGES", str(OLLAMA_PAGES_PER_BATCH))))
+        cache = os.getenv("OLLAMA_EXTRACTION_CACHE_DIR")
+        self._cache_dir = Path(cache) if cache else Path(__file__).parent / ".ollama-extraction-cache"
+
+    @property
+    def configured(self) -> bool:
+        # A local service needs no secret. Connection/model errors are reported
+        # when a request is made, with a useful setup message below.
+        return True
+
+    @staticmethod
+    def _pdf_page_count(pdf_bytes: bytes) -> int:
+        try:
+            import pypdfium2 as pdfium
+            return len(pdfium.PdfDocument(pdf_bytes))
+        except Exception as exc:
+            raise ExtractionError(f"could not read the PDF locally: {exc}") from exc
+
+    @staticmethod
+    def _render_pdf_pages(pdf_bytes: bytes, start: int, end: int) -> list[bytes]:
+        try:
+            import pypdfium2 as pdfium
+            document = pdfium.PdfDocument(pdf_bytes)
+            images: list[bytes] = []
+            for page_number in range(start, min(end, len(document))):
+                page = document[page_number]
+                bitmap = page.render(scale=1.35)
+                image = bitmap.to_pil().convert("RGB")
+                output = io.BytesIO()
+                image.save(output, format="JPEG", quality=80, optimize=True)
+                images.append(output.getvalue())
+        except Exception as exc:
+            raise ExtractionError(f"could not read the PDF locally: {exc}") from exc
+        if not images:
+            raise ExtractionError("the PDF contains no pages")
+        return images
+
+    def _cache_paths(self, pdf_bytes: bytes, kind: str) -> tuple[Path, Path]:
+        digest = hashlib.sha256(pdf_bytes).hexdigest()
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        stem = self._cache_dir / f"{digest}-{kind}"
+        return Path(f"{stem}.jsonl"), Path(f"{stem}.result.json")
+
+    @staticmethod
+    def _load_evidence(path: Path) -> dict[int, dict]:
+        rows: dict[int, dict] = {}
+        if not path.exists():
+            return rows
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+                rows[int(row["start_page"])] = row
+            except (ValueError, KeyError, TypeError):
+                # A process can stop during its final append. Earlier complete
+                # checkpoints remain usable; only the damaged line is ignored.
+                continue
+        return rows
+
+    @staticmethod
+    def _append_checkpoint(path: Path, row: dict) -> None:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    async def _chat(self, messages: list[dict], *, format=None):
+        import ollama
+        client = ollama.AsyncClient(host=self._host, timeout=20 * 60)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                return await client.chat(
+                    model=self._model,
+                    messages=messages,
+                    format=format,
+                    stream=False,
+                    think=False,
+                    options={"temperature": 0, "num_ctx": OLLAMA_CONTEXT_TOKENS},
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
+        assert last_error is not None
+        low = str(last_error).lower()
+        if "not found" in low and self._model.lower() in low:
+            raise ExtractionNotConfigured(
+                f"local model '{self._model}' is not installed; run: "
+                f"ollama pull {self._model}") from last_error
+        if any(term in low for term in ("connect", "refused", "10061")):
+            raise ExtractionNotConfigured(
+                f"Ollama is not running at {self._host}") from last_error
+        raise ExtractionError(f"local model request failed: {last_error}") from last_error
+
+    @staticmethod
+    def _message_text(response) -> str:
+        message = getattr(response, "message", None)
+        return (getattr(message, "content", None) or
+                (message.get("content") if isinstance(message, dict) else "") or "").strip()
+
+    async def _collect_evidence(self, pdf_bytes: bytes, *, kind: str,
+                                checkpoint_path: Path) -> str:
+        page_count = await asyncio.to_thread(self._pdf_page_count, pdf_bytes)
+        completed = self._load_evidence(checkpoint_path)
+        instruction = (
+            "Extract every fact relevant to the visit schedule: visit names, dates, "
+            "days, weeks, windows, cycles, cycle lengths/counts, arms, periods, "
+            "activities, footnotes, and cross-references."
+            if kind == "schedule" else
+            "Extract every trial-level fact: official title, registration number, "
+            "phase, indication, drug, duration, enrollment, status, and stated "
+            "number of visits."
+        )
+        rows: list[dict] = []
+        for start in range(0, page_count, self._batch_size):
+            if start in completed:
+                rows.append(completed[start])
+                continue
+            end = min(start + self._batch_size, page_count)
+            images = await asyncio.to_thread(
+                self._render_pdf_pages, pdf_bytes, start, end)
+            response = await self._chat([{
+                "role": "user",
+                "content": (
+                    f"These are protocol PDF pages {start + 1}-{end}. {instruction} "
+                    "Be faithful to tables and footnotes. Include page numbers. "
+                    "If there is no relevant evidence, say NONE. Keep the response "
+                    "under 900 words."),
+                "images": images,
+            }])
+            row = {
+                "start_page": start,
+                "end_page": end,
+                "evidence": self._message_text(response),
+            }
+            self._append_checkpoint(checkpoint_path, row)
+            completed[start] = row
+            rows.append(row)
+            log.info("local Qwen-VL %s extraction: pages %d-%d/%d checkpointed",
+                     kind, start + 1, end, page_count)
+
+        evidence = "\n\n".join(
+            f"[Pages {row['start_page'] + 1}-{row['end_page']}]\n{row['evidence']}"
+            for row in sorted(rows, key=lambda item: item["start_page"])
+            if row.get("evidence", "").strip().upper() != "NONE")
+        return await self._reduce_evidence(evidence, kind=kind)
+
+    async def _reduce_evidence(self, evidence: str, *, kind: str) -> str:
+        while len(evidence) > OLLAMA_FINAL_EVIDENCE_CHARS:
+            chunks = [evidence[i:i + OLLAMA_FINAL_EVIDENCE_CHARS]
+                      for i in range(0, len(evidence), OLLAMA_FINAL_EVIDENCE_CHARS)]
+            reduced: list[str] = []
+            for chunk in chunks:
+                response = await self._chat([{
+                    "role": "user",
+                    "content": (
+                        f"Consolidate this {kind} evidence without dropping any dates, "
+                        "visit/cycle rules, activities, trial facts, conflicts, or page "
+                        f"citations. Remove only repetition.\n\n{chunk}"),
+                }])
+                reduced.append(self._message_text(response))
+            new_evidence = "\n\n".join(reduced)
+            if len(new_evidence) >= len(evidence):
+                return new_evidence[:OLLAMA_FINAL_EVIDENCE_CHARS]
+            evidence = new_evidence
+        return evidence
+
+    async def _generate(self, pdf_bytes: bytes, prompt: str, schema, *,
+                        system_instruction: str):
+        kind = "details" if schema is ExtractedTrialDetails else "schedule"
+        checkpoint_path, result_path = self._cache_paths(pdf_bytes, kind)
+        if result_path.exists():
+            try:
+                return schema.model_validate_json(result_path.read_text(encoding="utf-8"))
+            except ValueError:
+                pass
+        evidence = await self._collect_evidence(
+            pdf_bytes, kind=kind, checkpoint_path=checkpoint_path)
+        try:
+            response = await self._chat(
+                [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": (
+                        f"{prompt}\nReturn only valid JSON matching the supplied schema. "
+                        f"Keep conflicts in assumptions/source notes.\n\n"
+                        f"PAGE-CITED EVIDENCE:\n{evidence}")},
+                ],
+                format=schema.model_json_schema(),
+            )
+        except (ExtractionError, ExtractionNotConfigured):
+            raise
+        raw = self._message_text(response)
+        try:
+            parsed = schema.model_validate_json(raw)
+            temp_path = Path(f"{result_path}.tmp")
+            temp_path.write_text(parsed.model_dump_json(), encoding="utf-8")
+            os.replace(temp_path, result_path)
+            return parsed
+        except ValueError as exc:
+            raise ExtractionError("the local model response was not valid structured JSON") from exc
+
+    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+        parsed = await self._generate(
+            pdf_bytes,
+            "Extract this protocol's visit schedule. Search all provided pages for "
+            "cycle length and cycle count before treating a block as open-ended.",
+            ExtractedSchedule,
+            system_instruction=_SYSTEM_PROMPT,
+        )
+        return expand_schedule(parsed)
+
+    async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
+        return await self._generate(
+            pdf_bytes,
+            "Extract the protocol's trial-level metadata.",
+            ExtractedTrialDetails,
+            system_instruction=_DETAILS_PROMPT,
+        )
+
+
 def get_extractor() -> ProtocolExtractor:
     """Factory — swap the returned implementation to change backends."""
     provider = os.getenv(
@@ -859,8 +1267,13 @@ def get_extractor() -> ProtocolExtractor:
         return GeminiProtocolExtractor()
     if provider in ("claude", "anthropic"):
         return ClaudeProtocolExtractor()
+    if provider in ("openrouter", "deepseek"):
+        return OpenRouterProtocolExtractor()
+    if provider in ("ollama", "qwen", "local"):
+        return OllamaProtocolExtractor()
     raise ExtractionNotConfigured(
-        "PROTOCOL_EXTRACTION_PROVIDER must be 'gemini' or 'claude'")
+        "PROTOCOL_EXTRACTION_PROVIDER must be 'gemini', 'claude', "
+        "'openrouter', or 'ollama'")
 
 
 def get_details_extractor():

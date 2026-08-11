@@ -13,14 +13,14 @@ import { usePathname, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   KeyRound, Lock, Plus, UserPlus, ShieldCheck, Landmark, CalendarDays, FileText,
-  Users, ArrowRightLeft, ArrowUpRight, Search,
+  Users, ArrowUpRight, Search,
 } from "lucide-react-native";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
-  TransferOwnershipSheet, DelegationGate, Loading, ErrorCard, EmptyCard, KitInput,
+  DelegationGate, Loading, ErrorCard, EmptyCard, KitInput,
   TrialAdminActions,
   errMsg, type OrgMember, type AuditEntry, type OrgTrial,
 } from "@/src/components/org-admin-kit";
@@ -52,7 +52,6 @@ export default function SiteConsole() {
   const [error, setError] = useState<string | null>(null);
   const [auditErr, setAuditErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [transfer, setTransfer] = useState<{ preset?: OrgMember } | null>(null);
   const [requested, setRequested] = useState<Set<string>>(new Set());
   const [gate, setGate] = useState(false);
   const [gateBusy, setGateBusy] = useState(false);
@@ -106,11 +105,6 @@ export default function SiteConsole() {
   const deleteMember = async (m: OrgMember) => { await api.delete(`/org/${orgId}/members/${m.id}`); };
   const makeAdmin = async (m: OrgMember) => { await api.post(`/org/${orgId}/members/${m.id}/make-admin`); };
   const assignSite = async (m: OrgMember, site: string) => { await api.post(`/org/${orgId}/members/${m.id}/assign-site`, { site }); };
-  const submitTransfer = async (successor_id: string, reason: string, handover: "deactivate" | "remove") => {
-    await api.post(`/org/${orgId}/ownership-transfer`, { successor_id, reason, handover });
-    showToast("Ownership transfer proposed — awaiting acceptance");
-    loadAll();
-  };
 
   const requestAccess = async (t: OrgTrial) => {
     setRequested((prev) => new Set(prev).add(t.id));
@@ -224,14 +218,6 @@ export default function SiteConsole() {
           {tab === "team" && (
             loading ? <Loading label="Loading team…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
               <>
-                <Pressable onPress={() => setTransfer({})} style={st.transferBanner}>
-                  <LinearGradient colors={[C.primary, C.primaryDeep] as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-                  <View style={st.transferIcon}><ArrowRightLeft size={20} color={C.primaryFg} /></View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <RNText style={st.transferTitle}>Transfer ownership</RNText>
-                    <RNText style={st.transferSub}>Hand the Site Admin role to another active member — reason, handover and audit included.</RNText>
-                  </View>
-                </Pressable>
                 <TeamRoster
                   members={members}
                   roleFilters={["pi", "crc"]}
@@ -257,10 +243,6 @@ export default function SiteConsole() {
       <DelegationGate
         open={gate} delegated={delegated} busy={gateBusy}
         onClose={() => setGate(false)} onRequest={requestDelegation} onProceed={proceedToCreate}
-      />
-      <TransferOwnershipSheet
-        open={!!transfer} members={members} fromName={user?.full_name || "You"} preset={transfer?.preset}
-        onClose={() => setTransfer(null)} onSubmit={submitTransfer}
       />
       {ToastView}
     </View>
@@ -403,8 +385,4 @@ const st = StyleSheet.create({
   lockedTxt: { flex: 1, minWidth: 0, fontFamily: fonts.semibold, fontSize: 10, color: C.mutedFg },
   requestBtn: { marginTop: 10, paddingVertical: 11, borderRadius: 999, borderWidth: 1, borderColor: "rgba(123,107,184,0.35)", backgroundColor: "rgba(123,107,184,0.08)", alignItems: "center" },
   requestTxt: { fontFamily: fonts.bold, fontSize: 12, color: C.info },
-  transferBanner: { flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 22, padding: 16, overflow: "hidden", marginBottom: 16 },
-  transferIcon: { width: 44, height: 44, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.20)" },
-  transferTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.primaryFg },
-  transferSub: { fontFamily: fonts.regular, fontSize: 11, color: "rgba(255,255,255,0.70)", marginTop: 2, lineHeight: 15 },
 });

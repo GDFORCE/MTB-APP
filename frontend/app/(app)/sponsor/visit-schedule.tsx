@@ -62,6 +62,13 @@ type ExtractedVisit = {
   review_status?: "pending" | "ok";
 };
 
+type ExtractionVerification = {
+  status: "verified" | "needs_review" | "not_run";
+  confidence?: number | null;
+  refinement_count?: number;
+  issues?: string[];
+};
+
 const blankRow = (name = "New Visit"): Row => ({
   name,
   day_offset: "0",
@@ -121,6 +128,7 @@ export default function VisitScheduleEditor() {
   const [notice, setNotice] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [extractErr, setExtractErr] = useState("");
+  const [verification, setVerification] = useState<ExtractionVerification | null>(null);
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "ok">("all");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -224,9 +232,11 @@ export default function VisitScheduleEditor() {
         // Do not set Content-Type manually: React Native/Axios must add its
         // multipart boundary. Protocol analysis can take longer than a normal
         // API request, especially for a full multi-page PDF.
-        timeout: 300000,
+        timeout: 900000,
       });
       const visits: ExtractedVisit[] = response.data?.visits ?? [];
+      const agentVerification: ExtractionVerification | null = response.data?.verification ?? null;
+      setVerification(agentVerification);
       if (!visits.length) {
         setExtractErr("No visit schedule was found in that PDF. You can still build it manually.");
         return;
@@ -245,7 +255,11 @@ export default function VisitScheduleEditor() {
       })));
       setSelectedIndex(null);
       setEditing(false);
-      setNotice("Draft extracted. Review every flagged row before saving.");
+      setNotice(agentVerification?.status === "verified"
+        ? `Agent extracted and verified the draft${agentVerification.refinement_count
+          ? ` after ${agentVerification.refinement_count} correction pass${agentVerification.refinement_count === 1 ? "" : "es"}`
+          : ""}. Human review is still required before saving.`
+        : "Agent extracted the draft but found unresolved items. Review every flagged row before saving.");
     } catch (error: any) {
       const status = error?.response?.status;
       const timedOut = error?.code === "ECONNABORTED" || /timeout/i.test(String(error?.message || ""));
@@ -492,6 +506,12 @@ export default function VisitScheduleEditor() {
                 </Small>
               </View>
               <Small>{rows.length} visits</Small>
+              {verification?.status === "verified" && (
+                <View style={styles.verifiedPill}>
+                  <CheckCircle2 size={13} color={colors.success} />
+                  <Small color={colors.success} weight="700">Agent verified</Small>
+                </View>
+              )}
             </View>
             {pendingCount > 0 && (
               <View style={styles.pendingPill}>
@@ -959,6 +979,7 @@ const styles = StyleSheet.create({
   summaryLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
   sourcePill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.primary + "12" },
   pendingPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.warning + "14" },
+  verifiedPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.success + "12" },
   editHint: { marginTop: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: radii.md, borderWidth: 1, borderColor: colors.primary + "25", backgroundColor: colors.primary + "0A", flexDirection: "row", alignItems: "center", gap: 7 },
   filters: { marginTop: 12, flexDirection: "row", gap: 7 },
   filterChip: { minHeight: 34, paddingHorizontal: 10, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, flexDirection: "row", alignItems: "center", gap: 5 },

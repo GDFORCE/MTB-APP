@@ -2,23 +2,22 @@
 //
 // A three-panel command deck layered on the sponsor dashboard: Trials (every
 // protocol the org runs, with created-by provenance + a recruitment funnel
-// derived from real masked subjects), Team (members, invites, admin handover)
+// derived from real masked subjects), Team (members and invites)
 // and Audit (the permanent record). Everything is wired to the live org
 // endpoints; subjects are already masked to SUBJ-xxx + initials server-side.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, ScrollView, Pressable, StyleSheet, StatusBar, Text as RNText, RefreshControl } from "react-native";
 import { useRouter } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
 import {
-  ArrowUpRight, ChevronDown, PenLine, ArrowRightLeft, Search,
+  ArrowUpRight, ChevronDown, PenLine, Search,
 } from "lucide-react-native";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
-  TransferOwnershipSheet, Loading, ErrorCard, EmptyCard, KitInput,
+  Loading, ErrorCard, EmptyCard, KitInput,
   TrialAdminActions,
   errMsg, type OrgMember, type AuditEntry, type OrgTrial, type OrgSubject,
 } from "@/src/components/org-admin-kit";
@@ -60,7 +59,6 @@ export default function SponsorConsole() {
   const [auditErr, setAuditErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [transfer, setTransfer] = useState<{ preset?: OrgMember } | null>(null);
 
   const loadAll = useCallback(async () => {
     if (!orgId) return;
@@ -115,11 +113,6 @@ export default function SponsorConsole() {
   const deleteMember = async (m: OrgMember) => { await api.delete(`/org/${orgId}/members/${m.id}`); };
   const makeAdmin = async (m: OrgMember) => { await api.post(`/org/${orgId}/members/${m.id}/make-admin`); };
   const assignSite = async (m: OrgMember, site: string) => { await api.post(`/org/${orgId}/members/${m.id}/assign-site`, { site }); };
-  const submitTransfer = async (successor_id: string, reason: string, handover: "deactivate" | "remove") => {
-    await api.post(`/org/${orgId}/ownership-transfer`, { successor_id, reason, handover });
-    showToast("Ownership transfer proposed — awaiting acceptance");
-    loadAll();
-  };
 
   if (orgLoading) return <View style={{ flex: 1, backgroundColor: C.background }}><Loading label="Opening console…" /></View>;
   if (orgErr || !orgId) return <View style={{ flex: 1, backgroundColor: C.background, padding: 16, justifyContent: "center" }}><ErrorCard message={orgErr || "Organization unavailable"} onRetry={retry} /></View>;
@@ -243,14 +236,6 @@ export default function SponsorConsole() {
           {tab === "team" && (
             loading ? <Loading label="Loading team…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
               <>
-                <Pressable onPress={() => setTransfer({})} style={st.transferBanner}>
-                  <LinearGradient colors={[C.primary, C.primaryDeep] as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
-                  <View style={st.transferIcon}><ArrowRightLeft size={20} color={C.primaryFg} /></View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <RNText style={st.transferTitle}>Transfer ownership</RNText>
-                    <RNText style={st.transferSub}>Hand the Org Admin role to another active member — reason, handover and audit included.</RNText>
-                  </View>
-                </Pressable>
                 <TeamRoster
                   members={members}
                   roleFilters={["sponsor", "cro", "pi", "crc"]}
@@ -272,10 +257,6 @@ export default function SponsorConsole() {
         </View>
       </ScrollView>
 
-      <TransferOwnershipSheet
-        open={!!transfer} members={members} fromName={user?.full_name || "You"} preset={transfer?.preset}
-        onClose={() => setTransfer(null)} onSubmit={submitTransfer}
-      />
       {ToastView}
     </View>
   );
@@ -305,8 +286,4 @@ const st = StyleSheet.create({
   funnelVal: { fontFamily: fonts.bold, fontSize: 16, fontVariant: ["tabular-nums"] },
   funnelLabel: { fontFamily: fonts.regular, fontSize: 9, color: C.mutedFg, marginTop: 2 },
   funnelNote: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, lineHeight: 16 },
-  transferBanner: { flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 22, padding: 16, overflow: "hidden", marginBottom: 16 },
-  transferIcon: { width: 44, height: 44, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.20)" },
-  transferTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.primaryFg },
-  transferSub: { fontFamily: fonts.regular, fontSize: 11, color: "rgba(255,255,255,0.70)", marginTop: 2, lineHeight: 15 },
 });

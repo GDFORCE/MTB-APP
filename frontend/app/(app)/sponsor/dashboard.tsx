@@ -27,7 +27,6 @@ import {
   Info,
   MapPin,
   RefreshCcw,
-  ShieldCheck,
   Sun,
   TrendingUp,
   UserCheck,
@@ -36,7 +35,6 @@ import {
 import { useAuth } from "@/src/auth/AuthContext";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { colors as C, dawnGradient, fonts } from "@/src/theme/tokens";
-import { consoleRouteForType, useOrgContext } from "@/src/components/org-admin-kit";
 import { getSponsorDashboard } from "@/src/features/sponsor/api";
 import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
 import type {
@@ -272,8 +270,6 @@ export default function SponsorDashboard() {
           </MotionItem>
 
           {error ? <ErrorCard text={error} onRetry={load} /> : null}
-          {user?.org_admin ? <OrgAdminEntry /> : null}
-
           <MotionItem index={1} reducedMotion={reducedMotion}>
             <SectionLabel label="QUICK ACTIONS" />
             <View style={styles.actionRow}>
@@ -768,28 +764,6 @@ function ErrorCard({ text, onRetry }: { text: string; onRetry: () => void }) {
   );
 }
 
-function OrgAdminEntry() {
-  const router = useRouter();
-  const { orgType, orgName, loading, error } = useOrgContext();
-  if (error) return null;
-  const route = consoleRouteForType(orgType || undefined);
-  return (
-    <Pressable disabled={loading} onPress={() => router.push(route as any)} style={styles.orgCard}>
-      <View style={styles.orgIcon}><ShieldCheck size={21} color={C.primaryFg} /></View>
-      <View style={styles.orgCopy}>
-        <View style={styles.orgTitleRow}>
-          <Text style={styles.orgTitle}>Organization oversight</Text>
-          <View style={styles.adminBadge}><Text style={styles.adminBadgeText}>ADMIN</Text></View>
-        </View>
-        <Text style={styles.orgDescription} numberOfLines={2}>
-          {orgName ? `Manage trials, sites and investigators across ${orgName}.` : "Manage trials, sites and investigators."}
-        </Text>
-      </View>
-      {loading ? <ActivityIndicator color={C.primaryFg} /> : <ArrowUpRight size={18} color={W.w70} />}
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.background },
   scroll: { flex: 1 },
@@ -890,14 +864,6 @@ const styles = StyleSheet.create({
   errorText: { flex: 1, fontFamily: fonts.medium, fontSize: 10, lineHeight: 14 },
   retryButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, height: 30, borderRadius: 999, backgroundColor: C.card },
   retryText: { color: C.primary, fontFamily: fonts.semibold, fontSize: 9 },
-  orgCard: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 15, padding: 13, borderRadius: 19, backgroundColor: C.primaryDeep },
-  orgIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: W.w15, alignItems: "center", justifyContent: "center" },
-  orgCopy: { flex: 1, minWidth: 0 },
-  orgTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  orgTitle: { color: C.primaryFg, fontFamily: fonts.semibold, fontSize: 12 },
-  adminBadge: { paddingHorizontal: 5, height: 16, borderRadius: 999, justifyContent: "center", backgroundColor: W.w15, borderWidth: 1, borderColor: W.w20 },
-  adminBadgeText: { color: C.primaryFg, fontFamily: fonts.bold, fontSize: 6, letterSpacing: 0.6 },
-  orgDescription: { color: W.w70, fontFamily: fonts.regular, fontSize: 9, lineHeight: 12, marginTop: 2 },
   pressed: { opacity: 0.8, transform: [{ scale: 0.985 }] },
   disabled: { opacity: 0.45 },
   disabledText: { color: C.border },

@@ -648,6 +648,96 @@ export function TransferOwnershipSheet({ open, members, fromName, preset, onClos
 }
 
 // ── TeamRoster ───────────────────────────────────────────────────────────────
+/** Ownership action shown in the Team Members area for the signed-in org admin. */
+export function OwnershipTransferCard({ adminLabel = "Org Admin" }: {
+  adminLabel?: string;
+}) {
+  const { user } = useAuth();
+  const { orgId, loading: orgLoading, error: orgError } = useOrgContext();
+  const { showToast, ToastView } = useToast();
+  const [open, setOpen] = useState(false);
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [membersError, setMembersError] = useState<string | null>(null);
+
+  const loadMembers = useCallback(async () => {
+    if (!orgId) return;
+    setMembersError(null);
+    try {
+      const response = await api.get(`/org/${orgId}/members`);
+      setMembers(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      setMembersError(errMsg(error, "Couldn't load eligible organization members."));
+    }
+  }, [orgId]);
+
+  useEffect(() => {
+    if (user?.org_admin && orgId) void loadMembers();
+  }, [user?.org_admin, orgId, loadMembers]);
+
+  if (!user?.org_admin) return null;
+
+  const beginTransfer = () => {
+    const error = orgError || membersError;
+    if (error) { showToast(error); return; }
+    if (orgLoading || !orgId) {
+      showToast("Your organization is still loading. Please try again.");
+      return;
+    }
+    setOpen(true);
+  };
+
+  const submitTransfer = async (
+    successorId: string,
+    reason: string,
+    handover: "deactivate" | "remove",
+  ) => {
+    if (!orgId) throw new Error("Organization unavailable");
+    await api.post(`/org/${orgId}/ownership-transfer`, {
+      successor_id: successorId,
+      reason,
+      handover,
+    });
+    showToast("Ownership transfer proposed — awaiting acceptance");
+    await loadMembers();
+  };
+
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Transfer organization ownership"
+        testID="team-transfer-ownership"
+        onPress={beginTransfer}
+        style={({ pressed }) => [k.transferCard, pressed && { opacity: 0.82 }]}
+      >
+        <LinearGradient
+          colors={[C.primary, C.primaryDeep] as any}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={k.transferCardIcon}>
+          <ArrowRightLeft size={20} color={C.primaryFg} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <RNText style={k.transferCardTitle}>Transfer ownership</RNText>
+          <RNText style={k.transferCardSub}>
+            Hand the {adminLabel} role to another active member — reason, handover and audit included.
+          </RNText>
+        </View>
+      </Pressable>
+      <TransferOwnershipSheet
+        open={open}
+        members={members}
+        fromName={user.full_name || "You"}
+        onClose={() => setOpen(false)}
+        onSubmit={submitTransfer}
+      />
+      {ToastView}
+    </>
+  );
+}
+
 export interface InviteConfig { roles: string[]; sites?: string[] }
 export function TeamRoster({ members, sites, roleFilters, inviteConfig, accentColor = C.primary, allowAssignSite, showToast, onReload, onInvite, onDelete, onMakeAdmin, onAssignSite }: {
   members: OrgMember[];
@@ -1032,6 +1122,11 @@ export const k = StyleSheet.create({
   emptyIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.surface, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   emptyTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.foreground },
   emptySub: { fontFamily: fonts.regular, fontSize: 12, color: C.mutedFg, marginTop: 4, textAlign: "center", paddingHorizontal: 16, lineHeight: 17 },
+
+  transferCard: { flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 22, padding: 16, overflow: "hidden", marginTop: 16, marginBottom: 2 },
+  transferCardIcon: { width: 44, height: 44, borderRadius: 16, backgroundColor: W.w15, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: W.w20 },
+  transferCardTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.primaryFg },
+  transferCardSub: { fontFamily: fonts.regular, fontSize: 11, color: W.w70, marginTop: 2, lineHeight: 15 },
 
   centerOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.50)", alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
   dialog: { width: "100%", maxWidth: 340, backgroundColor: C.background, borderRadius: 24, padding: 20, alignItems: "center" },

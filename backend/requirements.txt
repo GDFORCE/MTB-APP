@@ -31,3 +31,6 @@ typer>=0.9.0
 emergentintegrations==0.2.0
 google-genai>=2.17.0
 anthropic>=0.69.0
+ollama>=0.6.0
+pypdfium2>=4.30.0
+langgraph>=1.1.6,<1.2

@@ -36,6 +36,55 @@ Start it (bound to all interfaces so the phone can reach it):
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
+### Verified Gemini protocol extraction
+
+With `PROTOCOL_EXTRACTION_PROVIDER=gemini`, schedule extraction runs as a
+bounded LangGraph evaluator/optimizer workflow. Gemini maps the document,
+collects timing evidence, collects visit/activity evidence, synthesizes the
+schedule, and independently audits it against the PDF. A targeted repair pass
+fixes evidence-backed omissions or errors before re-auditing. Configure the
+maximum number of repair passes in `backend/.env`:
+
+```dotenv
+PROTOCOL_EXTRACTION_PROVIDER=gemini
+GEMINI_API_KEY=your-key
+PROTOCOL_EXTRACTION_MAX_REFINEMENTS=2
+```
+
+The API returns `verification.status`, audit confidence, refinement count,
+remaining issues, and separate accuracy values for visit coverage, timing,
+windows, visit types, procedure mapping, and the overall schedule. Every
+applicable dimension must pass independently; a strong procedure score cannot
+hide weak timing or an incomplete schedule. A schedule that reaches the limit
+with unresolved findings is marked `needs_review`; extraction remains a draft
+requiring human approval.
+
+### Local protocol extraction (no AI API key)
+
+For offline development on Windows, install Ollama, then download the small
+Qwen model:
+
+```powershell
+[Environment]::SetEnvironmentVariable('OLLAMA_MODELS', 'D:\ollama_models', 'User')
+ollama pull qwen3-vl:4b-instruct-q4_K_M
+```
+
+Restart Ollama after setting `OLLAMA_MODELS`, then use these values in
+`backend/.env`:
+
+```dotenv
+PROTOCOL_EXTRACTION_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_PROTOCOL_EXTRACTION_MODEL=qwen3-vl:4b-instruct-q4_K_M
+OLLAMA_PDF_BATCH_PAGES=2
+OLLAMA_EXTRACTION_CACHE_DIR=D:\OllamaExtractionCache
+```
+
+The local provider renders two pages at a time and checkpoints every batch, so
+scanned and 250-page documents work without separate OCR or loading the entire
+PDF into model memory. Retrying the same PDF resumes from its saved SHA-256
+checkpoint. Processing is sequential and can take hours on an 8 GB CPU-only PC.
+
 ## 3. Frontend (Expo)
 In a second terminal:
 ```

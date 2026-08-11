@@ -26,6 +26,7 @@ import { Body, Button, Card, Eyebrow, Small } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
+import { OwnershipTransferCard } from "@/src/components/org-admin-kit";
 
 type TeamRole = "pi" | "crc" | "sponsor" | "cro" | "smo" | "site";
 
@@ -200,6 +201,10 @@ export default function Team() {
             color={colors.success}
           />
         </View>
+
+        <OwnershipTransferCard
+          adminLabel={user?.role === "smo" ? "SMO Admin" : user?.role === "site" ? "Site Admin" : "Org Admin"}
+        />
 
         <View style={s.search}>
           <Search size={17} color={colors.mutedFg} />

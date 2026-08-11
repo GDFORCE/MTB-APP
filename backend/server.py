@@ -2568,6 +2568,112 @@ async def sponsor_pi_lookup(email: EmailStr, user=Depends(current_user)):
     }
 
 
+@api.get('/sponsor/share-site-directory',
+         dependencies=[Depends(require_roles('sponsor', 'cro'))])
+async def sponsor_share_site_directory(
+    trial_id: Optional[str] = None,
+    user=Depends(current_user),
+):
+    """All active Site organizations available to the schedule-share picker.
+
+    Sponsor dashboard sites are deliberately scoped to the caller's existing
+    network. Schedule sharing additionally needs a discovery surface so a
+    sponsor can find a new registered Site and establish the relationship by
+    sharing a trial. Only professional PI identity is returned; patient data is
+    never part of this directory contract.
+    """
+    if trial_id:
+        trial = await db.trials.find_one({'id': trial_id}, {'_id': 0, 'id': 1})
+        if not trial:
+            raise HTTPException(404, 'Trial not found')
+        if not await _trial_in_caller_org(user, trial_id):
+            raise HTTPException(403, 'You do not have access to this trial')
+
+    sponsor_org_name = (user.get('organization') or '').strip()
+    sponsor_org = await db.organizations.find_one(
+        {'name': sponsor_org_name}, {'_id': 0, 'id': 1},
+    ) if sponsor_org_name else None
+    network_sites = await db.org_sites.find(
+        {'org_id': sponsor_org['id']} if sponsor_org else {'id': {'$in': []}},
+        {'_id': 0},
+    ).to_list(2000)
+
+    site_orgs = await db.organizations.find(
+        {
+            'type': 'site',
+            'status': {'$nin': ['merged', 'inactive', 'Inactive', 'suspended', 'Suspended']},
+        },
+        {'_id': 0, 'id': 1, 'name': 1, 'address': 1, 'city': 1,
+         'state': 1, 'status': 1},
+    ).sort('name', 1).to_list(2000)
+    site_names = [str(row.get('name') or '').strip() for row in site_orgs]
+    pi_rows = await db.users.find(
+        {
+            'role': 'pi',
+            'organization': {'$in': site_names},
+            'status': {'$nin': ['Inactive', 'inactive', 'Removed', 'Suspended', 'suspended']},
+        },
+        {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'phone': 1,
+         'organization': 1, 'org_admin': 1, 'created_at': 1,
+         'profile.department': 1},
+    ).to_list(5000)
+    pis_by_org: Dict[str, List[dict]] = {}
+    for pi in pi_rows:
+        key = str(pi.get('organization') or '').strip().casefold()
+        if key:
+            pis_by_org.setdefault(key, []).append(pi)
+    for rows in pis_by_org.values():
+        rows.sort(key=lambda row: (
+            not bool(row.get('org_admin')),
+            str(row.get('created_at') or ''),
+            str(row.get('full_name') or row.get('email') or '').casefold(),
+        ))
+
+    network_by_org_id = {
+        row.get('site_org_id'): row for row in network_sites
+        if row.get('site_org_id')
+    }
+    network_by_name = {
+        str(row.get('name') or '').strip().casefold(): row
+        for row in network_sites if row.get('name')
+    }
+    result = []
+    for organization in site_orgs:
+        org_name = str(organization.get('name') or '').strip()
+        network_site = (
+            network_by_org_id.get(organization.get('id'))
+            or network_by_name.get(org_name.casefold())
+        )
+        available_pis = pis_by_org.get(org_name.casefold(), [])
+        pi = None
+        if network_site:
+            linked_id = network_site.get('user_id')
+            linked_email = str(network_site.get('pi_email') or '').strip().lower()
+            pi = next((row for row in available_pis if row.get('id') == linked_id), None)
+            if not pi and linked_email:
+                pi = next((row for row in available_pis
+                           if str(row.get('email') or '').strip().lower() == linked_email), None)
+        pi = pi or (available_pis[0] if available_pis else None)
+        trial_ids = (network_site or {}).get('trial_ids') or []
+        result.append({
+            'id': (network_site or {}).get('id') or f"directory:{organization['id']}",
+            'organization_id': organization['id'],
+            'name': org_name,
+            'address': (network_site or {}).get('address') or organization.get('address') or '',
+            'city': (network_site or {}).get('city') or organization.get('city') or '',
+            'state': (network_site or {}).get('state') or organization.get('state') or '',
+            'status': organization.get('status') or 'active',
+            'pi_id': (pi or {}).get('id') or '',
+            'pi_name': (pi or {}).get('full_name') or '',
+            'pi_email': (pi or {}).get('email') or '',
+            'pi_phone': (pi or {}).get('phone') or '',
+            'in_network': bool(network_site),
+            'assigned_to_trial': bool(trial_id and trial_id in trial_ids),
+            'can_receive_schedule': bool(pi),
+        })
+    return result
+
+
 @api.get('/sponsor/trials/{trial_id}/subjects',
          dependencies=[Depends(require_roles('sponsor', 'cro'))])
 async def sponsor_trial_subjects(trial_id: str,
@@ -2991,12 +3097,13 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
         f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
     visits = []
+    global_warning = schedule.verification_status == 'needs_review'
     for visit in schedule.visits:
         row = visit.model_dump()
         # An undated visit (Early Termination, Unscheduled) is real but has no
         # day. The editor needs a number, so it lands on baseline — flagged for
         # review so it is never saved as a genuine day-0 visit by accident.
-        warning = row.get('day_offset') is None
+        warning = global_warning or row.get('day_offset') is None
         row['day_offset'] = row.get('day_offset') or 0
         row['clinical_tasks'] = row.get('activities') or []
         row['admin_tasks'] = []
@@ -3013,6 +3120,13 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         'assumptions': schedule.assumptions,
         'schedule_kind': schedule.schedule_kind,
         'source_notes': schedule.source_notes,
+        'verification': {
+            'status': schedule.verification_status,
+            'confidence': schedule.verification_confidence,
+            'refinement_count': schedule.verification_iterations,
+            'issues': schedule.verification_issues,
+            'accuracy': schedule.verification_scores,
+        },
     }
 
 # ── Visit schedule ──────────────────────────────────────────────────────────
@@ -6768,6 +6882,10 @@ class ShareSiteIn(BaseModel):
     id: str
     name: str = Field(min_length=1, max_length=200)
     reviewer_id: Optional[str] = None
+    # Present when the picker row came from the platform-wide Site directory
+    # instead of an existing sponsor-network record. The server re-resolves
+    # this id and never trusts the client-provided site name/PI relationship.
+    organization_id: Optional[str] = None
 
 class ShareIn(BaseModel):
     trial_id: str
@@ -6784,15 +6902,47 @@ async def _validate_share_site(user: dict, trial: dict, site: ShareSiteIn):
 
     Client-provided names are display metadata only. A reviewer is accepted
     when they are a PI already attached to this trial, or work at a site in the
-    sponsor organization's managed network.
+    sponsor organization's managed network. A platform-directory Site may also
+    be selected; in that case the PI must be an active member of that exact
+    Site organization. The relationship is persisted only after every selected
+    site has passed validation.
     """
+    directory_org = None
+    if site.organization_id:
+        directory_org = await db.organizations.find_one(
+            {
+                'id': site.organization_id,
+                'type': 'site',
+                'status': {'$nin': [
+                    'merged', 'inactive', 'Inactive', 'suspended', 'Suspended',
+                ]},
+            },
+            {'_id': 0, 'id': 1, 'name': 1, 'address': 1, 'city': 1,
+             'state': 1},
+        )
+        if not directory_org:
+            raise HTTPException(400, f'{site.name} is not an active registered Site')
+
     reviewer = None
     if site.reviewer_id:
         reviewer = await db.users.find_one(
-            {'id': site.reviewer_id, 'role': 'pi'},
+            {
+                'id': site.reviewer_id,
+                'role': 'pi',
+                'status': {'$nin': [
+                    'Inactive', 'inactive', 'Removed', 'Suspended', 'suspended',
+                ]},
+            },
             {'_id': 0, 'id': 1, 'full_name': 1, 'email': 1, 'organization': 1})
         if not reviewer:
             raise HTTPException(400, f'No PI is available for {site.name}')
+        if directory_org:
+            reviewer_org = str(reviewer.get('organization') or '').strip().casefold()
+            directory_name = str(directory_org.get('name') or '').strip().casefold()
+            if not reviewer_org or reviewer_org != directory_name:
+                raise HTTPException(
+                    403, f'{reviewer["full_name"]} is not a PI at {directory_org["name"]}')
+            return reviewer
         assigned = await db.patients.find_one(
             {'trial_id': trial['id'], 'pi_id': reviewer['id']}, {'_id': 0, 'id': 1})
         sponsor_org = (user.get('organization') or '').strip()
@@ -6834,6 +6984,122 @@ async def _validate_share_site(user: dict, trial: dict, site: ShareSiteIn):
         if not network_site:
             raise HTTPException(400, f'{site.name} has no assigned PI')
     return reviewer
+
+
+async def _link_shared_site_to_network(user: dict, trial: dict,
+                                       site: ShareSiteIn, reviewer: dict) -> dict:
+    """Attach a successfully selected Site to the sponsor's trial network.
+
+    Existing network rows only gain the shared trial id. Directory discoveries
+    create a governed network row keyed to the source Site organization so
+    later shares and dashboard loads reuse the same relationship.
+    """
+    sponsor_org_name = (user.get('organization') or '').strip()
+    sponsor_org = await db.organizations.find_one(
+        {'name': sponsor_org_name}, {'_id': 0, 'id': 1},
+    ) if sponsor_org_name else None
+    if not sponsor_org:
+        raise HTTPException(400, 'Your organization could not be resolved')
+
+    directory_org = None
+    if site.organization_id:
+        directory_org = await db.organizations.find_one(
+            {'id': site.organization_id, 'type': 'site'},
+            {'_id': 0, 'id': 1, 'name': 1, 'address': 1, 'city': 1, 'state': 1},
+        )
+    existing = await db.org_sites.find_one(
+        {'id': site.id, 'org_id': sponsor_org['id']}, {'_id': 0})
+    if not existing and directory_org:
+        existing = await db.org_sites.find_one({
+            'org_id': sponsor_org['id'],
+            '$or': [
+                {'site_org_id': directory_org['id']},
+                {'name': directory_org['name']},
+            ],
+        }, {'_id': 0})
+
+    official_name = (directory_org or {}).get('name') or site.name.strip()
+    fields = {
+        'name': official_name,
+        'pi_name': reviewer.get('full_name') or '',
+        'pi_email': reviewer.get('email') or '',
+        'user_id': reviewer['id'],
+        'status': 'active',
+        'updated_at': now(),
+        'updated_by': user['id'],
+    }
+    if directory_org:
+        fields.update({
+            'site_org_id': directory_org['id'],
+            'address': directory_org.get('address') or '',
+            'city': directory_org.get('city') or '',
+            'state': directory_org.get('state') or '',
+        })
+    if existing:
+        await db.org_sites.update_one(
+            {'id': existing['id'], 'org_id': sponsor_org['id']},
+            {'$set': fields, '$addToSet': {'trial_ids': trial['id']}},
+        )
+        linked_site = {**existing, **fields, 'trial_ids': sorted(set(
+            [*(existing.get('trial_ids') or []), trial['id']]
+        ))}
+    else:
+        # A new row is only valid for an explicitly selected directory Site.
+        # Other legacy share paths retain their portfolio validation semantics.
+        if not directory_org:
+            return {'id': site.id, 'name': site.name}
+        linked_site = {
+            'id': str(uuid.uuid4()),
+            'org_id': sponsor_org['id'],
+            **fields,
+            'trial_ids': [trial['id']],
+            'trial_targets': {},
+            'access_type': 'restricted',
+            'created_at': now(),
+            'created_by': user['id'],
+        }
+        await db.org_sites.insert_one(linked_site)
+
+    if directory_org:
+        # The review itself is reviewer-scoped, but the accepted trial
+        # relationship is what also makes the shared trial visible in the PI's
+        # normal trial list and enables subsequent patient enrollment.
+        reviewer_email = str(reviewer.get('email') or '').strip().lower()
+        invitation_contacts = [{'accepted_user_id': reviewer['id']}]
+        if reviewer_email:
+            invitation_contacts.append({'email': reviewer_email})
+        invitation = await db.invitations.find_one({
+            'trial_id': trial['id'],
+            'role': 'pi',
+            '$or': invitation_contacts,
+            'status': {'$in': ['pending', 'accepted']},
+        }, {'_id': 0})
+        accepted_fields = {
+            'status': 'accepted',
+            'accepted_user_id': reviewer['id'],
+            'accepted_at': now(),
+        }
+        if invitation:
+            await db.invitations.update_one(
+                {'id': invitation['id']}, {'$set': accepted_fields})
+        else:
+            await db.invitations.insert_one({
+                'id': str(uuid.uuid4()),
+                'token': new_invite_code(),
+                'email': reviewer_email,
+                'phone': '',
+                'full_name': reviewer.get('full_name') or '',
+                'role': 'pi',
+                'trial_id': trial['id'],
+                'invited_by': user['id'],
+                'org': directory_org['name'],
+                'organization': directory_org['name'],
+                **accepted_fields,
+                'created_at': now(),
+                'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
+                'resend_count': 0,
+            })
+    return linked_site
 
 
 _SCHEDULE_DIFF_FIELDS = (
@@ -6926,6 +7192,14 @@ async def create_share(body: ShareIn, user=Depends(current_user)):
     ):
         raise HTTPException(400, 'Select at least one site with an assigned PI for in-app sharing')
 
+    linked_sites = []
+    for site, reviewer in validated_sites:
+        network_site = (
+            await _link_shared_site_to_network(user, trial, site, reviewer)
+            if reviewer else {'id': site.id, 'name': site.name}
+        )
+        linked_sites.append((site, reviewer, network_site))
+
     visit_snapshot = await db.visits.find(
         {'trial_id': body.trial_id}, {'_id': 0},
     ).sort('visit_number', 1).to_list(500)
@@ -6984,17 +7258,18 @@ async def create_share(body: ShareIn, user=Depends(current_user)):
            'schedule_version': schedule_version,
            'visit_snapshot': visit_snapshot,
            'changed_visits': changed_visits,
-           'site_ids': [site.id for site, _ in validated_sites]}
+           'site_ids': [network_site.get('id') or site.id
+                        for site, _, network_site in linked_sites]}
     await db.shares.insert_one(doc)
     review_ids = []
-    for site, reviewer in validated_sites:
+    for site, reviewer, network_site in linked_sites:
         rid = str(uuid.uuid4())
         review = {
             'id': rid,
             'share_id': doc['id'],
             'trial_id': body.trial_id,
-            'site_id': site.id,
-            'site_name': site.name,
+            'site_id': network_site.get('id') or site.id,
+            'site_name': network_site.get('name') or site.name,
             'reviewer_id': reviewer.get('id') if reviewer else None,
             'reviewer_name': reviewer.get('full_name') if reviewer else '',
             'reviewer_email': reviewer.get('email') if reviewer else '',
@@ -7027,13 +7302,13 @@ async def create_share(body: ShareIn, user=Depends(current_user)):
                 'read': False,
                 'created_at': now(),
             })
-    if validated_sites:
+    if linked_sites:
         await _refresh_trial_schedule_status(body.trial_id)
     await write_audit(user, 'schedule.share',
                       f"Shared schedule for {trial.get('protocol_id') or body.trial_id}",
                       target_id=doc['id'], trial_id=body.trial_id,
                       delivery=body.via, recipient_count=len(body.recipients),
-                      site_count=len(validated_sites), review_ids=review_ids,
+                      site_count=len(linked_sites), review_ids=review_ids,
                       schedule_version=schedule_version,
                       changed_visit_count=len(changed_visits))
     base = os.environ.get('PUBLIC_APP_URL', 'https://my-trial-board.app')
