@@ -338,6 +338,14 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
             "org_admin": True,
             "status": "Active",
         }
+        directory_pi_two = {
+            "id": str(uuid.uuid4()),
+            "email": f"directory-pi-two-{RUN_ID}@example.com",
+            "full_name": "Dr Second Directory PI",
+            "role": "pi",
+            "organization": directory_pi["organization"],
+            "status": "Active",
+        }
         directory_org = {
             "id": str(uuid.uuid4()),
             "name": directory_pi["organization"],
@@ -377,6 +385,7 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
         ]
         await server.db.users.insert_many([
             portfolio_pi, foreign_pi, network_pi, network_pi_two, directory_pi,
+            directory_pi_two,
         ])
         await server.db.organizations.insert_one(directory_org)
         await server.db.trials.insert_one(portfolio_trial)
@@ -394,7 +403,7 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
         await server.db.org_sites.insert_one(network_site)
         IDS["users"].extend([
             portfolio_pi["id"], foreign_pi["id"], network_pi["id"],
-            network_pi_two["id"], directory_pi["id"],
+            network_pi_two["id"], directory_pi["id"], directory_pi_two["id"],
         ])
         IDS["trials"].append(portfolio_trial["id"])
         IDS["patients"].extend(patient["id"] for patient in patients)
@@ -411,6 +420,10 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
                 row for row in directory.json()
                 if row["organization_id"] == directory_org["id"])
             assert directory_site["pi_id"] == directory_pi["id"]
+            assert directory_site["pi_count"] == 2
+            assert [pi["id"] for pi in directory_site["pis"]] == [
+                directory_pi["id"], directory_pi_two["id"],
+            ]
             assert directory_site["in_network"] is False
             assert directory_site["assigned_to_trial"] is False
             assert directory_site["can_receive_schedule"] is True
@@ -500,6 +513,32 @@ def test_schedule_can_be_shared_with_any_site_in_sponsor_portfolio():
                 "/api/trials", headers=headers(directory_pi))
             assert pi_trials.status_code == 200, pi_trials.text
             assert trial["id"] in {row["id"] for row in pi_trials.json()}
+
+            second_directory_share = await cli.post(
+                "/api/shares",
+                headers=headers(sponsor_a),
+                json={
+                    "trial_id": trial["id"],
+                    "via": "in_app",
+                    "sites": [{
+                        "id": linked_directory_site["id"],
+                        "name": directory_site["name"],
+                        "reviewer_id": directory_pi_two["id"],
+                        "organization_id": directory_org["id"],
+                    }],
+                },
+            )
+            assert second_directory_share.status_code == 200, second_directory_share.text
+            preserved_site = await server.db.org_sites.find_one(
+                {"id": linked_directory_site["id"]}, {"_id": 0})
+            assert preserved_site["user_id"] == directory_pi["id"]
+            assert set(preserved_site["pi_ids"]) == {
+                directory_pi["id"], directory_pi_two["id"],
+            }
+            assert await server.db.schedule_reviews.count_documents({
+                "trial_id": trial["id"],
+                "reviewer_id": directory_pi_two["id"],
+            }) == 1
 
             denied = await cli.post(
                 "/api/shares",

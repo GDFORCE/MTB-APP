@@ -135,7 +135,7 @@ export function consoleRouteForType(type?: OrgType): string {
   }
 }
 
-export function useOrgContext() {
+export function useOrgContext(enabled = true) {
   const { user } = useAuth();
   const [orgId, setOrgId] = useState<string | null>(null);
   const [orgType, setOrgType] = useState<OrgType | null>(null);
@@ -143,7 +143,17 @@ export function useOrgContext() {
   const [error, setError] = useState<string | null>(null);
 
   const resolve = useCallback(async () => {
+    if (!enabled) {
+      setOrgId(null);
+      setOrgType(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     const name = (user?.organization || "").trim();
+    setLoading(true);
+    setOrgId(null);
+    setOrgType(null);
     setError(null);
     if (!name) { setLoading(false); setError("Your account is not linked to an organization."); return; }
     try {
@@ -158,7 +168,7 @@ export function useOrgContext() {
     } finally {
       setLoading(false);
     }
-  }, [user?.organization]);
+  }, [enabled, user?.organization]);
 
   useEffect(() => { resolve(); }, [resolve]);
   return { orgId, orgType, orgName: user?.organization || "", loading, error, retry: resolve };

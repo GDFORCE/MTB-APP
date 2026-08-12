@@ -97,6 +97,7 @@ export default function AddTrial() {
   const [lookingUp, setLookingUp] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [extractionId, setExtractionId] = useState("");
   const [progress, setProgress] = useState(0);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -110,6 +111,7 @@ export default function AddTrial() {
     setResolved(false);
     setSource(null);
     setDetails(EMPTY);
+    setExtractionId("");
     setErr("");
   };
 
@@ -123,6 +125,7 @@ export default function AddTrial() {
       if (response.data?.found) {
         setProtocolId(response.data.protocol_id || id);
         setDetails(normalized(response.data.details));
+        setExtractionId("");
         setSource(response.data.source === "organization" ? "organization" : "registry");
         setResolved(true);
       } else {
@@ -161,11 +164,13 @@ export default function AddTrial() {
           type: asset.mimeType || "application/pdf",
         } as any);
       }
-      const response = await api.post("/protocols/extract-details", form, {
-        headers: { "Content-Type": "multipart/form-data" },
+      const response = await api.post("/protocols/extract", form, {
+        // This one analysis prepares both this form and the next schedule screen.
+        timeout: 900000,
       });
       setProgress(100);
       setDetails(normalized(response.data?.details));
+      setExtractionId(response.data?.extraction_id || "");
       setSource("upload");
       setResolved(true);
       setTimeout(() => setShowUpload(false), 250);
@@ -217,7 +222,10 @@ export default function AddTrial() {
       });
       router.replace({
         pathname: "/(app)/sponsor/visit-schedule",
-        params: { id: response.data.id },
+        params: {
+          id: response.data.id,
+          extractionId: extractionId || undefined,
+        },
       });
     } catch (error: any) {
       setErr(error?.response?.data?.detail || "Could not save this trial.");
@@ -425,8 +433,9 @@ export default function AddTrial() {
                 </View>
                 <Text style={s.modalTitle}>Protocol not found</Text>
                 <Small style={s.modalCopy}>
-                  Upload the latest approved protocol to auto-populate the trial details. Please review and verify all extracted information before saving the trial.
+                  Upload the latest approved protocol once to auto-populate the trial details and prepare the visit schedule. Please review and verify all extracted information before saving the trial.
                 </Small>
+                {!!err && <Text style={s.error}>{err}</Text>}
                 <Pressable testID="upload-protocol" onPress={extract} style={s.dropZone}>
                   <View style={s.uploadIcon}><UploadCloud size={24} color={colors.primary} /></View>
                   <Text style={s.dropTitle}>Choose protocol PDF</Text>
@@ -437,11 +446,11 @@ export default function AddTrial() {
               <View style={s.extracting}>
                 <View style={s.uploadIcon}><FileText size={23} color={colors.primary} /></View>
                 <Text style={s.modalTitle}>Reading your protocol…</Text>
-                <Small style={s.modalCopy}>Extracting study details and visit count. Keep this screen open.</Small>
+                <Small style={s.modalCopy}>Analyzing trial details and preparing the complete visit schedule. Keep this screen open.</Small>
                 <View style={s.progressTrack}>
                   <View style={[s.progressFill, { width: `${progress}%` }]} />
                 </View>
-                <Text style={s.progressText}>{progress}%</Text>
+                <Text style={s.progressText}>Processing…</Text>
               </View>
             )}
           </Card>

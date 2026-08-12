@@ -13,6 +13,7 @@ import { Body, Button, Card, Eyebrow, Small } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
+import { useOrgContext } from "@/src/components/org-admin-kit";
 
 type InviteRole = "pi" | "crc" | "sponsor" | "cro";
 
@@ -25,6 +26,12 @@ const roleNames: Record<InviteRole, string> = {
 
 export default function InviteMember() {
   const { user } = useAuth();
+  const isSiteAdmin = Boolean(user?.role === "site" && user.org_admin);
+  const {
+    orgId,
+    loading: orgLoading,
+    error: orgError,
+  } = useOrgContext(isSiteAdmin);
   const roles = useMemo<InviteRole[]>(
     () => user?.role === "sponsor" || user?.role === "cro"
       ? ["pi", "crc", "sponsor", "cro"]
@@ -48,24 +55,38 @@ export default function InviteMember() {
   } | null>(null);
 
   const send = async () => {
-    if (!email.trim() && !phone.trim()) {
+    const normalizedEmail = email.trim().toLocaleLowerCase();
+    const normalizedPhone = phone.trim();
+    if (isSiteAdmin && !/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      setError("Enter a valid email address for the site team member.");
+      return;
+    }
+    if (!isSiteAdmin && !normalizedEmail && !normalizedPhone) {
       setError("Enter an email address or phone number.");
+      return;
+    }
+    if (isSiteAdmin && !orgId) {
+      setError(orgError || "Your site organization is still loading. Please try again.");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const response = await api.post("/invitations", {
+      const payload = {
         full_name: name.trim() || undefined,
         designation: designation.trim() || undefined,
-        email: email.trim().toLocaleLowerCase() || undefined,
-        phone: phone.trim() || undefined,
+        email: normalizedEmail || undefined,
+        phone: normalizedPhone || undefined,
         role,
-      });
+      };
+      const response = isSiteAdmin
+        ? await api.post(`/org/${orgId}/members/invite`, payload)
+        : await api.post("/invitations", payload);
       setInvite(response.data);
     } catch (err: any) {
+      const detail = err?.response?.data?.detail;
       setError(
-        err?.response?.data?.detail
+        (typeof detail === "string" ? detail : undefined)
         || "Couldn't send the invitation. Please try again.",
       );
     } finally {
@@ -101,7 +122,7 @@ export default function InviteMember() {
                 {invite.invite_link}
               </Small>
               <Small style={s.linkHelp}>
-                Long-press the link to copy it. The link expires after seven days.
+                Long-press the link to copy it. The link expires after three days.
               </Small>
             </Card>
           ) : null}
@@ -205,6 +226,11 @@ export default function InviteMember() {
             keyboardType="phone-pad"
             testID="member-invite-phone"
           />
+          {isSiteAdmin && orgError ? (
+            <Small color={colors.destructive} style={s.error}>
+              {orgError}
+            </Small>
+          ) : null}
           {error ? (
             <Small testID="member-invite-error" color={colors.destructive} style={s.error}>
               {error}
@@ -212,7 +238,12 @@ export default function InviteMember() {
           ) : null}
         </ScrollView>
         <View style={s.footer}>
-          <Button testID="member-invite-send" onPress={() => void send()} loading={loading}>
+          <Button
+            testID="member-invite-send"
+            onPress={() => void send()}
+            loading={loading || (isSiteAdmin && orgLoading)}
+            disabled={isSiteAdmin && !orgLoading && !orgId}
+          >
             Send secure invitation
           </Button>
         </View>

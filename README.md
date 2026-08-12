@@ -59,6 +59,12 @@ hide weak timing or an incomplete schedule. A schedule that reaches the limit
 with unresolved findings is marked `needs_review`; extraction remains a draft
 requiring human approval.
 
+The Add Trial PDF upload uses this same workflow to populate both screens. It
+returns trial metadata and stores the audited schedule for two
+hours under a user-scoped extraction ID. After the trial is created, the Visit
+Schedule screen consumes that prepared result without uploading the PDF or
+calling the AI again.
+
 ### Local protocol extraction (no AI API key)
 
 For offline development on Windows, install Ollama, then download the small

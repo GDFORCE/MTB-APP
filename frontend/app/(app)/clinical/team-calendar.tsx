@@ -42,7 +42,7 @@ type Visit = {
   site?: string; pi_name?: string;
 };
 
-type Role = "pi" | "crc";
+type Role = "pi" | "crc" | "smo" | "site";
 type ViewMode = "day" | "week" | "month";
 
 // ── Status tone (token colours only) ────────────────────────────────────────
@@ -69,7 +69,13 @@ const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 export default function TeamCalendar() {
   const router = useRouter();
   const params = useLocalSearchParams<{ role?: string; initialView?: string }>();
-  const role: Role = params.role === "crc" ? "crc" : "pi";
+  const role: Role = params.role === "crc"
+    ? "crc"
+    : params.role === "site"
+      ? "site"
+      : params.role === "smo"
+        ? "smo"
+        : "pi";
   const initialView: ViewMode =
     params.initialView === "day" || params.initialView === "week" ? params.initialView : "month";
 
@@ -183,7 +189,9 @@ export default function TeamCalendar() {
           </View>
           <View style={s.roleRow}>
             <Users size={13} color={colors.overlay25} />
-            <Text style={s.roleText}>{role === "pi" ? "PI" : "CRC"} · All patients</Text>
+            <Text style={s.roleText}>
+              {role === "pi" ? "PI" : role === "crc" ? "CRC" : role === "site" ? "SITE" : "SMO"} · All patients
+            </Text>
           </View>
         </SafeAreaView>
       </View>

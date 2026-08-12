@@ -48,6 +48,7 @@ export default function PiDashboard() {
   const { user } = useAuth();
   // SMO and Site accounts share the de-identified operational dashboard.
   const isSmo = user?.role === "smo" || user?.role === "site";
+  const navRole = user?.role === "site" ? "site" : user?.role === "smo" ? "smo" : "pi";
   const unread = useUnreadCount();
   const [trials, setTrials] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
@@ -450,7 +451,7 @@ export default function PiDashboard() {
         </View>
       </ScrollView>
 
-      <PiBottomNav active="dashboard" calendarRole={isSmo ? "smo" : "pi"} />
+      <PiBottomNav active="dashboard" calendarRole={navRole} role={navRole} />
       <VisitUpdateSheet
         visit={editingVisit}
         trial={editingVisit?.trial_id ? trialById[editingVisit.trial_id] : null}

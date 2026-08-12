@@ -261,9 +261,11 @@ class TestOrgRoster:
             async with make_client() as cli:
                 r = await cli.post(f'/api/org/{oid}/members/invite', headers=h, json={
                     'email': f'orgadm-{RUN_ID}-newhire@example.com',
+                    'phone': '+91 98765 43210',
                     'full_name': f'New Hire {RUN_ID}', 'role': 'crc'})
                 assert r.status_code == 200, r.text
                 assert r.json()['invite_link']
+                assert r.json()['phone'] == '+91 98765 43210'
                 lst = await cli.get(f'/api/org/{oid}/members', headers=h)
                 invited = [m for m in lst.json() if m['status'] == 'invited'
                            and m['email'] == f'orgadm-{RUN_ID}-newhire@example.com']

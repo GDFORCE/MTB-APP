@@ -82,6 +82,7 @@ def cleanup():
         await server.db.users.delete_many({"id": {"$in": USER_IDS}})
         await server.db.organizations.delete_many({"name": {"$in": [ORG, SITE_ORG]}})
         await server.db.audit_logs.delete_many({"actor_id": {"$in": USER_IDS}})
+        await server.db.protocol_extractions.delete_many({"user_id": {"$in": USER_IDS}})
     run(clean())
     LOOP.close()
 
@@ -127,10 +128,12 @@ def test_lookup_found_and_not_found(headers):
 
 
 def test_precreation_pdf_extraction(headers, monkeypatch):
-    class FakeExtractor:
-        async def extract_details(self, data):
-            assert data == b"%PDF-test"
-            return pe.ExtractedTrialDetails(
+    calls = []
+
+    async def fake_bundle(data):
+        calls.append(data)
+        return (
+            pe.ExtractedTrialDetails(
                 ctri_number="CTRI/2026/07/654321",
                 title="Extracted study",
                 phase="Phase II",
@@ -140,9 +143,17 @@ def test_precreation_pdf_extraction(headers, monkeypatch):
                 target_enrollment=80,
                 total_visits=12,
                 status="active",
-            )
+            ),
+            pe.ExtractedSchedule.model_validate({
+                "schedule_kind": "linear",
+                "visits": [{"name": "Baseline", "day_offset": 0}],
+                "verification_status": "verified",
+                "verification_confidence": 0.98,
+                "verification_scores": {"overall_schedule": 0.97},
+            }),
+        )
 
-    monkeypatch.setattr(pe, "get_details_extractor", lambda: FakeExtractor())
+    monkeypatch.setattr(pe, "extract_protocol_bundle", fake_bundle)
 
     async def exercise():
         async with client() as cli:
@@ -152,10 +163,33 @@ def test_precreation_pdf_extraction(headers, monkeypatch):
                 files={"file": ("protocol.pdf", b"%PDF-test", "application/pdf")},
             )
         assert response.status_code == 200, response.text
-        details = response.json()["details"]
+        body = response.json()
+        details = body["details"]
         assert details["title"] == "Extracted study"
         assert details["target_enrollment"] == 80
         assert details["total_visits"] == 12
+        assert body["schedule_visit_count"] == 1
+        assert body["extraction_id"]
+
+        async with client() as cli:
+            created = await cli.post("/api/trials", headers=headers, json={
+                "title": details["title"],
+                "protocol_id": f"COMBINED-{RUN_ID}",
+                "phase": details["phase"],
+                "condition": "Oncology",
+            })
+            assert created.status_code == 200, created.text
+            trial_id = created.json()["id"]
+            TRIAL_IDS.append(trial_id)
+            consumed = await cli.post(
+                f"/api/trials/{trial_id}/protocol-extractions/"
+                f"{body['extraction_id']}/consume",
+                headers=headers,
+            )
+        assert consumed.status_code == 200, consumed.text
+        assert consumed.json()["visits"][0]["name"] == "Baseline"
+        assert consumed.json()["verification"]["status"] == "verified"
+        assert calls == [b"%PDF-test"], "consuming must not call AI again"
     run(exercise())
 
 

@@ -24,12 +24,13 @@ import {
   Share2,
   ShieldCheck,
   Upload,
+  UserRound,
   X,
 } from "lucide-react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { getSponsorDashboard, normalizeSite } from "@/src/features/sponsor/api";
-import type { SponsorSite, SponsorTrial } from "@/src/features/sponsor/types";
+import type { SponsorSite, SponsorSitePi, SponsorTrial } from "@/src/features/sponsor/types";
 import { uploadFile } from "@/src/lib/upload";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
@@ -42,7 +43,7 @@ type TrialDocument = {
 };
 
 type ShareResult = {
-  siteNames: string[];
+  recipients: { siteName: string; piName: string }[];
 };
 
 type ShareSite = SponsorSite & {
@@ -50,6 +51,35 @@ type ShareSite = SponsorSite & {
   inNetwork?: boolean;
   assignedToTrial?: boolean;
   canReceiveSchedule?: boolean;
+};
+
+type SharePI = SponsorSitePi & { id: string };
+
+const sitePIs = (site: SponsorSite): SharePI[] => {
+  const rows: SponsorSitePi[] = [
+    ...(site.pis || []),
+    ...(site.piId ? [{
+      id: site.piId,
+      name: site.pi || site.piEmail || "Unnamed PI",
+      email: site.piEmail,
+      phone: site.piPhone,
+      department: site.department,
+    }] : []),
+  ];
+  const byId = new Map<string, SharePI>();
+  rows.forEach((pi) => {
+    const id = String(pi.id || "").trim();
+    if (id && !byId.has(id)) byId.set(id, { ...pi, id });
+  });
+  return Array.from(byId.values());
+};
+
+const mergedSitePIs = (...siteRows: (SponsorSite | undefined)[]) => {
+  const byId = new Map<string, SharePI>();
+  siteRows.forEach((site) => site && sitePIs(site).forEach((pi) => {
+    if (!byId.has(pi.id)) byId.set(pi.id, pi);
+  }));
+  return Array.from(byId.values());
 };
 
 const fileName = (value: any) =>
@@ -68,6 +98,7 @@ export default function ShareSchedule() {
   const [trialId, setTrialId] = useState(id || "");
   const [selectedDocument, setSelectedDocument] = useState<TrialDocument | null>(null);
   const [selectedSites, setSelectedSites] = useState<Set<string>>(new Set());
+  const [selectedReviewerBySite, setSelectedReviewerBySite] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [loadingData, setLoadingData] = useState(true);
@@ -163,17 +194,19 @@ export default function ShareSchedule() {
     directorySites.forEach((directorySite) => {
       const key = directorySite.name.trim().toLocaleLowerCase();
       const networkSite = byName.get(key);
+      const pis = mergedSitePIs(directorySite, networkSite);
       byName.set(key, networkSite ? {
-        ...directorySite,
-        ...networkSite,
-        directoryOrgId: directorySite.directoryOrgId,
-        inNetwork: true,
-        assignedToTrial: directorySite.assignedToTrial,
-        canReceiveSchedule: Boolean(networkSite.piId || directorySite.piId),
-        pi: networkSite.pi || directorySite.pi,
-        piId: networkSite.piId || directorySite.piId,
-        piEmail: networkSite.piEmail || directorySite.piEmail,
-      } : directorySite);
+          ...directorySite,
+          ...networkSite,
+          pis,
+          directoryOrgId: directorySite.directoryOrgId,
+          inNetwork: true,
+          assignedToTrial: directorySite.assignedToTrial,
+          canReceiveSchedule: pis.length > 0,
+          pi: networkSite.pi || directorySite.pi,
+          piId: networkSite.piId || directorySite.piId,
+          piEmail: networkSite.piEmail || directorySite.piEmail,
+        } : { ...directorySite, pis });
     });
     return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [directorySites, sites]);
@@ -181,7 +214,13 @@ export default function ShareSchedule() {
   const visibleSites = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return availableSites.filter((site) => {
-      const searchable = [site.name, site.hospital, site.city, site.state, site.pi].filter(Boolean).join(" ").toLowerCase();
+      const searchable = [
+        site.name,
+        site.hospital,
+        site.city,
+        site.state,
+        ...sitePIs(site).flatMap((pi) => [pi.name, pi.email, pi.department]),
+      ].filter(Boolean).join(" ").toLowerCase();
       return !needle || searchable.includes(needle);
     });
   }, [availableSites, query]);
@@ -191,10 +230,10 @@ export default function ShareSchedule() {
     [availableSites, selectedSites],
   );
   const pendingSites = useMemo(
-    () => selectedSiteRows.filter((site) => !site.piId),
-    [selectedSiteRows],
+    () => selectedSiteRows.filter((site) => !selectedReviewerBySite[site.id]),
+    [selectedReviewerBySite, selectedSiteRows],
   );
-  const selectableVisibleIds = visibleSites.filter((site) => site.piId).map((site) => site.id);
+  const selectableVisibleIds = visibleSites.filter((site) => sitePIs(site).length > 0).map((site) => site.id);
   const allVisibleSelected =
     selectableVisibleIds.length > 0 && selectableVisibleIds.every((siteId) => selectedSites.has(siteId));
 
@@ -216,26 +255,60 @@ export default function ShareSchedule() {
     );
   };
 
-  const toggleSite = (siteId: string) =>
+  const toggleSite = (site: ShareSite) => {
+    const wasSelected = selectedSites.has(site.id);
     setSelectedSites((previous) => {
       const next = new Set(previous);
-      if (next.has(siteId)) next.delete(siteId);
-      else next.add(siteId);
+      if (next.has(site.id)) next.delete(site.id);
+      else next.add(site.id);
       return next;
     });
+    setSelectedReviewerBySite((previous) => {
+      const next = { ...previous };
+      if (wasSelected) {
+        delete next[site.id];
+      } else {
+        const pis = sitePIs(site);
+        if (pis.length === 1) next[site.id] = pis[0].id;
+      }
+      return next;
+    });
+  };
 
-  const toggleAllVisible = () =>
+  const selectReviewer = (siteId: string, reviewerId: string) =>
+    setSelectedReviewerBySite((previous) => ({
+      ...previous,
+      [siteId]: reviewerId,
+    }));
+
+  const toggleAllVisible = () => {
+    const selectingAll = !allVisibleSelected;
     setSelectedSites((previous) => {
       const next = new Set(previous);
       if (allVisibleSelected) selectableVisibleIds.forEach((siteId) => next.delete(siteId));
       else selectableVisibleIds.forEach((siteId) => next.add(siteId));
       return next;
     });
+    setSelectedReviewerBySite((previous) => {
+      const next = { ...previous };
+      visibleSites.forEach((site) => {
+        if (!selectableVisibleIds.includes(site.id)) return;
+        if (!selectingAll) {
+          delete next[site.id];
+          return;
+        }
+        const pis = sitePIs(site);
+        if (!next[site.id] && pis.length === 1) next[site.id] = pis[0].id;
+      });
+      return next;
+    });
+  };
 
   const selectTrial = (nextTrialId: string) => {
     if (nextTrialId === trialId) return;
     setTrialId(nextTrialId);
     setSelectedSites(new Set());
+    setSelectedReviewerBySite({});
     setQuery("");
     setErr("");
   };
@@ -290,7 +363,7 @@ export default function ShareSchedule() {
       return;
     }
     if (pendingSites.length > 0) {
-      setErr("Each selected site needs an assigned PI before the schedule can be sent in app.");
+      setErr("Choose one PI reviewer for each selected site before continuing.");
       return;
     }
     setErr("");
@@ -298,9 +371,9 @@ export default function ShareSchedule() {
   };
 
   const share = async () => {
-    if (!trialId || !selectedDocument || selectedSites.size === 0) {
+    if (!trialId || !selectedDocument || selectedSites.size === 0 || pendingSites.length > 0) {
       setStep(1);
-      setErr("Review the trial, document and selected sites.");
+      setErr("Review the trial, document, sites and selected PI reviewers.");
       return;
     }
     setLoading(true);
@@ -309,7 +382,7 @@ export default function ShareSchedule() {
       const chosenSites = selectedSiteRows.map((site) => ({
         id: site.id,
         name: site.name,
-        reviewer_id: site.piId || null,
+        reviewer_id: selectedReviewerBySite[site.id] || null,
         organization_id: site.directoryOrgId || null,
       }));
       await api.post("/shares", {
@@ -325,7 +398,12 @@ export default function ShareSchedule() {
           (selectedDocument.source === "schedule" ? "Current approved visit schedule" : "Document shared for PI review"),
       });
       setDone({
-        siteNames: selectedSiteRows.map((site) => site.name),
+        recipients: selectedSiteRows.map((site) => ({
+          siteName: site.name,
+          piName: sitePIs(site).find(
+            (pi) => pi.id === selectedReviewerBySite[site.id],
+          )?.name || "Selected PI",
+        })),
       });
     } catch (e: any) {
       setErr(e?.response?.data?.detail || "Couldn't share this schedule.");
@@ -338,6 +416,7 @@ export default function ShareSchedule() {
     setDone(null);
     setStep(1);
     setSelectedSites(new Set());
+    setSelectedReviewerBySite({});
     setSelectedDocument(null);
     setMessage("");
     setQuery("");
@@ -365,10 +444,13 @@ export default function ShareSchedule() {
           </Text>
           <View style={s.successList}>
             <Text style={s.successListTitle}>SHARED WITH</Text>
-            {done.siteNames.map((name) => (
-              <View key={name} style={s.successSite}>
+            {done.recipients.map((recipient) => (
+              <View key={`${recipient.siteName}:${recipient.piName}`} style={s.successSite}>
                 <View style={s.successCheck}><Check size={12} color={colors.white} /></View>
-                <Text style={s.successSiteName}>{name}</Text>
+                <View style={s.flex}>
+                  <Text style={s.successSiteName}>{recipient.siteName}</Text>
+                  <Text style={s.siteMeta}>PI · {recipient.piName}</Text>
+                </View>
                 <Text style={s.pendingText}>Pending PI review</Text>
               </View>
             ))}
@@ -400,7 +482,7 @@ export default function ShareSchedule() {
 
       <View style={s.progressWrap}>
         <View style={s.progressTextRow}>
-          <Text style={s.progressTitle}>{step === 1 ? "Choose document & sites" : "Review & share"}</Text>
+          <Text style={s.progressTitle}>{step === 1 ? "Choose document, sites & PIs" : "Review & share"}</Text>
           <Text style={s.progressCount}>STEP {step} OF 2</Text>
         </View>
         <View style={s.progressTrack}>
@@ -481,7 +563,7 @@ export default function ShareSchedule() {
                   <View style={s.sectionHead}>
                     <View>
                       <Text style={s.eyebrow}>RECIPIENT SITES</Text>
-                      <Text style={s.sectionTitle}>Select from all available sites</Text>
+                      <Text style={s.sectionTitle}>Select a site, then choose its PI</Text>
                     </View>
                     <Pressable onPress={toggleAllVisible} disabled={!selectableVisibleIds.length}>
                       <Text style={s.selectAll}>{allVisibleSelected ? "Deselect all" : "Select all"}</Text>
@@ -506,29 +588,62 @@ export default function ShareSchedule() {
                     )}
                     {visibleSites.map((site) => {
                       const active = selectedSites.has(site.id);
-                      const unavailable = !site.piId;
+                      const pis = sitePIs(site);
+                      const selectedPI = pis.find((pi) => pi.id === selectedReviewerBySite[site.id]);
+                      const unavailable = pis.length === 0;
                       return (
-                        <Pressable
-                          key={site.id}
-                          disabled={unavailable}
-                          onPress={() => toggleSite(site.id)}
-                          style={[s.siteRow, active && s.siteRowActive, unavailable && s.siteRowDisabled]}
-                        >
-                          <View style={[s.checkbox, active && s.checkboxActive, unavailable && s.checkboxDisabled]}>{active && <Check size={13} color={colors.white} />}</View>
-                          <View style={s.siteIcon}><MapPin size={16} color={colors.accent} /></View>
-                          <View style={s.flex}>
-                            <View style={s.siteNameRow}>
-                              <Text style={s.siteName}>{site.name}</Text>
-                              {site.inNetwork === false && <View style={s.newSiteBadge}><Text style={s.newSiteBadgeText}>NEW SITE</Text></View>}
+                        <View key={site.id} style={[s.siteGroup, active && s.siteGroupActive]}>
+                          <Pressable
+                            testID={`select-site-${site.id}`}
+                            disabled={unavailable}
+                            onPress={() => toggleSite(site)}
+                            style={[s.siteRow, active && s.siteRowActive, unavailable && s.siteRowDisabled]}
+                          >
+                            <View style={[s.checkbox, active && s.checkboxActive, unavailable && s.checkboxDisabled]}>{active && <Check size={13} color={colors.white} />}</View>
+                            <View style={s.siteIcon}><MapPin size={16} color={colors.accent} /></View>
+                            <View style={s.flex}>
+                              <View style={s.siteNameRow}>
+                                <Text style={s.siteName}>{site.name}</Text>
+                                {site.inNetwork === false && <View style={s.newSiteBadge}><Text style={s.newSiteBadgeText}>NEW SITE</Text></View>}
+                              </View>
+                              <Text style={s.siteMeta}>
+                                {unavailable
+                                  ? "No registered PI available"
+                                  : selectedPI
+                                    ? `Selected PI · ${selectedPI.name}`
+                                    : `${pis.length} PI${pis.length === 1 ? "" : "s"} available`}
+                              </Text>
+                              {site.inNetwork === false && !unavailable && (
+                                <Text style={s.networkHint}>Will be added to your network when shared</Text>
+                              )}
                             </View>
-                            <Text style={s.siteMeta}>
-                              {site.pi ? `PI · ${site.pi}` : "No registered PI available"}
-                            </Text>
-                            {site.inNetwork === false && site.piId && (
-                              <Text style={s.networkHint}>Will be added to your network when shared</Text>
-                            )}
-                          </View>
-                        </Pressable>
+                          </Pressable>
+                          {active && (
+                            <View style={s.piPicker}>
+                              <Text style={s.piPickerTitle}>CHOOSE PI REVIEWER</Text>
+                              {pis.map((pi) => (
+                                <Pressable
+                                  key={pi.id}
+                                  testID={`select-pi-${site.id}-${pi.id}`}
+                                  onPress={() => selectReviewer(site.id, pi.id)}
+                                  style={[
+                                    s.piRow,
+                                    selectedReviewerBySite[site.id] === pi.id && s.piRowActive,
+                                  ]}
+                                >
+                                  <View style={s.piIcon}><UserRound size={15} color={colors.primary} /></View>
+                                  <View style={s.flex}>
+                                    <Text style={s.piName}>{pi.name}</Text>
+                                    <Text numberOfLines={1} style={s.piMeta}>
+                                      {[pi.department, pi.email].filter(Boolean).join(" · ") || "Principal Investigator"}
+                                    </Text>
+                                  </View>
+                                  <SelectionMark active={selectedReviewerBySite[site.id] === pi.id} />
+                                </Pressable>
+                              ))}
+                            </View>
+                          )}
+                        </View>
                       );
                     })}
                     {!visibleSites.length && <View style={s.empty}><Text style={s.emptyText}>No available sites match your search.</Text></View>}
@@ -536,8 +651,10 @@ export default function ShareSchedule() {
                   {selectedSiteRows.length > 0 && (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
                       {selectedSiteRows.map((site) => (
-                        <Pressable key={site.id} onPress={() => toggleSite(site.id)} style={s.chip}>
-                          <Text numberOfLines={1} style={s.chipText}>{site.name}</Text>
+                        <Pressable key={site.id} onPress={() => toggleSite(site)} style={s.chip}>
+                          <Text numberOfLines={1} style={s.chipText}>
+                            {site.name}{selectedReviewerBySite[site.id] ? " · PI selected" : " · choose PI"}
+                          </Text>
                           <X size={12} color={colors.primary} />
                         </Pressable>
                       ))}
@@ -547,7 +664,7 @@ export default function ShareSchedule() {
                     <View style={s.warning}>
                       <AlertTriangle size={17} color={colors.warning} />
                       <Text style={s.warningText}>
-                        {pendingSites.length} selected site{pendingSites.length === 1 ? "" : "s"} still {pendingSites.length === 1 ? "has" : "have"} no assigned PI. Assign a PI before sending this schedule in app.
+                        Choose a PI reviewer for {pendingSites.length} selected site{pendingSites.length === 1 ? "" : "s"} before continuing.
                       </Text>
                     </View>
                   )}
@@ -573,7 +690,7 @@ export default function ShareSchedule() {
                   <View style={s.reviewIcon}><ShieldCheck size={25} color={colors.primary} /></View>
                   <View style={s.flex}>
                     <Text style={s.reviewTitle}>Ready for site review</Text>
-                    <Text style={s.reviewCopy}>Each selected site receives its own review task. The PI can approve or reject this version without affecting another site&apos;s status.</Text>
+                    <Text style={s.reviewCopy}>Each selected PI receives a review task for their site and can approve or reject this version independently.</Text>
                   </View>
                 </View>
                 <ReviewRow label="Trial" value={`${selectedTrial?.protocolId || "Trial"} · ${selectedTrial?.title || ""}`} />
@@ -585,7 +702,11 @@ export default function ShareSchedule() {
                       <View style={s.siteIcon}><MapPin size={15} color={colors.accent} /></View>
                       <View style={s.flex}>
                         <Text style={s.siteName}>{site.name}</Text>
-                        <Text style={s.siteMeta}>{site.pi ? `PI · ${site.pi}` : "PI assignment pending"}</Text>
+                        <Text style={s.siteMeta}>
+                          PI · {sitePIs(site).find(
+                            (pi) => pi.id === selectedReviewerBySite[site.id],
+                          )?.name || "Selection required"}
+                        </Text>
                         {site.inNetwork === false && <Text style={s.networkHint}>Will join your trial network</Text>}
                       </View>
                       <Text style={s.pendingText}>Pending</Text>
@@ -688,6 +809,8 @@ const s = StyleSheet.create({
   searchBox: { height: 42, marginTop: 11, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   searchInput: { flex: 1, fontFamily: fonts.regular, fontSize: 12.5, color: colors.foreground, outlineStyle: "none" } as any,
   siteList: { gap: 9, marginTop: 10 },
+  siteGroup: { borderRadius: 17 },
+  siteGroupActive: { paddingBottom: 8, backgroundColor: "rgba(166,33,63,0.035)" },
   siteRow: { minHeight: 65, padding: 11, flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 17, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   siteRowActive: { borderColor: colors.primary, backgroundColor: "rgba(166,33,63,0.035)" },
   siteRowDisabled: { opacity: 0.58 },
@@ -698,6 +821,13 @@ const s = StyleSheet.create({
   siteNameRow: { flexDirection: "row", alignItems: "center", gap: 7, flexWrap: "wrap" },
   siteName: { fontFamily: fonts.semibold, fontSize: 12, color: colors.foreground },
   siteMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
+  piPicker: { marginHorizontal: 10, paddingTop: 9, gap: 7, borderTopWidth: 1, borderTopColor: colors.border },
+  piPickerTitle: { marginBottom: 1, fontFamily: fonts.semibold, fontSize: 8, letterSpacing: 0.8, color: colors.mutedFg },
+  piRow: { minHeight: 50, paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 9, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.card },
+  piRowActive: { borderColor: colors.primary, backgroundColor: "rgba(166,33,63,0.05)" },
+  piIcon: { width: 31, height: 31, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: colors.secondary },
+  piName: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.foreground },
+  piMeta: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, color: colors.mutedFg },
   networkHint: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 8.5, color: colors.info },
   newSiteBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.12)" },
   newSiteBadgeText: { fontFamily: fonts.bold, fontSize: 7, letterSpacing: 0.5, color: colors.info },

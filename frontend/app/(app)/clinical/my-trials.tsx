@@ -21,6 +21,7 @@ const ALL = "all";
 export default function MyTrials() {
   const router = useRouter();
   const { user } = useAuth();
+  const navRole = user?.role === "site" ? "site" : user?.role === "smo" ? "smo" : user?.role === "crc" ? "crc" : "pi";
   const unread = useUnreadCount();
   const [trials, setTrials] = useState<Trial[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +60,7 @@ export default function MyTrials() {
       <Rise delay={60}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.statusRow}>{statusOptions.map(option => <Pressable key={option.value} onPress={() => setStatus(option.value)} style={[s.filterChip, status === option.value && s.filterChipActive]}><Small color={status === option.value ? colors.primaryFg : colors.foreground} weight="700">{option.label} {option.count}</Small></Pressable>)}</ScrollView></Rise>
       {loading ? <View style={s.state}><ActivityIndicator color={colors.primary} /><Small>Loading your trials...</Small></View> : error ? <Card style={s.stateCard}><Small color={colors.destructive} weight="700">{error}</Small><Button variant="secondary" style={{ marginTop: spacing.md }} onPress={() => load()}><Small color={colors.primary} weight="700">Retry</Small></Button></Card> : filtered.length === 0 ? <Card style={s.stateCard}><FlaskConical size={28} color={colors.mutedFg + "88"} /><Body weight="700" style={{ marginTop: spacing.sm }}>{trials.length ? "No matching trials" : "No trials assigned"}</Body><Small style={{ marginTop: 4, textAlign: "center" }}>{trials.length ? "Try changing your search or filters." : "Assigned studies will appear here."}</Small></Card> : filtered.map((trial, index) => <Rise key={trial.id} delay={140 + Math.min(index, 8) * 55}><TrialCard trial={trial} onPress={() => router.push({ pathname: "/(app)/clinical/trial-summary", params: { id: trial.id } })} /></Rise>)}
     </ScrollView>
-    <PiBottomNav active="trials" calendarRole="pi" />
+    <PiBottomNav active="trials" calendarRole={navRole} role={navRole} />
   </ScreenContainer>;
 }
 

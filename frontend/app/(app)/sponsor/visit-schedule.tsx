@@ -67,6 +67,7 @@ type ExtractionVerification = {
   confidence?: number | null;
   refinement_count?: number;
   issues?: string[];
+  accuracy?: Record<string, number | null>;
 };
 
 const blankRow = (name = "New Visit"): Row => ({
@@ -97,6 +98,19 @@ const templateToRow = (template: any): Row => ({
   extracted_from_protocol: Boolean(template.extracted_from_protocol),
 });
 
+const extractedVisitsToRows = (visits: ExtractedVisit[]): Row[] => visits.map((visit) => ({
+  name: visit.name ?? "",
+  day_offset: String(visit.day_offset ?? 0),
+  window_days: String(visit.window_days ?? 3),
+  activities: (visit.activities ?? []).join(", "),
+  clinical_tasks: (visit.clinical_tasks ?? visit.activities ?? []).join(", "),
+  admin_tasks: (visit.admin_tasks ?? []).join(", "),
+  comments: visit.comments ?? "",
+  extraction_warning: Boolean(visit.extraction_warning),
+  review_status: visit.review_status === "pending" ? "pending" : "ok",
+  extracted_from_protocol: true,
+}));
+
 const sameRow = (left: Row, right: Row) =>
   left.name.trim() === right.name.trim()
   && parseInt(left.day_offset || "0", 10) === parseInt(right.day_offset || "0", 10)
@@ -118,7 +132,10 @@ const csvCell = (value: string | number | boolean) => `"${String(value).replace(
 
 export default function VisitScheduleEditor() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, extractionId } = useLocalSearchParams<{
+    id: string;
+    extractionId?: string;
+  }>();
   const [rows, setRows] = useState<Row[]>([]);
   const [original, setOriginal] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -141,7 +158,29 @@ export default function VisitScheduleEditor() {
     try {
       const response = await api.get(`/trials/${id}/visits`);
       const templates: any[] = response.data ?? [];
-      const loaded = templates.map(templateToRow);
+      let loaded = templates.map(templateToRow);
+      if (!loaded.length && extractionId) {
+        try {
+          const prepared = await api.post(
+            `/trials/${id}/protocol-extractions/${extractionId}/consume`,
+          );
+          const visits: ExtractedVisit[] = prepared.data?.visits ?? [];
+          const preparedVerification: ExtractionVerification | null =
+            prepared.data?.verification ?? null;
+          loaded = extractedVisitsToRows(visits);
+          setVerification(preparedVerification);
+          if (loaded.length) {
+            setNotice(preparedVerification?.status === "verified"
+              ? "The schedule prepared from your first protocol upload is ready for review. No second AI extraction was used."
+              : "The schedule from your first upload is ready, with items that need review. No second AI extraction was used.");
+          }
+        } catch (preparedError: any) {
+          setExtractErr(
+            preparedError?.response?.data?.detail
+            || "The prepared schedule could not be loaded. You can upload the PDF again or build it manually.",
+          );
+        }
+      }
       setRows(loaded);
       setOriginal(loaded);
       setEditing(loaded.length === 0);
@@ -150,7 +189,7 @@ export default function VisitScheduleEditor() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, extractionId]);
 
   useEffect(() => {
     load();
@@ -241,18 +280,7 @@ export default function VisitScheduleEditor() {
         setExtractErr("No visit schedule was found in that PDF. You can still build it manually.");
         return;
       }
-      setRows(visits.map((visit) => ({
-        name: visit.name ?? "",
-        day_offset: String(visit.day_offset ?? 0),
-        window_days: String(visit.window_days ?? 3),
-        activities: (visit.activities ?? []).join(", "),
-        clinical_tasks: (visit.clinical_tasks ?? visit.activities ?? []).join(", "),
-        admin_tasks: (visit.admin_tasks ?? []).join(", "),
-        comments: visit.comments ?? "",
-        extraction_warning: Boolean(visit.extraction_warning),
-        review_status: visit.review_status === "pending" ? "pending" : "ok",
-        extracted_from_protocol: true,
-      })));
+      setRows(extractedVisitsToRows(visits));
       setSelectedIndex(null);
       setEditing(false);
       setNotice(agentVerification?.status === "verified"

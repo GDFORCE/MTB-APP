@@ -476,11 +476,17 @@ export default function Chat() {
 
   const isPatient = user?.role === "patient";
   const isSponsorLike = user?.role === "sponsor" || user?.role === "cro";
-  const isCrc = user?.role === "crc";
   const isClinical = user?.role === "pi"
     || user?.role === "crc"
     || user?.role === "smo"
     || user?.role === "site";
+  const clinicalNavRole = user?.role === "crc"
+    ? "crc"
+    : user?.role === "site"
+      ? "site"
+      : user?.role === "smo"
+        ? "smo"
+        : "pi";
   const inboxRole = user?.role === "cro" ? "CRO" : (user?.role || "Secure inbox").toUpperCase();
   const inboxEyebrow = user?.organization
     ? `${inboxRole} · ${user.organization.toUpperCase()}`
@@ -841,8 +847,8 @@ export default function Chat() {
         {isClinical && (
           <PiBottomNav
             active="messages"
-            calendarRole={isCrc ? "crc" : user?.role === "pi" ? "pi" : "smo"}
-            role={isCrc ? "crc" : "pi"}
+            calendarRole={clinicalNavRole}
+            role={clinicalNavRole}
           />
         )}
       </SafeAreaView>
@@ -1095,8 +1101,8 @@ export default function Chat() {
       {isClinical && (
         <PiBottomNav
           active="messages"
-          calendarRole={isCrc ? "crc" : user?.role === "pi" ? "pi" : "smo"}
-          role={isCrc ? "crc" : "pi"}
+          calendarRole={clinicalNavRole}
+          role={clinicalNavRole}
         />
       )}
     </SafeAreaView>

@@ -15,6 +15,7 @@ from protocol_extraction import (  # noqa: E402
     GeminiProtocolExtractor,
     OllamaProtocolExtractor,
     OpenRouterProtocolExtractor,
+    ScheduleDraft,
     get_details_extractor,
     get_extractor,
 )
@@ -201,13 +202,60 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
     assert [item["config"]["response_schema"].__name__
             for item in async_client.models.calls] == [
         "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
-        "ExtractedSchedule", "ScheduleAudit",
+        "ScheduleDraft", "ScheduleAudit",
     ]
-    assert async_client.models.calls[3]["config"]["response_schema"] is ExtractedSchedule
+    assert async_client.models.calls[3]["config"]["response_schema"] is ScheduleDraft
+    assert "additionalProperties" not in json.dumps(ScheduleDraft.model_json_schema())
     assert schedule.visits[0].name == "Screening"
     assert schedule.verification_status == "verified"
     assert schedule.verification_confidence == 0.98
     assert schedule.verification_scores["procedure_mapping"] == 0.98
+
+
+def test_gemini_retries_only_the_malformed_structured_stage():
+    valid_payload = {
+        "schedule_kind": "linear",
+        "visits": [{"name": "Baseline", "day_offset": 0}],
+    }
+
+    class Models:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_content(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return SimpleNamespace(parsed=None, text="{truncated")
+            return SimpleNamespace(parsed=valid_payload, text=json.dumps(valid_payload))
+
+    class AsyncClient:
+        def __init__(self):
+            self.models = Models()
+
+        async def aclose(self):
+            return None
+
+    async_client = AsyncClient()
+    client = SimpleNamespace(aio=async_client, close=lambda: None)
+    fake_types = SimpleNamespace(
+        Part=SimpleNamespace(from_bytes=lambda **kwargs: kwargs),
+        GenerateContentConfig=lambda **kwargs: kwargs,
+    )
+    extractor = GeminiProtocolExtractor(api_key="test")
+    extractor._client = lambda: (
+        SimpleNamespace(APIError=RuntimeError), fake_types, client)
+
+    result = asyncio.run(extractor._generate(
+        b"%PDF-test",
+        "Build this stage.",
+        ExtractedSchedule,
+        system_instruction="Return structured data.",
+        max_tokens=1000,
+    ))
+
+    assert result.visits[0].name == "Baseline"
+    assert len(async_client.models.calls) == 2
+    assert "STRUCTURED OUTPUT RETRY" in async_client.models.calls[1]["contents"][1]
 
 
 def test_provider_switch_selects_gemini(monkeypatch):

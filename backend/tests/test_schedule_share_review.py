@@ -53,6 +53,13 @@ async def build_world():
         "full_name": "Dr Outside", "role": "pi",
         "organization": f"Other Site {RUN_ID}", "status": "Active",
     }
+    sponsor_org = {
+        "id": str(uuid.uuid4()),
+        "name": sponsor["organization"],
+        "type": "sponsor",
+        "status": "active",
+    }
+    await server.db.organizations.insert_one(sponsor_org)
     await server.db.users.insert_many([sponsor, pi_a, pi_b, outsider])
     trial = {
         "id": str(uuid.uuid4()), "title": "Persistent Schedule Trial",
@@ -92,6 +99,7 @@ async def build_world():
         "trial": trial["id"], "visits": [v["id"] for v in visits],
         "patients": [p["id"] for p in patients],
         "files": [shared_document["id"]],
+        "organizations": [sponsor_org["id"]],
     })
     return sponsor, pi_a, pi_b, outsider, trial, shared_document
 
@@ -188,6 +196,9 @@ def test_share_creates_site_reviews_and_decisions_are_isolated():
                 await server.db.users.delete_many({"id": {"$in": IDS["users"]}})
             if IDS.get("files"):
                 await server.db.files.delete_many({"id": {"$in": IDS["files"]}})
+            if IDS.get("organizations"):
+                await server.db.organizations.delete_many(
+                    {"id": {"$in": IDS["organizations"]}})
         run(cleanup())
 
 

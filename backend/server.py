@@ -1601,8 +1601,62 @@ async def extract_protocol_details(file: UploadFile = File(...),
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_protocol_alias(file: UploadFile = File(...),
                                  user=Depends(current_user)):
-    """Stable Add Trial extraction contract; retains /extract-details."""
-    return await extract_protocol_details(file, user)
+    """Extract trial details and an audited schedule from one protocol analysis.
+
+    The schedule is cached briefly and consumed after the trial is created, so
+    the Visit Schedule screen does not upload/analyse the same PDF again.
+    """
+    content_type = (file.content_type or '').lower()
+    filename = (file.filename or '').lower()
+    if content_type != 'application/pdf' and not filename.endswith('.pdf'):
+        raise HTTPException(400, 'Upload a PDF protocol document')
+    data = await file.read(pe.MAX_PDF_BYTES + 1)
+    if not data:
+        raise HTTPException(400, 'The uploaded PDF is empty')
+    if len(data) > pe.MAX_PDF_BYTES:
+        raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
+    try:
+        extracted_details, schedule = await pe.extract_protocol_bundle(data)
+    except pe.ExtractionNotConfigured as exc:
+        raise HTTPException(
+            503, f'Protocol extraction is not configured on the server: {exc}')
+    except pe.ExtractionUnavailable as exc:
+        raise HTTPException(503, f'Protocol extraction is temporarily unavailable: {exc}')
+    except pe.ExtractionError as exc:
+        raise HTTPException(502, f'Could not analyse protocol: {exc}')
+
+    details = extracted_details.model_dump()
+    details['status'] = (
+        details.get('status') if details.get('status') in
+        ('active', 'completed', 'terminated') else 'active')
+    extraction_id = str(uuid.uuid4())
+    created_at = now()
+    await db.protocol_extractions.delete_many({'expires_at': {'$lte': created_at}})
+    await db.protocol_extractions.insert_one({
+        'id': extraction_id,
+        'user_id': user['id'],
+        'file_name': file.filename or 'protocol.pdf',
+        'details': details,
+        'schedule': schedule.model_dump(mode='json'),
+        'created_at': created_at,
+        'expires_at': created_at + timedelta(hours=2),
+    })
+    await write_audit(
+        user, 'trial.extract_protocol',
+        f'Extracted trial details and {len(schedule.visits)} schedule visit(s) '
+        f'from {file.filename or "protocol PDF"}')
+    return {
+        'details': details,
+        'extraction_id': extraction_id,
+        'schedule_visit_count': len(schedule.visits),
+        'verification': {
+            'status': schedule.verification_status,
+            'confidence': schedule.verification_confidence,
+            'refinement_count': schedule.verification_iterations,
+            'issues': schedule.verification_issues,
+            'accuracy': schedule.verification_scores,
+        },
+    }
 
 
 @api.get('/trials')
@@ -2654,6 +2708,10 @@ async def sponsor_share_site_directory(
                 pi = next((row for row in available_pis
                            if str(row.get('email') or '').strip().lower() == linked_email), None)
         pi = pi or (available_pis[0] if available_pis else None)
+        ordered_pis = (
+            ([pi] if pi else [])
+            + [row for row in available_pis if not pi or row.get('id') != pi.get('id')]
+        )
         trial_ids = (network_site or {}).get('trial_ids') or []
         result.append({
             'id': (network_site or {}).get('id') or f"directory:{organization['id']}",
@@ -2667,9 +2725,18 @@ async def sponsor_share_site_directory(
             'pi_name': (pi or {}).get('full_name') or '',
             'pi_email': (pi or {}).get('email') or '',
             'pi_phone': (pi or {}).get('phone') or '',
+            'pis': [{
+                'id': row.get('id') or '',
+                'name': row.get('full_name') or '',
+                'email': row.get('email') or '',
+                'phone': row.get('phone') or '',
+                'department': (row.get('profile') or {}).get('department') or '',
+                'is_default': bool(pi and row.get('id') == pi.get('id')),
+            } for row in ordered_pis],
+            'pi_count': len(available_pis),
             'in_network': bool(network_site),
             'assigned_to_trial': bool(trial_id and trial_id in trial_ids),
-            'can_receive_schedule': bool(pi),
+            'can_receive_schedule': bool(available_pis),
         })
     return result
 
@@ -3049,6 +3116,37 @@ async def smo_dashboard(user=Depends(current_user)):
         'sites': network_sites,
     })
 
+def _schedule_extraction_payload(schedule: pe.ExtractedSchedule) -> dict:
+    """Convert an extracted schedule to the existing editor response contract."""
+    visits = []
+    global_warning = schedule.verification_status == 'needs_review'
+    for visit in schedule.visits:
+        row = visit.model_dump()
+        # Undated ET/Unscheduled visits remain visible but require review.
+        warning = global_warning or row.get('day_offset') is None
+        row['day_offset'] = row.get('day_offset') or 0
+        row['clinical_tasks'] = row.get('activities') or []
+        row['admin_tasks'] = []
+        row['comments'] = ''
+        row['extraction_warning'] = warning
+        row['review_status'] = 'pending' if warning else 'ok'
+        row['extracted_from_protocol'] = True
+        visits.append(row)
+    return {
+        'visits': visits,
+        'assumptions': schedule.assumptions,
+        'schedule_kind': schedule.schedule_kind,
+        'source_notes': schedule.source_notes,
+        'verification': {
+            'status': schedule.verification_status,
+            'confidence': schedule.verification_confidence,
+            'refinement_count': schedule.verification_iterations,
+            'issues': schedule.verification_issues,
+            'accuracy': schedule.verification_scores,
+        },
+    }
+
+
 @api.post('/trials/{trial_id}/extract-schedule',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_schedule(trial_id: str, file: UploadFile = File(...),
@@ -3096,38 +3194,53 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         user, 'trial.extract_schedule',
         f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
         f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
-    visits = []
-    global_warning = schedule.verification_status == 'needs_review'
-    for visit in schedule.visits:
-        row = visit.model_dump()
-        # An undated visit (Early Termination, Unscheduled) is real but has no
-        # day. The editor needs a number, so it lands on baseline — flagged for
-        # review so it is never saved as a genuine day-0 visit by accident.
-        warning = global_warning or row.get('day_offset') is None
-        row['day_offset'] = row.get('day_offset') or 0
-        row['clinical_tasks'] = row.get('activities') or []
-        row['admin_tasks'] = []
-        row['comments'] = ''
-        row['extraction_warning'] = warning
-        row['review_status'] = 'pending' if warning else 'ok'
-        row['extracted_from_protocol'] = True
-        visits.append(row)
-    return {
-        'visits': visits,
-        # Everything the reviewer needs to check the draft before saving:
-        # inferences the model made, cycle expansions the server bounded, and
-        # where in the document the schedule was read from.
-        'assumptions': schedule.assumptions,
-        'schedule_kind': schedule.schedule_kind,
-        'source_notes': schedule.source_notes,
-        'verification': {
-            'status': schedule.verification_status,
-            'confidence': schedule.verification_confidence,
-            'refinement_count': schedule.verification_iterations,
-            'issues': schedule.verification_issues,
-            'accuracy': schedule.verification_scores,
-        },
-    }
+    return _schedule_extraction_payload(schedule)
+
+
+@api.post('/trials/{trial_id}/protocol-extractions/{extraction_id}/consume',
+          dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def consume_protocol_extraction(
+    trial_id: str,
+    extraction_id: str,
+    user=Depends(current_user),
+):
+    """Return the schedule produced during Add Trial without another AI call."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if user['role'] in ('sponsor', 'cro'):
+        owns = await _trial_in_caller_org(user, trial_id)
+    else:
+        owns = await _pi_owns_trial(user, trial)
+    if not owns:
+        raise HTTPException(403, 'You do not have access to this trial')
+
+    draft = await db.protocol_extractions.find_one({
+        'id': extraction_id,
+        'user_id': user['id'],
+        'expires_at': {'$gt': now()},
+    }, {'_id': 0})
+    if not draft:
+        raise HTTPException(
+            404, 'The prepared protocol schedule expired or is unavailable. '
+                 'Upload the PDF again to regenerate it.')
+    linked_trial = draft.get('trial_id')
+    if linked_trial and linked_trial != trial_id:
+        raise HTTPException(409, 'This protocol extraction belongs to another trial')
+
+    try:
+        schedule = pe.ExtractedSchedule.model_validate(draft.get('schedule') or {})
+    except ValueError as exc:
+        raise HTTPException(500, 'The prepared schedule could not be read') from exc
+    await db.protocol_extractions.update_one(
+        {'id': extraction_id},
+        {'$set': {'trial_id': trial_id, 'consumed_at': now()}})
+    await write_audit(
+        user, 'trial.consume_protocol_extraction',
+        f'Reused prepared protocol schedule for '
+        f'{trial.get("protocol_id") or trial_id}',
+        trial_id=trial_id, target_id=trial_id)
+    return _schedule_extraction_payload(schedule)
 
 # ── Visit schedule ──────────────────────────────────────────────────────────
 @api.post('/visits')
@@ -7021,13 +7134,19 @@ async def _link_shared_site_to_network(user: dict, trial: dict,
     official_name = (directory_org or {}).get('name') or site.name.strip()
     fields = {
         'name': official_name,
-        'pi_name': reviewer.get('full_name') or '',
-        'pi_email': reviewer.get('email') or '',
-        'user_id': reviewer['id'],
         'status': 'active',
         'updated_at': now(),
         'updated_by': user['id'],
     }
+    # A review recipient is not necessarily the site's permanent/default PI.
+    # Preserve an existing primary assignment; only initialise it for a new or
+    # previously unassigned network site.
+    if not existing or not (existing.get('user_id') or existing.get('pi_email')):
+        fields.update({
+            'pi_name': reviewer.get('full_name') or '',
+            'pi_email': reviewer.get('email') or '',
+            'user_id': reviewer['id'],
+        })
     if directory_org:
         fields.update({
             'site_org_id': directory_org['id'],
@@ -7038,10 +7157,15 @@ async def _link_shared_site_to_network(user: dict, trial: dict,
     if existing:
         await db.org_sites.update_one(
             {'id': existing['id'], 'org_id': sponsor_org['id']},
-            {'$set': fields, '$addToSet': {'trial_ids': trial['id']}},
+            {'$set': fields, '$addToSet': {
+                'trial_ids': trial['id'],
+                'pi_ids': reviewer['id'],
+            }},
         )
         linked_site = {**existing, **fields, 'trial_ids': sorted(set(
             [*(existing.get('trial_ids') or []), trial['id']]
+        )), 'pi_ids': sorted(set(
+            [*(existing.get('pi_ids') or []), reviewer['id']]
         ))}
     else:
         # A new row is only valid for an explicitly selected directory Site.
@@ -7053,6 +7177,7 @@ async def _link_shared_site_to_network(user: dict, trial: dict,
             'org_id': sponsor_org['id'],
             **fields,
             'trial_ids': [trial['id']],
+            'pi_ids': [reviewer['id']],
             'trial_targets': {},
             'access_type': 'restricted',
             'created_at': now(),

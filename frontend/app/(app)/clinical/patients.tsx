@@ -105,6 +105,7 @@ export default function PatientList() {
     .filter(r => active === "all" || r.status === active)
     .filter(r => q === "" || r.full_name.toLowerCase().includes(q.toLowerCase()));
   const isCrc = user?.role === "crc";
+  const navRole = isCrc ? "crc" : user?.role === "site" ? "site" : user?.role === "smo" ? "smo" : "pi";
   const initials = user?.avatar_initials
     || (user?.full_name || (isCrc ? "CRC" : "PI"))
       .split(/\s+/)
@@ -240,8 +241,8 @@ export default function PatientList() {
 
       <PiBottomNav
         active={isCrc ? "patients" : "dashboard"}
-        calendarRole={isCrc ? "crc" : "pi"}
-        role={isCrc ? "crc" : "pi"}
+        calendarRole={navRole}
+        role={navRole}
       />
 
       <View pointerEvents="box-none" style={s.quickMenuRoot}>

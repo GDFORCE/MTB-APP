@@ -44,6 +44,7 @@ export default function ClinicalProfile() {
   const isCrc = user.role === "crc";
   const isSmo = user.role === "smo";
   const isSite = user.role === "site";
+  const navRole = isCrc ? "crc" : isSite ? "site" : isSmo ? "smo" : "pi";
   const designation = isPi ? "Principal Investigator" : isSmo ? "SMO Operations" : isSite ? "Site Administrator" : "Clinical Research Coordinator";
   const roleLabel = isPi ? "PRINCIPAL INVESTIGATOR" : isSmo ? "SMO" : isSite ? "SITE" : "RESEARCH TEAM";
   const entity = TYPE_LABEL[user.role] || (isPi ? "Site / Hospital" : "Clinical Site");
@@ -100,11 +101,11 @@ export default function ClinicalProfile() {
 
         <Pressable onPress={logout} style={({ pressed }) => [s.logout, pressed && s.menuPressed]}><LogOut size={17} color={colors.destructive} /><Text style={s.logoutText}>Sign Out</Text></Pressable>
       </ScrollView>
-      {(isPi || isCrc) && (
+      {(isPi || isCrc || isSmo || isSite) && (
         <PiBottomNav
           active="profile"
-          calendarRole={isCrc ? "crc" : "pi"}
-          role={isCrc ? "crc" : "pi"}
+          calendarRole={navRole}
+          role={navRole}
         />
       )}
     </View>

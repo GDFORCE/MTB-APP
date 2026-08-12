@@ -237,8 +237,8 @@ class ExtractedVisit(BaseModel):
         return 3 if value is None else value
 
 
-class ExtractedSchedule(BaseModel):
-    """The model's reading of the protocol, before server-side expansion."""
+class ScheduleDraft(BaseModel):
+    """AI-authored schedule fields supported by Gemini's structured-output API."""
     schedule_kind: Optional[str] = Field(
         default=None,
         description="One of: 'linear' (fixed visit list), 'cyclic' (repeating cycles), "
@@ -265,6 +265,10 @@ class ExtractedSchedule(BaseModel):
         default=None,
         description="Where in the document the schedule came from (e.g. 'Appendix I, p42; "
         "cycle length from section 2.5, p15'). Helps the reviewer check your work.")
+
+
+class ExtractedSchedule(ScheduleDraft):
+    """Schedule draft plus server-authored verification metadata."""
     verification_status: Literal["not_run", "verified", "needs_review"] = "not_run"
     verification_confidence: Optional[float] = Field(default=None, ge=0, le=1)
     verification_iterations: int = Field(default=0, ge=0)
@@ -799,46 +803,76 @@ class GeminiProtocolExtractor:
         system_instruction: str | None,
         max_tokens: int,
     ):
-        errors, types, client = self._client()
         if system_instruction is None:
             system_instruction = _SYSTEM_PROMPT
-        async_client = client.aio
-        try:
-            response = await async_client.models.generate_content(
-                model=self._model,
-                contents=[
-                    types.Part.from_bytes(
-                        data=pdf_bytes,
-                        mime_type="application/pdf",
-                    ),
-                    prompt,
-                ],
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    max_output_tokens=max_tokens,
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_schema=schema,
-                ),
-            )
-        except errors.APIError as exc:
-            raise _classify_api_error(exc) from exc
-        finally:
-            await async_client.aclose()
-            client.close()
+        last_parse_error: Exception | None = None
+        # Verification fields are populated by our audit/finalizer, not Gemini.
+        # In particular, verification_scores is a dictionary and produces JSON
+        # Schema `additionalProperties`, which the Gemini Developer API rejects.
+        provider_schema = ScheduleDraft if schema is ExtractedSchedule else schema
 
-        parsed = getattr(response, "parsed", None)
-        if isinstance(parsed, schema):
-            return parsed
-        if parsed is not None:
-            return schema.model_validate(parsed)
-        raw = (getattr(response, "text", None) or "").strip()
-        if not raw:
-            raise ExtractionError("model did not return a parseable structured response")
-        try:
-            return schema.model_validate_json(raw)
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise ExtractionError("the AI response was not valid structured JSON") from exc
+        # A provider can return HTTP 200 while its structured response is empty,
+        # truncated, or fails schema validation. Retry only that one graph stage;
+        # restarting the whole protocol workflow would waste completed AI work.
+        for attempt in range(2):
+            errors, types, client = self._client()
+            async_client = client.aio
+            retry_instruction = "" if attempt == 0 else (
+                "\n\nSTRUCTURED OUTPUT RETRY: The previous response could not be "
+                "validated. Return one complete JSON object matching the requested "
+                "schema. Do not use markdown, commentary, or omit required fields."
+            )
+            try:
+                response = await async_client.models.generate_content(
+                    model=self._model,
+                    contents=[
+                        types.Part.from_bytes(
+                            data=pdf_bytes,
+                            mime_type="application/pdf",
+                        ),
+                        prompt + retry_instruction,
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        max_output_tokens=max_tokens,
+                        temperature=0.1,
+                        response_mime_type="application/json",
+                        response_schema=provider_schema,
+                    ),
+                )
+            except errors.APIError as exc:
+                raise _classify_api_error(exc) from exc
+            except ValueError as exc:
+                log.error(
+                    "Gemini rejected the %s request schema: %s",
+                    provider_schema.__name__, exc)
+                raise ExtractionError(
+                    f"Gemini rejected the {provider_schema.__name__} request schema") from exc
+            finally:
+                await async_client.aclose()
+                client.close()
+
+            try:
+                parsed = getattr(response, "parsed", None)
+                if isinstance(parsed, schema):
+                    return parsed
+                if parsed is not None:
+                    if isinstance(parsed, BaseModel):
+                        parsed = parsed.model_dump()
+                    return schema.model_validate(parsed)
+                raw = (getattr(response, "text", None) or "").strip()
+                if not raw:
+                    raise ValueError("empty structured response")
+                return schema.model_validate_json(raw)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                last_parse_error = exc
+                log.warning(
+                    "Gemini returned invalid %s structured output (attempt %d/2): %s",
+                    schema.__name__, attempt + 1, type(exc).__name__)
+
+        raise ExtractionError(
+            f"Gemini could not return valid {schema.__name__} structured JSON "
+            "after one retry") from last_parse_error
 
     async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
         from protocol_agent import run_schedule_extraction_agent
@@ -861,6 +895,20 @@ class GeminiProtocolExtractor:
             expanded.verification_iterations,
         )
         return expanded
+
+    async def extract_bundle(
+        self, pdf_bytes: bytes,
+    ) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
+        """Return metadata + schedule without a separate metadata model call."""
+        from protocol_agent import run_protocol_extraction_agent
+
+        max_refinements = int(os.getenv(
+            "PROTOCOL_EXTRACTION_MAX_REFINEMENTS", "2"))
+        return await run_protocol_extraction_agent(
+            pdf_bytes,
+            self._generate,
+            max_refinements=max_refinements,
+        )
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         return await self._generate(
@@ -1279,3 +1327,21 @@ def get_extractor() -> ProtocolExtractor:
 def get_details_extractor():
     """Factory kept separate so focused tests/providers can replace it alone."""
     return get_extractor()
+
+
+async def extract_protocol_bundle(
+    pdf_bytes: bytes,
+) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
+    """Extract details and schedule together when the provider supports it.
+
+    Gemini reuses its decomposed discovery pass, eliminating the standalone
+    metadata request. Other providers retain a compatible fallback.
+    """
+    extractor = get_extractor()
+    combined = getattr(extractor, "extract_bundle", None)
+    if callable(combined):
+        return await combined(pdf_bytes)
+    schedule = await extractor.extract(pdf_bytes)
+    details_extractor = extractor if hasattr(extractor, "extract_details") else get_details_extractor()
+    details = await details_extractor.extract_details(pdf_bytes)
+    return details, schedule

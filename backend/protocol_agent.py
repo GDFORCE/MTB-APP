@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field, field_validator
 
 from protocol_extraction import (
     MAX_OUTPUT_TOKENS,
+    ExtractionError,
     ExtractedSchedule,
+    ExtractedTrialDetails,
     expand_schedule,
 )
 
@@ -116,8 +118,32 @@ class ScheduleAudit(BaseModel):
         }
 
 
+def _unavailable_audit(message: str) -> ScheduleAudit:
+    """Represent an unavailable AI audit without approving an unchecked draft."""
+    unchecked = ScheduleAccuracyDimension(
+        applicable=True,
+        accuracy=None,
+        passed=False,
+        checked_items=[],
+        summary=message,
+    )
+    return ScheduleAudit(
+        approved=False,
+        confidence=0,
+        visit_coverage=unchecked,
+        timing=unchecked,
+        windows=unchecked,
+        visit_types=unchecked,
+        procedure_mapping=unchecked,
+        overall_schedule=unchecked,
+        verified_items=[],
+        issues=[],
+        summary=message,
+    )
+
+
 class ScheduleDocumentMap(BaseModel):
-    """Locations and high-level structure found before any schedule is built."""
+    """Protocol metadata, locations, and structure found before schedule synthesis."""
 
     has_schedule: bool = Field(
         description="Whether the document contains a real visit schedule.")
@@ -136,6 +162,15 @@ class ScheduleDocumentMap(BaseModel):
     baseline_anchor: str = Field(
         default="",
         description="The event treated as study Day 1/day offset zero.")
+    ctri_number: str = ""
+    official_title: str = ""
+    phase: str = ""
+    indications: list[str] = Field(default_factory=list)
+    investigational_drug: str = ""
+    planned_duration: str = ""
+    target_enrollment: int | None = None
+    stated_total_visits: int | None = None
+    study_status: str = "active"
     notes: list[str] = Field(default_factory=list)
 
 
@@ -162,7 +197,10 @@ class ScheduleVisitEvidence(BaseModel):
 
 
 _DISCOVERY_PROMPT = """You are the discovery stage of a clinical-protocol schedule
-pipeline. Do not build a visit schedule yet. Locate every Schedule of Assessments,
+pipeline. Do not build a visit schedule yet. First capture the official trial metadata:
+study title, CTRI/registration number, phase, indications, investigational drug, planned
+duration, target enrollment, stated total visit count, and study status. Use empty values
+when the PDF does not state them; never invent metadata. Then locate every Schedule of Assessments,
 Activities, Events, flow chart, and relevant appendix in the PDF. Then locate the study
 design, treatment, dosing, and follow-up sections that define cadence. Map arms, cohorts,
 periods, washouts, extensions, and the baseline/randomization anchor. Cite a page, section,
@@ -263,6 +301,8 @@ class ExtractionAgentState(TypedDict, total=False):
     refinement_count: int
     max_refinements: int
     result: ExtractedSchedule
+    stage_warnings: list[str]
+    stop_after_stage_error: bool
 
 
 def build_schedule_extraction_graph(generate: Generate):
@@ -322,13 +362,25 @@ def build_schedule_extraction_graph(generate: Generate):
                 "verification_issues",
                 "verification_scores",
             })
-        audit = await generate(
-            state["pdf_bytes"],
-            "Audit this candidate schedule against the PDF:\n\n" + candidate_json,
-            ScheduleAudit,
-            system_instruction=_AUDIT_PROMPT,
-            max_tokens=6000,
-        )
+        try:
+            audit = await generate(
+                state["pdf_bytes"],
+                "Audit this candidate schedule against the PDF:\n\n" + candidate_json,
+                ScheduleAudit,
+                system_instruction=_AUDIT_PROMPT,
+                max_tokens=6000,
+            )
+        except ExtractionError as exc:
+            warning = (
+                "Automated schedule verification could not be completed. "
+                "Review every visit against the protocol before saving."
+            )
+            log.warning("schedule audit unavailable; returning review draft: %s", exc)
+            return {
+                "audit": state.get("audit") or _unavailable_audit(warning),
+                "stage_warnings": list(state.get("stage_warnings", [])) + [warning],
+                "stop_after_stage_error": True,
+            }
         log.info(
             "schedule agent audit: refinement=%d accepted=%s confidence=%.2f issues=%d",
             state.get("refinement_count", 0), audit.accepted,
@@ -346,13 +398,24 @@ def build_schedule_extraction_graph(generate: Generate):
                 "verification_scores",
             })
         audit = state["audit"].model_dump_json()
-        repaired = await generate(
-            state["pdf_bytes"],
-            "CANDIDATE SCHEDULE:\n" + candidate + "\n\nAUDIT:\n" + audit,
-            ExtractedSchedule,
-            system_instruction=_REPAIR_PROMPT,
-            max_tokens=MAX_OUTPUT_TOKENS,
-        )
+        try:
+            repaired = await generate(
+                state["pdf_bytes"],
+                "CANDIDATE SCHEDULE:\n" + candidate + "\n\nAUDIT:\n" + audit,
+                ExtractedSchedule,
+                system_instruction=_REPAIR_PROMPT,
+                max_tokens=MAX_OUTPUT_TOKENS,
+            )
+        except ExtractionError as exc:
+            warning = (
+                "The automated correction pass could not be completed. The last "
+                "valid schedule draft was retained for manual review."
+            )
+            log.warning("schedule repair unavailable; retaining candidate: %s", exc)
+            return {
+                "stage_warnings": list(state.get("stage_warnings", [])) + [warning],
+                "stop_after_stage_error": True,
+            }
         return {
             "candidate": repaired,
             "refinement_count": state.get("refinement_count", 0) + 1,
@@ -370,6 +433,8 @@ def build_schedule_extraction_graph(generate: Generate):
                 "Verification did not approve this schedule, but returned no "
                 "specific major finding. Review the protocol manually before saving.")
         candidate = state["candidate"]
+        stage_warnings = list(state.get("stage_warnings", []))
+        unresolved.extend(stage_warnings)
         if unresolved:
             candidate = candidate.model_copy(update={
                 "assumptions": list(candidate.assumptions) + unresolved,
@@ -378,17 +443,23 @@ def build_schedule_extraction_graph(generate: Generate):
             "verification_status": "verified" if audit.accepted else "needs_review",
             "verification_confidence": audit.confidence,
             "verification_iterations": state.get("refinement_count", 0),
-            "verification_issues": [issue.finding for issue in audit.issues],
+            "verification_issues": (
+                [issue.finding for issue in audit.issues] + stage_warnings),
             "verification_scores": audit.accuracy_scores(),
         })
         return {"result": result}
 
     def route_after_audit(state: ExtractionAgentState):
+        if state.get("stop_after_stage_error"):
+            return "finalize"
         if state["audit"].accepted:
             return "finalize"
         if state.get("refinement_count", 0) >= state["max_refinements"]:
             return "finalize"
         return "refine"
+
+    def route_after_refine(state: ExtractionAgentState):
+        return "finalize" if state.get("stop_after_stage_error") else "audit"
 
     graph = StateGraph(ExtractionAgentState)
     graph.add_node("discover", discover_node)
@@ -407,7 +478,10 @@ def build_schedule_extraction_graph(generate: Generate):
         "audit", route_after_audit,
         {"refine": "refine", "finalize": "finalize"},
     )
-    graph.add_edge("refine", "audit")
+    graph.add_conditional_edges(
+        "refine", route_after_refine,
+        {"audit": "audit", "finalize": "finalize"},
+    )
     graph.add_edge("finalize", END)
     return graph.compile()
 
@@ -418,9 +492,47 @@ async def run_schedule_extraction_agent(
     *,
     max_refinements: int = 2,
 ) -> ExtractedSchedule:
+    final_state = await _run_schedule_extraction_graph(
+        pdf_bytes, generate, max_refinements=max_refinements)
+    return final_state["result"]
+
+
+async def run_protocol_extraction_agent(
+    pdf_bytes: bytes,
+    generate: Generate,
+    *,
+    max_refinements: int = 2,
+) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
+    """Extract metadata and schedule from one shared decomposed model workflow."""
+    final_state = await _run_schedule_extraction_graph(
+        pdf_bytes, generate, max_refinements=max_refinements)
+    document_map = final_state["document_map"]
+    schedule = final_state["result"]
+    status = document_map.study_status.lower().strip()
+    if status not in ("active", "completed", "terminated"):
+        status = "active"
+    details = ExtractedTrialDetails(
+        ctri_number=document_map.ctri_number,
+        title=document_map.official_title,
+        phase=document_map.phase,
+        indications=document_map.indications,
+        drug=document_map.investigational_drug,
+        duration=document_map.planned_duration,
+        target_enrollment=document_map.target_enrollment,
+        total_visits=document_map.stated_total_visits or len(schedule.visits),
+        status=status,
+    )
+    return details, schedule
+
+
+async def _run_schedule_extraction_graph(
+    pdf_bytes: bytes,
+    generate: Generate,
+    *,
+    max_refinements: int,
+) -> ExtractionAgentState:
     graph = build_schedule_extraction_graph(generate)
-    final_state = await graph.ainvoke({
+    return await graph.ainvoke({
         "pdf_bytes": pdf_bytes,
         "max_refinements": max(0, min(max_refinements, 3)),
     })
-    return final_state["result"]

@@ -11,9 +11,10 @@ from protocol_agent import (  # noqa: E402
     ScheduleDocumentMap,
     ScheduleTimingEvidence,
     ScheduleVisitEvidence,
+    run_protocol_extraction_agent,
     run_schedule_extraction_agent,
 )
-from protocol_extraction import ExtractedSchedule  # noqa: E402
+from protocol_extraction import ExtractionError, ExtractedSchedule  # noqa: E402
 
 
 def _schedule(name: str, day: int) -> ExtractedSchedule:
@@ -68,6 +69,14 @@ def _decomposition_responses():
             schedule_kind="linear",
             schedule_locations=["Schedule of Assessments, page 12"],
             baseline_anchor="Day 1",
+            ctri_number="CTRI/2026/08/123456",
+            official_title="Combined extraction study",
+            phase="Phase II",
+            indications=["Oncology"],
+            investigational_drug="Compound X",
+            planned_duration="12 months",
+            target_enrollment=80,
+            stated_total_visits=2,
         ),
         ScheduleTimingEvidence(
             visit_timing=["Baseline is Day 1 (page 12)"],
@@ -169,3 +178,73 @@ def test_high_procedure_accuracy_cannot_hide_bad_overall_schedule():
     assert result.verification_status == "needs_review"
     assert result.verification_scores["timing"] == 0.72
     assert result.verification_scores["overall_schedule"] == 0.72
+
+
+def test_metadata_and_schedule_share_one_agent_workflow():
+    responses = _decomposition_responses() + [
+        _schedule("Baseline", 0),
+        _audit(approved=True),
+    ]
+    calls = []
+
+    async def generate(pdf_bytes, prompt, schema, **kwargs):
+        calls.append(schema.__name__)
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    details, schedule = asyncio.run(run_protocol_extraction_agent(
+        b"%PDF-test", generate, max_refinements=2))
+
+    assert calls == [
+        "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
+        "ExtractedSchedule", "ScheduleAudit",
+    ]
+    assert details.title == "Combined extraction study"
+    assert details.ctri_number == "CTRI/2026/08/123456"
+    assert details.target_enrollment == 80
+    assert details.total_visits == 2
+    assert schedule.verification_status == "verified"
+
+
+def test_agent_retains_valid_candidate_when_repair_output_is_malformed():
+    responses = _decomposition_responses() + [
+        _schedule("Baseline", 0),
+        _audit(approved=False, finding="Day 30 follow-up is missing."),
+    ]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        if schema is ExtractedSchedule and not responses:
+            raise ExtractionError("invalid repair JSON")
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=2))
+
+    assert result.visits[0].name == "Baseline"
+    assert result.verification_status == "needs_review"
+    assert any("last valid schedule draft" in item for item in result.assumptions)
+    assert any("correction pass" in item for item in result.verification_issues)
+
+
+def test_agent_returns_review_draft_when_audit_is_unavailable():
+    responses = _decomposition_responses() + [_schedule("Baseline", 0)]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        if schema is ScheduleAudit:
+            raise ExtractionError("invalid audit JSON")
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=2))
+
+    assert result.visits[0].name == "Baseline"
+    assert result.verification_status == "needs_review"
+    assert result.verification_confidence == 0
+    assert result.verification_scores["overall_schedule"] is None
+    assert any("verification could not be completed" in item
+               for item in result.verification_issues)

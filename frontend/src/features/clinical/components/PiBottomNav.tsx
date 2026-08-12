@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CalendarDays, FileText, Home, MessageCircle, User, Users } from "lucide-react-native";
 
 type PiTab = "dashboard" | "trials" | "patients" | "messages" | "calendar" | "profile";
+export type ClinicalNavRole = "pi" | "crc" | "smo" | "site";
 
 const palette = {
   card: "#FEFAF1",
@@ -20,14 +21,19 @@ export function PiBottomNav({
   role = "pi",
 }: {
   active: PiTab;
-  calendarRole: "pi" | "crc" | "smo";
-  role?: "pi" | "crc";
+  calendarRole: ClinicalNavRole;
+  role?: ClinicalNavRole;
 }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, 10);
+  const dashboardRoute = role === "crc"
+    ? "/(app)/crc/dashboard"
+    : role === "site"
+      ? "/(app)/site/dashboard"
+      : "/(app)/pi/dashboard";
   const tabs = [
-    { key: "dashboard" as const, label: "Dashboard", icon: Home, onPress: () => router.replace(role === "crc" ? "/(app)/crc/dashboard" : "/(app)/pi/dashboard") },
+    { key: "dashboard" as const, label: "Dashboard", icon: Home, onPress: () => router.replace(dashboardRoute) },
     role === "crc"
       ? { key: "patients" as const, label: "Patients", icon: Users, onPress: () => router.replace("/(app)/clinical/patients") }
       : { key: "trials" as const, label: "My Trials", icon: FileText, onPress: () => router.replace("/(app)/clinical/my-trials") },
@@ -44,6 +50,7 @@ export function PiBottomNav({
         return (
           <Pressable
             key={tab.key}
+            testID={`clinical-tab-${tab.key}`}
             accessibilityRole="button"
             accessibilityState={{ selected }}
             onPress={tab.onPress}

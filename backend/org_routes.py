@@ -110,6 +110,7 @@ async def _org_member_ids(org: dict) -> List[str]:
 # ═════════════════════════════════════════════════════════════════════════════
 class OrgInviteIn(BaseModel):
     email: EmailStr
+    phone: Optional[str] = ''
     full_name: Optional[str] = ''
     designation: Optional[str] = ''
     role: Role = 'crc'
@@ -169,7 +170,8 @@ async def org_invite_member(body: OrgInviteIn, ctx=Depends(org_admin_ctx)):
         raise HTTPException(400, 'A pending invitation already exists for this email')
     token = new_invite_code()
     doc = {
-        'id': str(uuid.uuid4()), 'token': token, 'email': email, 'phone': '',
+        'id': str(uuid.uuid4()), 'token': token, 'email': email,
+        'phone': (body.phone or '').strip(),
         'full_name': body.full_name or '', 'designation': body.designation or '',
         'role': body.role, 'trial_id': None, 'invited_by': user['id'],
         'org': org['name'], 'org_id': org['id'], 'site': (body.site or '').strip(),

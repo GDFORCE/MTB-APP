@@ -114,7 +114,13 @@ export default function Team() {
   }, [load]);
 
   const canInvite = teamCapabilities?.can_invite
-    ?? Boolean(user && ["pi", "crc", "sponsor", "cro"].includes(user.role));
+    ?? Boolean(
+      user
+      && (
+        ["pi", "crc", "sponsor", "cro"].includes(user.role)
+        || (user.role === "site" && user.org_admin)
+      ),
+    );
 
   const allMembers = useMemo<TeamMember[]>(() => {
     if (!user) return members;
