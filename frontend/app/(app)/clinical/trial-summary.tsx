@@ -50,6 +50,11 @@ import type {
   SponsorTrialTeamMember,
 } from "@/src/features/sponsor/types";
 import { downloadFile, uploadFile, type UploadedFile } from "@/src/lib/upload";
+import {
+  formatIsoCalendarDate,
+  formatVisitTiming,
+  formatVisitWindow,
+} from "@/src/lib/visit-timing";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
 type Trial = {
@@ -79,8 +84,20 @@ type VisitTemplate = {
   id: string;
   visit_number?: number;
   name: string;
-  day_offset?: number;
+  day_offset?: number | null;
+  day_end?: number | null;
+  hour_offset?: number | null;
+  hour_end?: number | null;
+  hour_offset_basis?: "absolute" | "within_day" | null;
+  relative_to?: string | null;
+  relative_offset_days?: number | null;
+  source_day_label?: string | null;
+  source_timing_label?: string | null;
+  anchor_study_day?: 0 | 1 | null;
+  includes_day_zero?: boolean | null;
   window_days?: number;
+  window_before?: number | null;
+  window_after?: number | null;
 };
 
 type SubjectVisit = {
@@ -167,6 +184,8 @@ function dateLabel(value?: string) {
     ? value
     : parsed.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
+
+const scheduledDateLabel = (value?: string) => formatIsoCalendarDate(value, value || "Not recorded");
 
 function initials(value?: string) {
   return (value || "").split(/\s+/).filter(Boolean).slice(0, 2)
@@ -684,7 +703,7 @@ export default function TrialSummary() {
                     <PatientField label="VISIT NO." value={subject.current_visit?.visit_number ? `Visit ${subject.current_visit.visit_number}` : "—"} />
                     <PatientField label="VISIT NAME" value={subject.current_visit?.name || "Not scheduled"} />
                     <PatientField label="VISIT TYPE" value={subject.current_visit?.visit_type || "—"} />
-                    <PatientField label="VISIT DATE" value={dateLabel(subject.current_visit?.scheduled_date)} />
+                    <PatientField label="VISIT DATE" value={scheduledDateLabel(subject.current_visit?.scheduled_date)} />
                   </View>
                   {expanded && (
                     <View style={s.subjectVisits}>
@@ -698,7 +717,9 @@ export default function TrialSummary() {
                           <View style={{ flex: 1 }}>
                             <Text style={s.visitName}>{visit.name}</Text>
                             <Text style={s.visitMeta}>
-                              {dateLabel(visit.completed_at || visit.scheduled_date)}
+                              {visit.completed_at
+                                ? dateLabel(visit.completed_at)
+                                : scheduledDateLabel(visit.scheduled_date)}
                             </Text>
                           </View>
                           <Text style={[
@@ -742,7 +763,9 @@ export default function TrialSummary() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.visitName}>{visit.name}</Text>
-                  <Text style={s.visitMeta}>Day {visit.day_offset || 0} · ±{visit.window_days || 0} days</Text>
+                  <Text style={s.visitMeta}>
+                    {formatVisitTiming(visit)} · {formatVisitWindow(visit)}
+                  </Text>
                 </View>
               </View>
             )) : <Empty text="No visit schedule has been created." />}

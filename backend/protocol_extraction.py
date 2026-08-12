@@ -40,11 +40,14 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
+import re
+from datetime import timedelta
 from pathlib import Path
 from typing import List, Literal, Optional, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -105,11 +108,25 @@ class RepeatMember(BaseModel):
     name_template: str = Field(
         description="Visit name with '{cycle}' where the cycle number belongs, e.g. "
         "'Cycle {cycle} Day 1', 'Cycle {cycle} Intra-cycle Visit 2'.")
+    source_day_label_template: Optional[str] = Field(
+        default=None,
+        description="Exact protocol timing label with '{cycle}' where applicable. "
+        "null when the source did not print a distinct timing label.")
     day_within_cycle: int = Field(
         description="0-based day offset from the START of the cycle. The cycle's "
         "first/dosing day is 0; a visit 7 days later is 7.")
+    day_end_within_cycle: Optional[int] = Field(
+        default=None,
+        description="0-based end-day offset for a multi-day member; null otherwise.")
+    hour_offset: Optional[float] = None
+    hour_offset_basis: Optional[Literal["absolute", "within_day"]] = None
+    hour_end: Optional[float] = None
     visit_type: Optional[str] = Field(default=None, description="See ExtractedVisit.visit_type.")
     window_days: int = Field(default=3, description="Visit window as +/- days.")
+    window_before: Optional[int] = Field(default=None, ge=0)
+    window_after: Optional[int] = Field(default=None, ge=0)
+    arm: Optional[str] = None
+    period: Optional[str] = None
     activities: List[str] = Field(
         default_factory=list,
         description="Assessments performed at this visit in EVERY cycle.")
@@ -149,7 +166,8 @@ class RepeatingBlock(BaseModel):
         "the schedule table does not state it (e.g. 'every 3 weekly' -> 21, "
         "'q4w' -> 28, '28-day cycle' -> 28).")
     first_cycle_start_day: int = Field(
-        description="ABSOLUTE study day (Day 1 = 0) on which cycle `from_cycle` STARTS. "
+        description="Absolute calendar offset from baseline (0 = baseline) on which "
+        "cycle `from_cycle` STARTS. "
         "e.g. if cycle 1 starts at baseline and cycles are 21 days, then a block "
         "beginning at cycle 2 has first_cycle_start_day = 21.")
     members: List[RepeatMember] = Field(
@@ -172,13 +190,20 @@ class ExtractedVisit(BaseModel):
         "(e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone). null if not determinable.")
     day_offset: Optional[int] = Field(
         default=None,
-        description="ABSOLUTE study day relative to baseline, where Day 1 = 0. "
-        "Screening / run-in visits before baseline are NEGATIVE. Convert Week N to "
-        "(N*7) and Month N to (N*30) unless the protocol states an explicit day; for a "
-        "calendar-date schedule, use the day count from the baseline/randomization date. "
+        description="Absolute calendar displacement in days from the baseline anchor, "
+        "where 0 is the baseline date regardless of its printed study-day label. "
+        "Screening / run-in visits before baseline are NEGATIVE. Convert Week/Month "
+        "labels only when the protocol explicitly defines their anchor/cadence; Week 1 "
+        "must not be assumed to mean seven days. For a calendar-date schedule, use the "
+        "day count from the baseline/randomization date. "
         "Leave null when the visit's timing is expressed RELATIVE to another visit (use "
         "relative_to instead) or when the protocol genuinely does not specify a day "
         "(Early Termination, Unscheduled) — keep the visit either way.")
+    source_day_label: Optional[str] = Field(
+        default=None,
+        description="Exact timing text printed by the protocol, such as 'Day 0', "
+        "'Day 8', 'Week 4', 'Cycle 2 Day 1', or 'Unscheduled'. Do not rewrite it "
+        "as an offset. null only when no timing label is present.")
     day_end: Optional[int] = Field(
         default=None,
         description="For a visit that spans MULTIPLE consecutive days as a single entry "
@@ -187,8 +212,13 @@ class ExtractedVisit(BaseModel):
     hour_offset: Optional[float] = Field(
         default=None,
         description="For INTRA-DAY timepoints (PK sampling, hourly assessments), hours "
-        "from dosing/Hour 0. May be negative for pre-dose. Set this IN ADDITION to "
-        "day_offset. Only use when the protocol's schedule is genuinely hour-level.")
+        "from dosing/Hour 0. May be negative for pre-dose. This is an absolute elapsed "
+        "hour, so Hour 26 is 26 total hours and is not added on top of its containing "
+        "day_offset. Only use for a genuinely hour-level schedule.")
+    hour_offset_basis: Optional[Literal["absolute", "within_day"]] = Field(
+        default=None,
+        description="'absolute' when hour_offset is elapsed time from the schedule "
+        "anchor. 'within_day' is reserved for an hour adjustment to day_offset.")
     hour_end: Optional[float] = Field(
         default=None,
         description="End of an hour RANGE, e.g. 'Hour -4 to Hour 0' -> hour_offset=-4, "
@@ -236,6 +266,15 @@ class ExtractedVisit(BaseModel):
         """Accept a model's explicit null as the documented +/-3 day default."""
         return 3 if value is None else value
 
+    @model_validator(mode="after")
+    def default_extracted_hour_semantics(self):
+        # Extracted Hour N values are absolute elapsed time. Persist the mode so
+        # scheduling cannot count the day portion twice. Historical database
+        # rows lack this field and retain their legacy day-plus-hour behavior.
+        if self.hour_offset is not None and self.hour_offset_basis is None:
+            self.hour_offset_basis = "absolute"
+        return self
+
 
 class ScheduleDraft(BaseModel):
     """AI-authored schedule fields supported by Gemini's structured-output API."""
@@ -244,6 +283,14 @@ class ScheduleDraft(BaseModel):
         description="One of: 'linear' (fixed visit list), 'cyclic' (repeating cycles), "
         "'crossover' (periods + washout), 'multi_arm' (different schedule per arm), "
         "'intra_day' (hour-level timepoints only), 'none' (document has no schedule).")
+    anchor_study_day: Optional[Literal[0, 1]] = Field(
+        default=None,
+        description="Protocol study-day number on the baseline/randomization anchor "
+        "date: normally 0 or 1. null when the document is ambiguous.")
+    includes_day_zero: Optional[bool] = Field(
+        default=None,
+        description="Whether the protocol explicitly includes Day 0. This must be "
+        "known to convert non-positive labels around a Day 1 anchor.")
     visits: List[ExtractedVisit] = Field(
         default_factory=list,
         description="Explicitly-scheduled visits: screening, baseline, the visits of any "
@@ -265,6 +312,15 @@ class ScheduleDraft(BaseModel):
         default=None,
         description="Where in the document the schedule came from (e.g. 'Appendix I, p42; "
         "cycle length from section 2.5, p15'). Helps the reviewer check your work.")
+
+    @model_validator(mode="after")
+    def validate_day_numbering(self):
+        if self.anchor_study_day == 0:
+            if self.includes_day_zero is False:
+                raise ValueError(
+                    "A Day 0 anchor cannot use a convention that excludes Day 0")
+            self.includes_day_zero = True
+        return self
 
 
 class ExtractedSchedule(ScheduleDraft):
@@ -308,6 +364,197 @@ class ExtractionUnavailable(ExtractionError):
 # ──────────────────────────── expansion (pure) ────────────────────────────
 # Deterministic, no network, no API key — this is where all schedule arithmetic
 # lives so it can be unit-tested against real protocols offline.
+
+_SIMPLE_DAY_LABEL = re.compile(r"^\s*day\s*([+-]?\d+)\s*$", re.IGNORECASE)
+_SIMPLE_DAY_RANGE_LABEL = re.compile(
+    r"^\s*day\s*([+-]?\d+)\s*(?:-|–|—|to)\s*(?:day\s*)?([+-]?\d+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def study_day_to_offset(
+    study_day: int,
+    *,
+    anchor_study_day: int,
+    includes_day_zero: Optional[bool],
+) -> int:
+    """Convert one printed ``Day N`` into the canonical calendar offset.
+
+    Day-numbering conventions skip zero only when the anchor is Day 1 and the
+    protocol explicitly has no Day 0. A printed Day 0 is invalid in that
+    convention instead of being silently moved to the baseline date.
+    """
+    if anchor_study_day not in (0, 1):
+        raise ValueError("anchor_study_day must be 0 or 1")
+    if anchor_study_day == 0:
+        if includes_day_zero is False:
+            raise ValueError("A Day 0 anchor requires includes_day_zero=true")
+        return int(study_day)
+    if study_day >= 1:
+        return int(study_day) - 1
+    if includes_day_zero is None:
+        raise ValueError(
+            "includes_day_zero is required for Day 0 or negative Day labels")
+    if includes_day_zero:
+        return int(study_day) - 1
+    if study_day == 0:
+        raise ValueError("Day 0 is invalid when the protocol excludes Day 0")
+    # In a Day-1/no-Day-0 sequence, Day -1 is the prior calendar day while
+    # positive labels are one-based (Day 1 is offset zero).
+    return int(study_day) - 1 if study_day >= 1 else int(study_day)
+
+
+def simple_day_label_offset(
+    source_day_label: Optional[str],
+    *,
+    anchor_study_day: Optional[int],
+    includes_day_zero: Optional[bool],
+) -> Optional[int]:
+    """Convert only an exact ``Day N`` label when convention metadata is known.
+
+    Cycle labels, Week 1, ranges, and prose stay untouched because converting
+    them requires protocol-specific evidence. ``None`` means "do not infer".
+    """
+    if anchor_study_day is None:
+        return None
+    match = _SIMPLE_DAY_LABEL.fullmatch(str(source_day_label or ""))
+    if not match:
+        return None
+    study_day = int(match.group(1))
+    if anchor_study_day == 1 and includes_day_zero is None and study_day <= 0:
+        return None
+    return study_day_to_offset(
+        study_day,
+        anchor_study_day=anchor_study_day,
+        includes_day_zero=includes_day_zero,
+    )
+
+
+def simple_day_label_range_offsets(
+    source_day_label: Optional[str],
+    *,
+    anchor_study_day: Optional[int],
+    includes_day_zero: Optional[bool],
+) -> Optional[tuple[int, int]]:
+    """Convert only exact ``Day A-B``/``Day A to Day B`` source labels."""
+    if anchor_study_day is None:
+        return None
+    match = _SIMPLE_DAY_RANGE_LABEL.fullmatch(str(source_day_label or ""))
+    if not match:
+        return None
+    start_day, end_day = int(match.group(1)), int(match.group(2))
+    if (anchor_study_day == 1 and includes_day_zero is None
+            and (start_day <= 0 or end_day <= 0)):
+        return None
+    start = study_day_to_offset(
+        start_day, anchor_study_day=anchor_study_day,
+        includes_day_zero=includes_day_zero)
+    end = study_day_to_offset(
+        end_day, anchor_study_day=anchor_study_day,
+        includes_day_zero=includes_day_zero)
+    if end < start:
+        raise ValueError("day range ends before it starts")
+    return start, end
+
+
+def normalize_extracted_timing(
+    schedule: ExtractedSchedule,
+) -> tuple[List[ExtractedVisit], List[str]]:
+    """Return copied visits with evidence-backed simple Day labels normalized.
+
+    Existing schedules with no numbering metadata remain untouched. When the
+    extraction supplies both a simple label and a complete convention, the
+    deterministic result replaces conflicting AI arithmetic and is recorded as
+    a review warning.
+    """
+    visits = [visit.model_copy(deep=True) for visit in schedule.visits]
+    warnings: List[str] = []
+    for visit in visits:
+        label = str(visit.source_day_label or "")
+        exact_day_label = bool(
+            _SIMPLE_DAY_LABEL.fullmatch(label)
+            or _SIMPLE_DAY_RANGE_LABEL.fullmatch(label)
+        )
+        try:
+            derived = simple_day_label_offset(
+                visit.source_day_label,
+                anchor_study_day=schedule.anchor_study_day,
+                includes_day_zero=schedule.includes_day_zero,
+            )
+            derived_range = simple_day_label_range_offsets(
+                visit.source_day_label,
+                anchor_study_day=schedule.anchor_study_day,
+                includes_day_zero=schedule.includes_day_zero,
+            )
+        except ValueError as exc:
+            warnings.append(f"'{visit.name}' has invalid day numbering: {exc}.")
+            visit.day_offset = None
+            visit.day_end = None
+            continue
+        if derived_range is not None:
+            start, end = derived_range
+            if visit.day_offset not in (None, start) or visit.day_end not in (None, end):
+                warnings.append(
+                    f"'{visit.name}' timing was corrected deterministically from "
+                    f"{visit.source_day_label} and flagged for review.")
+            visit.day_offset, visit.day_end = start, end
+            continue
+        if derived is None:
+            if exact_day_label and (
+                schedule.anchor_study_day is None
+                or schedule.includes_day_zero is None
+            ):
+                warnings.append(
+                    f"'{visit.name}' uses {visit.source_day_label}, but the protocol's "
+                    "Day 0/Day 1 convention is incomplete; retained the extracted "
+                    "offset and flagged it for review.")
+            continue
+        if visit.day_offset is None:
+            visit.day_offset = derived
+        elif visit.day_offset != derived:
+            warnings.append(
+                f"'{visit.name}' has day_offset {visit.day_offset}, but "
+                f"{visit.source_day_label} maps to {derived}; corrected it "
+                "deterministically and flagged it for review.")
+            visit.day_offset = derived
+    return visits, warnings
+
+
+def canonical_elapsed_time(
+    day_offset: Optional[int],
+    hour_offset: Optional[float],
+    hour_offset_basis: Optional[str],
+) -> timedelta:
+    """Return elapsed time without double-counting absolute Hour 26 values.
+
+    New extraction rows declare ``absolute``. A legacy row with no basis keeps
+    its old day-plus-hour behavior so existing saved dates never move.
+    """
+    hours = float(hour_offset or 0)
+    if not math.isfinite(hours):
+        raise ValueError("hour_offset must be a finite number")
+    if hour_offset_basis not in (None, "absolute", "within_day"):
+        raise ValueError("hour_offset_basis must be absolute or within_day")
+    absolute = hour_offset_basis == "absolute"
+    if absolute:
+        return timedelta(hours=hours)
+    if day_offset is None:
+        raise ValueError("Visit has no calculable day offset")
+    return timedelta(days=int(day_offset), hours=hours)
+
+
+def _visit_elapsed_seconds(visit: ExtractedVisit) -> float:
+    """Comparable elapsed time for chronological ordering of dated visits."""
+    try:
+        return canonical_elapsed_time(
+            visit.day_offset, visit.hour_offset, visit.hour_offset_basis,
+        ).total_seconds()
+    except (TypeError, ValueError):
+        # Invalid arithmetic is retained for human review; deterministic day
+        # order is still preferable to dropping the visit.
+        if visit.day_offset is None:
+            return math.inf
+        return timedelta(days=visit.day_offset).total_seconds()
 
 def _fill_template(template: str, cycle: int) -> str:
     """Substitute the cycle number into a member name template.
@@ -370,9 +617,24 @@ def _expand_blocks(schedule: ExtractedSchedule,
                         acts.append(cond.name)
                 out.append(ExtractedVisit(
                     name=_fill_template(member.name_template, cycle),
+                    source_day_label=(
+                        _fill_template(member.source_day_label_template, cycle)
+                        if member.source_day_label_template else None
+                    ),
                     visit_type=member.visit_type,
                     day_offset=cycle_start + member.day_within_cycle,
+                    day_end=(
+                        cycle_start + member.day_end_within_cycle
+                        if member.day_end_within_cycle is not None else None
+                    ),
+                    hour_offset=member.hour_offset,
+                    hour_offset_basis=member.hour_offset_basis,
+                    hour_end=member.hour_end,
                     window_days=member.window_days,
+                    window_before=member.window_before,
+                    window_after=member.window_after,
+                    arm=member.arm,
+                    period=member.period,
                     activities=acts,
                 ))
     return out
@@ -384,13 +646,20 @@ def _resolve_relative(visits: List[ExtractedVisit], warnings: List[str]) -> None
     Runs to a fixed point so a chain (A -> B -> C) resolves, and stops rather
     than looping when a cycle is present.
     """
-    by_name = {v.name.strip().lower(): v for v in visits if v.name}
+    by_name: dict[str, List[ExtractedVisit]] = {}
+    for visit in visits:
+        if visit.name:
+            by_name.setdefault(visit.name.strip().lower(), []).append(visit)
     pending = [v for v in visits
                if v.day_offset is None and v.relative_to and v.relative_offset_days is not None]
     for _ in range(len(pending) + 1):
         progressed = False
         for v in list(pending):
-            target = by_name.get((v.relative_to or "").strip().lower())
+            matches = by_name.get((v.relative_to or "").strip().lower(), [])
+            scoped = [candidate for candidate in matches
+                      if candidate.arm == v.arm and candidate.period == v.period]
+            target = scoped[0] if len(scoped) == 1 else (
+                matches[0] if len(matches) == 1 else None)
             if target is not None and target.day_offset is not None:
                 v.day_offset = target.day_offset + int(v.relative_offset_days or 0)
                 pending.remove(v)
@@ -398,9 +667,11 @@ def _resolve_relative(visits: List[ExtractedVisit], warnings: List[str]) -> None
         if not pending or not progressed:
             break
     for v in pending:
+        matches = by_name.get((v.relative_to or "").strip().lower(), [])
+        ambiguity = " is ambiguous" if len(matches) > 1 else " has no resolvable date"
         warnings.append(
-            f"'{v.name}' is scheduled relative to '{v.relative_to}', which has no "
-            "resolvable date — set its day manually.")
+            f"'{v.name}' is scheduled relative to '{v.relative_to}', which{ambiguity} "
+            "for its arm/period — set its day manually.")
 
 
 def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
@@ -412,7 +683,8 @@ def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
     assumptions: List[str] = list(schedule.assumptions)
     warnings: List[str] = []
 
-    visits: List[ExtractedVisit] = [v.model_copy(deep=True) for v in schedule.visits]
+    visits, timing_warnings = normalize_extracted_timing(schedule)
+    warnings.extend(timing_warnings)
     visits.extend(_expand_blocks(schedule, assumptions, warnings))
     _resolve_relative(visits, warnings)
 
@@ -421,7 +693,12 @@ def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
     seen: set = set()
     deduped: List[ExtractedVisit] = []
     for v in visits:
-        key = (v.name.strip().lower(), v.day_offset, v.hour_offset)
+        key = (
+            v.name.strip().lower(), v.day_offset, v.hour_offset,
+            v.hour_offset_basis, v.day_end, v.hour_end,
+            (v.arm or "").strip().lower(), (v.period or "").strip().lower(),
+            (v.source_day_label or "").strip().lower(),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -435,15 +712,18 @@ def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
 
     # Chronological, with undated visits (ET / Unscheduled) last but preserved.
     deduped.sort(key=lambda v: (
-        v.day_offset is None,
-        v.day_offset if v.day_offset is not None else 0,
-        v.hour_offset if v.hour_offset is not None else 0,
+        _visit_elapsed_seconds(v) == math.inf,
+        _visit_elapsed_seconds(v),
     ))
 
     return schedule.model_copy(update={
         "visits": deduped,
         "repeating_blocks": [],     # consumed
         "assumptions": assumptions + warnings,
+        "verification_status": (
+            "needs_review" if warnings else schedule.verification_status
+        ),
+        "verification_issues": list(schedule.verification_issues) + warnings,
     })
 
 
@@ -480,10 +760,18 @@ cycle_length_days 21, total_cycles 6), "q4w", "28-day cycles", "subject will be 
 for the next visit 7 days after this visit" (-> intra-cycle spacing 7). Cite where you \
 found them in `source_notes`.
 
-## Day offsets
+## Day labels and calendar offsets
 
-- `day_offset` is the ABSOLUTE study day with Day 1 = 0. Screening/run-in before baseline \
-is NEGATIVE. Week N -> N*7, Month N -> N*30 unless an explicit day is given.
+- Preserve the exact protocol timing text in `source_day_label` (Day 0, Day 1, Week 4, \
+Cycle 2 Day 1, etc.). It is display evidence, never the raw offset.
+- Identify the protocol convention once: `anchor_study_day` is 0 or 1 for the study-day \
+number on the baseline/randomization date, and `includes_day_zero` says whether Day 0 \
+exists. Leave either null when the document is ambiguous.
+- `day_offset` is the ABSOLUTE calendar displacement from baseline. Derive a simple Day D \
+deterministically: anchor Day 0 -> D; anchor Day 1 with Day 0 -> D-1; anchor Day 1 with no \
+Day 0 -> D-1 for D>=1 and D for negative D. Day 0 is invalid in the last convention.
+- Do NOT blindly convert Week N to N*7. Week 1 may mean the baseline week, seven days \
+after baseline, or a range; use explicit nearby dates/cadence or leave it for review.
 - Inside a `repeating_blocks` member, use `day_within_cycle` (0-based from the cycle's \
 first day) and set the block's `first_cycle_start_day` to the absolute day that cycle \
 starts. Do not pre-compute per-cycle absolute days.
@@ -513,8 +801,10 @@ schedule per arm, set `arm` and repeat the visits per arm.
 - MULTI-PHASE (Core + Extension, Blinded + Open-label): enumerate every phase in order, \
 using `period` to label them.
 - INTRA-DAY / PK: if the study's schedule is hour-level ("Hour -4 to Hour 0", "Hour 26"), \
-set `hour_offset` (and `hour_end` for a range) alongside `day_offset`, and set \
-`schedule_kind` to 'intra_day'. If the document has BOTH a visit-level schedule and an \
+set `hour_offset` (and `hour_end` for a range) as ABSOLUTE elapsed hours from Hour 0, set \
+`hour_offset_basis` to 'absolute', and set `schedule_kind` to 'intra_day'. Hour 26 is \
+exactly 26 hours total; never add it on top of a one-day offset. If the document has BOTH a \
+visit-level schedule and an \
 intra-visit hourly sampling table, extract the VISIT-level schedule.
 - SURGICAL / admission: screening, admission/procedure day, post-op days, discharge, \
 follow-up.
@@ -646,9 +936,11 @@ class ClaudeProtocolExtractor:
             thinking={'type': 'adaptive'},
             system=_SYSTEM_PROMPT + (
                 '\n\nReturn ONLY a valid JSON object with these top-level keys: '
-                'schedule_kind, visits, repeating_blocks, assumptions, source_notes. '
+                'schedule_kind, anchor_study_day, includes_day_zero, visits, '
+                'repeating_blocks, assumptions, source_notes. '
                 'Each visit must include name, visit_type, day_offset, day_end, '
-                'hour_offset, hour_end, window_days, window_before, window_after, '
+                'source_day_label, hour_offset, hour_offset_basis, hour_end, '
+                'window_days, window_before, window_after, '
                 'relative_to, relative_offset_days, arm, period, activities. '
                 'Use null only for unknown nullable fields and [] for unknown lists. '
                 'window_days must always be a non-negative integer; use 3 when the '

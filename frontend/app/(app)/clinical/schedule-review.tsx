@@ -29,14 +29,27 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api, API_BASE } from "@/src/api/client";
 import { Body, Small } from "@/src/components/ui";
 import { downloadFile, fetchFileUri } from "@/src/lib/upload";
+import { formatVisitTiming, formatVisitWindow } from "@/src/lib/visit-timing";
 import { colors, fonts, radii, shadows, spacing } from "@/src/theme/tokens";
 
 type Visit = {
   id: string;
   visit_number: number;
   name: string;
-  day_offset: number;
+  day_offset: number | null;
+  day_end?: number | null;
+  hour_offset?: number | null;
+  hour_end?: number | null;
+  hour_offset_basis?: "absolute" | "within_day" | null;
+  relative_to?: string | null;
+  relative_offset_days?: number | null;
+  source_day_label?: string | null;
+  source_timing_label?: string | null;
+  anchor_study_day?: 0 | 1 | null;
+  includes_day_zero?: boolean | null;
   window_days?: number;
+  window_before?: number | null;
+  window_after?: number | null;
 };
 
 type ChangedVisit = {
@@ -96,10 +109,40 @@ const dateTime = (value?: string) => {
   });
 };
 
-const dayLabel = (offset?: number) => {
-  if (offset === undefined) return "—";
-  return offset < 0 ? `Day ${offset}` : `Day +${offset}`;
+const timingLabel = (visit?: Partial<Visit> | null) => formatVisitTiming({
+  day_offset: visit?.day_offset,
+  day_end: visit?.day_end,
+  hour_offset: visit?.hour_offset,
+  hour_end: visit?.hour_end,
+  hour_offset_basis: visit?.hour_offset_basis,
+  relative_to: visit?.relative_to,
+  relative_offset_days: visit?.relative_offset_days,
+  source_day_label: visit?.source_day_label,
+  source_timing_label: visit?.source_timing_label,
+});
+
+const timingChangeLabel = (visit?: Partial<Visit> | null) => {
+  const display = timingLabel(visit);
+  const canonical = formatVisitTiming({
+    day_offset: visit?.day_offset,
+    day_end: visit?.day_end,
+    hour_offset: visit?.hour_offset,
+    hour_end: visit?.hour_end,
+    hour_offset_basis: visit?.hour_offset_basis,
+    relative_to: visit?.relative_to,
+    relative_offset_days: visit?.relative_offset_days,
+  });
+  return canonical === display || canonical === "Timing not specified"
+    ? display
+    : `${display} (${canonical})`;
 };
+
+const TIMING_CHANGE_FIELDS = new Set([
+  "day_offset", "day_end", "hour_offset", "hour_end", "hour_offset_basis",
+  "source_day_label", "source_timing_label", "anchor_study_day", "includes_day_zero",
+  "relative_to", "relative_offset_days", "arm", "arm_label", "period", "visit_type",
+]);
+const WINDOW_CHANGE_FIELDS = new Set(["window_days", "window_before", "window_after"]);
 
 const fileSize = (value?: number) => {
   if (value === undefined || value === null) return "";
@@ -410,6 +453,13 @@ export default function ScheduleReview() {
                 ? Plus
                 : change.change_type === "removed" ? Minus : RefreshCw;
               const fields = change.changed_fields || [];
+              const timingChanged = fields.some((field) => TIMING_CHANGE_FIELDS.has(field));
+              const windowChanged = fields.some((field) => WINDOW_CHANGE_FIELDS.has(field));
+              const remainingFields = fields.filter((field) => (
+                field !== "name"
+                && !TIMING_CHANGE_FIELDS.has(field)
+                && !WINDOW_CHANGE_FIELDS.has(field)
+              ));
               return (
                 <View key={`${change.change_type}-${change.id}-${index}`} style={s.changeRow}>
                   <View style={[s.changeIcon, { backgroundColor: tone + "14" }]}>
@@ -425,17 +475,22 @@ export default function ScheduleReview() {
                         {fields.includes("name") && (
                           <Small>{change.before?.name || "—"} → {change.after?.name || "—"}</Small>
                         )}
-                        {fields.includes("day_offset") && (
-                          <Small>{dayLabel(change.before?.day_offset)} → {dayLabel(change.after?.day_offset)}</Small>
+                        {timingChanged && (
+                          <Small>Timing: {timingChangeLabel(change.before)} → {timingChangeLabel(change.after)}</Small>
                         )}
-                        {fields.includes("window_days") && (
-                          <Small>±{change.before?.window_days ?? 0} → ±{change.after?.window_days ?? 0} days</Small>
+                        {windowChanged && (
+                          <Small>
+                            Window: {formatVisitWindow(change.before || {})} → {formatVisitWindow(change.after || {})}
+                          </Small>
+                        )}
+                        {!!remainingFields.length && (
+                          <Small>Updated: {remainingFields.map((field) => field.replace(/_/g, " ")).join(", ")}</Small>
                         )}
                         {!fields.length && <Small>Visit details were updated in this version.</Small>}
                       </View>
                     ) : (
                       <Small style={{ marginTop: 3 }}>
-                        Visit {visit.visit_number || change.visit_number} · {dayLabel(visit.day_offset)} · ±{visit.window_days ?? 0} days
+                        Visit {visit.visit_number || change.visit_number} · {timingLabel(visit)} · {formatVisitWindow(visit)}
                       </Small>
                     )}
                   </View>
@@ -454,8 +509,8 @@ export default function ScheduleReview() {
             <View key={visit.id} style={[s.visitRow, index % 2 === 1 && s.altRow]}>
               <Small style={s.visitNumber}>Visit {visit.visit_number}</Small>
               <Body style={{ flex: 1 }} numberOfLines={1}>{visit.name}</Body>
-              <Small style={s.day}>{dayLabel(visit.day_offset)}</Small>
-              <Small style={s.window}>±{visit.window_days ?? 0} days</Small>
+              <Small style={s.day}>{timingLabel(visit)}</Small>
+              <Small style={s.window}>{formatVisitWindow(visit)}</Small>
             </View>
           ))}
           {!showAll && selected.visits.length > 4 && (
@@ -669,8 +724,8 @@ const s = StyleSheet.create({
   visitRow: { minHeight: 46, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   altRow: { backgroundColor: colors.background + "88" },
   visitNumber: { width: 48 },
-  day: { width: 52, textAlign: "right" },
-  window: { width: 55, textAlign: "right" },
+  day: { width: 100, textAlign: "right" },
+  window: { width: 90, textAlign: "right" },
   viewAll: { paddingVertical: 12, alignItems: "center" },
   notes: { minHeight: 88, marginTop: 7, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 18, color: colors.foreground, outlineStyle: "none" } as any,
   auditCard: { padding: 13, borderRadius: 15, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.secondary + "66" },

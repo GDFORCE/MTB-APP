@@ -8,6 +8,7 @@ import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
+import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 
 const fmtTime = (d?: string) =>
   d ? new Date(d).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
@@ -137,9 +138,10 @@ export default function MyVisits() {
                     <View style={[st.statusTag, { backgroundColor: railColor + "22" }]}><Small weight="700" color={railColor} style={{ textTransform: "capitalize" }}>{v.status}</Small></View>
                   </View>
                   <Small>{v.name}</Small>
+                  <Small color={colors.mutedFg}>{formatVisitTiming(v)}</Small>
                   <View style={{ flexDirection: "row", gap: 12, marginTop: 4 }}>
-                    <Small><CalIcon size={11} color={colors.mutedFg} /> {new Date(v.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</Small>
-                    <Small><Clock size={11} color={colors.mutedFg} /> {fmtTime(v.scheduled_date)}</Small>
+                    <Small><CalIcon size={11} color={colors.mutedFg} /> {v.scheduled_date ? formatIsoCalendarDate(v.scheduled_date) : "Date pending"}</Small>
+                    {!!v.scheduled_date && <Small><Clock size={11} color={colors.mutedFg} /> {fmtTime(v.scheduled_date)}</Small>}
                   </View>
                 </View>
                 <ChevronRight size={16} color={colors.mutedFg} />

@@ -115,8 +115,20 @@ export type SponsorTrialDetail = {
     id: string;
     name: string;
     visit_number: number;
-    day_offset: number;
+    day_offset: number | null;
+    day_end?: number | null;
+    hour_offset?: number | null;
+    hour_end?: number | null;
+    hour_offset_basis?: "absolute" | "within_day" | null;
+    relative_to?: string | null;
+    relative_offset_days?: number | null;
+    source_day_label?: string | null;
+    source_timing_label?: string | null;
+    anchor_study_day?: 0 | 1 | null;
+    includes_day_zero?: boolean | null;
     window_days: number;
+    window_before?: number | null;
+    window_after?: number | null;
   }[];
   documents: {
     id: string;

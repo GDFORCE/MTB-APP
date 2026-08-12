@@ -28,6 +28,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { api } from "@/src/api/client";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Body, Card, Eyebrow, Small } from "@/src/components/ui";
+import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 import { colors, dawnGradient, radii, shadows, spacing } from "@/src/theme/tokens";
 
 type Section = "overview" | "schedule" | "medication" | "risks" | "contacts" | "faq";
@@ -83,9 +84,7 @@ function stringList(value: unknown): string[] {
 
 function formatDate(value?: string): string {
   if (!value) return "Date pending";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return formatIsoCalendarDate(value, value);
 }
 
 function formatTime(value?: string): string {
@@ -349,6 +348,7 @@ export default function AboutTrial() {
                 </Small>
               </View>
               <Small style={s.rowGap}>{formatDate(visit.scheduled_date)}</Small>
+              <Small style={s.rowGap} color={colors.mutedFg}>{formatVisitTiming(visit)}</Small>
               <View style={[s.inline, s.rowGap]}>
                 {remote ? <Phone size={13} color={colors.mutedFg} /> : <MapPin size={13} color={colors.mutedFg} />}
                 <Small>{rawType ? `${rawType} · ${location}` : location}</Small>

@@ -18,6 +18,7 @@ import {
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
+import { formatVisitTiming, formatVisitWindow } from "@/src/lib/visit-timing";
 import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
   DelegationGate, Loading, ErrorCard, EmptyCard, KitInput,
@@ -319,7 +320,9 @@ function TrialCard({ t, mine, requested, onOpen, onRequest, actions }: {
                 {(t.schedule || []).slice(0, 4).map((v, i) => (
                   <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                     <RNText style={st.visitName} numberOfLines={1}>{v.name || `Visit ${v.visit_number ?? i + 1}`}</RNText>
-                    <RNText style={st.visitDay}>{typeof v.day_offset === "number" ? `Day ${v.day_offset}` : "—"}{typeof v.window_days === "number" ? ` · ±${v.window_days}d` : ""}</RNText>
+                    <RNText style={st.visitDay}>
+                      {formatVisitTiming(v)} · {formatVisitWindow(v, true)}
+                    </RNText>
                   </View>
                 ))}
                 {(t.schedule || []).length > 4 && <RNText style={st.subjectMore}>+{(t.schedule || []).length - 4} more visits</RNText>}

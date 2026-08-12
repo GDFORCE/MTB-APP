@@ -28,7 +28,11 @@ from protocol_extraction import (  # noqa: E402
     ExtractedVisit,
     RepeatMember,
     RepeatingBlock,
+    canonical_elapsed_time,
     expand_schedule,
+    simple_day_label_range_offsets,
+    simple_day_label_offset,
+    study_day_to_offset,
 )
 
 
@@ -38,6 +42,112 @@ def days(schedule):
 
 def names(schedule):
     return [v.name for v in schedule.visits]
+
+
+# ───────────────────── exact source labels and numbering ─────────────────────
+
+def test_day_zero_anchor_conversion():
+    assert study_day_to_offset(
+        0, anchor_study_day=0, includes_day_zero=True) == 0
+    assert study_day_to_offset(
+        8, anchor_study_day=0, includes_day_zero=True) == 8
+
+
+def test_day_one_without_zero_skips_zero_for_negative_days():
+    assert study_day_to_offset(
+        1, anchor_study_day=1, includes_day_zero=False) == 0
+    assert study_day_to_offset(
+        8, anchor_study_day=1, includes_day_zero=False) == 7
+    assert study_day_to_offset(
+        -1, anchor_study_day=1, includes_day_zero=False) == -1
+    with pytest.raises(ValueError, match="Day 0 is invalid"):
+        study_day_to_offset(0, anchor_study_day=1, includes_day_zero=False)
+
+
+def test_day_one_with_explicit_day_zero_uses_continuous_sequence():
+    assert study_day_to_offset(
+        1, anchor_study_day=1, includes_day_zero=True) == 0
+    assert study_day_to_offset(
+        0, anchor_study_day=1, includes_day_zero=True) == -1
+
+
+def test_only_exact_simple_day_labels_are_derived():
+    convention = {"anchor_study_day": 1, "includes_day_zero": False}
+    assert simple_day_label_offset("Day 8", **convention) == 7
+    assert simple_day_label_offset("Week 1", **convention) is None
+    assert simple_day_label_offset("Cycle 2 Day 1", **convention) is None
+    assert simple_day_label_offset("Unscheduled", **convention) is None
+
+
+def test_positive_day_is_safe_when_day_zero_presence_is_unknown():
+    assert simple_day_label_offset(
+        "Day 8", anchor_study_day=1, includes_day_zero=None) == 7
+    assert simple_day_label_offset(
+        "Day -1", anchor_study_day=1, includes_day_zero=None) is None
+
+
+def test_exact_day_with_unknown_anchor_is_retained_but_needs_review():
+    out = expand_schedule(ExtractedSchedule(
+        anchor_study_day=None,
+        includes_day_zero=None,
+        verification_status="verified",
+        visits=[ExtractedVisit(
+            name="Day 8", source_day_label="Day 8", day_offset=8)],
+    ))
+    assert out.visits[0].day_offset == 8
+    assert out.verification_status == "needs_review"
+    assert any("convention is incomplete" in note for note in out.assumptions)
+
+
+def test_simple_day_range_uses_same_numbering_formula():
+    convention = {"anchor_study_day": 1, "includes_day_zero": False}
+    assert simple_day_label_range_offsets("Day 14-17", **convention) == (13, 16)
+    assert simple_day_label_range_offsets("Day 14 to Day 17", **convention) == (13, 16)
+
+
+def test_expansion_corrects_conflicting_model_arithmetic_and_flags_review():
+    schedule = ExtractedSchedule(
+        anchor_study_day=1,
+        includes_day_zero=False,
+        verification_status="verified",
+        visits=[ExtractedVisit(
+            name="Visit Day 8", source_day_label="Day 8", day_offset=8)],
+    )
+    out = expand_schedule(schedule)
+    assert out.visits[0].day_offset == 7
+    assert out.verification_status == "needs_review"
+    assert any("corrected it deterministically" in item for item in out.assumptions)
+
+
+def test_undated_and_relative_labels_are_not_coerced_to_baseline():
+    out = expand_schedule(ExtractedSchedule(
+        anchor_study_day=1,
+        includes_day_zero=False,
+        visits=[
+            ExtractedVisit(name="Unscheduled", source_day_label="Unscheduled"),
+            ExtractedVisit(name="Relative", source_day_label="After last dose",
+                           relative_to="Unknown", relative_offset_days=3),
+        ],
+    ))
+    assert all(visit.day_offset is None for visit in out.visits)
+
+
+def test_absolute_hour_26_is_not_added_to_its_containing_day():
+    assert canonical_elapsed_time(1, 26, "absolute").total_seconds() == 26 * 3600
+    # Missing basis retains historical additive semantics (1 day + 26 hours).
+    assert canonical_elapsed_time(1, 26, None).total_seconds() == 50 * 3600
+    assert canonical_elapsed_time(1, 2, "within_day").total_seconds() == 26 * 3600
+
+
+def test_absolute_hours_sort_by_elapsed_time_not_day_then_hour():
+    out = expand_schedule(ExtractedSchedule(
+        schedule_kind="intra_day",
+        visits=[
+            ExtractedVisit(name="Hour 30", day_offset=0, hour_offset=30),
+            ExtractedVisit(name="Hour 26", day_offset=1, hour_offset=26),
+        ],
+    ))
+    assert names(out) == ["Hour 26", "Hour 30"]
 
 
 # ────────────────────────────── the PICN case ──────────────────────────────
@@ -303,6 +413,15 @@ def test_duplicate_visits_are_collapsed():
     assert len(out.visits) == 1
 
 
+def test_same_named_timepoint_in_different_arms_is_not_collapsed():
+    out = expand_schedule(ExtractedSchedule(visits=[
+        ExtractedVisit(name="Day 1", day_offset=0, arm="Arm A"),
+        ExtractedVisit(name="Day 1", day_offset=0, arm="Arm B"),
+    ]))
+    assert [(visit.name, visit.arm) for visit in out.visits] == [
+        ("Day 1", "Arm A"), ("Day 1", "Arm B")]
+
+
 def test_nonpositive_cycle_length_is_rejected_not_expanded():
     sched = ExtractedSchedule(repeating_blocks=[
         RepeatingBlock(from_cycle=1, to_cycle=3, cycle_length_days=0,
@@ -348,6 +467,27 @@ def test_member_template_without_a_placeholder_still_disambiguates():
     out = expand_schedule(sched)
     assert len(out.visits) == 3
     assert len(set(names(out))) == 3
+
+
+def test_repeat_member_preserves_rich_timing_metadata():
+    out = expand_schedule(ExtractedSchedule(repeating_blocks=[
+        RepeatingBlock(
+            from_cycle=2, to_cycle=2, cycle_length_days=21,
+            first_cycle_start_day=21,
+            members=[RepeatMember(
+                name_template="Cycle {cycle} Day 1-2",
+                source_day_label_template="Cycle {cycle} Day 1-2",
+                day_within_cycle=0, day_end_within_cycle=1,
+                window_days=3, window_before=0, window_after=2,
+                arm="Arm A", period="Treatment",
+            )],
+        )],
+    ))
+    visit = out.visits[0]
+    assert visit.source_day_label == "Cycle 2 Day 1-2"
+    assert (visit.day_offset, visit.day_end) == (21, 22)
+    assert (visit.window_before, visit.window_after) == (0, 2)
+    assert (visit.arm, visit.period) == ("Arm A", "Treatment")
 
 
 def test_runaway_expansion_is_capped():

@@ -8,11 +8,27 @@ import { Eyebrow, H1, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
+import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 
-const fmtDate = (d?: string) =>
-  d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
-const fmtTime = (d?: string) =>
-  d ? new Date(d).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
+const fmtScheduleDate = (d?: string) => formatIsoCalendarDate(d, "");
+const fmtEventDate = (d?: string) => {
+  if (!d) return "";
+  const parsed = new Date(d);
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+const fmtTime = (d?: string) => {
+  if (!d) return "";
+  const clock = d.match(/[T\s](\d{2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?/);
+  if (!clock) return "";
+  const rawSeconds = Number(clock[3] || 0);
+  if (Number(clock[1]) === 0 && Number(clock[2]) === 0 && rawSeconds === 0) return "";
+  const parsed = new Date(d);
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true });
+};
 
 export default function VisitDetail() {
   const router = useRouter();
@@ -84,8 +100,9 @@ export default function VisitDetail() {
   const contactId = visit.assigned_contact_id || visit.pi_id || "";
   const contactRole = visit.assigned_contact_role === "crc" ? "Coordinator" : "PI";
   const completionDate = visit.completion_timestamp || visit.completed_at;
+  const scheduledTime = fmtTime(visit.scheduled_date);
   const windowLabel = visit.window_start && visit.window_end
-    ? `${fmtDate(visit.window_start)} – ${fmtDate(visit.window_end)}`
+    ? `${fmtScheduleDate(visit.window_start)} – ${fmtScheduleDate(visit.window_end)}`
     : visit.window_days
       ? `±${visit.window_days} days`
       : "Not published";
@@ -102,8 +119,9 @@ export default function VisitDetail() {
           </View>
           <H1 color={colors.primaryFg} style={{ marginTop: spacing.sm, fontSize: 20 }}>Visit {visit.visit_number} · {visit.name}</H1>
           <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: spacing.sm }}>
-            <View style={s.chipSm}><CalIcon size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700">{fmtDate(visit.scheduled_date)}</Small></View>
-            <View style={s.chipSm}><Clock size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700">{fmtTime(visit.scheduled_date)}</Small></View>
+            <View style={s.chipSm}><CalIcon size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700">{fmtScheduleDate(visit.scheduled_date)}</Small></View>
+            {!!scheduledTime && <View style={s.chipSm}><Clock size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700">{scheduledTime}</Small></View>}
+            <View style={s.chipSm}><Small color={colors.primaryFg} weight="700">{formatVisitTiming(visit)}</Small></View>
             {!!site && <View style={s.chipSm}><Building2 size={12} color={colors.primaryFg} /><Small color={colors.primaryFg} weight="700">{site}</Small></View>}
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing.sm }}>
@@ -163,7 +181,7 @@ export default function VisitDetail() {
         {done && (
           <View style={s.doneBanner}>
             <CheckCircle size={16} color={colors.success} />
-            <Small color={colors.success} style={{ flex: 1 }}>Completed on {completionDate ? fmtDate(completionDate) : "date unavailable"}{visit.clinician_name ? ` · Confirmed by ${visit.clinician_name}${visit.clinician_role ? `, ${visit.clinician_role.toUpperCase()}` : ""}` : ""}</Small>
+            <Small color={colors.success} style={{ flex: 1 }}>Completed on {completionDate ? fmtEventDate(completionDate) : "date unavailable"}{visit.clinician_name ? ` · Confirmed by ${visit.clinician_name}${visit.clinician_role ? `, ${visit.clinician_role.toUpperCase()}` : ""}` : ""}</Small>
           </View>
         )}
 

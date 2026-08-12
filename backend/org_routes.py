@@ -564,9 +564,17 @@ async def org_trials(ctx=Depends(org_admin_ctx)):
         })
         visits = await db.visits.find({'trial_id': t['id']}, {'_id': 0}) \
             .sort('visit_number', 1).to_list(200)
-        row['schedule'] = [{'visit_number': v.get('visit_number'), 'name': v.get('name'),
-                            'day_offset': v.get('day_offset'),
-                            'window_days': v.get('window_days')} for v in visits]
+        timing_fields = (
+            'visit_number', 'name', 'day_offset', 'day_end', 'source_day_label',
+            'anchor_study_day', 'includes_day_zero', 'hour_offset',
+            'hour_offset_basis', 'hour_end', 'relative_to',
+            'relative_offset_days', 'period', 'arm_label', 'arm', 'window_days',
+            'window_before', 'window_after',
+        )
+        row['schedule'] = [
+            {field: v.get(field) for field in timing_fields if field in v}
+            for v in visits
+        ]
         if full:
             patients = await db.patients.find({'trial_id': t['id']}, {'_id': 0}).to_list(1000)
             row['subjects'] = [_masked_subject(p) for p in patients]

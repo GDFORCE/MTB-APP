@@ -33,6 +33,11 @@ import * as DocumentPicker from "expo-document-picker";
 import { api } from "@/src/api/client";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Body, Button, Card, Eyebrow, Small } from "@/src/components/ui";
+import {
+  formatVisitTiming,
+  formatVisitWindow,
+  parseOptionalDayOffset,
+} from "@/src/lib/visit-timing";
 import { colors, fonts, radii, shadows, spacing } from "@/src/theme/tokens";
 
 type Row = {
@@ -40,6 +45,20 @@ type Row = {
   visit_number?: number;
   name: string;
   day_offset: string;
+  source_day_label: string;
+  day_end: number | null;
+  hour_offset: number | null;
+  hour_end: number | null;
+  hour_offset_basis: "absolute" | "within_day" | null;
+  window_before: number | null;
+  window_after: number | null;
+  relative_to: string | null;
+  relative_offset_days: number | null;
+  arm_label: string | null;
+  period: string | null;
+  visit_type: string | null;
+  anchor_study_day: 0 | 1 | null;
+  includes_day_zero: boolean | null;
   window_days: string;
   activities: string;
   clinical_tasks: string;
@@ -52,7 +71,23 @@ type Row = {
 
 type ExtractedVisit = {
   name: string;
-  day_offset: number;
+  day_offset: number | null;
+  source_day_label?: string | null;
+  source_timing_label?: string | null;
+  day_end?: number | null;
+  hour_offset?: number | null;
+  hour_end?: number | null;
+  hour_offset_basis?: "absolute" | "within_day" | null;
+  window_before?: number | null;
+  window_after?: number | null;
+  relative_to?: string | null;
+  relative_offset_days?: number | null;
+  arm?: string | null;
+  arm_label?: string | null;
+  period?: string | null;
+  visit_type?: string | null;
+  anchor_study_day?: 0 | 1 | null;
+  includes_day_zero?: boolean | null;
   window_days: number;
   activities: string[];
   clinical_tasks?: string[];
@@ -70,9 +105,35 @@ type ExtractionVerification = {
   accuracy?: Record<string, number | null>;
 };
 
+type ScheduleNumbering = {
+  anchor_study_day?: 0 | 1 | null;
+  includes_day_zero?: boolean | null;
+};
+
+const hasAbsoluteHourTiming = (timing: {
+  hour_offset?: number | null;
+  hour_offset_basis?: "absolute" | "within_day" | null;
+}) => timing.hour_offset_basis === "absolute"
+  && typeof timing.hour_offset === "number"
+  && Number.isFinite(timing.hour_offset);
+
 const blankRow = (name = "New Visit"): Row => ({
   name,
   day_offset: "0",
+  source_day_label: "",
+  day_end: null,
+  hour_offset: null,
+  hour_end: null,
+  hour_offset_basis: null,
+  window_before: null,
+  window_after: null,
+  relative_to: null,
+  relative_offset_days: null,
+  arm_label: null,
+  period: null,
+  visit_type: null,
+  anchor_study_day: null,
+  includes_day_zero: null,
   window_days: "3",
   activities: "",
   clinical_tasks: "",
@@ -83,37 +144,95 @@ const blankRow = (name = "New Visit"): Row => ({
   extracted_from_protocol: false,
 });
 
-const templateToRow = (template: any): Row => ({
-  id: template.id,
-  visit_number: template.visit_number,
-  name: template.name ?? "",
-  day_offset: String(template.day_offset ?? 0),
-  window_days: String(template.window_days ?? 3),
-  activities: (template.activities ?? []).join(", "),
-  clinical_tasks: (template.clinical_tasks ?? []).join(", "),
-  admin_tasks: (template.admin_tasks ?? []).join(", "),
-  comments: template.comments ?? "",
-  extraction_warning: Boolean(template.extraction_warning),
-  review_status: template.review_status === "pending" ? "pending" : "ok",
-  extracted_from_protocol: Boolean(template.extracted_from_protocol),
-});
+const templateToRow = (template: any): Row => {
+  const hasOffset = typeof template.day_offset === "number"
+    && Number.isInteger(template.day_offset);
+  return {
+    id: template.id,
+    visit_number: template.visit_number,
+    name: template.name ?? "",
+    day_offset: hasOffset ? String(template.day_offset) : "",
+    source_day_label: template.source_day_label?.trim()
+      || template.source_timing_label?.trim()
+      || "",
+    day_end: template.day_end ?? null,
+    hour_offset: template.hour_offset ?? null,
+    hour_end: template.hour_end ?? null,
+    hour_offset_basis: template.hour_offset_basis ?? null,
+    window_before: template.window_before ?? null,
+    window_after: template.window_after ?? null,
+    relative_to: template.relative_to ?? null,
+    relative_offset_days: template.relative_offset_days ?? null,
+    arm_label: template.arm_label ?? template.arm ?? null,
+    period: template.period ?? null,
+    visit_type: template.visit_type ?? null,
+    anchor_study_day: template.anchor_study_day ?? null,
+    includes_day_zero: template.includes_day_zero ?? null,
+    window_days: String(template.window_days ?? 3),
+    activities: (template.activities ?? []).join(", "),
+    clinical_tasks: (template.clinical_tasks ?? []).join(", "),
+    admin_tasks: (template.admin_tasks ?? []).join(", "),
+    comments: template.comments ?? "",
+    extraction_warning: Boolean(template.extraction_warning),
+    review_status: template.review_status === "pending" ? "pending" : "ok",
+    extracted_from_protocol: Boolean(template.extracted_from_protocol),
+  };
+};
 
-const extractedVisitsToRows = (visits: ExtractedVisit[]): Row[] => visits.map((visit) => ({
-  name: visit.name ?? "",
-  day_offset: String(visit.day_offset ?? 0),
-  window_days: String(visit.window_days ?? 3),
-  activities: (visit.activities ?? []).join(", "),
-  clinical_tasks: (visit.clinical_tasks ?? visit.activities ?? []).join(", "),
-  admin_tasks: (visit.admin_tasks ?? []).join(", "),
-  comments: visit.comments ?? "",
-  extraction_warning: Boolean(visit.extraction_warning),
-  review_status: visit.review_status === "pending" ? "pending" : "ok",
-  extracted_from_protocol: true,
-}));
+const extractedVisitsToRows = (
+  visits: ExtractedVisit[],
+  numbering: ScheduleNumbering = {},
+): Row[] => visits.map((visit) => {
+  const hasDayOffset = typeof visit.day_offset === "number"
+    && Number.isInteger(visit.day_offset);
+  const missingComputableTiming = !hasDayOffset && !hasAbsoluteHourTiming(visit);
+  return {
+    name: visit.name ?? "",
+    day_offset: hasDayOffset ? String(visit.day_offset) : "",
+    source_day_label: visit.source_day_label?.trim()
+      || visit.source_timing_label?.trim()
+      || "",
+    day_end: visit.day_end ?? null,
+    hour_offset: visit.hour_offset ?? null,
+    hour_end: visit.hour_end ?? null,
+    hour_offset_basis: visit.hour_offset_basis ?? null,
+    window_before: visit.window_before ?? null,
+    window_after: visit.window_after ?? null,
+    relative_to: visit.relative_to ?? null,
+    relative_offset_days: visit.relative_offset_days ?? null,
+    arm_label: visit.arm_label ?? visit.arm ?? null,
+    period: visit.period ?? null,
+    visit_type: visit.visit_type ?? null,
+    anchor_study_day: visit.anchor_study_day ?? numbering.anchor_study_day ?? null,
+    includes_day_zero: visit.includes_day_zero ?? numbering.includes_day_zero ?? null,
+    window_days: String(visit.window_days ?? 3),
+    activities: (visit.activities ?? []).join(", "),
+    clinical_tasks: (visit.clinical_tasks ?? visit.activities ?? []).join(", "),
+    admin_tasks: (visit.admin_tasks ?? []).join(", "),
+    comments: visit.comments ?? "",
+    extraction_warning: Boolean(visit.extraction_warning) || missingComputableTiming,
+    review_status: visit.review_status === "pending" || missingComputableTiming ? "pending" : "ok",
+    extracted_from_protocol: true,
+  };
+});
 
 const sameRow = (left: Row, right: Row) =>
   left.name.trim() === right.name.trim()
-  && parseInt(left.day_offset || "0", 10) === parseInt(right.day_offset || "0", 10)
+  && parseOptionalDayOffset(left.day_offset) === parseOptionalDayOffset(right.day_offset)
+  && left.source_day_label.trim() === right.source_day_label.trim()
+  && left.day_end === right.day_end
+  && left.hour_offset === right.hour_offset
+  && left.hour_end === right.hour_end
+  && left.hour_offset_basis === right.hour_offset_basis
+  && left.window_before === right.window_before
+  && left.window_after === right.window_after
+  && left.relative_to === right.relative_to
+  && left.relative_offset_days === right.relative_offset_days
+  && left.arm_label === right.arm_label
+  && left.period === right.period
+  && left.visit_type === right.visit_type
+  && left.anchor_study_day === right.anchor_study_day
+  && left.includes_day_zero === right.includes_day_zero
   && parseInt(left.window_days || "3", 10) === parseInt(right.window_days || "3", 10)
   && left.activities.trim() === right.activities.trim()
   && left.clinical_tasks.trim() === right.clinical_tasks.trim()
@@ -123,10 +242,21 @@ const sameRow = (left: Row, right: Row) =>
   && left.review_status === right.review_status
   && left.extracted_from_protocol === right.extracted_from_protocol;
 
-const dayLabel = (value: string) => {
-  const day = parseInt(value || "0", 10);
-  return day > 0 ? `+${day}` : String(day);
-};
+const timingForRow = (row: Row) => formatVisitTiming({
+  day_offset: parseOptionalDayOffset(row.day_offset),
+  source_day_label: row.source_day_label,
+  day_end: row.day_end,
+  hour_offset: row.hour_offset,
+  hour_end: row.hour_end,
+  hour_offset_basis: row.hour_offset_basis,
+  relative_to: row.relative_to,
+  relative_offset_days: row.relative_offset_days,
+});
+
+const rowNeedsReview = (row: Row) => (
+  row.extraction_warning
+  || row.review_status === "pending"
+);
 
 const csvCell = (value: string | number | boolean) => `"${String(value).replace(/"/g, "\"\"")}"`;
 
@@ -167,7 +297,10 @@ export default function VisitScheduleEditor() {
           const visits: ExtractedVisit[] = prepared.data?.visits ?? [];
           const preparedVerification: ExtractionVerification | null =
             prepared.data?.verification ?? null;
-          loaded = extractedVisitsToRows(visits);
+          loaded = extractedVisitsToRows(visits, {
+            anchor_study_day: prepared.data?.anchor_study_day ?? null,
+            includes_day_zero: prepared.data?.includes_day_zero ?? null,
+          });
           setVerification(preparedVerification);
           if (loaded.length) {
             setNotice(preparedVerification?.status === "verified"
@@ -196,9 +329,23 @@ export default function VisitScheduleEditor() {
   }, [load]);
 
   const updateRow = <K extends keyof Row>(index: number, key: K, value: Row[K]) => {
-    setRows((current) => current.map((row, rowIndex) => (
-      rowIndex === index ? { ...row, [key]: value } : row
-    )));
+    setRows((current) => current.map((row, rowIndex) => {
+      if (rowIndex !== index) return row;
+      const next = { ...row, [key]: value };
+      // Clearing a previously fixed date is a meaningful scheduling change.
+      // Flag it by default, but let the reviewer acknowledge a legitimate
+      // Unscheduled/ET row afterwards without inventing an offset.
+      if (
+        key === "day_offset"
+        && typeof value === "string"
+        && !value.trim()
+        && !hasAbsoluteHourTiming(next)
+      ) {
+        next.extraction_warning = true;
+        next.review_status = "pending";
+      }
+      return next;
+    }));
   };
 
   const add = () => {
@@ -280,7 +427,10 @@ export default function VisitScheduleEditor() {
         setExtractErr("No visit schedule was found in that PDF. You can still build it manually.");
         return;
       }
-      setRows(extractedVisitsToRows(visits));
+      setRows(extractedVisitsToRows(visits, {
+        anchor_study_day: response.data?.anchor_study_day ?? null,
+        includes_day_zero: response.data?.includes_day_zero ?? null,
+      }));
       setSelectedIndex(null);
       setEditing(false);
       setNotice(agentVerification?.status === "verified"
@@ -306,11 +456,27 @@ export default function VisitScheduleEditor() {
     if (!rows.length) return "Add at least one visit before saving.";
     const invalidIndex = rows.findIndex((row) => (
       !row.name.trim()
-      || !Number.isFinite(Number(row.day_offset))
+      || (row.day_offset.trim() !== "" && parseOptionalDayOffset(row.day_offset) === null)
       || !Number.isFinite(Number(row.window_days))
       || Number(row.window_days) < 0
     ));
-    if (invalidIndex >= 0) return `Check the name, day and window for Visit ${invalidIndex + 1}.`;
+    if (invalidIndex >= 0) {
+      return `Check the name, whole-day baseline offset, and window for Visit ${invalidIndex + 1}.`;
+    }
+    const invalidAdvancedIndex = rows.findIndex((row) => {
+      const finiteOrNull = (value: number | null) => value === null || Number.isFinite(value);
+      return !finiteOrNull(row.day_end)
+        || !finiteOrNull(row.hour_offset)
+        || !finiteOrNull(row.hour_end)
+        || !finiteOrNull(row.window_before)
+        || !finiteOrNull(row.window_after)
+        || !finiteOrNull(row.relative_offset_days)
+        || (row.window_before !== null && row.window_before < 0)
+        || (row.window_after !== null && row.window_after < 0);
+    });
+    if (invalidAdvancedIndex >= 0) {
+      return `The advanced timing values for Visit ${invalidAdvancedIndex + 1} are invalid.`;
+    }
     return "";
   };
 
@@ -328,10 +494,25 @@ export default function VisitScheduleEditor() {
       for (let index = 0; index < rows.length; index += 1) {
         const row = rows[index];
         const visitNumber = index + 1;
+        const dayOffset = parseOptionalDayOffset(row.day_offset);
         const payload = {
           name: row.name.trim(),
           visit_number: visitNumber,
-          day_offset: parseInt(row.day_offset || "0", 10),
+          day_offset: dayOffset,
+          source_day_label: row.source_day_label.trim() || null,
+          day_end: row.day_end,
+          hour_offset: row.hour_offset,
+          hour_end: row.hour_end,
+          hour_offset_basis: row.hour_offset_basis,
+          window_before: row.window_before,
+          window_after: row.window_after,
+          relative_to: row.relative_to,
+          relative_offset_days: row.relative_offset_days,
+          arm_label: row.arm_label,
+          period: row.period,
+          visit_type: row.visit_type,
+          anchor_study_day: row.anchor_study_day,
+          includes_day_zero: row.includes_day_zero,
           window_days: parseInt(row.window_days || "3", 10),
           activities: row.activities.split(",").map((value) => value.trim()).filter(Boolean),
           clinical_tasks: row.clinical_tasks.split(",").map((value) => value.trim()).filter(Boolean),
@@ -379,14 +560,31 @@ export default function VisitScheduleEditor() {
       return;
     }
     const header = [
-      "Visit number", "Visit name", "Day offset", "Window days", "Activities",
+      "Visit number", "Visit name", "Protocol timing label", "Offset from baseline (days)",
+      "Offset end (days)", "Hour offset", "Hour end", "Hour offset basis",
+      "Window days", "Window before", "Window after", "Relative to", "Relative offset days",
+      "Arm", "Period", "Visit type", "Anchor study day", "Includes Day 0", "Activities",
       "Clinical tasks", "Administrative tasks", "Comments", "Review status",
     ];
     const lines = rows.map((row, index) => [
       index + 1,
       row.name,
+      row.source_day_label,
       row.day_offset,
+      row.day_end ?? "",
+      row.hour_offset ?? "",
+      row.hour_end ?? "",
+      row.hour_offset_basis ?? "",
       row.window_days,
+      row.window_before ?? "",
+      row.window_after ?? "",
+      row.relative_to ?? "",
+      row.relative_offset_days ?? "",
+      row.arm_label ?? "",
+      row.period ?? "",
+      row.visit_type ?? "",
+      row.anchor_study_day ?? "",
+      row.includes_day_zero ?? "",
       row.activities,
       row.clinical_tasks,
       row.admin_tasks,
@@ -426,16 +624,14 @@ export default function VisitScheduleEditor() {
     router.replace({ pathname: "/(app)/clinical/trial-summary", params: { id } });
   };
 
-  const pendingCount = rows.filter((row) => (
-    row.extraction_warning || row.review_status === "pending"
-  )).length;
+  const pendingCount = rows.filter(rowNeedsReview).length;
   const visibleRows = rows
     .map((row, index) => ({ row, index }))
     .filter(({ row }) => (
       filter === "all"
       || (filter === "pending"
-        ? row.extraction_warning || row.review_status === "pending"
-        : !row.extraction_warning && row.review_status === "ok")
+        ? rowNeedsReview(row)
+        : !rowNeedsReview(row))
     ));
   const selectedRow = selectedIndex === null ? null : rows[selectedIndex];
   const isProtocolExtract = rows.some((row) => row.extracted_from_protocol);
@@ -588,13 +784,13 @@ export default function VisitScheduleEditor() {
               {editing && <View style={styles.orderCell} />}
               <Small weight="700" style={styles.numberCell}>#</Small>
               <Small weight="700" style={styles.nameCell}>Visit name</Small>
-              <Small weight="700" style={styles.dayCell}>Day</Small>
+              <Small weight="700" style={styles.dayCell}>Timing</Small>
               <Small weight="700" style={styles.windowCell}>Window</Small>
               {editing && <View style={styles.deleteCell} />}
             </View>
 
             {visibleRows.map(({ row, index }) => {
-              const warning = row.extraction_warning || row.review_status === "pending";
+              const warning = rowNeedsReview(row);
               return (
                 <Pressable
                   key={row.id ?? `new-${index}`}
@@ -640,8 +836,14 @@ export default function VisitScheduleEditor() {
                     <Body weight="700" numberOfLines={1}>{row.name || "Untitled visit"}</Body>
                     {!!row.comments && <MessageSquareText size={11} color={colors.mutedFg} />}
                   </View>
-                  <Small style={styles.dayCell}>{dayLabel(row.day_offset)}</Small>
-                  <Small style={styles.windowCell}>±{row.window_days || 0}</Small>
+                  <Small numberOfLines={2} style={styles.dayCell}>{timingForRow(row)}</Small>
+                  <Small style={styles.windowCell}>
+                    {formatVisitWindow({
+                      window_days: Number(row.window_days || 0),
+                      window_before: row.window_before,
+                      window_after: row.window_after,
+                    }, true)}
+                  </Small>
                   {editing && (
                     <View style={styles.deleteCell}>
                       <Pressable
@@ -767,7 +969,9 @@ function VisitDetailSheet({
   onDelete: (index: number) => void;
 }) {
   if (!row || index === null) return null;
-  const warning = row.extraction_warning || row.review_status === "pending";
+  const missingTiming = parseOptionalDayOffset(row.day_offset) === null
+    && !hasAbsoluteHourTiming(row);
+  const warning = rowNeedsReview(row);
   return (
     <Modal transparent visible animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetBackdrop}>
@@ -799,9 +1003,15 @@ function VisitDetailSheet({
                     <Body weight="700">Visit {index + 1} · {row.name}</Body>
                     <View style={styles.metaLine}>
                       <CalendarDays size={12} color={colors.mutedFg} />
-                      <Small>Day {dayLabel(row.day_offset)}</Small>
+                      <Small>{timingForRow(row)}</Small>
                       <Small>·</Small>
-                      <Small>Window ±{row.window_days || 0} days</Small>
+                      <Small>
+                        Window {formatVisitWindow({
+                          window_days: Number(row.window_days || 0),
+                          window_before: row.window_before,
+                          window_after: row.window_after,
+                        })}
+                      </Small>
                     </View>
                   </>
                 )}
@@ -826,12 +1036,25 @@ function VisitDetailSheet({
               )}
 
               {editing && (
-                <View style={styles.twoColumns}>
-                  <Field label="Day">
+                <>
+                  <Field label="Protocol timing label">
+                    <TextInput
+                      testID={`vsource-day-label-${index}`}
+                      value={row.source_day_label}
+                      onChangeText={(value) => onChange(index, "source_day_label", value)}
+                      placeholder="For example: Day 0, Week 4, Unscheduled"
+                      placeholderTextColor={colors.mutedFg}
+                      style={styles.input}
+                    />
+                  </Field>
+                  <View style={styles.twoColumns}>
+                  <Field label="Offset from baseline (days)">
                     <TextInput
                       testID={`vday-${index}`}
                       value={row.day_offset}
                       onChangeText={(value) => onChange(index, "day_offset", value)}
+                      placeholder="Leave blank if undated"
+                      placeholderTextColor={colors.mutedFg}
                       keyboardType="numbers-and-punctuation"
                       style={styles.input}
                     />
@@ -845,7 +1068,11 @@ function VisitDetailSheet({
                       style={styles.input}
                     />
                   </Field>
-                </View>
+                  </View>
+                  <Small color={colors.mutedFg} style={styles.offsetHelp}>
+                    0 is the baseline date. Use negative values before baseline and positive values after it.
+                  </Small>
+                </>
               )}
 
               <TaskField
@@ -905,6 +1132,16 @@ function VisitDetailSheet({
                   <Check size={15} color={colors.success} />
                   <Small color={colors.success} weight="700">Acknowledge warning</Small>
                 </Pressable>
+              )}
+              {missingTiming && (
+                <View style={styles.undatedNote}>
+                  <AlertTriangle size={15} color={colors.warning} />
+                  <Small color={colors.warning} style={styles.flex}>
+                    {warning
+                      ? "This visit has no computable baseline offset. Acknowledge it only when the protocol intentionally leaves the visit undated."
+                      : "This protocol visit intentionally has no fixed baseline date."}
+                  </Small>
+                </View>
               )}
             </ScrollView>
 
@@ -1024,8 +1261,8 @@ const styles = StyleSheet.create({
   orderButton: { width: 24, height: 19, alignItems: "center", justifyContent: "center" },
   numberCell: { width: 26, alignItems: "center", justifyContent: "center", textAlign: "center" },
   nameCell: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 5 },
-  dayCell: { width: 39, textAlign: "center" },
-  windowCell: { width: 50, textAlign: "center" },
+  dayCell: { width: 96, textAlign: "center", lineHeight: 15 },
+  windowCell: { width: 80, textAlign: "center" },
   deleteCell: { width: 29, alignItems: "center", justifyContent: "center" },
   deleteButton: { width: 29, height: 29, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.destructive + "0C" },
   emptyRows: { paddingHorizontal: 16, paddingVertical: 30, alignItems: "center" },
@@ -1058,6 +1295,7 @@ const styles = StyleSheet.create({
   sheetContent: { padding: 17, paddingBottom: 22, gap: 18 },
   warningBanner: { padding: 10, borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning + "35", backgroundColor: colors.warning + "10", flexDirection: "row", alignItems: "flex-start", gap: 7 },
   twoColumns: { flexDirection: "row", gap: 10 },
+  offsetHelp: { marginTop: -12, lineHeight: 17 },
   field: { flex: 1 },
   fieldLabel: { marginBottom: 5 },
   input: { minHeight: 42, paddingHorizontal: 11, paddingVertical: 9, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background, color: colors.foreground, fontFamily: fonts.regular, fontSize: 13 },
@@ -1070,6 +1308,7 @@ const styles = StyleSheet.create({
   commentInput: { minHeight: 72 },
   readComment: { padding: 11, borderRadius: radii.md, backgroundColor: colors.surface, lineHeight: 18 },
   acknowledgeButton: { minHeight: 42, borderRadius: radii.md, borderWidth: 1, borderColor: colors.success + "45", backgroundColor: colors.success + "10", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  undatedNote: { padding: 10, borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning + "35", backgroundColor: colors.warning + "10", flexDirection: "row", alignItems: "flex-start", gap: 7 },
   sheetFooter: { paddingHorizontal: 17, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border, flexDirection: "row", gap: 10 },
   sheetDelete: { flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.destructive + "35", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   sheetDone: { flex: 1, minHeight: 44, borderRadius: radii.md, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },

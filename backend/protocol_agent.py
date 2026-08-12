@@ -161,7 +161,8 @@ class ScheduleDocumentMap(BaseModel):
         description="Distinct arms, cohorts, periods, washouts, and extensions.")
     baseline_anchor: str = Field(
         default="",
-        description="The event treated as study Day 1/day offset zero.")
+        description="The event treated as calendar day_offset zero. Preserve whether "
+                    "the protocol labels that event Day 0 or Day 1.")
     ctri_number: str = ""
     official_title: str = ""
     phase: str = ""
@@ -212,7 +213,10 @@ pipeline. Do not construct the final schedule and do not extract activity matric
 Using the attached PDF and the supplied document map, collect every explicit visit day,
 week, month, hour, window, cycle length/count, repetition range, relative-time rule, and
 open-ended cadence. Search beyond the schedule table in dosing and treatment prose.
-Preserve conflicts and unknowns instead of guessing. Every fact must carry a page,
+Determine whether the baseline/randomization anchor is printed as Day 0 or Day 1 and
+whether the protocol includes Day 0. Preserve every exact Day/Week/Cycle/Hour label.
+Week 1 is ambiguous unless the protocol defines its relationship to the anchor; do not
+blindly convert it to seven days. Preserve conflicts and unknowns instead of guessing. Every fact must carry a page,
 section, table, footnote, or nearby-label citation. Return only the requested schema."""
 
 _VISIT_EVIDENCE_PROMPT = """You are the visit-matrix specialist in a decomposed
@@ -229,10 +233,15 @@ schedule pipeline. Build the complete schedule from the attached PDF and the thr
 page-cited evidence packets in the user message. The evidence guides you but the PDF is
 authoritative.
 
-Use absolute day offsets with Day 1 = 0; screening before baseline is negative. Preserve
+Preserve each exact timing string in source_day_label. Set anchor_study_day to 0 or 1 and
+includes_day_zero only when supported by the protocol. Derive simple Day D offsets using:
+anchor Day 0 -> D; anchor Day 1 with Day 0 -> D-1; anchor Day 1 without Day 0 -> D-1 for
+D>=1 and D for negative D. Day 0 is invalid in the no-Day-0 convention. Do not blindly
+convert Week 1 to seven days. Preserve
 real visits whose timing is unknown with a null day offset. Use relative_to and
 relative_offset_days for timing against another visit. Use hour offsets only for genuine
-intra-day schedules. Preserve asymmetric windows.
+intra-day schedules and set hour_offset_basis to absolute; Hour 26 is exactly 26 elapsed
+hours and must not also carry another 24-hour addition. Preserve asymmetric windows.
 
 For collapsed cycles, emit one repeating_blocks entry and let the server expand it; do
 not enumerate repeated cycles manually. Keep explicitly different Cycle 1 visits outside
@@ -439,12 +448,21 @@ def build_schedule_extraction_graph(generate: Generate):
             candidate = candidate.model_copy(update={
                 "assumptions": list(candidate.assumptions) + unresolved,
             })
-        result = expand_schedule(candidate).model_copy(update={
-            "verification_status": "verified" if audit.accepted else "needs_review",
+        expanded = expand_schedule(candidate)
+        deterministic_issues = list(expanded.verification_issues)
+        result = expanded.model_copy(update={
+            "verification_status": (
+                "verified" if audit.accepted
+                and expanded.verification_status != "needs_review"
+                else "needs_review"
+            ),
             "verification_confidence": audit.confidence,
             "verification_iterations": state.get("refinement_count", 0),
             "verification_issues": (
-                [issue.finding for issue in audit.issues] + stage_warnings),
+                deterministic_issues
+                + [issue.finding for issue in audit.issues]
+                + stage_warnings
+            ),
             "verification_scores": audit.accuracy_scores(),
         })
         return {"result": result}

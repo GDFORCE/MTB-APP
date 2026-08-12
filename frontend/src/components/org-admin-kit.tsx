@@ -85,7 +85,24 @@ export interface AuditEntry {
 export interface OrgSite { id: string; name: string; address?: string }
 
 export interface OrgSubject { subject: string; initials?: string; status?: string; enrolled_date?: string }
-export interface OrgVisit { visit_number?: number; name?: string; day_offset?: number; window_days?: number }
+export interface OrgVisit {
+  visit_number?: number;
+  name?: string;
+  day_offset?: number | null;
+  day_end?: number | null;
+  hour_offset?: number | null;
+  hour_end?: number | null;
+  hour_offset_basis?: "absolute" | "within_day" | null;
+  relative_to?: string | null;
+  relative_offset_days?: number | null;
+  source_day_label?: string | null;
+  source_timing_label?: string | null;
+  anchor_study_day?: 0 | 1 | null;
+  includes_day_zero?: boolean | null;
+  window_days?: number;
+  window_before?: number | null;
+  window_after?: number | null;
+}
 export interface OrgTrial {
   id: string;
   title?: string;

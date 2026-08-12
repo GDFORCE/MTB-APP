@@ -8,6 +8,7 @@ import { Eyebrow, H1, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { animateNextLayout } from "@/src/lib/motion";
+import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 
 type VisitTask = {
   id: string;
@@ -32,6 +33,14 @@ type Instance = {
   seq: number;
   visit_number?: number;
   scheduled_date: string;
+  day_offset?: number | null;
+  day_end?: number | null;
+  hour_offset?: number | null;
+  hour_end?: number | null;
+  hour_offset_basis?: "absolute" | "within_day" | null;
+  source_day_label?: string | null;
+  relative_to?: string | null;
+  relative_offset_days?: number | null;
   status: string;
   note?: string;
   clinical_tasks?: VisitTask[];
@@ -50,12 +59,14 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "completed", label: "Completed" },
 ];
 
-function fmtDate(iso?: string | null): string {
+function fmtInstantDate(iso?: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
+
+const fmtScheduleDate = (iso?: string | null) => formatIsoCalendarDate(iso, "—");
 
 function pillFor(status: string): { label: string; bg: string; fg: string } {
   switch (status) {
@@ -269,11 +280,13 @@ export default function ClinicalVisitDetail() {
   const completedVisits = visits.filter(v => v.status === "completed").slice().reverse();
   const windowLabel = (date?: string) => {
     if (!date) return "—";
-    const base = new Date(date);
+    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/);
+    if (!match) return "—";
+    const base = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
     if (Number.isNaN(base.getTime())) return "—";
-    const start = new Date(base); start.setDate(start.getDate() - 3);
-    const end = new Date(base); end.setDate(end.getDate() + 3);
-    const fmt = (value: Date) => value.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+    const start = new Date(base); start.setUTCDate(start.getUTCDate() - 3);
+    const end = new Date(base); end.setUTCDate(end.getUTCDate() + 3);
+    const fmt = (value: Date) => formatIsoCalendarDate(value.toISOString(), "—");
     return `${fmt(start)} – ${fmt(end)}`;
   };
   const recordStatus = pillFor(currentVisit?.status || "completed");
@@ -286,8 +299,8 @@ export default function ClinicalVisitDetail() {
           <View style={s.finalHeroTop}><View style={s.finalIdentity}><View style={s.finalAvatar}><Body weight="700" color={colors.primaryFg}>{patient.avatar_initials || (patient.full_name || "?").slice(0, 2).toUpperCase()}</Body></View><View><Body weight="700" color={colors.primaryFg}>{patient.avatar_initials || "Participant"}</Body><Small color={colors.overlay25}>{patient.subject_id || `SUBJ-${String(patient.id).slice(-3)}`}{patient.age ? ` · Age ${patient.age}` : ""}</Small></View></View><View style={s.finalStatus}><Small color={colors.primaryFg} weight="700">{recordStatus.label}</Small></View></View>
           <View style={s.finalGrid}>{[
             { label: "PROTOCOL", value: trial?.protocol_id || "—" }, { label: "SITE", value: trial?.site_names?.[0] || patient.site_name || "—" },
-            { label: "CURRENT VISIT", value: currentVisit ? `Visit ${currentVisit.seq ?? currentVisit.visit_number ?? "—"}` : "—" }, { label: "VISIT DATE", value: fmtDate(currentVisit?.scheduled_date) },
-            { label: "VISIT COMPLETED", value: currentVisit?.status === "completed" ? "Yes" : "No" }, { label: "LAST UPDATED", value: currentVisit?.completed_at ? fmtDate(currentVisit.completed_at) : "—" },
+            { label: "CURRENT VISIT", value: currentVisit ? `Visit ${currentVisit.seq ?? currentVisit.visit_number ?? "—"}` : "—" }, { label: "VISIT DATE", value: fmtScheduleDate(currentVisit?.scheduled_date) },
+            { label: "VISIT COMPLETED", value: currentVisit?.status === "completed" ? "Yes" : "No" }, { label: "LAST UPDATED", value: currentVisit?.completed_at ? fmtInstantDate(currentVisit.completed_at) : "—" },
           ].map(field => <View key={field.label} style={s.finalField}><Eyebrow color={colors.overlay25} style={s.finalLabel}>{field.label}</Eyebrow><Small color={colors.primaryFg} weight="700" numberOfLines={1} style={s.finalValue}>{field.value}</Small></View>)}</View>
         </LinearGradient>
 
@@ -302,12 +315,12 @@ export default function ClinicalVisitDetail() {
               const done = visit.status === "completed";
               const overdue = visit.status === "overdue";
               const tasks = [...(visit.clinical_tasks || []), ...(visit.admin_tasks || [])];
-              return <View key={visit.id} style={index ? s.scheduleDivider : undefined}><Pressable onPress={() => setExpandedScheduleVisit(expanded ? null : visit.id)} style={[s.scheduleRow, expanded && s.scheduleRowOpen]}><View style={s.scheduleVisitCell}>{done ? <CheckCircle2 size={14} color={colors.success} /> : overdue ? <Clock3 size={14} color={colors.destructive} /> : <CalIcon size={13} color={colors.mutedFg} />}<Small weight="700">Visit {visit.seq ?? visit.visit_number ?? "—"}</Small></View><Small numberOfLines={2} style={{ flex: 1.15 }}>{visit.name || "Visit"}</Small><View style={s.scheduleWindow}><Small numberOfLines={1}>{windowLabel(visit.scheduled_date)}</Small><ChevronDown size={13} color={colors.mutedFg} style={{ transform: [{ rotate: expanded ? "180deg" : "0deg" }] }} /></View></Pressable>{expanded && <View style={s.activities}><Eyebrow style={{ marginBottom: 6 }}>{done ? "ACTIVITIES COMPLETED" : "PLANNED ACTIVITIES"}</Eyebrow>{tasks.length ? <View style={s.activitiesGrid}>{tasks.map(task => <View key={task.id} style={s.activity}><CheckCircle2 size={12} color={task.completed ? colors.success : colors.mutedFg} /><Small numberOfLines={1}>{task.label}</Small></View>)}</View> : <Small>No activities listed.</Small>}</View>}</View>;
+              return <View key={visit.id} style={index ? s.scheduleDivider : undefined}><Pressable onPress={() => setExpandedScheduleVisit(expanded ? null : visit.id)} style={[s.scheduleRow, expanded && s.scheduleRowOpen]}><View style={s.scheduleVisitCell}>{done ? <CheckCircle2 size={14} color={colors.success} /> : overdue ? <Clock3 size={14} color={colors.destructive} /> : <CalIcon size={13} color={colors.mutedFg} />}<Small weight="700">Visit {visit.seq ?? visit.visit_number ?? "—"}</Small></View><View style={{ flex: 1.15 }}><Small numberOfLines={1}>{visit.name || "Visit"}</Small><Small color={colors.mutedFg} numberOfLines={1}>{formatVisitTiming(visit)}</Small></View><View style={s.scheduleWindow}><Small numberOfLines={1}>{windowLabel(visit.scheduled_date)}</Small><ChevronDown size={13} color={colors.mutedFg} style={{ transform: [{ rotate: expanded ? "180deg" : "0deg" }] }} /></View></Pressable>{expanded && <View style={s.activities}><Eyebrow style={{ marginBottom: 6 }}>{done ? "ACTIVITIES COMPLETED" : "PLANNED ACTIVITIES"}</Eyebrow>{tasks.length ? <View style={s.activitiesGrid}>{tasks.map(task => <View key={task.id} style={s.activity}><CheckCircle2 size={12} color={task.completed ? colors.success : colors.mutedFg} /><Small numberOfLines={1}>{task.label}</Small></View>)}</View> : <Small>No activities listed.</Small>}</View>}</View>;
             })}
           </View>}
         </View>
 
-        <View><View style={s.finalScheduleHead}><Eyebrow>VISIT HISTORY</Eyebrow><Small>{completedVisits.length} completed</Small></View><Card style={s.historyCard}>{completedVisits.length ? <View style={s.historyLine}>{completedVisits.map(visit => <View key={visit.id} style={s.historyItem}><View style={s.historyIcon}><CheckCircle2 size={14} color={colors.success} /></View><View style={{ flex: 1 }}><View style={s.historyTop}><Small weight="700">Visit {visit.seq ?? visit.visit_number ?? "—"}</Small><View style={s.historyDone}><Small color={colors.success} weight="700">Completed</Small></View></View><Small>{visit.name || "Visit"}</Small><Small>{fmtDate(visit.scheduled_date)}</Small>{visit.note ? <Small style={s.historyNote}>“{visit.note}”</Small> : null}</View></View>)}</View> : <Small>No visits recorded yet.</Small>}</Card></View>
+        <View><View style={s.finalScheduleHead}><Eyebrow>VISIT HISTORY</Eyebrow><Small>{completedVisits.length} completed</Small></View><Card style={s.historyCard}>{completedVisits.length ? <View style={s.historyLine}>{completedVisits.map(visit => <View key={visit.id} style={s.historyItem}><View style={s.historyIcon}><CheckCircle2 size={14} color={colors.success} /></View><View style={{ flex: 1 }}><View style={s.historyTop}><Small weight="700">Visit {visit.seq ?? visit.visit_number ?? "—"}</Small><View style={s.historyDone}><Small color={colors.success} weight="700">Completed</Small></View></View><Small>{visit.name || "Visit"}</Small><Small>{fmtScheduleDate(visit.scheduled_date)}</Small>{visit.note ? <Small style={s.historyNote}>“{visit.note}”</Small> : null}</View></View>)}</View> : <Small>No visits recorded yet.</Small>}</Card></View>
 
         <Button testID="patient-record-update" variant="dawn" disabled={!currentVisit} onPress={() => currentVisit && openSheet(currentVisit)}><Small color={colors.primaryFg} weight="700">Update Visit</Small></Button>
 
@@ -317,7 +330,7 @@ export default function ClinicalVisitDetail() {
             <View style={s.avatar}><Body weight="700" color={colors.primary} style={{ fontSize: 22 }}>{patient.avatar_initials || (patient.full_name || "?").slice(0, 2).toUpperCase()}</Body></View>
             <View style={{ flex: 1 }}>
               <H1 color={colors.primaryFg} style={{ fontSize: 18 }}>{patient.full_name}</H1>
-              <Small color={colors.overlay25}>{trial?.protocol_id || "—"} · Enrolled {fmtDate(patient.enrolled_date)}</Small>
+              <Small color={colors.overlay25}>{trial?.protocol_id || "—"} · Enrolled {fmtScheduleDate(patient.enrolled_date)}</Small>
             </View>
           </View>
           <View style={{ flexDirection: "row", gap: 8, marginTop: spacing.md }}>
@@ -348,8 +361,8 @@ export default function ClinicalVisitDetail() {
           <View style={s.recordGrid}>{[
             { label: "PROTOCOL", value: trial?.protocol_id || "—" }, { label: "SITE", value: trial?.site_names?.[0] || patient.site_name || "—" },
             { label: "CURRENT VISIT", value: (() => { const v = visits.find(x => x.status === "overdue") || visits.find(x => x.status !== "completed"); return `Visit ${v?.seq ?? v?.visit_number ?? "—"}`; })() },
-            { label: "VISIT DATE", value: fmtDate((visits.find(x => x.status === "overdue") || visits.find(x => x.status !== "completed"))?.scheduled_date) },
-            { label: "VISIT COMPLETED", value: visits.some(v => v.status !== "completed") ? "No" : "Yes" }, { label: "LAST UPDATED", value: fmtDate(patient.updated_at || patient.enrolled_date) },
+            { label: "VISIT DATE", value: fmtScheduleDate((visits.find(x => x.status === "overdue") || visits.find(x => x.status !== "completed"))?.scheduled_date) },
+            { label: "VISIT COMPLETED", value: visits.some(v => v.status !== "completed") ? "No" : "Yes" }, { label: "LAST UPDATED", value: patient.updated_at ? fmtInstantDate(patient.updated_at) : fmtScheduleDate(patient.enrolled_date) },
           ].map(field => <View key={field.label} style={{ width: "50%", paddingRight: 8 }}><Eyebrow style={s.recordLabel}>{field.label}</Eyebrow><Small numberOfLines={1} weight="700" style={s.recordValue}>{field.value}</Small></View>)}</View>
         </Card>
 
@@ -365,7 +378,7 @@ export default function ClinicalVisitDetail() {
           <Eyebrow style={{ marginBottom: spacing.sm }}>CONTACT INFO</Eyebrow>
           <Row label="Email" value={patient.email || "—"} />
           <Row label="Phone" value={patient.phone || "—"} />
-          <Row label="Enrolled" value={fmtDate(patient.enrolled_date)} last />
+          <Row label="Enrolled" value={fmtScheduleDate(patient.enrolled_date)} last />
         </Card>
 
         <View>
@@ -388,7 +401,7 @@ export default function ClinicalVisitDetail() {
                   <View style={{ flex: 1 }}>
                     <Body weight="700">Visit {seq} · {v.name}</Body>
                     <View style={{ flexDirection: "row", gap: 4, alignItems: "center", marginTop: 2 }}>
-                      <CalIcon size={11} color={colors.mutedFg} /><Small>{fmtDate(v.scheduled_date)}</Small>
+                      <CalIcon size={11} color={colors.mutedFg} /><Small>{fmtScheduleDate(v.scheduled_date)} · {formatVisitTiming(v)}</Small>
                     </View>
                   </View>
                   <View style={[s.pill, { backgroundColor: pill.bg }]}>
@@ -508,7 +521,7 @@ export default function ClinicalVisitDetail() {
                     <View key={row.id} style={s.commentCard}>
                       <Small color={colors.foreground}>{row.text}</Small>
                       <Small style={{ marginTop: 5 }}>
-                        {row.created_by_name || "Study team"} · {fmtDate(row.created_at)}
+                        {row.created_by_name || "Study team"} · {fmtInstantDate(row.created_at)}
                       </Small>
                     </View>
                   ))}
@@ -618,7 +631,7 @@ function VisitTaskGroup({
                   {task.completed && (
                     <Small style={{ marginTop: 2 }}>
                       Completed{task.completed_by_name ? ` by ${task.completed_by_name}` : ""}
-                      {task.completed_at ? ` · ${fmtDate(task.completed_at)}` : ""}
+                      {task.completed_at ? ` · ${fmtInstantDate(task.completed_at)}` : ""}
                     </Small>
                   )}
                 </View>

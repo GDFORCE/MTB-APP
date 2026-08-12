@@ -317,15 +317,24 @@ class VisitIn(BaseModel):
     trial_id: str
     visit_number: int
     name: str
-    day_offset: int
+    day_offset: Optional[int] = None
+    day_end: Optional[int] = None
     window_days: int = Field(default=3, ge=0)
     # Keep protocol timing semantics instead of flattening every visit to a
     # symmetric, whole-day baseline offset.
-    hour_offset: float = 0
+    hour_offset: Optional[float] = None
+    hour_offset_basis: Optional[Literal['absolute', 'within_day']] = None
+    hour_end: Optional[float] = None
     window_before: Optional[int] = Field(default=None, ge=0)
     window_after: Optional[int] = Field(default=None, ge=0)
     arm_label: Optional[str] = ''
+    arm: Optional[str] = None
     source_day_label: Optional[str] = ''
+    anchor_study_day: Optional[Literal[0, 1]] = None
+    includes_day_zero: Optional[bool] = None
+    relative_to: Optional[str] = None
+    relative_offset_days: Optional[int] = None
+    period: Optional[str] = None
     activities: List[str] = []
     procedures: List[Dict] = Field(default_factory=list)
     visit_type: Optional[str] = ''
@@ -347,12 +356,21 @@ class VisitUpdate(BaseModel):
     name: Optional[str] = None
     visit_number: Optional[int] = None
     day_offset: Optional[int] = None
+    day_end: Optional[int] = None
     window_days: Optional[int] = Field(default=None, ge=0)
     hour_offset: Optional[float] = None
+    hour_offset_basis: Optional[Literal['absolute', 'within_day']] = None
+    hour_end: Optional[float] = None
     window_before: Optional[int] = Field(default=None, ge=0)
     window_after: Optional[int] = Field(default=None, ge=0)
     arm_label: Optional[str] = None
+    arm: Optional[str] = None
     source_day_label: Optional[str] = None
+    anchor_study_day: Optional[Literal[0, 1]] = None
+    includes_day_zero: Optional[bool] = None
+    relative_to: Optional[str] = None
+    relative_offset_days: Optional[int] = None
+    period: Optional[str] = None
     activities: Optional[List[str]] = None
     procedures: Optional[List[Dict]] = None
     visit_type: Optional[str] = None
@@ -3122,9 +3140,15 @@ def _schedule_extraction_payload(schedule: pe.ExtractedSchedule) -> dict:
     global_warning = schedule.verification_status == 'needs_review'
     for visit in schedule.visits:
         row = visit.model_dump()
-        # Undated ET/Unscheduled visits remain visible but require review.
-        warning = global_warning or row.get('day_offset') is None
-        row['day_offset'] = row.get('day_offset') or 0
+        # Undated ET/Unscheduled visits remain visible but require review. An
+        # explicitly absolute hour is independently calculable even when its
+        # day offset is null (including Hour 0).
+        warning = global_warning or not _has_calculable_template_time(row)
+        # Never turn an unknown day into baseline. The editor can retain the
+        # row as manual-review/undated and save that state explicitly.
+        row['anchor_study_day'] = schedule.anchor_study_day
+        row['includes_day_zero'] = schedule.includes_day_zero
+        row['arm_label'] = row.get('arm') or ''
         row['clinical_tasks'] = row.get('activities') or []
         row['admin_tasks'] = []
         row['comments'] = ''
@@ -3136,6 +3160,8 @@ def _schedule_extraction_payload(schedule: pe.ExtractedSchedule) -> dict:
         'visits': visits,
         'assumptions': schedule.assumptions,
         'schedule_kind': schedule.schedule_kind,
+        'anchor_study_day': schedule.anchor_study_day,
+        'includes_day_zero': schedule.includes_day_zero,
         'source_notes': schedule.source_notes,
         'verification': {
             'status': schedule.verification_status,
@@ -3251,13 +3277,34 @@ async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro
     if not await _can_access_trial(user, trial):
         raise HTTPException(403, 'You do not have access to this trial')
     vid = str(uuid.uuid4())
-    doc = {'id': vid, **body.dict(), 'created_at': now()}
+    values = body.model_dump()
+    if values.get('arm') and not values.get('arm_label'):
+        values['arm_label'] = values['arm']
+    values, timing_warning = _normalized_template_timing(values)
+    explicitly_acknowledged = (
+        values.get('review_status') == 'ok'
+        and values.get('extraction_warning') is False
+    )
+    if timing_warning or (
+        not _has_calculable_template_time(values) and not explicitly_acknowledged
+    ):
+        values['extraction_warning'] = True
+        values['review_status'] = 'pending'
+        existing = str(values.get('comments') or '').strip()
+        reason = timing_warning or 'Visit has no calculable day offset.'
+        values['comments'] = ' '.join(part for part in (existing, reason) if part)
+    doc = {'id': vid, **values, 'created_at': now()}
     await db.visits.insert_one(doc)
     # Finding 2: a visit ADDED to an in-flight schedule must appear for patients
     # already enrolled (materialize_visit_instances is a per-patient no-op once
     # they have instances, so it would never reach them otherwise).
     await _materialize_new_template_for_enrolled(doc)
-    return serialize(doc)
+    # A newly-added target may resolve existing dependents; a newly-added
+    # relative visit may itself become dated. The recomputation re-materializes
+    # the already-created instance in place, so no duplicate is created.
+    await _recompute_relative_templates(body.trial_id)
+    current = await db.visits.find_one({'id': vid}, {'_id': 0})
+    return serialize(current or doc)
 
 
 @api.post('/trials/{trial_id}/schedule-preview')
@@ -3327,18 +3374,43 @@ async def update_visit(visit_id: str, body: VisitUpdate,
     if not trial:
         raise HTTPException(404, 'Trial not found')
     await _require_schedule_owner(user, trial)
-    fields = {k: v for k, v in body.dict().items() if v is not None}
+    # ``exclude_unset`` distinguishes "not edited" from an explicit null. That
+    # lets a reviewer safely mark a visit undated instead of retaining a stale
+    # offset from an earlier extraction.
+    fields = body.model_dump(exclude_unset=True)
+    if fields.get('arm') and not fields.get('arm_label'):
+        fields['arm_label'] = fields['arm']
+    candidate, timing_warning = _normalized_template_timing({**tpl, **fields})
+    if candidate.get('day_offset') != tpl.get('day_offset') or 'day_offset' in fields:
+        fields['day_offset'] = candidate.get('day_offset')
+    if candidate.get('day_end') != tpl.get('day_end') or 'day_end' in fields:
+        fields['day_end'] = candidate.get('day_end')
+    explicitly_acknowledged = (
+        fields.get('review_status') == 'ok'
+        and fields.get('extraction_warning') is False
+    )
+    if timing_warning or (
+        not _has_calculable_template_time(candidate) and not explicitly_acknowledged
+    ):
+        fields['extraction_warning'] = True
+        fields['review_status'] = 'pending'
+        existing = str(candidate.get('comments') or '').strip()
+        reason = timing_warning or 'Visit has no calculable day offset.'
+        fields['comments'] = ' '.join(part for part in (existing, reason) if part)
     if not fields:
         raise HTTPException(400, 'Nothing to update')
     await db.visits.update_one({'id': visit_id}, {'$set': fields})
     fresh = await db.visits.find_one({'id': visit_id}, {'_id': 0})
     remat = await _rematerialize_template_change(fresh)
+    relative_updates = await _recompute_relative_templates(fresh['trial_id'])
+    current = await db.visits.find_one({'id': visit_id}, {'_id': 0}) or fresh
     await write_audit(user, 'visit.update',
                       f"Updated visit template {fresh.get('name', '')} "
-                      f"({remat} future instance(s) re-materialized)",
+                      f"({remat} future instance(s) re-materialized; "
+                      f"{relative_updates} relative template(s) recalculated)",
                       target_id=visit_id, trial_id=tpl.get('trial_id'),
                       changes={k: iso(v) for k, v in fields.items()})
-    return serialize(fresh)
+    return serialize(current)
 
 
 @api.delete('/visits/{visit_id}')
@@ -3355,11 +3427,17 @@ async def delete_visit(visit_id: str,
     await _require_schedule_owner(user, trial)
     removed = await _rematerialize_template_delete(tpl)
     await db.visits.delete_one({'id': visit_id})
+    relative_updates = await _recompute_relative_templates(tpl['trial_id'])
     await write_audit(user, 'visit.delete',
                       f"Deleted visit template {tpl.get('name', '')} "
-                      f"({removed} future instance(s) removed)",
+                      f"({removed} future instance(s) removed; "
+                      f"{relative_updates} relative template(s) recalculated)",
                       target_id=visit_id, trial_id=tpl.get('trial_id'))
-    return {'deleted': True, 'instances_removed': removed}
+    return {
+        'deleted': True,
+        'instances_removed': removed,
+        'relative_templates_recalculated': relative_updates,
+    }
 
 async def _patient_care_context(patient) -> dict:
     """Site + PI contact for a patient, joined from their assigned PI user.
@@ -3508,16 +3586,30 @@ async def my_visits(user=Depends(current_user)):
     visits = await db.visits.find({'trial_id': patient['trial_id']}, {'_id': 0}).sort('visit_number', 1).to_list(200)
     completed = set(patient.get('completed_visit_ids', []))
     result = []
-    base_date = datetime.fromisoformat(patient.get('enrolled_date') or now().isoformat().replace('Z', '+00:00').replace('+00:00', ''))
+    base_date = _patient_visit_anchor(patient)
     for v in visits:
-        scheduled = base_date + timedelta(days=v['day_offset'])
+        try:
+            scheduled = _calculate_template_datetime(base_date, v)
+            scheduled_end = _calculate_template_end_datetime(base_date, v, scheduled)
+            window_start, window_end = _schedule_window(v, scheduled)
+            operational_status = 'completed' if v['id'] in completed else 'planned'
+            manual_review_reason = ''
+        except (TypeError, ValueError) as exc:
+            scheduled = scheduled_end = window_start = window_end = None
+            operational_status = (
+                'completed' if v['id'] in completed else 'manual_review')
+            manual_review_reason = str(exc)
         result.append({
             **v, **care,
             'patient_id': patient['id'],
-            'scheduled_date': scheduled.isoformat(),
+            'scheduled_date': iso(scheduled),
+            'scheduled_end': iso(scheduled_end),
+            'window_start': iso(window_start),
+            'window_end': iso(window_end),
             'checklist': v.get('checklist') or [],
-            'status': 'completed' if v['id'] in completed else 'planned',
-            'operational_status': 'completed' if v['id'] in completed else 'planned',
+            'status': operational_status,
+            'operational_status': operational_status,
+            'manual_review_reason': manual_review_reason,
         })
     return result
 
@@ -3591,13 +3683,96 @@ def _schedule_window(template: dict, scheduled: datetime) -> tuple[datetime, dat
     return scheduled - timedelta(days=before_days), scheduled + timedelta(days=after_days)
 
 
+def _normalized_template_timing(template: dict) -> tuple[dict, Optional[str]]:
+    """Apply deterministic simple-Day conversion without mutating the caller.
+
+    Historical rows have no complete numbering convention and pass through
+    unchanged. Newly extracted rows with an exact ``Day N`` label are corrected
+    from that evidence before persistence or date calculation.
+    """
+    normalized = dict(template)
+    try:
+        derived = pe.simple_day_label_offset(
+            normalized.get('source_day_label'),
+            anchor_study_day=normalized.get('anchor_study_day'),
+            includes_day_zero=normalized.get('includes_day_zero'),
+        )
+        derived_range = pe.simple_day_label_range_offsets(
+            normalized.get('source_day_label'),
+            anchor_study_day=normalized.get('anchor_study_day'),
+            includes_day_zero=normalized.get('includes_day_zero'),
+        )
+    except ValueError as exc:
+        normalized['day_offset'] = None
+        normalized['day_end'] = None
+        return normalized, str(exc)
+    if derived_range is not None:
+        start, end = derived_range
+        previous = (normalized.get('day_offset'), normalized.get('day_end'))
+        normalized['day_offset'], normalized['day_end'] = start, end
+        if previous[0] not in (None, start) or previous[1] not in (None, end):
+            return normalized, (
+                f"Corrected day range {previous} to ({start}, {end}) from "
+                f"{normalized.get('source_day_label')}")
+        return normalized, None
+    if derived is None:
+        return normalized, None
+    previous = normalized.get('day_offset')
+    normalized['day_offset'] = derived
+    warning = None
+    if previous is not None and previous != derived:
+        warning = (
+            f"Corrected day_offset {previous} to {derived} from "
+            f"{normalized.get('source_day_label')}")
+    return normalized, warning
+
+
+def _has_calculable_template_time(template: dict) -> bool:
+    """Whether a template can produce a date without guessing baseline."""
+    if template.get('day_offset') is not None:
+        return True
+    hour = template.get('hour_offset')
+    if hour is None:
+        return False
+    return template.get('hour_offset_basis') == 'absolute'
+
+
 def _calculate_template_datetime(anchor: datetime, template: dict) -> datetime:
-    """Day 1 is offset 0; Day -1 is exactly one day before baseline."""
-    offset = template.get('day_offset')
-    if offset is None:
+    """Calculate from the canonical offset and explicit hour interpretation."""
+    normalized, numbering_warning = _normalized_template_timing(template)
+    if numbering_warning and normalized.get('day_offset') is None:
+        raise ValueError(numbering_warning)
+    offset = normalized.get('day_offset')
+    hour = normalized.get('hour_offset')
+    basis = normalized.get('hour_offset_basis')
+    if offset is None and basis != 'absolute':
         raise ValueError('Visit has no calculable day offset')
-    hours = float(template.get('hour_offset', 0) or 0)
-    return anchor + timedelta(days=int(offset), hours=hours)
+    elapsed = pe.canonical_elapsed_time(
+        int(offset) if offset is not None else None,
+        normalized.get('hour_offset'),
+        normalized.get('hour_offset_basis'),
+    )
+    return anchor + elapsed
+
+
+def _calculate_template_end_datetime(
+    anchor: datetime, template: dict, scheduled: Optional[datetime],
+) -> Optional[datetime]:
+    """Calculate an optional multi-day/hour-range end from the same anchor."""
+    normalized, numbering_warning = _normalized_template_timing(template)
+    if numbering_warning and normalized.get('day_offset') is None:
+        raise ValueError(numbering_warning)
+    if normalized.get('hour_end') is not None:
+        end = anchor + pe.canonical_elapsed_time(
+            normalized.get('day_offset'), normalized.get('hour_end'),
+            normalized.get('hour_offset_basis'))
+    elif normalized.get('day_end') is not None:
+        end = anchor + timedelta(days=int(normalized['day_end']))
+    else:
+        return None
+    if scheduled is not None and end < scheduled:
+        raise ValueError('Visit end cannot be before its scheduled start')
+    return end
 
 
 def _template_matches_arm(template: dict, arm_label: Optional[str]) -> bool:
@@ -3614,24 +3789,140 @@ def _build_schedule_preview(templates: List[dict], baseline: datetime, arm_label
             continue
         try:
             scheduled = _calculate_template_datetime(baseline, template)
+            scheduled_end = _calculate_template_end_datetime(
+                baseline, template, scheduled)
             window_start, window_end = _schedule_window(template, scheduled)
             status = 'planned'
             warning = ''
         except (TypeError, ValueError) as exc:
-            scheduled = window_start = window_end = None
+            scheduled = scheduled_end = window_start = window_end = None
             status = 'manual_review'
             warning = str(exc)
         rows.append({
             'visit_template_id': template.get('id'),
             'visit_number': template.get('visit_number'),
             'name': template.get('name') or 'Visit',
+            'source_day_label': template.get('source_day_label') or '',
+            'day_offset': template.get('day_offset'),
+            'day_end': template.get('day_end'),
+            'hour_offset': template.get('hour_offset'),
+            'hour_offset_basis': template.get('hour_offset_basis'),
+            'hour_end': template.get('hour_end'),
+            'relative_to': template.get('relative_to'),
+            'relative_offset_days': template.get('relative_offset_days'),
+            'period': template.get('period'),
+            'arm_label': template.get('arm_label') or template.get('arm') or '',
             'scheduled_date': iso(scheduled),
+            'scheduled_end': iso(scheduled_end),
             'window_start': iso(window_start),
             'window_end': iso(window_end),
             'status': status,
             'manual_review_reason': warning,
         })
     return rows
+
+
+def _resolve_relative_template_offsets(templates: List[dict]) -> List[dict]:
+    """Recompute persisted relative visits to a fixed point.
+
+    A target edit or rename must never leave a dependent visit carrying a stale
+    absolute offset. Resolution is arm/period scoped; ambiguous, missing, and
+    circular targets become explicitly undated/manual-review rows.
+    """
+    rows = [dict(template) for template in templates]
+    by_name: Dict[str, List[dict]] = {}
+    for row in rows:
+        by_name.setdefault(str(row.get('name') or '').strip().lower(), []).append(row)
+
+    pending = []
+    for row in rows:
+        if row.get('relative_to') and row.get('relative_offset_days') is not None:
+            row['_previous_day_offset'] = row.get('day_offset')
+            row['_previous_day_end'] = row.get('day_end')
+            row['day_offset'] = None
+            row['day_end'] = None
+            pending.append(row)
+        else:
+            normalized, _ = _normalized_template_timing(row)
+            row.update({
+                'day_offset': normalized.get('day_offset'),
+                'day_end': normalized.get('day_end'),
+            })
+
+    for _ in range(len(pending) + 1):
+        progressed = False
+        for row in list(pending):
+            matches = by_name.get(
+                str(row.get('relative_to') or '').strip().lower(), [])
+            scoped = [candidate for candidate in matches if
+                      (candidate.get('arm_label') or candidate.get('arm') or '') ==
+                      (row.get('arm_label') or row.get('arm') or '') and
+                      (candidate.get('period') or '') == (row.get('period') or '')]
+            target = scoped[0] if len(scoped) == 1 else (
+                matches[0] if len(matches) == 1 else None)
+            if target is None or target.get('day_offset') is None:
+                continue
+            new_start = int(target['day_offset']) + int(row['relative_offset_days'])
+            old_start = row.pop('_previous_day_offset', None)
+            old_end = row.pop('_previous_day_end', None)
+            row['day_offset'] = new_start
+            if old_start is not None and old_end is not None:
+                row['day_end'] = new_start + int(old_end) - int(old_start)
+            pending.remove(row)
+            progressed = True
+        if not pending or not progressed:
+            break
+
+    for row in rows:
+        if row in pending:
+            row['_relative_resolution_warning'] = (
+                f"Relative target '{row.get('relative_to')}' is missing, ambiguous, "
+                "or undated for this arm/period.")
+        row.pop('_previous_day_offset', None)
+        row.pop('_previous_day_end', None)
+    return rows
+
+
+async def _recompute_relative_templates(trial_id: str) -> int:
+    """Persist and re-materialize relative visits affected by a template edit."""
+    templates = await db.visits.find(
+        {'trial_id': trial_id}, {'_id': 0}).sort('visit_number', 1).to_list(500)
+    resolved = _resolve_relative_template_offsets(templates)
+    changed = 0
+    originals = {row.get('id'): row for row in templates}
+    for row in resolved:
+        original = originals.get(row.get('id')) or {}
+        warning = row.pop('_relative_resolution_warning', None)
+        updates = {}
+        for field in ('day_offset', 'day_end'):
+            if row.get(field) != original.get(field):
+                updates[field] = row.get(field)
+        if warning:
+            updates.update({
+                'extraction_warning': True,
+                'review_status': 'pending',
+            })
+        if not updates:
+            continue
+        await db.visits.update_one({'id': row['id']}, {'$set': updates})
+        fresh = {**original, **updates}
+        await _rematerialize_template_change(fresh)
+        changed += 1
+    return changed
+
+
+_VISIT_TIMING_FIELDS = (
+    'day_offset', 'day_end', 'hour_offset', 'hour_offset_basis', 'hour_end',
+    'source_day_label', 'anchor_study_day', 'includes_day_zero', 'relative_to',
+    'relative_offset_days', 'period', 'arm_label', 'arm', 'window_before',
+    'window_after',
+)
+
+
+def _visit_timing_snapshot(template: dict) -> dict:
+    """Copy additive protocol timing evidence onto a patient visit instance."""
+    return {field: template.get(field) for field in _VISIT_TIMING_FIELDS
+            if field in template}
 
 
 def _visit_task_snapshot(template: dict, kind: str, tasks: list) -> list:
@@ -3741,11 +4032,12 @@ async def materialize_visit_instances(patient) -> int:
     for t in templates:
         try:
             sched = _calculate_template_datetime(base, t)
+            scheduled_end = _calculate_template_end_datetime(base, t, sched)
             window_start, window_end = _schedule_window(t, sched)
             operational_status = 'planned'
             manual_review_reason = ''
         except (TypeError, ValueError) as exc:
-            sched = window_start = window_end = None
+            sched = scheduled_end = window_start = window_end = None
             operational_status = 'manual_review'
             manual_review_reason = str(exc)
         wd = t.get('window_days', 3)
@@ -3765,7 +4057,9 @@ async def materialize_visit_instances(patient) -> int:
             'visit_type': t.get('visit_type', ''),
             'location': t.get('location', ''),
             'window_days': wd,
+            **_visit_timing_snapshot(t),
             'scheduled_date': sched,
+            'scheduled_end': scheduled_end,
             'window_start': window_start,
             'window_end': window_end,
             # Never infer completion or a missed visit just because time passed.
@@ -3810,7 +4104,16 @@ async def _materialize_new_template_for_enrolled(template) -> int:
                 {'patient_id': patient['id'], 'visit_template_id': template['id']}, limit=1):
             continue
         base = _patient_visit_anchor(patient)
-        sched = base + timedelta(days=template.get('day_offset', 0))
+        try:
+            sched = _calculate_template_datetime(base, template)
+            scheduled_end = _calculate_template_end_datetime(base, template, sched)
+            window_start, window_end = _schedule_window(template, sched)
+            operational_status = 'planned'
+            manual_review_reason = ''
+        except (TypeError, ValueError) as exc:
+            sched = scheduled_end = window_start = window_end = None
+            operational_status = 'manual_review'
+            manual_review_reason = str(exc)
         await db.visit_instances.insert_one({
             'id': str(uuid.uuid4()),
             'patient_id': patient['id'],
@@ -3824,11 +4127,14 @@ async def _materialize_new_template_for_enrolled(template) -> int:
             'visit_type': template.get('visit_type', ''),
             'location': template.get('location', ''),
             'window_days': wd,
+            **_visit_timing_snapshot(template),
             'scheduled_date': sched,
-            'window_start': sched - timedelta(days=wd),
-            'window_end': sched + timedelta(days=wd),
-            'status': 'planned',
-            'operational_status': 'planned',
+            'scheduled_end': scheduled_end,
+            'window_start': window_start,
+            'window_end': window_end,
+            'status': operational_status,
+            'operational_status': operational_status,
+            'manual_review_reason': manual_review_reason,
             'note': '',
             'clinical_tasks': _visit_task_snapshot(
                 template, 'clinical', template.get('clinical_tasks') or []),
@@ -3853,11 +4159,11 @@ def _instance_is_repointable(inst, n) -> bool:
         return False
     if inst.get('note'):              # carries patient/staff activity
         return False
-    if inst.get('status') not in ('upcoming', 'scheduled'):
+    if inst.get('status') not in ('upcoming', 'scheduled', 'planned', 'manual_review'):
         return False
     sched = inst.get('scheduled_date')
     if sched is None:
-        return False
+        return inst.get('status') == 'manual_review'
     if isinstance(sched, str):
         try:
             sched = datetime.fromisoformat(sched)
@@ -3887,7 +4193,17 @@ async def _rematerialize_template_change(template) -> int:
         if pid not in anchors:
             patient = await db.patients.find_one({'id': pid}, {'_id': 0})
             anchors[pid] = _patient_visit_anchor(patient) if patient else n
-        sched = anchors[pid] + timedelta(days=template.get('day_offset', 0))
+        try:
+            sched = _calculate_template_datetime(anchors[pid], template)
+            scheduled_end = _calculate_template_end_datetime(
+                anchors[pid], template, sched)
+            window_start, window_end = _schedule_window(template, sched)
+            operational_status = 'planned'
+            manual_review_reason = ''
+        except (TypeError, ValueError) as exc:
+            sched = scheduled_end = window_start = window_end = None
+            operational_status = 'manual_review'
+            manual_review_reason = str(exc)
         wd = template.get('window_days', 3)
         await db.visit_instances.update_one({'id': inst['id']}, {'$set': {
             'name': template.get('name', ''),
@@ -3901,11 +4217,14 @@ async def _rematerialize_template_change(template) -> int:
             'visit_type': template.get('visit_type', ''),
             'location': template.get('location', ''),
             'window_days': wd,
+            **_visit_timing_snapshot(template),
             'scheduled_date': sched,
-            'window_start': sched - timedelta(days=wd),
-            'window_end': sched + timedelta(days=wd),
-            'status': 'planned',
-            'operational_status': 'planned',
+            'scheduled_end': scheduled_end,
+            'window_start': window_start,
+            'window_end': window_end,
+            'status': operational_status,
+            'operational_status': operational_status,
+            'manual_review_reason': manual_review_reason,
             'updated_at': n,
         }})
         updated += 1
@@ -5821,10 +6140,8 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
             raise HTTPException(400, 'scheduled_date must be an ISO 8601 date/datetime')
         if sched.tzinfo is None:
             sched = sched.replace(tzinfo=timezone.utc)
-        wd = inst.get('window_days', 3)
         upd['scheduled_date'] = sched
-        upd['window_start'] = sched - timedelta(days=wd)
-        upd['window_end'] = sched + timedelta(days=wd)
+        upd['window_start'], upd['window_end'] = _schedule_window(inst, sched)
         upd['rescheduled_from'] = inst.get('scheduled_date')
         upd['status'] = 'planned'
         upd['operational_status'] = 'planned'
@@ -7228,7 +7545,11 @@ async def _link_shared_site_to_network(user: dict, trial: dict,
 
 
 _SCHEDULE_DIFF_FIELDS = (
-    'visit_number', 'name', 'day_offset', 'window_days', 'activities',
+    'visit_number', 'name', 'day_offset', 'day_end', 'source_day_label',
+    'anchor_study_day', 'includes_day_zero', 'hour_offset',
+    'hour_offset_basis', 'hour_end', 'relative_to', 'relative_offset_days',
+    'period', 'arm_label', 'arm', 'window_days', 'window_before',
+    'window_after', 'activities',
     'checklist', 'clinical_tasks', 'admin_tasks', 'comments',
     'extraction_warning', 'review_status', 'extracted_from_protocol',
 )
@@ -7472,9 +7793,37 @@ async def share_pdf(token: str):
         Paragraph(f"Phase: {trial.get('phase', '')} · Condition: {trial.get('condition', '')}", styles['Normal']),
         Spacer(1, 16),
     ]
-    rows = [['#', 'Visit name', 'Day offset', 'Window', 'Activities']]
+    rows = [['#', 'Visit name', 'Protocol timing', 'Window', 'Activities']]
     for v in visits:
-        rows.append([v['visit_number'], v['name'], f"D+{v['day_offset']}", f"±{v.get('window_days', 3)}d", ', '.join(v.get('activities', [])[:3])])
+        label = str(v.get('source_day_label') or '').strip()
+        if not label:
+            offset = v.get('day_offset')
+            if offset is None:
+                label = 'Undated / manual review'
+            elif offset == 0:
+                label = 'Baseline'
+            else:
+                label = f"Baseline {offset:+d} days"
+            if v.get('hour_offset') is not None:
+                hour = float(v['hour_offset'])
+                label = f"Hour {hour:g}" if v.get('hour_offset_basis') == 'absolute' else (
+                    f"{label}, {hour:+g}h")
+        before = v.get('window_before')
+        after = v.get('window_after')
+        if before is not None or after is not None:
+            symmetric = int(v.get('window_days', 3) or 0)
+            window_label = (
+                f"-{symmetric if before is None else before}/"
+                f"+{symmetric if after is None else after}d")
+        else:
+            window_label = f"±{v.get('window_days', 3)}d"
+        if v.get('day_end') is not None and not v.get('source_day_label'):
+            label += f" to baseline {int(v['day_end']):+d} days"
+        if v.get('hour_end') is not None and v.get('source_day_label'):
+            label += f" (through Hour {float(v['hour_end']):g})"
+        rows.append([v.get('visit_number'), v.get('name') or '', label,
+                     window_label,
+                     ', '.join((v.get('activities') or [])[:3])])
     t = Table(rows, repeatRows=1, colWidths=[28, 140, 60, 50, 200])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), rcolors.HexColor('#A6213F')),

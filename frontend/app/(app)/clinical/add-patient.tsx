@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
+import { formatIsoCalendarDate } from "@/src/lib/visit-timing";
 
 const C = {
   surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -476,7 +477,9 @@ export default function AddPatient() {
               {visible.map((v, index) => (
                 <View key={v.visit_template_id || `${v.name}-${index}`} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
                   <Text style={{ color: C.muted, fontSize: 13, flex: 1 }} numberOfLines={1}>{v.name || `Visit ${v.visit_number || index + 1}`}</Text>
-                  <Text style={{ color: v.status === "manual_review" ? C.destructive : C.fg, fontWeight: "600", fontSize: 13 }}>{v.scheduled_date ? new Date(v.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "Needs review"}</Text>
+                  <Text style={{ color: v.status === "manual_review" ? C.destructive : C.fg, fontWeight: "600", fontSize: 13 }}>
+                    {v.scheduled_date ? formatIsoCalendarDate(v.scheduled_date) : "Needs review"}
+                  </Text>
                 </View>
               ))}
             </View>

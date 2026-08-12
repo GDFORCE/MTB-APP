@@ -8,6 +8,7 @@ import { Eyebrow, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
+import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 
 type Slot = { time: string; label?: string };
 type Med = { id: string; name: string; dosage: string; route?: string; schedule?: Slot[]; start_date?: string; end_date?: string | null; active?: boolean };
@@ -290,8 +291,9 @@ export default function MyTrial() {
                         <Small color={done ? colors.accent : isNext ? colors.warning : colors.info} weight="700">{done ? "Done" : isNext ? "Next →" : "Scheduled"}</Small>
                       </View>
                     </View>
+                    <Small color={colors.mutedFg}>{formatVisitTiming(v)}</Small>
                     <View style={{ flexDirection: "row", gap: 12, marginTop: 4 }}>
-                      <Small><CalIcon size={11} color={colors.mutedFg} /> {new Date(v.scheduled_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</Small>
+                      <Small><CalIcon size={11} color={colors.mutedFg} /> {v.scheduled_date ? formatIsoCalendarDate(v.scheduled_date) : "Date pending"}</Small>
                       <Small><Icon size={11} color={colors.mutedFg} /> {locationLabel}</Small>
                     </View>
                   </Card>

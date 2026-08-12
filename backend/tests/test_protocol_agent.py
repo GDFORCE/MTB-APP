@@ -207,6 +207,32 @@ def test_metadata_and_schedule_share_one_agent_workflow():
     assert schedule.verification_status == "verified"
 
 
+def test_agent_cannot_verify_a_deterministically_corrected_day_offset():
+    corrected = ExtractedSchedule.model_validate({
+        "schedule_kind": "linear",
+        "anchor_study_day": 1,
+        "includes_day_zero": False,
+        "visits": [{
+            "name": "Day 8",
+            "source_day_label": "Day 8",
+            "day_offset": 8,
+        }],
+    })
+    responses = _decomposition_responses() + [corrected, _audit(approved=True)]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=0))
+
+    assert result.visits[0].day_offset == 7
+    assert result.verification_status == "needs_review"
+    assert any("maps to 7" in issue for issue in result.verification_issues)
+
+
 def test_agent_retains_valid_candidate_when_repair_output_is_malformed():
     responses = _decomposition_responses() + [
         _schedule("Baseline", 0),
