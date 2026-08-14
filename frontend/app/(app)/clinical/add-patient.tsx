@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users, UserRound, Phone as PhoneIcon, ClipboardList } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
@@ -151,11 +152,13 @@ export default function AddPatient() {
   const suggestedInitials = initialsFromName(fullName);
   const visible = showAll ? scheduleVisits : scheduleVisits.slice(0, 5);
   const phoneDigits = phone.replace(/\D/g, "");
+  const normalizedEmail = email.trim().toLowerCase();
+  const optionalEmailValid = !normalizedEmail || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail);
   const canSubmit = !!subjectId.trim()
     && !!fullName.trim()
     && !!parseDate(dob)
     && phoneDigits.length === 10
-    && !!email.trim()
+    && optionalEmailValid
     && !!trialId
     && scheduleGenerated
     && scheduleVisits.length > 0
@@ -163,15 +166,17 @@ export default function AddPatient() {
     && !subjectDuplicate
     && !emailDuplicate
     && !saving;
-  const submitHint = !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10 || !email.trim()
+  const submitHint = !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10
     ? "Complete the required patient details"
-    : !trialId
-      ? "Select a trial to continue"
-      : needsPiSelection && !piId
-        ? "Select the responsible PI"
-        : !scheduleGenerated || !scheduleVisits.length
-          ? "Generate the visit schedule to continue"
-          : "Ready to send the patient invitation";
+    : !optionalEmailValid
+      ? "Enter a valid email address or leave it blank"
+      : !trialId
+        ? "Select a trial to continue"
+        : needsPiSelection && !piId
+          ? "Select the responsible PI"
+          : !scheduleGenerated || !scheduleVisits.length
+            ? "Generate the visit schedule to continue"
+            : "Ready to send the patient invitation";
 
   const updateFullName = (value: string) => {
     setFullName(value);
@@ -242,9 +247,9 @@ export default function AddPatient() {
     try {
       const parsedBaseline = parseDate(baseline);
       const parsedDob = parseDate(dob);
-      await api.post("/patients/invite", {
+      const response = await api.post("/patients/invite", {
         full_name: fullName.trim(),
-        email: email.trim().toLowerCase(),
+        email: normalizedEmail || undefined,
         phone: `+91${phoneDigits}`,
         trial_id: trialId,                                  // the SELECTED trial
         pi_id: needsPiSelection ? piId : undefined,
@@ -256,11 +261,30 @@ export default function AddPatient() {
         baseline_date: parsedBaseline ? toISO(parsedBaseline) : undefined,
         enrolled_date: new Date().toISOString().slice(0, 10),
       });
-      Alert.alert(
-        "Invitation sent",
-        "The patient will receive an email invitation. Their account, trial enrollment, and visit schedule will be created after they accept and complete registration.",
-        [{ text: "Done", onPress: () => router.back() }],
-      );
+      if (normalizedEmail) {
+        Alert.alert(
+          "Invitation sent",
+          "The patient will receive an email invitation. Their account, trial enrollment, and visit schedule will be created after they accept and complete registration.",
+          [{ text: "Done", onPress: () => router.back() }],
+        );
+      } else {
+        const invitationCode = String(response.data?.token || "");
+        Alert.alert(
+          "Invitation created",
+          `Share this invitation code with the patient:\n\n${invitationCode}\n\nThe patient will verify the registered phone number while joining.`,
+          [
+            {
+              text: "Copy code",
+              onPress: () => {
+                void Clipboard.setStringAsync(invitationCode).then(() => {
+                  Alert.alert("Copied", "Invitation code copied.");
+                });
+              },
+            },
+            { text: "Done", onPress: () => router.back() },
+          ],
+        );
+      }
     } catch (e: any) {
       if (e?.response?.status === 409) {
         setError(e.response.data?.detail || `SUBJ-${subjectId} already exists in this trial.`);
@@ -362,7 +386,7 @@ export default function AddPatient() {
               </View>
             </Field>
 
-            <Field label="Email *" hint="The invitation will be sent to this address.">
+            <Field label="Email (Optional)" hint="If provided, the invitation will also be sent by email.">
               <TextInput
                 testID="email"
                 value={email}

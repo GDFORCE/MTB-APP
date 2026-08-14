@@ -39,7 +39,15 @@ export default function SignIn() {
 
           <View style={{ marginTop: spacing.xl }}>
             <Small color={colors.foreground} style={{ marginBottom: 6, fontWeight: "600" as any }}>Email or Phone</Small>
-            <TextInput testID="signin-email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" style={s.input} />
+            <TextInput
+              testID="signin-email"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="default"
+              placeholder="Email address or phone number"
+              style={s.input}
+            />
 
             <Small color={colors.foreground} style={{ marginBottom: 6, marginTop: spacing.md, fontWeight: "600" as any }}>Password</Small>
             <View style={{ position: "relative" }}>

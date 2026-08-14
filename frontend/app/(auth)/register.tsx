@@ -427,8 +427,9 @@ export default function Register() {
     delete errors.orgAddress;
     delete errors.hospitalType;
     delete errors.role;
+    if (isPatient && !fld.email.trim()) delete errors.email;
     return { ...result, errors, valid: Object.keys(errors).length === 0 };
-  }, [fld, isInvite, phoneCountry, variant]);
+  }, [fld, isInvite, isPatient, phoneCountry, variant]);
 
   // Check valid contact values while the user is still on this screen. The
   // backend repeats the check at submission to protect against race conditions.
@@ -527,7 +528,7 @@ export default function Register() {
         const { data } = await api.post("/auth/register/start", {
           full_name: payload.fullName,
           role: effectiveRole,
-          email: payload.email,
+          email: payload.email || undefined,
           phone: payload.phone,
           organization: payload.orgName || undefined,
           profile,
@@ -735,7 +736,11 @@ export default function Register() {
                     error={!!fieldError("phone")}
                   />
                 </Field>
-                <Field label="Email ID" required error={fieldError("email")}>
+                <Field
+                  label={isInvite ? "Email ID (Optional)" : "Email ID"}
+                  required={!isInvite}
+                  error={fieldError("email")}
+                >
                   <Input
                     value={fld.email}
                     onChangeText={inviteEmailLocked ? undefined : up("email")}

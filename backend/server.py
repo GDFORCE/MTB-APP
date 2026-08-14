@@ -214,7 +214,9 @@ class RegisterResendIn(BaseModel):
     channel: Literal['email', 'phone']
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    # Keep the historical field name for API compatibility, but accept either
+    # a registered email address or a mobile number as the login identifier.
+    email: str = Field(min_length=1, max_length=254)
     password: str
     remember_me: bool = False
 
@@ -416,7 +418,7 @@ class VisitUpdate(BaseModel):
 
 class PatientIn(BaseModel):
     full_name: str
-    email: EmailStr
+    email: Optional[EmailStr] = None
     phone: Optional[str] = ''
     trial_id: str
     pi_id: Optional[str] = None
@@ -428,6 +430,12 @@ class PatientIn(BaseModel):
     language: Optional[str] = None
     avatar_initials: Optional[str] = None
     baseline_date: Optional[str] = None   # anchors visit-instance scheduling
+
+
+class PatientInvitationIn(PatientIn):
+    # Staff-created patient invitations are phone-first. Direct legacy patient
+    # enrollment keeps its existing contract, while this flow requires phone.
+    phone: str = Field(min_length=1)
 
 def patient_initials(value: Optional[str], full_name: str) -> str:
     """Normalize staff-entered initials, falling back to the first two name parts."""
@@ -760,7 +768,15 @@ async def register(body: RegisterIn):
 
 @api.post('/auth/login')
 async def login(body: LoginIn):
-    user = await db.users.find_one({'email': body.email.lower()})
+    identifier = body.email.strip()
+    if '@' in identifier:
+        user = await db.users.find_one({'email': identifier.lower()})
+    else:
+        try:
+            phone = normalize_phone(identifier)
+        except HTTPException:
+            phone = None
+        user = await db.users.find_one({'phone': phone}) if phone else None
     if not user or not pwd_ctx.verify(body.password, user['hashed_password']):
         raise HTTPException(401, 'Invalid credentials')
     if user.get('status') == 'Suspended':
@@ -5176,8 +5192,13 @@ async def check_patient_invitation_availability(
 
 
 @api.post('/patients/invite', dependencies=[Depends(require_roles('pi', 'crc', 'smo', 'site'))])
-async def invite_patient_for_enrollment(body: PatientIn, user=Depends(current_user)):
+async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(current_user)):
     """Invite a patient to register, then enrol them only after acceptance."""
+    email = normalize_email(body.email)
+    phone = normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(400, 'Phone number is required')
+
     trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -5234,20 +5255,28 @@ async def invite_patient_for_enrollment(body: PatientIn, user=Depends(current_us
             {'_id': 0, 'id': 1})
         if duplicate_patient or duplicate_invite:
             raise HTTPException(409, f'Subject ID {body.subject_id} already exists or is awaiting registration in this trial')
+    contact_matches = [{'phone': phone}]
+    if email:
+        contact_matches.append({'email': email})
     existing_invite = await db.invitations.find_one(
-        {'email': body.email.lower(), 'trial_id': body.trial_id, 'role': 'patient',
-         'status': 'pending'},
+        {'$or': contact_matches, 'trial_id': body.trial_id, 'role': 'patient',
+         'status': {'$in': ['pending', 'accepting']}},
         {'_id': 0, 'id': 1})
     if existing_invite:
-        raise HTTPException(409, 'A pending patient invitation already exists for this email and trial')
+        raise HTTPException(
+            409,
+            'A pending patient invitation already exists for this phone number or email and trial',
+        )
 
     patient_data = body.dict()
+    patient_data['email'] = email or ''
+    patient_data['phone'] = phone
     patient_data['pi_id'] = pi_id
     patient_data['crc_id'] = crc_id
     token = new_invite_code()
     invitation = {
         'id': str(uuid.uuid4()), 'token': token,
-        'email': body.email.lower(), 'phone': body.phone or '',
+        'email': email or '', 'phone': phone,
         'full_name': body.full_name, 'designation': '', 'role': 'patient',
         'trial_id': body.trial_id, 'invited_by': user['id'],
         'org': caller_org, 'site': '',
@@ -5258,25 +5287,29 @@ async def invite_patient_for_enrollment(body: PatientIn, user=Depends(current_us
         'resend_count': 0, 'patient_data': patient_data,
     }
     await db.invitations.insert_one(invitation)
-    try:
-        await run_in_threadpool(
-            otp_service.send_invitation_email,
-            invitation['email'],
-            _invite_link(token),
-            invitation['full_name'],
-            invitation['inviter_name'],
-            invitation['inviter_organization'],
-        )
-    except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
-        await db.invitations.delete_one({'id': invitation['id']})
-        raise HTTPException(502, 'The patient invitation email could not be delivered.')
+    if email:
+        try:
+            await run_in_threadpool(
+                otp_service.send_invitation_email,
+                email,
+                _invite_link(token),
+                invitation['full_name'],
+                invitation['inviter_name'],
+                invitation['inviter_organization'],
+            )
+        except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
+            await db.invitations.delete_one({'id': invitation['id']})
+            raise HTTPException(502, 'The patient invitation email could not be delivered.')
     await write_audit(user, 'patient.invite',
                       f"Invited {body.full_name} to register for trial {body.trial_id}",
                       target_id=invitation['id'], trial_id=body.trial_id)
     return {
         **serialize(invitation),
         'invite_link': _invite_link(token),
-        'message': 'Patient invitation sent. The patient will be enrolled after completing registration.',
+        'message': (
+            'Patient invitation sent by email.' if email
+            else 'Patient invitation created. Share the invitation code with the patient.'
+        ),
     }
 
 
