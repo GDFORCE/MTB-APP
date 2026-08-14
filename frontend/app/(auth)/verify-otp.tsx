@@ -154,6 +154,17 @@ export default function VerifyOtp() {
       if (needPhone) body.phone_otp = phoneOtp;
       const { data } = await api.post("/auth/register/verify", body);
       if (!data.verified) { setErr("Some codes were not accepted. Please check and try again."); return; }
+      if (params.invited === "1") {
+        router.push({
+          pathname: "/(auth)/security-questions",
+          params: {
+            registration_id: params.registration_id,
+            role: params.role,
+            invited: "1",
+          },
+        });
+        return;
+      }
       router.push({
         pathname: "/(auth)/set-password",
         params: { registration_id: params.registration_id, role: params.role, invited: params.invited || "" },
@@ -237,11 +248,11 @@ export default function VerifyOtp() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <AuthHeader
-          eyebrow="Step 4 of 5"
+          eyebrow={`Step ${params.invited === "1" ? 3 : 4} of 5`}
           title={blocked ? blockedTitle : "Verify your contact details"}
           subtitle={blocked ? undefined : `Enter the codes we sent to ${channelSummary} — this keeps your account secure.`}
           onBack={() => router.back()}
-          step={4}
+          step={params.invited === "1" ? 3 : 4}
         />
 
         <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>

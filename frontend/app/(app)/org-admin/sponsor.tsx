@@ -137,7 +137,7 @@ export default function SponsorConsole() {
           <DeckTabs
             tabs={[
               { key: "trials", label: "Trials", count: trials.length },
-              { key: "team", label: "Team", count: members.filter((m) => m.status !== "rejected").length },
+              { key: "team", label: "Organization Members", count: members.filter((m) => m.status !== "rejected").length },
               { key: "audit", label: "Audit", count: audit.length },
             ]}
             active={tab} onChange={setTab}
@@ -234,7 +234,7 @@ export default function SponsorConsole() {
           )}
 
           {tab === "team" && (
-            loading ? <Loading label="Loading team…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
+            loading ? <Loading label="Loading organization members…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
               <>
                 <TeamRoster
                   members={members}

@@ -88,7 +88,7 @@ export default function SiteConsole() {
       { value: trials.length, label: "Total Trials" },
       { value: pis, label: "Total PIs" },
       { value: patients, label: "Total Patients" },
-      { value: members.filter((m) => m.status === "active").length, label: "Team Members" },
+      { value: members.filter((m) => m.status === "active").length, label: "Organization Members" },
     ];
   }, [trials, members]);
 
@@ -147,7 +147,7 @@ export default function SiteConsole() {
         <ConsoleHeader
           eyebrow="SITE · ORGANIZATION MANAGEMENT"
           org={orgName} roleLabel="Site Admin"
-          note="You're also the site administrator — manage trials, access, team and audit"
+          note="You're also the site administrator — manage trials, access, organization members and audit"
           glow="rgba(123,107,184,0.34)"
           pulse={pulse}
           onBack={() => pathname.includes("/site/dashboard")
@@ -160,7 +160,7 @@ export default function SiteConsole() {
             activeColor={C.info}
             tabs={[
               { key: "trials", label: "Trials", count: trials.length },
-              { key: "team", label: "Team", count: members.filter((m) => m.status !== "rejected").length },
+              { key: "team", label: "Organization Members", count: members.filter((m) => m.status !== "rejected").length },
               { key: "audit", label: "Audit", count: audit.length },
             ]}
             active={tab} onChange={setTab}
@@ -217,7 +217,7 @@ export default function SiteConsole() {
           )}
 
           {tab === "team" && (
-            loading ? <Loading label="Loading team…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
+            loading ? <Loading label="Loading organization members…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
               <>
                 <TeamRoster
                   members={members}

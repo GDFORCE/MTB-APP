@@ -41,6 +41,8 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+backend/backend-dev*.log
+frontend/expo-dev*.log
 
 # System files
 .DS_Store
@@ -75,6 +77,11 @@ agenthub/agents/youtube/db
 
 # Build caches
 .cache/
+frontend/.tmp-expo/
+frontend/.eslintcache
+
+# Local Expo QR snapshots
+frontend/expo-go-qr*.png
 
 memory/test_credentials.md
 

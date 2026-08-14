@@ -130,6 +130,9 @@ export function validateRegistration(
     required(fields, errors, "designation", "Designation");
     required(fields, errors, "orgName", variant === "smo" ? "SMO name" : "Organization name");
     required(fields, errors, "orgAddress", variant === "smo" ? "SMO address" : "Organization address");
+    if (variant === "smo") {
+      required(fields, errors, "role", "Role");
+    }
     if (variant === "site") {
       required(fields, errors, "hospitalType", "Hospital type");
       required(fields, errors, "role", "Role");

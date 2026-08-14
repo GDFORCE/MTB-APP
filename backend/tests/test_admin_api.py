@@ -91,6 +91,10 @@ def _cleanup():
     yield
     async def clean():
         db = server.db
+        test_users = await db.users.find(
+            {'email': {'$regex': f'{RUN_ID}'}}, {'_id': 0, 'id': 1}).to_list(1000)
+        await db.refresh_tokens.delete_many(
+            {'user_id': {'$in': [user['id'] for user in test_users]}})
         await db.users.delete_many({'email': {'$regex': f'{RUN_ID}'}})
         await db.password_reset_tokens.delete_many({'email': {'$regex': RUN_ID}})
         await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
@@ -544,14 +548,17 @@ class TestAdminOrgs:
 
 # ── Master data ──────────────────────────────────────────────────────────────
 class TestAdminMasterData:
-    async def _mk_submission(self, value):
+    async def _mk_submission(self, value, field_type='designation', submitted_by_id=None):
         sid = str(uuid.uuid4())
         _extra_cleanup_ids['submissions'].append(sid)
-        await server.db.master_data_submissions.insert_one({
-            'id': sid, 'fieldType': 'designation', 'value': value,
+        doc = {
+            'id': sid, 'fieldType': field_type, 'value': value,
             'submittedBy': f'Test {RUN_ID}', 'org': f'ADMORG-{RUN_ID} Hospital',
             'dateSubmitted': server.now(), 'status': 'pending',
-            'actionBy': None, 'rejectReason': ''})
+            'actionBy': None, 'rejectReason': ''}
+        if submitted_by_id:
+            doc['submittedById'] = submitted_by_id
+        await server.db.master_data_submissions.insert_one(doc)
         return sid
 
     def test_approve_adds_global_value(self, actors):
@@ -602,6 +609,66 @@ class TestAdminMasterData:
                 sub = await server.db.master_data_submissions.find_one({'id': sid}, {'_id': 0})
                 assert sub['status'] == 'rejected'
                 assert sub['rejectReason'] == 'Not a clinical designation'
+        run(flow())
+
+    def test_department_visibility_and_edit_approval(self, actors):
+        admin_h = actors['admin1'][1]
+        pi, pi_h = actors['pi']
+        original = f'Experimental Department {RUN_ID}'
+        corrected = f'Experimental Medicine {RUN_ID}'
+
+        async def flow():
+            sid = await self._mk_submission(
+                original, field_type='department', submitted_by_id=pi['id'])
+            await server.db.users.update_one({'id': pi['id']}, {'$set': {
+                'profile.department': original,
+                'profile.department_review_status': 'pending',
+            }})
+            async with make_client() as cli:
+                public = await cli.get('/api/master-data/options', params={
+                    'fieldType': 'department'})
+                private = await cli.get('/api/master-data/options', headers=pi_h,
+                                        params={'fieldType': 'department'})
+                assert original not in public.json()['values']
+                assert any(row['value'] == original
+                           for row in private.json()['private_values'])
+
+                approved = await cli.post(
+                    f'/api/admin/master-data/submissions/{sid}/approve',
+                    headers=admin_h, json={'value': corrected})
+                assert approved.status_code == 200, approved.text
+                published = await cli.get('/api/master-data/options', params={
+                    'fieldType': 'department'})
+                assert corrected in published.json()['values']
+
+            fresh = await server.db.users.find_one({'id': pi['id']}, {'_id': 0})
+            assert fresh['profile']['department'] == corrected
+            assert fresh['profile']['department_review_status'] == 'approved'
+
+            rejected_value = f'Private Department {RUN_ID}'
+            rejected_sid = await self._mk_submission(
+                rejected_value, field_type='department', submitted_by_id=pi['id'])
+            await server.db.users.update_one({'id': pi['id']}, {'$set': {
+                'profile.department': rejected_value,
+                'profile.department_review_status': 'pending',
+            }})
+            async with make_client() as cli:
+                rejected = await cli.post(
+                    f'/api/admin/master-data/submissions/{rejected_sid}/reject',
+                    headers=admin_h, json={'reason': 'Too site-specific'})
+                assert rejected.status_code == 200, rejected.text
+                public = await cli.get('/api/master-data/options', params={
+                    'fieldType': 'department'})
+                private = await cli.get('/api/master-data/options', headers=pi_h,
+                                        params={'fieldType': 'department'})
+                assert rejected_value not in public.json()['values']
+                assert any(row['value'] == rejected_value and row['status'] == 'rejected'
+                           for row in private.json()['private_values'])
+
+            fresh = await server.db.users.find_one({'id': pi['id']}, {'_id': 0})
+            assert fresh['profile']['department'] == rejected_value
+            assert fresh['profile']['department_review_status'] == 'rejected'
+
         run(flow())
 
 

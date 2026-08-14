@@ -75,6 +75,27 @@ def test_team_capabilities_patch_remove_and_scope():
                 "can_edit": False, "can_remove": False,
             }
 
+            invite_denied = await cli.post(
+                "/api/invitations",
+                headers=headers(pi),
+                json={
+                    "email": f"invite-{RUN_ID}@example.com",
+                    "full_name": "Not Allowed",
+                    "role": "crc",
+                },
+            )
+            assert invite_denied.status_code == 403
+            assert "Organization Admin" in invite_denied.json()["detail"]
+
+            patient_invite_reaches_validation = await cli.post(
+                "/api/invitations",
+                headers=headers(pi),
+                json={"role": "patient"},
+            )
+            assert patient_invite_reaches_validation.status_code == 400
+            assert patient_invite_reaches_validation.json()["detail"] == (
+                "Email or phone required")
+
             denied = await cli.patch(
                 f"/api/team/{crc['id']}",
                 headers=headers(pi),

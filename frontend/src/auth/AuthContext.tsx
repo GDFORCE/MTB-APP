@@ -27,7 +27,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!t) { setUser(null); return; }
       const r = await api.get('/auth/me');
       setUser(r.data);
-    } catch { setUser(null); await tokenStore.del('access_token'); }
+    } catch (error: any) {
+      setUser(null);
+      if ([400, 401, 403].includes(error?.response?.status)) {
+        await tokenStore.setPersistence(false);
+      }
+    }
   }, []);
 
   useEffect(() => { (async () => { await refresh(); setLoading(false); })(); }, [refresh]);
@@ -39,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string, rememberMe = false) => {
-    const r = await api.post('/auth/login', { email, password });
+    const r = await api.post('/auth/login', { email, password, remember_me: rememberMe });
     await tokenStore.setPersistence(rememberMe);
     await tokenStore.set('access_token', r.data.access_token);
     await tokenStore.set('refresh_token', r.data.refresh_token);
@@ -63,7 +68,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return data.user;
   };
   const signOut = async () => {
-    await tokenStore.del('access_token'); await tokenStore.del('refresh_token'); setUser(null);
+    const refreshToken = await tokenStore.get('refresh_token');
+    try {
+      if (refreshToken) await api.post('/auth/logout', { refresh_token: refreshToken });
+    } finally {
+      await tokenStore.setPersistence(false);
+      setUser(null);
+    }
   };
 
   return <AuthCtx.Provider value={{ user, loading, signIn, signUp, applySession, signOut, refresh }}>{children}</AuthCtx.Provider>;

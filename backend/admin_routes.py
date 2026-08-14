@@ -299,6 +299,11 @@ async def admin_set_user_status(user_id: str, body: UserStatusIn, admin=Depends(
     updates: Dict = {'status': body.status}
     if body.status == 'Suspended':
         updates['force_logout_at'] = now()   # kill active sessions immediately
+        await db.refresh_tokens.update_many(
+            {'user_id': user_id, 'status': 'active'},
+            {'$set': {'status': 'revoked', 'revoked_at': updates['force_logout_at'],
+                      'revoke_reason': 'account suspended'}},
+        )
     await db.users.update_one({'id': user_id}, {'$set': updates})
     await write_audit(admin, 'admin.user_status',
                       f"Set {u.get('email')} status to {body.status}"
@@ -333,6 +338,11 @@ async def admin_reset_password(user_id: str, admin=Depends(current_user)):
     delivery = await _deliver_password_reset_link(u, admin, 'password_reset')
     await db.users.update_one({'id': user_id}, {'$set': {
         'must_reset_password': True, 'force_logout_at': now(), 'is_online': False}})
+    await db.refresh_tokens.update_many(
+        {'user_id': user_id, 'status': 'active'},
+        {'$set': {'status': 'revoked', 'revoked_at': now(),
+                  'revoke_reason': 'password reset requested'}},
+    )
     await write_audit(admin, 'admin.user_reset_password',
                       f"Sent password reset link for {u.get('email')}",
                       target_id=user_id, delivery_channel='email')
@@ -342,7 +352,14 @@ async def admin_reset_password(user_id: str, admin=Depends(current_user)):
 @router.post('/users/{user_id}/force-logout')
 async def admin_force_logout(user_id: str, admin=Depends(current_user)):
     u = await _find_or_404(db.users, user_id, 'User')
-    await db.users.update_one({'id': user_id}, {'$set': {'force_logout_at': now(), 'is_online': False}})
+    revoked_at = now()
+    await db.users.update_one({'id': user_id}, {'$set': {
+        'force_logout_at': revoked_at, 'is_online': False}})
+    await db.refresh_tokens.update_many(
+        {'user_id': user_id, 'status': 'active'},
+        {'$set': {'status': 'revoked', 'revoked_at': revoked_at,
+                  'revoke_reason': 'administrative force logout'}},
+    )
     await write_audit(admin, 'admin.user_force_logout',
                       f"Forced logout for {u.get('email')}", target_id=user_id)
     return {'ok': True, 'id': user_id}
@@ -562,6 +579,12 @@ async def admin_approve_master_data(submission_id: str, body: MasterDataApproveI
         {'$setOnInsert': {'id': str(uuid.uuid4()), 'added_by': admin['full_name'],
                           'added_at': now(), 'source_submission': submission_id}},
         upsert=True)
+    if sub.get('submittedById') and sub.get('fieldType') == 'department':
+        await db.users.update_one({'id': sub['submittedById']}, {'$set': {
+            'profile.department': final_value,
+            'profile.department_is_custom': False,
+            'profile.department_review_status': 'approved',
+        }})
     await write_audit(admin, 'admin.master_data_approve',
                       f"Approved {sub['fieldType']} value \"{final_value}\""
                       + (' (edited)' if body.value else ''),
@@ -578,6 +601,11 @@ async def admin_reject_master_data(submission_id: str, body: MasterDataRejectIn,
     await db.master_data_submissions.update_one({'id': submission_id}, {'$set': {
         'status': 'rejected', 'rejectReason': body.reason,
         'actionBy': admin['full_name'], 'actioned_at': now()}})
+    if sub.get('submittedById') and sub.get('fieldType') == 'department':
+        await db.users.update_one({'id': sub['submittedById']}, {'$set': {
+            'profile.department_is_custom': True,
+            'profile.department_review_status': 'rejected',
+        }})
     await write_audit(admin, 'admin.master_data_reject',
                       f"Rejected {sub['fieldType']} value \"{sub['value']}\" — {body.reason}",
                       target_id=submission_id)

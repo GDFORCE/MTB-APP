@@ -7,7 +7,7 @@ Production-grade FastAPI app with:
 - Real-time chat over WebSocket (1-to-1 + group, typing, read receipts)
 - MongoDB persistence
 """
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form, Request
+from fastapi import FastAPI, APIRouter, BackgroundTasks, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form, Request
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument, UpdateOne
 from pymongo.errors import DuplicateKeyError
-import os, re, json, logging, uuid, asyncio, hashlib
+import os, re, json, logging, uuid, asyncio, hashlib, secrets
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import Any, List, Optional, Dict, Literal
@@ -37,7 +37,7 @@ DB_NAME = os.environ['DB_NAME']
 JWT_SECRET = os.environ.get('JWT_SECRET', 'dawn-rounds-dev-secret-change-me')
 JWT_REFRESH_SECRET = os.environ.get('JWT_REFRESH_SECRET', 'dawn-rounds-dev-refresh-secret')
 ALGO = 'HS256'
-ACCESS_MIN = 60 * 24            # 1 day for demo comfort
+ACCESS_MIN = 15
 REFRESH_DAYS = 30
 
 client = AsyncIOMotorClient(MONGO_URL, tz_aware=True)
@@ -205,6 +205,10 @@ class RegisterCompleteIn(BaseModel):
     registration_id: str
     password: str
 
+class RegisterSecurityQuestionsIn(BaseModel):
+    registration_id: str
+    security_questions: List[Dict]
+
 class RegisterResendIn(BaseModel):
     registration_id: str
     channel: Literal['email', 'phone']
@@ -212,10 +216,36 @@ class RegisterResendIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+    remember_me: bool = False
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
+
+
+class LogoutIn(BaseModel):
+    refresh_token: Optional[str] = Field(default=None, min_length=32, max_length=512)
 
 class ForgotIn(BaseModel):
     email: Optional[EmailStr] = None
     phone: Optional[str] = None
+
+
+class ForgotVerifyIn(BaseModel):
+    recovery_id: str = Field(min_length=1)
+    otp: str = Field(min_length=6, max_length=6)
+
+
+class LoginSupportStartIn(BaseModel):
+    email: EmailStr
+    subject: str = Field(min_length=3, max_length=120)
+    description: str = Field(min_length=10, max_length=2000)
+
+
+class LoginSupportVerifyIn(BaseModel):
+    request_id: str = Field(min_length=1, max_length=100)
+    otp: str = Field(min_length=6, max_length=6)
+
 
 class ResetIn(BaseModel):
     email: Optional[EmailStr] = None
@@ -396,7 +426,21 @@ class PatientIn(BaseModel):
     dob: Optional[str] = None
     gender: Optional[str] = None
     language: Optional[str] = None
+    avatar_initials: Optional[str] = None
     baseline_date: Optional[str] = None   # anchors visit-instance scheduling
+
+def patient_initials(value: Optional[str], full_name: str) -> str:
+    """Normalize staff-entered initials, falling back to the first two name parts."""
+    supplied = ''.join(
+        character for character in str(value or '').upper()
+        if character.isalpha()
+    )[:4]
+    if supplied:
+        return supplied
+    return ''.join(
+        word[0].upper() for word in str(full_name or '').split()[:2]
+        if word
+    ) or 'P'
 
 class SchedulePreviewIn(BaseModel):
     baseline_date: str
@@ -449,6 +493,53 @@ def make_token(sub: str, role: str, kind: str = 'access'):
     return jwt.encode({'sub': sub, 'role': role, 'kind': kind,
                        'iat': now(), 'exp': now() + delta}, secret, ALGO)
 
+
+def _refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+async def issue_refresh_token(
+    user_id: str,
+    role: str,
+    *,
+    family_id: Optional[str] = None,
+    remember_me: bool = True,
+) -> tuple[str, dict]:
+    """Issue a one-time opaque refresh token and persist only its SHA-256 hash."""
+    raw = secrets.token_urlsafe(48)
+    issued_at = now()
+    doc = {
+        'id': str(uuid.uuid4()),
+        'token_hash': _refresh_token_hash(raw),
+        'family_id': family_id or str(uuid.uuid4()),
+        'user_id': user_id,
+        'role': role,
+        'remember_me': bool(remember_me),
+        'status': 'active',
+        'created_at': issued_at,
+        'expires_at': issued_at + timedelta(days=REFRESH_DAYS),
+    }
+    await db.refresh_tokens.insert_one(doc)
+    return raw, doc
+
+
+async def revoke_refresh_family(token_doc: dict, reason: str, *, reuse=False):
+    revoked_at = now()
+    await db.refresh_tokens.update_many(
+        {'family_id': token_doc['family_id'], 'status': {'$ne': 'revoked'}},
+        {'$set': {'status': 'revoked', 'revoked_at': revoked_at,
+                  'revoke_reason': reason}},
+    )
+    user = await db.users.find_one({'id': token_doc.get('user_id')}, {'_id': 0})
+    action = 'auth.refresh_reuse_detected' if reuse else 'auth.session_revoked'
+    await write_audit(
+        user, action,
+        ('Refresh-token reuse detected; revoked the entire session family'
+         if reuse else f'Revoked refresh-token family: {reason}'),
+        status='failure' if reuse else 'success',
+        family_id=token_doc.get('family_id'),
+    )
+
 async def current_user(token: Optional[str] = Depends(oauth2)):
     if not token:
         raise HTTPException(401, 'Not authenticated')
@@ -473,6 +564,13 @@ async def current_user(token: Optional[str] = Depends(oauth2)):
         if issued is None or issued < flo:
             raise HTTPException(401, 'Session terminated — please sign in again')
     return user
+
+
+async def optional_current_user(token: Optional[str] = Depends(oauth2)):
+    """Return the signed-in user when supplied, while allowing public lookups."""
+    if not token:
+        return None
+    return await current_user(token)
 
 def require_roles(*allowed):
     async def dep(user=Depends(current_user)):
@@ -657,7 +755,7 @@ async def register(body: RegisterIn):
         await db.users.update_one(
             {'id': uid}, {'$set': {'org_admin': doc['org_admin']}})
     access = make_token(uid, body.role, 'access')
-    refresh = make_token(uid, body.role, 'refresh')
+    refresh, _ = await issue_refresh_token(uid, body.role, remember_me=True)
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
 
 @api.post('/auth/login')
@@ -668,21 +766,111 @@ async def login(body: LoginIn):
     if user.get('status') == 'Suspended':
         raise HTTPException(403, 'Your account has been suspended. Contact support.')
     access = make_token(user['id'], user['role'], 'access')
-    refresh = make_token(user['id'], user['role'], 'refresh')
-    return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**user})}
+    refresh, refresh_doc = await issue_refresh_token(
+        user['id'], user['role'], remember_me=body.remember_me)
+    await write_audit(
+        user, 'auth.login', 'Signed in successfully',
+        remember_me=body.remember_me, family_id=refresh_doc['family_id'])
+    return {
+        'access_token': access,
+        'refresh_token': refresh,
+        'expires_in': ACCESS_MIN * 60,
+        'remember_me': body.remember_me,
+        'user': serialize({**user}),
+    }
 
 @api.post('/auth/refresh')
-async def refresh_token(body: dict):
-    try:
-        payload = jwt.decode(body['refresh_token'], JWT_REFRESH_SECRET, algorithms=[ALGO])
-    except jwt.PyJWTError:
+async def refresh_token(body: RefreshIn):
+    token_hash = _refresh_token_hash(body.refresh_token)
+    token_doc = await db.refresh_tokens.find_one({'token_hash': token_hash})
+    if not token_doc:
         raise HTTPException(401, 'Invalid refresh token')
-    access = make_token(payload['sub'], payload['role'], 'access')
-    return {'access_token': access}
+    if token_doc.get('status') != 'active':
+        if token_doc.get('status') == 'consumed':
+            await revoke_refresh_family(token_doc, 'refresh token reused', reuse=True)
+        raise HTTPException(401, 'Refresh token is no longer valid')
+    if token_doc.get('expires_at') and token_doc['expires_at'] <= now():
+        await db.refresh_tokens.update_one(
+            {'id': token_doc['id']}, {'$set': {'status': 'expired'}})
+        raise HTTPException(401, 'Refresh token expired')
+
+    consumed_at = now()
+    consumed = await db.refresh_tokens.find_one_and_update(
+        {
+            'id': token_doc['id'],
+            'status': 'active',
+            'expires_at': {'$gt': consumed_at},
+        },
+        {'$set': {'status': 'consumed', 'consumed_at': consumed_at}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not consumed:
+        latest = await db.refresh_tokens.find_one({'id': token_doc['id']})
+        if latest and latest.get('status') == 'consumed':
+            await revoke_refresh_family(latest, 'refresh token reused', reuse=True)
+        raise HTTPException(401, 'Refresh token is no longer valid')
+
+    user = await db.users.find_one({'id': consumed['user_id']}, {'_id': 0})
+    if not user or user.get('status') == 'Suspended':
+        await revoke_refresh_family(consumed, 'user unavailable or suspended')
+        raise HTTPException(401, 'Session is no longer active')
+    force_logout_at = user.get('force_logout_at')
+    if force_logout_at and consumed.get('created_at') < force_logout_at:
+        await revoke_refresh_family(consumed, 'administrative force logout')
+        raise HTTPException(401, 'Session was terminated')
+
+    rotated, replacement = await issue_refresh_token(
+        user['id'], user['role'],
+        family_id=consumed['family_id'],
+        remember_me=bool(consumed.get('remember_me')),
+    )
+    await db.refresh_tokens.update_one(
+        {'id': consumed['id']},
+        {'$set': {'replaced_by_id': replacement['id']}},
+    )
+    return {
+        'access_token': make_token(user['id'], user['role'], 'access'),
+        'refresh_token': rotated,
+        'expires_in': ACCESS_MIN * 60,
+    }
+
+
+@api.post('/auth/logout')
+async def logout(body: LogoutIn):
+    if body.refresh_token:
+        token_doc = await db.refresh_tokens.find_one(
+            {'token_hash': _refresh_token_hash(body.refresh_token)})
+        if token_doc:
+            await revoke_refresh_family(token_doc, 'user logout')
+    return {'ok': True}
 
 @api.get('/auth/me')
 async def me(user=Depends(current_user)):
     return user
+
+
+@api.get('/master-data/options')
+async def master_data_options(
+    fieldType: Literal['department', 'designation'] = Query(...),
+    user=Depends(optional_current_user),
+):
+    """Published values plus pending/rejected values private to the caller."""
+    global_rows = await db.master_data_values.find(
+        {'fieldType': fieldType}, {'_id': 0, 'value': 1},
+    ).sort('value', 1).to_list(1000)
+    private_rows = []
+    if user:
+        private_rows = await db.master_data_submissions.find({
+            'fieldType': fieldType,
+            'submittedById': user['id'],
+            'status': {'$in': ['pending', 'rejected']},
+        }, {
+            '_id': 0, 'id': 1, 'value': 1, 'status': 1, 'rejectReason': 1,
+        }).sort('dateSubmitted', -1).to_list(100)
+    return {
+        'values': [row['value'] for row in global_rows if row.get('value')],
+        'private_values': private_rows,
+    }
 
 @api.patch('/auth/me')
 async def update_me(body: ProfileUpdateIn, user=Depends(current_user)):
@@ -747,6 +935,143 @@ async def create_ticket(body: TicketIn, user=Depends(current_user)):
     await db.support_tickets.insert_one(doc)
     return serialize({**doc})
 
+
+async def _deliver_login_support_code(email: str, code: str, user_name: str):
+    """Do not let provider behavior disclose whether a pre-login email exists."""
+    try:
+        await _deliver_otp(
+            'email', email, code, user_name=user_name, purpose='login_support')
+    except Exception:
+        logging.exception('Pre-login support OTP delivery failed')
+
+
+@api.post('/auth/support/start')
+async def start_login_support(
+    body: LoginSupportStartIn,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """Start an email-verified support request without requiring a session.
+
+    The response deliberately does not reveal whether the email is registered.
+    Unknown addresses receive a synthetic request id and no database record.
+    """
+    email = normalize_email(body.email)
+    subject = body.subject.strip()
+    description = body.description.strip()
+    if len(subject) < 3 or len(description) < 10:
+        raise HTTPException(422, 'Enter a subject and at least 10 characters describing the issue.')
+
+    await _enforce_rate_limit(f'login-support:{email}')
+    client_host = request.client.host if request.client else 'unknown'
+    await _enforce_rate_limit(f'login-support-ip:{client_host}')
+    request_id = str(uuid.uuid4())
+    response = {
+        'ok': True,
+        'message': 'If the email is registered, a verification code has been sent.',
+        'request_id': request_id,
+        'expires_in': otp_service.OTP_TTL_MIN * 60,
+        'resend_cooldown': OTP_RESEND_COOLDOWN_SEC,
+    }
+    user = await db.users.find_one({'email': email})
+    if not user:
+        return response
+
+    code = DEV_OTP_CODE if DEV_OTP_MODE and not _channel_configured('email') else otp_service.generate_code()
+    n = now()
+    await db.prelogin_support_requests.update_many(
+        {'user_id': user['id'], 'status': 'pending'},
+        {'$set': {'status': 'superseded', 'updated_at': n}},
+    )
+    await db.prelogin_support_requests.insert_one({
+        'id': request_id,
+        'user_id': user['id'],
+        'registered_email': email,
+        'subject': subject,
+        'description': description,
+        'otp_hash': pwd_ctx.hash(code),
+        'otp_sent_at': n,
+        'otp_attempts': 0,
+        'status': 'pending',
+        'created_at': n,
+        'expires_at': n + timedelta(minutes=otp_service.OTP_TTL_MIN),
+    })
+    background_tasks.add_task(
+        _deliver_login_support_code, email, code, user.get('full_name') or '')
+    return response
+
+
+@api.post('/auth/support/verify')
+async def verify_login_support(body: LoginSupportVerifyIn):
+    """Verify the email code and create one admin-visible login support ticket."""
+    pending = await db.prelogin_support_requests.find_one({'id': body.request_id})
+    if pending and pending.get('status') == 'submitted':
+        if not _otp_matches(body.otp, pending.get('otp_hash')):
+            raise HTTPException(400, 'Invalid OTP. Please enter the correct OTP.')
+        ticket = await db.support_tickets.find_one(
+            {'prelogin_request_id': body.request_id}, {'_id': 0})
+        if ticket:
+            return {'ok': True, 'ticket_id': ticket['ticket_id']}
+
+    sent_at = pending.get('otp_sent_at') if pending else None
+    expired = not sent_at or (now() - sent_at).total_seconds() > otp_service.OTP_TTL_MIN * 60
+    attempts = int(pending.get('otp_attempts') or 0) if pending else 0
+    valid = bool(pending) and pending.get('status') == 'pending' and not expired \
+        and attempts < OTP_MAX_VERIFY_ATTEMPTS \
+        and _otp_matches(body.otp, pending.get('otp_hash'))
+    if not valid:
+        if pending and pending.get('status') == 'pending' and not expired \
+                and attempts < OTP_MAX_VERIFY_ATTEMPTS:
+            await db.prelogin_support_requests.update_one(
+                {'id': body.request_id}, {'$inc': {'otp_attempts': 1}})
+        if pending and expired:
+            raise HTTPException(400, 'Verification code expired. Request a new code.')
+        if pending and attempts >= OTP_MAX_VERIFY_ATTEMPTS:
+            raise HTTPException(429, 'Too many incorrect attempts. Request a new code.')
+        raise HTTPException(400, 'Invalid OTP. Please enter the correct OTP.')
+
+    claimed = await db.prelogin_support_requests.find_one_and_update(
+        {'id': body.request_id, 'status': 'pending'},
+        {'$set': {'status': 'submitting', 'verified_at': now()}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not claimed:
+        ticket = await db.support_tickets.find_one(
+            {'prelogin_request_id': body.request_id}, {'_id': 0})
+        if ticket:
+            return {'ok': True, 'ticket_id': ticket['ticket_id']}
+        raise HTTPException(409, 'This support request has already been used.')
+
+    n = now()
+    ticket_id = f"#TKT-{n.strftime('%Y%m%d')}-{str(uuid.uuid4().int)[:4]}"
+    ticket = {
+        'id': str(uuid.uuid4()),
+        'ticket_id': ticket_id,
+        'user_id': claimed['user_id'],
+        'registered_email': claimed['registered_email'],
+        'category': 'Login Issue',
+        'subject': claimed['subject'],
+        'description': claimed['description'],
+        'source': 'Pre-login',
+        'status': 'Open',
+        'prelogin_request_id': body.request_id,
+        'created_at': n,
+    }
+    try:
+        await db.support_tickets.insert_one(ticket)
+        await db.prelogin_support_requests.update_one(
+            {'id': body.request_id},
+            {'$set': {'status': 'submitted', 'submitted_at': n}},
+        )
+    except Exception:
+        await db.prelogin_support_requests.update_one(
+            {'id': body.request_id, 'status': 'submitting'},
+            {'$set': {'status': 'pending'}, '$unset': {'verified_at': ''}},
+        )
+        raise
+    return {'ok': True, 'ticket_id': ticket_id}
+
+
 @api.post('/auth/forgot')
 async def forgot(body: ForgotIn):
     email = normalize_email(body.email)
@@ -800,6 +1125,34 @@ async def forgot(body: ForgotIn):
     )
     return {**response, 'resend_count': max(previous_count, 0)}
 
+
+async def _validate_password_recovery_otp(user: Optional[dict], supplied_otp: str) -> dict:
+    sent_at = user.get('reset_otp_at') if user else None
+    expired = not sent_at or (now() - sent_at).total_seconds() > otp_service.OTP_TTL_MIN * 60
+    attempts = int(user.get('reset_otp_attempts') or 0) if user else 0
+    valid = bool(user) and not expired and attempts < OTP_MAX_VERIFY_ATTEMPTS and _otp_matches(
+        supplied_otp, user.get('reset_otp_hash')
+    )
+    if valid:
+        return user
+    if user and not expired and attempts < OTP_MAX_VERIFY_ATTEMPTS:
+        await db.users.update_one({'id': user['id']}, {'$inc': {'reset_otp_attempts': 1}})
+    if expired:
+        raise HTTPException(400, 'Verification code expired. Request a new code.')
+    if attempts >= OTP_MAX_VERIFY_ATTEMPTS:
+        raise HTTPException(429, 'Too many incorrect attempts. Request a new code.')
+    raise HTTPException(400, 'Invalid OTP. Please enter the correct OTP.')
+
+
+@api.post('/auth/forgot/verify')
+async def verify_forgot_password_otp(body: ForgotVerifyIn):
+    user = await db.users.find_one({'reset_recovery_id': body.recovery_id})
+    user = await _validate_password_recovery_otp(user, body.otp)
+    await db.users.update_one(
+        {'id': user['id']}, {'$set': {'reset_otp_verified_at': now()}})
+    return {'verified': True}
+
+
 @api.post('/auth/reset')
 async def reset(body: ResetIn):
     email = normalize_email(body.email)
@@ -810,28 +1163,20 @@ async def reset(body: ResetIn):
         user = await db.users.find_one({'email' if email else 'phone': email or phone})
     else:
         raise HTTPException(400, 'Recovery session is required')
-    sent_at = user.get('reset_otp_at') if user else None
-    expired = not sent_at or (now() - sent_at).total_seconds() > otp_service.OTP_TTL_MIN * 60
-    attempts = int(user.get('reset_otp_attempts') or 0) if user else 0
-    valid = bool(user) and not expired and attempts < OTP_MAX_VERIFY_ATTEMPTS and _otp_matches(
-        body.otp, user.get('reset_otp_hash')
-    )
-    if not valid:
-        if user and not expired and attempts < OTP_MAX_VERIFY_ATTEMPTS:
-            await db.users.update_one({'id': user['id']}, {'$inc': {'reset_otp_attempts': 1}})
-        if expired:
-            raise HTTPException(400, 'Verification code expired. Request a new code.')
-        if attempts >= OTP_MAX_VERIFY_ATTEMPTS:
-            raise HTTPException(429, 'Too many incorrect attempts. Request a new code.')
-        raise HTTPException(400, 'Invalid OTP')
+    user = await _validate_password_recovery_otp(user, body.otp)
     await db.users.update_one(
         {'id': user['id']},
         {'$set': {'hashed_password': pwd_ctx.hash(body.new_password)},
          '$unset': {
              'reset_otp': '', 'reset_otp_hash': '', 'reset_otp_at': '',
-             'reset_otp_attempts': '', 'reset_otp_send_count': '',
-             'reset_recovery_id': '', 'reset_channel': '',
+              'reset_otp_attempts': '', 'reset_otp_send_count': '',
+              'reset_recovery_id': '', 'reset_channel': '', 'reset_otp_verified_at': '',
          }}
+    )
+    await db.refresh_tokens.update_many(
+        {'user_id': user['id'], 'status': 'active'},
+        {'$set': {'status': 'revoked', 'revoked_at': now(),
+                  'revoke_reason': 'password recovered'}},
     )
     return {'ok': True}
 
@@ -883,6 +1228,11 @@ async def complete_password_reset_link(body: PasswordResetLinkIn):
             },
             '$unset': {'must_reset_password': ''},
         })
+    await db.refresh_tokens.update_many(
+        {'user_id': user['id'], 'status': 'active'},
+        {'$set': {'status': 'revoked', 'revoked_at': consumed_at,
+                  'revoke_reason': 'password reset completed'}},
+    )
     await write_audit(
         user,
         'account.password_reset_link_complete',
@@ -1044,7 +1394,7 @@ async def _finalize_registration(pending: dict) -> dict:
             await db.organizations.delete_one({'id': organization['id']})
         raise
     access = make_token(uid, doc['role'], 'access')
-    refresh = make_token(uid, doc['role'], 'refresh')
+    refresh, _ = await issue_refresh_token(uid, doc['role'], remember_me=True)
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
 
 
@@ -1075,9 +1425,34 @@ async def _complete_registration(pending: dict) -> dict:
 
     created_user_id = None
     created_patient_id = None
+    created_master_submission_id = None
     try:
         session = await _finalize_registration(pending)
         created_user_id = session['user']['id']
+        profile = pending.get('profile') or {}
+        if pending.get('role') == 'pi' and profile.get('department_is_custom'):
+            submission = {
+                'id': str(uuid.uuid4()),
+                'fieldType': 'department',
+                'value': str(profile.get('department') or '').strip(),
+                'submittedBy': pending.get('full_name') or '',
+                'submittedById': created_user_id,
+                'org': pending.get('organization') or '',
+                'dateSubmitted': now(),
+                'status': 'pending',
+                'actionBy': None,
+                'rejectReason': '',
+            }
+            await db.master_data_submissions.insert_one(submission)
+            created_master_submission_id = submission['id']
+            review_fields = {
+                'department_submission_id': submission['id'],
+                'department_review_status': 'pending',
+            }
+            await db.users.update_one({'id': created_user_id}, {'$set': {
+                f'profile.{key}': value for key, value in review_fields.items()
+            }})
+            session['user'].setdefault('profile', {}).update(review_fields)
         if invitation:
             accepted_details = {
                 'full_name': pending.get('full_name') or '',
@@ -1127,10 +1502,10 @@ async def _complete_registration(pending: dict) -> dict:
                         'created_at': now(),
                         'enrolled_date': now().date().isoformat(),
                         'completed_visit_ids': [],
-                        'avatar_initials': ''.join(
-                            word[0].upper()
-                            for word in (pending.get('full_name') or invitation.get('full_name', '')).split()[:2]
-                        ) or 'P',
+                        'avatar_initials': patient_initials(
+                            patient_data.get('avatar_initials'),
+                            pending.get('full_name') or invitation.get('full_name', ''),
+                        ),
                     }
                     # Invitation values are prefills; preserve any final
                     # profile changes the patient makes while registering.
@@ -1184,9 +1559,13 @@ async def _complete_registration(pending: dict) -> dict:
         await db.pending_registrations.delete_one({'id': pending['id']})
         return session
     except Exception:
+        if created_master_submission_id:
+            await db.master_data_submissions.delete_one(
+                {'id': created_master_submission_id})
         if created_patient_id:
             await db.patients.delete_one({'id': created_patient_id})
         if created_user_id:
+            await db.refresh_tokens.delete_many({'user_id': created_user_id})
             await db.users.delete_one({'id': created_user_id})
         if invitation:
             await db.invitations.update_one(
@@ -1232,21 +1611,29 @@ async def register_start(body: RegisterStartIn):
             raise HTTPException(
                 400, f'This invitation is {status} and can no longer be used')
 
-    effective_role = invitation.get('role') if invitation else body.role
-    if not invitation and effective_role == 'site':
-        selected_site_role = str((body.profile or {}).get('role') or '').strip().lower()
-        if selected_site_role == 'pi':
+    registration_entity_role = invitation.get('role') if invitation else body.role
+    effective_role = registration_entity_role
+    if not invitation and registration_entity_role in ('site', 'smo'):
+        selected_organization_role = str(
+            (body.profile or {}).get('role') or '').strip().lower()
+        if selected_organization_role == 'pi':
             effective_role = 'pi'
-        elif selected_site_role in ('research team', 'crc'):
+        elif selected_organization_role in ('research team', 'crc'):
             effective_role = 'crc'
-        elif selected_site_role in ('administrative', 'administrator', 'admin'):
-            effective_role = 'site'
+        elif selected_organization_role in ('administrative', 'administrator', 'admin'):
+            effective_role = registration_entity_role
         else:
             raise HTTPException(
-                400, 'Select PI, Research Team, or Administrative for Site registration')
+                400,
+                f'Select PI, Research Team, or Administrative for '
+                f'{registration_entity_role.upper()} registration',
+            )
     if effective_role == 'admin':
         raise HTTPException(403, 'This role cannot self-register')
-    channels = required_channels(effective_role)
+    # Possession of the emailed invitation code establishes the invited email.
+    # Invited users therefore verify only the phone number they enter during
+    # registration; normal self-registration keeps its role-based channels.
+    channels = ['phone'] if invitation else required_channels(effective_role)
     email = normalize_email(body.email)
     phone = normalize_phone(body.phone)
     organization = (body.organization or '').strip() or None
@@ -1258,9 +1645,25 @@ async def register_start(body: RegisterStartIn):
         organization = (invitation.get('org') or '').strip()
 
     profile = normalize_registration_profile(effective_role, body.profile)
-    if not invitation and effective_role == 'smo':
+    if effective_role == 'pi' and profile.get('department_is_custom'):
+        custom_department = str(profile.get('department') or '').strip()
+        if custom_department.lower() == 'others specify':
+            custom_department = ''
+        if len(custom_department) < 2 or len(custom_department) > 120:
+            raise HTTPException(
+                400, 'Specify a department between 2 and 120 characters')
+        profile['department'] = custom_department
+        profile['department_is_custom'] = True
+    else:
+        profile.pop('department_is_custom', None)
+    if not invitation and registration_entity_role == 'smo':
         raw_hospitals = profile.get('hospitals')
-        smo_roles = {'pi': 'PI', 'crc': 'CRC', 'administrative': 'Administrative'}
+        smo_roles = {
+            'pi': 'PI',
+            'research team': 'Research Team',
+            'crc': 'Research Team',
+            'administrative': 'Administrative',
+        }
         hospital_types = {'private': 'Private', 'government': 'Government'}
         if not isinstance(raw_hospitals, list) or not raw_hospitals:
             raise HTTPException(
@@ -1278,7 +1681,8 @@ async def register_start(body: RegisterStartIn):
             if hospital_type not in hospital_types:
                 raise HTTPException(400, 'Select a hospital type: Private or Government')
             if hospital_role not in smo_roles:
-                raise HTTPException(400, 'Select a hospital role: PI, CRC, or Administrative')
+                raise HTTPException(
+                    400, 'Select a hospital role: PI, Research Team, or Administrative')
             normalized_hospital = {
                 'name': name,
                 'address': address,
@@ -1361,9 +1765,10 @@ async def register_start(body: RegisterStartIn):
         'security_answer_hash': (pwd_ctx.hash(body.security_answer.lower()) if body.security_answer
                                  else (sec_qs[0]['answer_hash'] if sec_qs else '')),
         'security_questions': sec_qs,
+        'security_questions_completed': bool(sec_qs),
         'profile': profile,
         'channels': channels,
-        'email_verified': False,
+        'email_verified': bool(invitation and invitation.get('email')),
         'phone_verified': False,
         'attempts': 0,
         'send_count': len(channels),
@@ -1374,7 +1779,7 @@ async def register_start(body: RegisterStartIn):
     }
     if creates_organization:
         doc['creates_organization'] = True
-        doc['organization_type'] = org_type_for_role(effective_role)
+        doc['organization_type'] = org_type_for_role(registration_entity_role)
     if invitation:
         doc['invitation_id'] = invitation['id']
         doc['invite_token'] = normalize_invite_code(invitation['token'])
@@ -1470,9 +1875,55 @@ async def register_complete(body: RegisterCompleteIn):
         raise HTTPException(400, 'Your password setup session expired. Please restart registration.')
     if not all(pending.get(f'{ch}_verified') for ch in pending['channels']):
         raise HTTPException(400, 'Please verify your contact details before setting a password.')
+    if pending.get('invitation_id') and not pending.get('security_questions_completed'):
+        raise HTTPException(400, 'Please complete your security questions before setting a password.')
     pending['hashed_password'] = pwd_ctx.hash(body.password)
     session = await _complete_registration(pending)
     return {'verified': True, **session}
+
+
+@api.post('/auth/register/security-questions')
+async def register_security_questions(body: RegisterSecurityQuestionsIn):
+    """Save invited-user recovery questions after phone verification."""
+    pending = await db.pending_registrations.find_one({'id': body.registration_id})
+    if not pending:
+        raise HTTPException(404, 'Registration not found or already completed')
+    if pending['expires_at'] < now():
+        await db.pending_registrations.delete_one({'id': pending['id']})
+        raise HTTPException(400, 'Your registration session expired. Please restart registration.')
+    if not pending.get('invitation_id'):
+        raise HTTPException(400, 'Security questions must be submitted during registration')
+    if not pending.get('fully_verified'):
+        raise HTTPException(400, 'Please verify your phone number before setting security questions.')
+    if len(body.security_questions) != 3:
+        raise HTTPException(400, 'Please answer all three security questions')
+
+    questions = []
+    seen = set()
+    for item in body.security_questions:
+        question = str(item.get('question') or '').strip()
+        answer = str(item.get('answer') or '').strip().lower()
+        if not question or not answer:
+            raise HTTPException(400, 'Please answer all three security questions')
+        normalized_question = question.casefold()
+        if normalized_question in seen:
+            raise HTTPException(400, 'Please select three different security questions')
+        seen.add(normalized_question)
+        questions.append({
+            'question': question,
+            'answer_hash': pwd_ctx.hash(answer),
+        })
+
+    await db.pending_registrations.update_one(
+        {'id': pending['id']},
+        {'$set': {
+            'security_question': questions[0]['question'],
+            'security_answer_hash': questions[0]['answer_hash'],
+            'security_questions': questions,
+            'security_questions_completed': True,
+        }},
+    )
+    return {'ok': True}
 
 @api.post('/auth/register/resend')
 async def register_resend(body: RegisterResendIn):
@@ -4665,7 +5116,7 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
         'created_at': now(),
         'enrolled_date': body.enrolled_date or now().date().isoformat(),
         'completed_visit_ids': [],
-        'avatar_initials': ''.join([w[0].upper() for w in body.full_name.split()[:2]]) or 'P',
+        'avatar_initials': patient_initials(body.avatar_initials, body.full_name),
     }
     await db.patients.insert_one(doc)
     created = await materialize_visit_instances(doc)
@@ -5659,10 +6110,10 @@ async def _manageable_team_member(user: dict, member_id: str) -> dict:
         {'_id': 0, 'hashed_password': 0, 'security_answer_hash': 0},
     )
     if not member:
-        raise HTTPException(404, 'Team member not found')
+        raise HTTPException(404, 'Organization member not found')
     scoped = await list_team(user)
     if not any(row.get('id') == member_id for row in scoped):
-        raise HTTPException(403, 'This team member is outside your scope')
+        raise HTTPException(403, 'This organization member is outside your scope')
     if not _can_manage_team_member(user, member):
         raise HTTPException(403, 'Organization admin permission is required')
     return member
@@ -5688,7 +6139,7 @@ async def patch_team_member(
     member = await _manageable_team_member(user, member_id)
     values = {key: value for key, value in body.dict().items() if value is not None}
     if not values:
-        raise HTTPException(400, 'No team member changes supplied')
+        raise HTTPException(400, 'No organization member changes supplied')
     if 'role' in values:
         values['role'] = values['role'].strip().lower()
         if values['role'] not in TEAM_ROLES:
@@ -5710,7 +6161,7 @@ async def patch_team_member(
         'id': str(uuid.uuid4()),
         'user_id': member_id,
         'title': 'Team profile updated',
-        'body': f"{user.get('full_name') or 'Your organization admin'} updated your team profile.",
+        'body': f"{user.get('full_name') or 'Your organization admin'} updated your organization member profile.",
         'type': 'team',
         'read': False,
         'created_at': now(),
@@ -5718,7 +6169,7 @@ async def patch_team_member(
     await write_audit(
         user,
         'team.member_update',
-        f"Updated team member {member.get('full_name') or member_id}",
+        f"Updated organization member {member.get('full_name') or member_id}",
         target_id=member_id,
         changes=values,
     )
@@ -5761,7 +6212,7 @@ async def remove_team_member(
     await write_audit(
         user,
         'team.member_remove',
-        f"Removed team member {member.get('full_name') or member_id}",
+        f"Removed organization member {member.get('full_name') or member_id}",
         target_id=member_id,
     )
     return {'removed': True, 'member_id': member_id}
@@ -7308,6 +7759,10 @@ def _can_manage_invitation(inv: dict, user: dict) -> bool:
 
 @api.post('/invitations', dependencies=[Depends(require_roles('pi', 'crc', 'sponsor', 'cro'))])
 async def create_invitation(body: InvitationIn, user=Depends(current_user)):
+    invite_role = body.role or 'patient'
+    if invite_role != 'patient' and not user.get('org_admin'):
+        raise HTTPException(
+            403, 'Organization Admin access is required to invite members')
     if not body.email and not body.phone:
         raise HTTPException(400, 'Email or phone required')
     token = new_invite_code()
@@ -7315,7 +7770,7 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
         'id': str(uuid.uuid4()), 'token': token,
         'email': (body.email or '').lower(), 'phone': body.phone or '',
         'full_name': body.full_name or '', 'designation': body.designation or '',
-        'role': body.role or 'patient',
+        'role': invite_role,
         'trial_id': body.trial_id, 'invited_by': user['id'],
         'supervising_pi_id': user['id'] if user.get('role') == 'pi' and (body.role or '').lower() == 'crc' else '',
         'org': (body.organization or user.get('organization') or '').strip(),
@@ -8672,8 +9127,13 @@ async def _ensure_indexes():
         # Auto-expire abandoned/unverified registrations + throttle windows via TTL.
         await db.pending_registrations.create_index('expires_at', expireAfterSeconds=0)
         await db.pending_contact_changes.create_index('expires_at', expireAfterSeconds=0)
+        await db.prelogin_support_requests.create_index('expires_at', expireAfterSeconds=0)
+        await db.prelogin_support_requests.create_index('id', unique=True)
         await db.otp_throttle.create_index('expires_at', expireAfterSeconds=0)
         await db.public_api_throttle.create_index('expires_at', expireAfterSeconds=0)
+        await db.refresh_tokens.create_index('token_hash', unique=True)
+        await db.refresh_tokens.create_index('family_id')
+        await db.refresh_tokens.create_index('expires_at', expireAfterSeconds=0)
         # Enforce unique emails at the DB layer (defence-in-depth vs. concurrent signups).
         await db.users.create_index(
             'email', unique=True,

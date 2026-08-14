@@ -925,7 +925,7 @@ export default function Chat() {
             <View style={{ alignItems: "center", paddingVertical: 8 }}>
               <View style={s.encryptedPill}>
                 <Small color={colors.mutedFg} style={{ fontSize: 11, textAlign: "center" }}>
-                  Encrypted in transit and at rest · shared with all {memberCount} site-team members.
+                  Encrypted in transit and at rest · shared with all {memberCount} organization members.
                 </Small>
               </View>
             </View>

@@ -90,7 +90,7 @@ export default function SponsorProfile() {
       rows: [
         { icon: FlaskConical, label: "My Trials", route: "/(app)/sponsor/trials" },
         { icon: MapPin, label: "My Sites", route: "/(app)/sponsor/sites" },
-        { icon: Users, label: "Team Members", route: "/(app)/clinical/team" },
+        { icon: Users, label: "Organization Members", route: "/(app)/clinical/team" },
       ],
     },
     {

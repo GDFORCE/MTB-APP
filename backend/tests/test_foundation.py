@@ -70,6 +70,7 @@ def _cleanup():
         _uids = [u['id'] async for u in db.users.find(
             {'email': {'$regex': f'^test-{RUN_ID}-'}}, {'id': 1})]
         await db.preferences.delete_many({'user_id': {'$in': _uids}})
+        await db.refresh_tokens.delete_many({'user_id': {'$in': _uids}})
         await db.users.delete_many({'email': {'$regex': f'^test-{RUN_ID}-'}})
         await db.organizations.delete_many({'name': {'$regex': RUN_ID}})
         await db.invitations.delete_many({'email': {'$regex': RUN_ID}})
@@ -177,9 +178,12 @@ class TestOrganizations:
             assert 'platform_contact' not in plain.json()[0]
             assert 'platform_contact' not in detailed.json()[0]
             assert exact.status_code == 200, exact.text
-            # This fixture has ordinary site staff but no designated org admin,
-            # so the exact endpoint must not fall back to an arbitrary employee.
-            assert exact.json()['platform_contact'] is None
+            # Registration help is routed to the public platform-support
+            # contract, never to an arbitrary organization employee.
+            contact = exact.json()['platform_contact']
+            assert contact['name'] == 'MTB Platform Support'
+            assert contact['designation'] == 'Platform Administrator'
+            assert contact['email']
         run(flow())
 
 
@@ -596,7 +600,8 @@ class TestAddPatientFields:
                     'email': f'test-{RUN_ID}-fields@example.com',
                     'phone': '+910000000000', 'trial_id': trial_id,
                     'subject_id': subj, 'dob': '1990-01-01', 'gender': 'Female',
-                    'language': 'Hindi', 'baseline_date': baseline,
+                    'language': 'Hindi', 'avatar_initials': 'FPT',
+                    'baseline_date': baseline,
                 })
             assert r.status_code == 200, r.text
             created = r.json()
@@ -607,6 +612,7 @@ class TestAddPatientFields:
                          ('baseline_date', baseline)]:
                 assert created.get(k) == v, f'{k}: {created.get(k)!r} != {v!r}'
             assert created['trial_id'] == trial_id      # the SELECTED trial is used
+            assert created['avatar_initials'] == 'FPT'
             # baseline_date (not enrolled_date) anchors visit-instance scheduling:
             # the first template has day_offset 0, so it lands on the baseline day.
             async with make_client() as cli:

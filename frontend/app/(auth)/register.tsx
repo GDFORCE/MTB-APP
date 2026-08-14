@@ -24,7 +24,7 @@ const labelMap: Record<string, string> = {
   site: "Site / Hospital", pi: "Site / Hospital", crc: "Site / Hospital",
   patient: "Patient",
 };
-const departmentOptions = [
+const DEFAULT_DEPARTMENT_OPTIONS = [
   "Emergency Medicine", "Internal Medicine", "General Surgery", "Critical Care / Intensive Care",
   "Cardiology", "Gastroenterology", "Pulmonology", "Nephrology", "Neurology", "Endocrinology",
   "Haematology", "Infectious Diseases", "Allergy & Immunology", "Clinical Pharmacology", "Medical Genetics",
@@ -43,8 +43,8 @@ function variantFor(role?: string): RegistrationVariant {
 // These objects define each form's field shape only. Registration always starts
 // blank; real invitation values are applied separately from route parameters.
 const FIELD_SHAPES: Record<string, Record<string, string>> = {
-  site: { fullName: "Dr. Rajesh Kumar", designation: "Principal Investigator", email: "r.kumar@apollo.com", phone: "98100 12345", orgName: "Apollo Hospitals Mumbai", orgAddress: "", hospitalType: "Private", role: "PI", department: "" },
-  smo: { fullName: "Dr. Rajesh Kumar", designation: "SMO Manager", email: "r.kumar@smo.com", phone: "98100 12345", orgName: "MedSites SMO Pvt Ltd", orgAddress: "" },
+  site: { fullName: "Dr. Rajesh Kumar", designation: "Principal Investigator", email: "r.kumar@apollo.com", phone: "98100 12345", orgName: "Apollo Hospitals Mumbai", orgAddress: "", hospitalType: "Private", role: "PI", department: "", departmentOther: "" },
+  smo: { fullName: "Dr. Rajesh Kumar", designation: "SMO Manager", email: "r.kumar@smo.com", phone: "98100 12345", orgName: "MedSites SMO Pvt Ltd", orgAddress: "", role: "" },
   patient: { fullName: "Priya Kapoor", phone: "98765 43210", email: "", dob: "1985-06-15", gender: "", language: "English" },
   sponsor: { fullName: "John Doe", designation: "Clinical Research Manager", email: "john.doe@pharmaco.com", phone: "98765 43210", orgName: "PharmaCo Ltd", orgAddress: "21 Business Park, Mumbai 400001" },
 };
@@ -66,6 +66,7 @@ const organizationRegistrationInstructions = [
   "You must not share your login credentials, password, or OTP with others.",
   "Administrative activities performed through your account may be recorded for security and audit purposes.",
 ];
+const OTHER_DEPARTMENT = "Others Specify";
 
 const smoRegistrationInstructions = [
   "Register an organization, hospital, or clinical trial site only if you are authorized or have a legitimate professional relationship to manage its clinical trial activities on this platform.",
@@ -86,7 +87,7 @@ const smoRegistrationInstructions = [
 // while new org registrations proceed directly.
 interface PlatformContact { name: string; designation?: string; email?: string; phone?: string }
 interface Org { id: string; name: string; type: string; address?: string; contact?: string; email?: string; website?: string; status?: string; platform_contact?: PlatformContact }
-type SmoHospital = { name: string; address: string; type: string; role: string; googlePlaceId?: string };
+type SmoHospital = { name: string; address: string; type: string; googlePlaceId?: string };
 // Map the selected role to the org `type` used to narrow the directory search.
 function orgTypeFor(role?: string): string | undefined {
   if (role === "sponsor") return "sponsor";
@@ -330,8 +331,9 @@ export default function Register() {
   const [availabilityErrors, setAvailabilityErrors] = useState<RegistrationErrors>({});
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [smoHospitals, setSmoHospitals] = useState<SmoHospital[]>([
-    { name: "", address: "", type: "", role: "" },
+    { name: "", address: "", type: "" },
   ]);
+  const [departmentOptions, setDepartmentOptions] = useState(DEFAULT_DEPARTMENT_OPTIONS);
   const up = (k: string) => (v: string) => {
     setFld((s) => ({ ...s, [k]: v }));
     setTouched((current) => ({ ...current, [k]: true }));
@@ -342,13 +344,33 @@ export default function Register() {
     setTouched((current) => ({ ...current, phone: true }));
   };
 
-  const [declarationAccepted, setDeclarationAccepted] = useState(false);
+  useEffect(() => {
+    let ignore = false;
+    api.get("/master-data/options", { params: { fieldType: "department" } })
+      .then(({ data }) => {
+        if (ignore) return;
+        const published = Array.isArray(data?.values) ? data.values : [];
+        const privateValues = Array.isArray(data?.private_values)
+          ? data.private_values.map((item: any) => item?.value)
+          : [];
+        const combined = [...DEFAULT_DEPARTMENT_OPTIONS, ...published, ...privateValues]
+          .filter((value): value is string => typeof value === "string" && !!value.trim());
+        setDepartmentOptions(Array.from(new Set(combined)));
+      })
+      .catch(() => {
+        // Keep the built-in catalogue when the optional master-data lookup fails.
+      });
+    return () => { ignore = true; };
+  }, []);
+
+  const [declarationAccepted, setDeclarationAccepted] = useState(() => isInvite);
   const [showInstructions, setShowInstructions] = useState(() => isOrganizationAdminRegistration);
-  const [showDeclaration, setShowDeclaration] = useState(() => !isOrganizationAdminRegistration);
+  const [showDeclaration, setShowDeclaration] = useState(() => !isInvite && !isOrganizationAdminRegistration);
   const [orgCheck, setOrgCheck] = useState<"exists" | "new" | null>(null);
   const [orgContactError, setOrgContactError] = useState("");
   // True while Continue performs the authoritative org/contact lookup.
   const [checkingOrg, setCheckingOrg] = useState(false);
+  const [startingVerification, setStartingVerification] = useState(false);
   const [err, setErr] = useState("");
 
   // ── Live org directory lookup (debounced) ─────────────────────────────────
@@ -444,9 +466,13 @@ export default function Register() {
 
   const smoHospitalsValid = !needsSmoHospitals || (
     smoHospitals.length > 0
-    && smoHospitals.every((hospital) => hospital.name.trim() && hospital.address.trim() && hospital.type && hospital.role)
+    && smoHospitals.every((hospital) => hospital.name.trim() && hospital.address.trim() && hospital.type)
   );
-  const canContinue = declarationAccepted && validation.valid && smoHospitalsValid && !checkingAvailability && !availabilityErrors.email && !availabilityErrors.phone;
+  const customDepartmentMissing = variant === "site"
+    && fld.role === "PI"
+    && fld.department === OTHER_DEPARTMENT
+    && !fld.departmentOther?.trim();
+  const canContinue = declarationAccepted && validation.valid && smoHospitalsValid && !customDepartmentMissing && !checkingAvailability && !availabilityErrors.email && !availabilityErrors.phone;
   const fieldError = (key: keyof RegistrationErrors) =>
     availabilityErrors[key] || (submitted || touched[key] ? validation.errors[key] : undefined);
   const normalizeOrgName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
@@ -457,17 +483,24 @@ export default function Register() {
     ? "I confirm that the information I have provided is true, accurate and complete, and I agree to comply with the platform's Terms of Use and Privacy Policy."
     : "I confirm that I am authorized to register and represent this organization, that the information provided is accurate, and I agree to comply with the platform's Terms of Use and Privacy Policy.";
 
-  const proceed = () => {
+  const proceed = async () => {
     const effectiveRole = role === "site"
       ? fld.role === "PI" ? "pi" : fld.role === "Administrative" ? "site" : "crc"
       : role || "patient";
     const registrationPayload: Record<string, any> = { ...validation.normalized };
+    if (variant === "site") {
+      if (fld.role === "PI" && fld.department === OTHER_DEPARTMENT) {
+        registrationPayload.department = fld.departmentOther.trim();
+        registrationPayload.department_is_custom = true;
+      }
+      delete registrationPayload.departmentOther;
+    }
     if (needsSmoHospitals) {
       registrationPayload.hospitals = smoHospitals.map((hospital) => ({
         name: hospital.name.trim(),
         address: hospital.address.trim(),
         type: hospital.type,
-        role: hospital.role,
+        role: validation.normalized.role,
         google_place_id: hospital.googlePlaceId || undefined,
         address_source: hospital.googlePlaceId ? "google_places" : "manual",
       }));
@@ -478,15 +511,53 @@ export default function Register() {
       delete registrationPayload.role;
       delete registrationPayload.department;
     }
+    const payload: Record<string, any> = {
+      ...registrationPayload,
+      inviteToken: inviteToken || "",
+    };
+    if (isInvite) {
+      setStartingVerification(true);
+      setErr("");
+      try {
+        const profile: Record<string, string> = {};
+        const coreFields = new Set(["fullName", "email", "phone", "phoneCountry", "orgName", "inviteToken"]);
+        Object.keys(payload).forEach((key) => {
+          if (!coreFields.has(key) && payload[key]) profile[key] = payload[key];
+        });
+        const { data } = await api.post("/auth/register/start", {
+          full_name: payload.fullName,
+          role: effectiveRole,
+          email: payload.email,
+          phone: payload.phone,
+          organization: payload.orgName || undefined,
+          profile,
+          invite_token: payload.inviteToken,
+          security_questions: [],
+        });
+        router.push({
+          pathname: "/(auth)/verify-otp",
+          params: {
+            registration_id: data.registration_id,
+            channels: JSON.stringify(data.channels),
+            email: data.email || "",
+            phone: data.phone || "",
+            role: effectiveRole,
+            invited: "1",
+          },
+        });
+      } catch (error: any) {
+        setErr(error?.response?.data?.detail || "Could not start verification. Please try again.");
+      } finally {
+        setStartingVerification(false);
+      }
+      return;
+    }
     router.push({
       pathname: "/(auth)/security-questions",
       params: {
         role: effectiveRole,
         variant,
-        payload: JSON.stringify({
-          ...registrationPayload,
-          inviteToken: inviteToken || "",
-        }),
+        payload: JSON.stringify(payload),
       },
     });
   };
@@ -612,7 +683,7 @@ export default function Register() {
     setSmoHospitals((current) => current.map((hospital, i) => i === index ? { ...hospital, ...patch } : hospital));
   };
   const addSmoHospital = () => {
-    setSmoHospitals((current) => [...current, { name: "", address: "", type: "", role: "" }]);
+    setSmoHospitals((current) => [...current, { name: "", address: "", type: "" }]);
   };
   const removeSmoHospital = (index: number) => {
     setSmoHospitals((current) => current.filter((_, i) => i !== index));
@@ -717,6 +788,16 @@ export default function Register() {
                     error={!!fieldError("phone")}
                   />
                 </Field>
+                {!isInvite && (variant === "site" || variant === "smo") && (
+                  <Field label="Role" required error={fieldError("role")}>
+                    <Select
+                      value={fld.role}
+                      placeholder="Select role"
+                      options={["PI", "Research Team", "Administrative"]}
+                      onChange={up("role")}
+                    />
+                  </Field>
+                )}
 
                 <SectionRow title="Organization" />
                 <Field label={variant === "smo" ? "SMO Name" : "Organization Name"} required error={fieldError("orgName")}>
@@ -814,9 +895,6 @@ export default function Register() {
                             <Field label="Type of Hospital" required error={submitted && !hospital.type ? "Hospital type is required." : undefined}>
                               <Select value={hospital.type} placeholder="Type of Hospital" options={["Private", "Government"]} onChange={(type) => updateSmoHospital(index, { type })} />
                             </Field>
-                            <Field label="Role" required error={submitted && !hospital.role ? "Role is required." : undefined}>
-                              <Select value={hospital.role} placeholder="Role" options={["PI", "CRC", "Administrative"]} onChange={(hospitalRole) => updateSmoHospital(index, { role: hospitalRole })} />
-                            </Field>
                           </View>
                         ))}
                         <Pressable onPress={addSmoHospital} style={f.addHospitalButton}>
@@ -828,8 +906,36 @@ export default function Register() {
                     {variant === "site" && (
                       <>
                         <Field label="Hospital Type" required error={fieldError("hospitalType")}><Select value={fld.hospitalType} placeholder="Select hospital type" options={["Private", "Government"]} onChange={up("hospitalType")} /></Field>
-                        <Field label="Role" required error={fieldError("role")}><Select value={fld.role} placeholder="Select role" options={["PI", "Research Team", "Administrative"]} onChange={up("role")} /></Field>
-                        {fld.role === "PI" && <Field label="Department"><Select value={fld.department} placeholder="Select department" options={departmentOptions} onChange={up("department")} /></Field>}
+                        {fld.role === "PI" && (
+                          <>
+                            <Field label="Department">
+                              <Select
+                                value={fld.department}
+                                placeholder="Select department"
+                                options={[...departmentOptions, OTHER_DEPARTMENT]}
+                                onChange={(department) => {
+                                  up("department")(department);
+                                  if (department !== OTHER_DEPARTMENT) up("departmentOther")("");
+                                }}
+                              />
+                            </Field>
+                            {fld.department === OTHER_DEPARTMENT && (
+                              <Field
+                                label="Specify Department"
+                                required
+                                error={(submitted || touched.departmentOther) && customDepartmentMissing ? "Department is required." : undefined}
+                              >
+                                <Input
+                                  value={fld.departmentOther}
+                                  onChangeText={up("departmentOther")}
+                                  placeholder="Enter department name"
+                                  maxLength={120}
+                                  style={customDepartmentMissing && submitted ? f.inputError : undefined}
+                                />
+                              </Field>
+                            )}
+                          </>
+                        )}
                       </>
                     )}
 
@@ -844,8 +950,8 @@ export default function Register() {
 
         {/* Footer */}
         <View style={f.footer}>
-          <Springy testID="register-submit-button" onPress={handleContinue} disabled={!canContinue || checkingOrg} style={[f.cta, canContinue ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
-            {checkingOrg ? (
+          <Springy testID="register-submit-button" onPress={handleContinue} disabled={!canContinue || checkingOrg || startingVerification} style={[f.cta, canContinue ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
+            {checkingOrg || startingVerification ? (
               <ActivityIndicator color={colors.primaryFg} />
             ) : (
               <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: canContinue ? colors.primaryFg : colors.mutedFg }}>Continue</Text>

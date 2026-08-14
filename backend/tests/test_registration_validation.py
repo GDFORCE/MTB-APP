@@ -249,6 +249,99 @@ def test_site_registration_maps_selected_site_role(monkeypatch):
     run(flow())
 
 
+def test_smo_registration_maps_selected_role_and_keeps_smo_entity(monkeypatch):
+    async def no_delivery(*_args, **_kwargs):
+        return None
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', no_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        created = []
+        try:
+            async with make_client() as cli:
+                for index, (selected, expected) in enumerate([
+                    ('PI', 'pi'),
+                    ('Research Team', 'crc'),
+                    ('Administrative', 'smo'),
+                ]):
+                    response = await cli.post('/api/auth/register/start', json={
+                        'full_name': f'SMO Member {index}',
+                        'role': 'smo',
+                        'email': f'smo-role-{RUN_ID}-{index}@example.com',
+                        'phone': f'+91976543{index:04d}',
+                        'organization': f'SMO Role {RUN_ID} {index}',
+                        'profile': {
+                            'role': selected,
+                            'hospitals': [{
+                                'name': f'Hospital {index}',
+                                'address': f'Address {index}',
+                                'type': 'Private',
+                                'role': selected,
+                            }],
+                        },
+                    })
+                    assert response.status_code == 200, response.text
+                    registration_id = response.json()['registration_id']
+                    created.append(registration_id)
+                    pending = await server.db.pending_registrations.find_one(
+                        {'id': registration_id},
+                        {'_id': 0, 'role': 1, 'organization_type': 1, 'profile': 1},
+                    )
+                    assert pending['role'] == expected
+                    assert pending['organization_type'] == 'smo'
+                    assert pending['profile']['role'] == selected
+                    assert pending['profile']['hospitals'][0]['role'] == selected
+        finally:
+            await server.db.pending_registrations.delete_many(
+                {'id': {'$in': created}})
+
+    run(flow())
+
+
+def test_sponsor_and_cro_default_without_profile_role(monkeypatch):
+    async def no_delivery(*_args, **_kwargs):
+        return None
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', no_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        created = []
+        try:
+            async with make_client() as cli:
+                for index, selected_role in enumerate(('sponsor', 'cro')):
+                    response = await cli.post('/api/auth/register/start', json={
+                        'full_name': f'{selected_role.upper()} User',
+                        'role': selected_role,
+                        'email': f'{selected_role}-default-{RUN_ID}@example.com',
+                        'phone': f'+91965432{index:04d}',
+                        'organization': f'{selected_role.upper()} Default {RUN_ID}',
+                        'profile': {'designation': 'Manager'},
+                    })
+                    assert response.status_code == 200, response.text
+                    registration_id = response.json()['registration_id']
+                    created.append(registration_id)
+                    pending = await server.db.pending_registrations.find_one(
+                        {'id': registration_id},
+                        {'_id': 0, 'role': 1, 'organization_type': 1, 'profile': 1},
+                    )
+                    assert pending['role'] == selected_role
+                    assert pending['organization_type'] == selected_role
+                    assert not pending['profile'].get('role')
+        finally:
+            await server.db.pending_registrations.delete_many(
+                {'id': {'$in': created}})
+
+    run(flow())
+
+
 def test_first_registrant_is_org_admin_and_invitee_is_regular_member():
     org_name = f'Ownership {RUN_ID} {uuid.uuid4().hex[:6]}'
     created_user_ids = []
@@ -290,11 +383,165 @@ def test_first_registrant_is_org_admin_and_invitee_is_regular_member():
             created_user_ids.append(member['user']['id'])
             assert member['user']['org_admin'] is False
         finally:
+            await server.db.refresh_tokens.delete_many(
+                {'user_id': {'$in': created_user_ids}})
             await server.db.users.delete_many({'id': {'$in': created_user_ids}})
             if organization:
                 await server.db.organizations.delete_one({'id': organization['id']})
                 await server.db.audit_logs.delete_many(
                     {'target_id': organization['id']})
+
+    run(flow())
+
+
+def test_email_invitee_verifies_phone_only(monkeypatch):
+    suffix = uuid.uuid4().hex[:8]
+    org_name = f'Invite Verification {RUN_ID} {suffix}'
+    invite_email = f'invite-phone-only-{suffix}@example.com'
+    invite_phone = f"+919{int(uuid.uuid4().hex[:8], 16) % 1_000_000_000:09d}"
+    invite_token = server.new_invite_code()
+    delivered = []
+
+    async def capture_delivery(channel, target, code, **_kwargs):
+        delivered.append((channel, target, code))
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', capture_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        organization = None
+        registration_id = None
+        invitation_id = str(uuid.uuid4())
+        try:
+            organization, created = await server.ensure_organization(org_name, 'site')
+            assert created is True
+            await server.db.invitations.insert_one({
+                'id': invitation_id,
+                'token': invite_token,
+                'email': invite_email,
+                'phone': '',
+                'full_name': 'Invited Researcher',
+                'designation': 'Research Coordinator',
+                'role': 'crc',
+                'org': org_name,
+                'status': 'pending',
+                'created_at': server.now(),
+                'expires_at': server.now() + timedelta(days=1),
+            })
+            async with make_client() as cli:
+                response = await cli.post('/api/auth/register/start', json={
+                    'full_name': 'Invited Researcher',
+                    'role': 'crc',
+                    'email': invite_email,
+                    'phone': invite_phone,
+                    'organization': org_name,
+                    'profile': {'designation': 'Research Coordinator'},
+                    'security_questions': [],
+                    'invite_token': invite_token,
+                })
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            registration_id = payload['registration_id']
+            assert payload['channels'] == ['phone']
+            assert [(channel, target) for channel, target, _code in delivered] == [
+                ('phone', invite_phone),
+            ]
+            pending = await server.db.pending_registrations.find_one(
+                {'id': registration_id},
+                {'_id': 0, 'channels': 1, 'email_verified': 1, 'phone_verified': 1},
+            )
+            assert pending == {
+                'channels': ['phone'],
+                'email_verified': True,
+                'phone_verified': False,
+            }
+
+            async with make_client() as cli:
+                verified = await cli.post('/api/auth/register/verify', json={
+                    'registration_id': registration_id,
+                    'phone_otp': delivered[0][2],
+                })
+                password_too_early = await cli.post('/api/auth/register/complete', json={
+                    'registration_id': registration_id,
+                    'password': 'Password1!',
+                })
+                saved = await cli.post('/api/auth/register/security-questions', json={
+                    'registration_id': registration_id,
+                    'security_questions': [
+                        {'question': 'Question one?', 'answer': 'First answer'},
+                        {'question': 'Question two?', 'answer': 'Second answer'},
+                        {'question': 'Question three?', 'answer': 'Third answer'},
+                    ],
+                })
+            assert verified.status_code == 200, verified.text
+            assert verified.json()['verified'] is True
+            assert password_too_early.status_code == 400
+            assert 'security questions' in password_too_early.json()['detail'].lower()
+            assert saved.status_code == 200, saved.text
+            pending_after_questions = await server.db.pending_registrations.find_one(
+                {'id': registration_id},
+                {'_id': 0, 'security_questions_completed': 1, 'security_questions': 1},
+            )
+            assert pending_after_questions['security_questions_completed'] is True
+            assert [item['question'] for item in pending_after_questions['security_questions']] == [
+                'Question one?', 'Question two?', 'Question three?',
+            ]
+            assert all('answer_hash' in item for item in pending_after_questions['security_questions'])
+        finally:
+            if registration_id:
+                await server.db.pending_registrations.delete_one({'id': registration_id})
+            await server.db.invitations.delete_one({'id': invitation_id})
+            if organization:
+                await server.db.organizations.delete_one({'id': organization['id']})
+
+    run(flow())
+
+
+def test_custom_department_is_queued_when_site_registration_completes():
+    suffix = uuid.uuid4().hex[:8]
+    org_name = f'Custom Department Site {RUN_ID} {suffix}'
+    department = f'Translational Medicine {RUN_ID} {suffix}'
+    created_user_id = None
+
+    async def flow():
+        nonlocal created_user_id
+        try:
+            session = await server._complete_registration({
+                'id': str(uuid.uuid4()),
+                'full_name': 'Custom Department PI',
+                'role': 'pi',
+                'email': f'custom-dept-{suffix}@example.com',
+                'phone': '',
+                'organization': org_name,
+                'hashed_password': server.pwd_ctx.hash('Password1!'),
+                'profile': {
+                    'designation': 'Principal Investigator',
+                    'department': department,
+                    'department_is_custom': True,
+                },
+                'creates_organization': True,
+                'organization_type': 'site',
+                'email_verified': True,
+                'phone_verified': False,
+            })
+            created_user_id = session['user']['id']
+            submission = await server.db.master_data_submissions.find_one(
+                {'submittedById': created_user_id}, {'_id': 0})
+            assert submission['fieldType'] == 'department'
+            assert submission['value'] == department
+            assert submission['status'] == 'pending'
+            assert session['user']['profile']['department_review_status'] == 'pending'
+        finally:
+            if created_user_id:
+                await server.db.master_data_submissions.delete_many(
+                    {'submittedById': created_user_id})
+                await server.db.refresh_tokens.delete_many(
+                    {'user_id': created_user_id})
+                await server.db.users.delete_one({'id': created_user_id})
+            await server.db.organizations.delete_many({'name': org_name})
 
     run(flow())
 
@@ -318,7 +565,10 @@ def test_smo_self_registration_requires_and_stores_hospitals(monkeypatch):
                 'email': f'smo-missing-{uuid.uuid4().hex[:8]}@example.com',
                 'phone': '+919700000011',
                 'organization': f'SMO Missing {uuid.uuid4().hex[:8]}',
-                'profile': {'designation': 'SMO Manager'},
+                'profile': {
+                    'designation': 'SMO Manager',
+                    'role': 'Administrative',
+                },
             })
             valid = await cli.post('/api/auth/register/start', json={
                 'full_name': 'SMO Administrative User',
@@ -328,6 +578,7 @@ def test_smo_self_registration_requires_and_stores_hospitals(monkeypatch):
                 'organization': f'SMO Valid {uuid.uuid4().hex[:8]}',
                 'profile': {
                     'designation': 'SMO Manager',
+                    'role': 'Administrative',
                     'hospitals': [{
                         'name': 'Apollo Hospitals Mumbai',
                         'address': 'Bandra West, Mumbai',

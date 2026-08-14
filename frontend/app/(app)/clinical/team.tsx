@@ -83,7 +83,6 @@ export default function Team() {
   const router = useRouter();
   const { user } = useAuth();
   const [members, setMembers] = useState<TeamMember[]>([]);
-  const [teamCapabilities, setTeamCapabilities] = useState<Exclude<TeamResponse, TeamMember[]>["capabilities"]>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -101,9 +100,8 @@ export default function Team() {
         ...member,
         designation: member.designation || member.profile?.designation,
       })));
-      setTeamCapabilities(Array.isArray(payload) ? undefined : payload.capabilities);
     } catch {
-      setError("Couldn't load your team. Please try again.");
+      setError("Couldn't load organization members. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -113,14 +111,7 @@ export default function Team() {
     void load();
   }, [load]);
 
-  const canInvite = teamCapabilities?.can_invite
-    ?? Boolean(
-      user
-      && (
-        ["pi", "crc", "sponsor", "cro"].includes(user.role)
-        || (user.role === "site" && user.org_admin)
-      ),
-    );
+  const canInvite = Boolean(user?.org_admin);
 
   const allMembers = useMemo<TeamMember[]>(() => {
     if (!user) return members;
@@ -169,10 +160,10 @@ export default function Team() {
     <ScreenContainer>
       <ScreenHeader
         eyebrow={`${allMembers.length} member${allMembers.length === 1 ? "" : "s"}`}
-        title="Clinical Team"
+        title="Organization Members"
         right={canInvite ? (
           <Pressable
-            accessibilityLabel="Invite team member"
+            accessibilityLabel="Invite organization member"
             testID="invite-fab"
             onPress={() => router.push("/(app)/clinical/invite-member")}
             style={s.fab}
@@ -242,7 +233,7 @@ export default function Team() {
         </ScrollView>
 
         <View style={s.sectionTitle}>
-          <Eyebrow>Your team</Eyebrow>
+          <Eyebrow>Organization members</Eyebrow>
           {!loading && !error ? (
             <Small>{visible.length} shown</Small>
           ) : null}
@@ -251,7 +242,7 @@ export default function Team() {
         {loading ? (
           <View style={s.loading}>
             <ActivityIndicator color={colors.primary} />
-            <Small>Loading team…</Small>
+            <Small>Loading organization members…</Small>
           </View>
         ) : error ? (
           <Card style={s.stateCard}>
@@ -297,14 +288,14 @@ export default function Team() {
                       {roleLabel[member.role] || member.role.toUpperCase()}
                     </Small>
                     <Small numberOfLines={1} style={s.meta}>
-                      {member.designation || member.organization || member.email || "Team member"}
+                      {member.designation || member.organization || member.email || "Organization member"}
                     </Small>
                   </View>
                   {!isYou ? (
                     <View style={s.memberActions}>
                       <Pressable
                         testID={`team-message-${member.id}`}
-                        accessibilityLabel={`Message ${member.full_name || "team member"}`}
+                        accessibilityLabel={`Message ${member.full_name || "organization member"}`}
                         hitSlop={6}
                         onPress={(event) => {
                           event.stopPropagation();
@@ -341,7 +332,7 @@ export default function Team() {
                   testID={`team-trials-${member.id}`}
                   accessibilityRole="button"
                   accessibilityState={{ expanded: isExpanded }}
-                  accessibilityLabel={`${isExpanded ? "Hide" : "Show"} trials for ${member.full_name || "team member"}`}
+                  accessibilityLabel={`${isExpanded ? "Hide" : "Show"} trials for ${member.full_name || "organization member"}`}
                   onPress={() => setExpandedMember((current) => current === member.id ? null : member.id)}
                   style={s.trialsToggle}
                 >
@@ -376,7 +367,7 @@ export default function Team() {
             style={s.inviteButton}
             onPress={() => router.push("/(app)/clinical/invite-member")}
           >
-            Invite team member
+            Invite organization member
           </Button>
         ) : null}
       </ScrollView>

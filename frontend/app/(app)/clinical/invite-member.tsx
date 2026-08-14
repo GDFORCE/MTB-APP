@@ -26,17 +26,18 @@ const roleNames: Record<InviteRole, string> = {
 
 export default function InviteMember() {
   const { user } = useAuth();
-  const isSiteAdmin = Boolean(user?.role === "site" && user.org_admin);
+  const isOrgAdmin = Boolean(user?.org_admin);
   const {
     orgId,
+    orgType,
     loading: orgLoading,
     error: orgError,
-  } = useOrgContext(isSiteAdmin);
+  } = useOrgContext(isOrgAdmin);
   const roles = useMemo<InviteRole[]>(
-    () => user?.role === "sponsor" || user?.role === "cro"
+    () => orgType === "sponsor" || orgType === "cro"
       ? ["pi", "crc", "sponsor", "cro"]
       : ["pi", "crc"],
-    [user?.role],
+    [orgType],
   );
   const [role, setRole] = useState<InviteRole>(
     user?.role === "crc" ? "pi" : "crc",
@@ -57,16 +58,16 @@ export default function InviteMember() {
   const send = async () => {
     const normalizedEmail = email.trim().toLocaleLowerCase();
     const normalizedPhone = phone.trim();
-    if (isSiteAdmin && !/\S+@\S+\.\S+/.test(normalizedEmail)) {
-      setError("Enter a valid email address for the site team member.");
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
+      setError("Enter a valid email address for the organization member.");
       return;
     }
-    if (!isSiteAdmin && !normalizedEmail && !normalizedPhone) {
-      setError("Enter an email address or phone number.");
+    if (!isOrgAdmin) {
+      setError("Organization Admin access is required to invite members.");
       return;
     }
-    if (isSiteAdmin && !orgId) {
-      setError(orgError || "Your site organization is still loading. Please try again.");
+    if (!orgId) {
+      setError(orgError || "Your organization is still loading. Please try again.");
       return;
     }
     setLoading(true);
@@ -79,9 +80,7 @@ export default function InviteMember() {
         phone: normalizedPhone || undefined,
         role,
       };
-      const response = isSiteAdmin
-        ? await api.post(`/org/${orgId}/members/invite`, payload)
-        : await api.post("/invitations", payload);
+      const response = await api.post(`/org/${orgId}/members/invite`, payload);
       setInvite(response.data);
     } catch (err: any) {
       const detail = err?.response?.data?.detail;
@@ -94,10 +93,23 @@ export default function InviteMember() {
     }
   };
 
+  if (!isOrgAdmin) {
+    return (
+      <ScreenContainer>
+        <ScreenHeader eyebrow="Organization access" title="Invite unavailable" />
+        <View style={s.deniedContent}>
+          <LockKeyhole size={38} color={colors.mutedFg} />
+          <Body weight="700">Organization Admin access required</Body>
+          <Small style={s.deniedText}>Only an Organization Admin can invite organization members.</Small>
+        </View>
+      </ScreenContainer>
+    );
+  }
+
   if (invite) {
     return (
       <ScreenContainer>
-        <ScreenHeader eyebrow="Team access" title="Invitation Sent" />
+        <ScreenHeader eyebrow="Organization access" title="Invitation Sent" />
         <ScrollView contentContainerStyle={s.successContent}>
           <View style={s.successIcon}>
             <CheckCircle2 size={36} color={colors.success} />
@@ -147,7 +159,7 @@ export default function InviteMember() {
 
   return (
     <ScreenContainer>
-      <ScreenHeader eyebrow="Team access" title="Add Team Member" />
+      <ScreenHeader eyebrow="Organization access" title="Add Organization Member" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={s.flex}
@@ -226,7 +238,7 @@ export default function InviteMember() {
             keyboardType="phone-pad"
             testID="member-invite-phone"
           />
-          {isSiteAdmin && orgError ? (
+          {isOrgAdmin && orgError ? (
             <Small color={colors.destructive} style={s.error}>
               {orgError}
             </Small>
@@ -241,8 +253,8 @@ export default function InviteMember() {
           <Button
             testID="member-invite-send"
             onPress={() => void send()}
-            loading={loading || (isSiteAdmin && orgLoading)}
-            disabled={isSiteAdmin && !orgLoading && !orgId}
+            loading={loading || (isOrgAdmin && orgLoading)}
+            disabled={isOrgAdmin && !orgLoading && !orgId}
           >
             Send secure invitation
           </Button>
@@ -269,6 +281,8 @@ function Field({ label, ...props }: React.ComponentProps<typeof TextInput> & {
 
 const s = StyleSheet.create({
   flex: { flex: 1 },
+  deniedContent: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md },
+  deniedText: { textAlign: "center", maxWidth: 320 },
   content: { padding: spacing.md, paddingBottom: spacing.xl },
   scopeCard: {
     flexDirection: "row",

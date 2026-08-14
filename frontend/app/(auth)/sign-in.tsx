@@ -72,6 +72,15 @@ export default function SignIn() {
 
           <View style={{ marginTop: spacing.xl, gap: spacing.md }}>
             <Button testID="signin-submit-button" onPress={submit} loading={loading}>Sign In</Button>
+            <Pressable
+              testID="signin-contact-support"
+              onPress={() => router.push("/(auth)/login-support")}
+              hitSlop={8}
+            >
+              <Small color={colors.primary} style={{ textAlign: "center", fontWeight: "700" as any }}>
+                Having trouble signing in? Contact Support
+              </Small>
+            </Pressable>
             <Pressable onPress={() => router.push("/(auth)/entity-type")}>
               <Small color={colors.mutedFg} style={{ textAlign: "center" }}>Don’t have an account? <Small color={colors.primary} style={{ fontWeight: "700" as any }}>Sign Up</Small></Small>
             </Pressable>

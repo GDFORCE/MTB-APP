@@ -105,7 +105,7 @@ export default function TeamMemberDetail() {
           });
         }
       } catch {
-        if (alive) setError("Couldn't load this team member.");
+        if (alive) setError("Couldn't load this organization member.");
       } finally {
         if (alive) setLoading(false);
       }
@@ -148,7 +148,7 @@ export default function TeamMemberDetail() {
   const remove = () => {
     if (!member || !canRemove) return;
     Alert.alert(
-      "Remove team member?",
+      "Remove organization member?",
       `${member.full_name || member.email || "This member"} will lose access to the organization and its trials.`,
       [
         { text: "Cancel", style: "cancel" },
@@ -198,7 +198,7 @@ export default function TeamMemberDetail() {
   return (
     <ScreenContainer>
       <ScreenHeader
-        eyebrow={mode === "edit" ? "Editing access profile" : "Team member"}
+        eyebrow={mode === "edit" ? "Editing access profile" : "Organization member"}
         title={mode === "edit" ? "Edit Member" : "Member Details"}
         right={headerAction}
       />
@@ -210,7 +210,7 @@ export default function TeamMemberDetail() {
         <View style={s.loading}>
           <Body weight="700">Member not found</Body>
           <Small style={s.notFoundText}>
-            This person is no longer in your scoped clinical team.
+            This person is no longer in your organization member scope.
           </Small>
         </View>
       ) : (
@@ -231,7 +231,7 @@ export default function TeamMemberDetail() {
               </Small>
             </View>
             <Small style={s.status}>
-              {member.is_online ? "Online now" : member.status || "Clinical team member"}
+              {member.is_online ? "Online now" : member.status || "Organization member"}
             </Small>
           </View>
 
@@ -286,7 +286,7 @@ export default function TeamMemberDetail() {
                   params: { participantId: member.id },
                 })}
               >
-                Message team member
+                Message organization member
               </Button>
               {member.phone ? (
                 <Button
@@ -312,7 +312,7 @@ export default function TeamMemberDetail() {
           {canRemove && mode === "view" ? (
             <Pressable testID="member-remove" onPress={remove} style={s.remove}>
               <Trash2 size={16} color={colors.destructive} />
-              <Small color={colors.destructive}>Remove from team</Small>
+              <Small color={colors.destructive}>Remove from organization</Small>
             </Pressable>
           ) : null}
         </ScrollView>

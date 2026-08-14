@@ -59,7 +59,7 @@ export default function ClinicalProfile() {
     ] },
     { title: "TRIAL MANAGEMENT", rows: [
       { icon: FlaskConical, label: "My Trials", route: "/(app)/clinical/my-trials" },
-      { icon: Users, label: "Team Members", route: "/(app)/clinical/team" },
+      { icon: Users, label: "Organization Members", route: "/(app)/clinical/team" },
       ...(isSmo && user.org_admin ? [{ icon: MapPin, label: "Managed Hospitals", route: "/(app)/org-admin/smo" }] : []),
       ...(user.org_admin ? [{ icon: KeyRound, label: "Trial Access Requests", route: "/(app)/org-admin/trial-access-requests" }] : []),
     ] },

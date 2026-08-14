@@ -127,6 +127,12 @@ def build_verification_email(
             "MTB mobile application:"
         )
         welcome = "We received a request to reset your My Trial Board (MTB) password."
+    elif purpose == "login_support":
+        introduction = (
+            "Use the verification code below to confirm your registered email and "
+            "submit your login support ticket:"
+        )
+        welcome = "We received a request for help signing in to My Trial Board (MTB)."
     elif purpose == "contact_change":
         introduction = (
             "Use the verification code below to verify your new email address on the "

@@ -675,7 +675,7 @@ export function TransferOwnershipSheet({ open, members, fromName, preset, onClos
 }
 
 // ── TeamRoster ───────────────────────────────────────────────────────────────
-/** Ownership action shown in the Team Members area for the signed-in org admin. */
+/** Ownership action shown in the Organization Members area for the signed-in org admin. */
 export function OwnershipTransferCard({ adminLabel = "Org Admin" }: {
   adminLabel?: string;
 }) {
@@ -795,13 +795,13 @@ export function TeamRoster({ members, sites, roleFilters, inviteConfig, accentCo
   });
 
   const doDelete = (m: OrgMember) => setConfirm({
-    title: "Deactivate member?",
+    title: "Deactivate organization member?",
     body: `${stripTitle(m.name)} will lose access to the organization and its trials. The record is retained.`,
-    confirmLabel: "Deactivate member",
+    confirmLabel: "Deactivate organization member",
     onConfirm: async () => {
       setBusy(true);
       try { await onDelete(m); showToast(`${stripTitle(m.name)} deactivated`); setConfirm(null); onReload(); }
-      catch (e) { showToast(errMsg(e, "Couldn't deactivate member")); }
+      catch (e) { showToast(errMsg(e, "Couldn't deactivate organization member")); }
       finally { setBusy(false); }
     },
   });
@@ -821,9 +821,9 @@ export function TeamRoster({ members, sites, roleFilters, inviteConfig, accentCo
   return (
     <View>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <RNText style={k.rosterCount}>{visible.length} member{visible.length === 1 ? "" : "s"}</RNText>
+        <RNText style={k.rosterCount}>{visible.length} organization member{visible.length === 1 ? "" : "s"}</RNText>
         <Pressable onPress={() => setInvite(true)} style={[k.invitePill, { backgroundColor: accentColor }]}>
-          <UserPlus size={14} color={C.primaryFg} /><RNText style={k.invitePillTxt}>Invite member</RNText>
+          <UserPlus size={14} color={C.primaryFg} /><RNText style={k.invitePillTxt}>Invite organization member</RNText>
         </Pressable>
       </View>
 
@@ -870,7 +870,7 @@ export function TeamRoster({ members, sites, roleFilters, inviteConfig, accentCo
             </View>
           );
         })}
-        {visible.length === 0 && <EmptyCard icon={UserPlus} title="No members yet" subtitle="Invite your first teammate to get started." />}
+        {visible.length === 0 && <EmptyCard icon={UserPlus} title="No organization members yet" subtitle="Invite your first organization member to get started." />}
       </View>
 
       {invite && (
@@ -919,7 +919,7 @@ function InviteMemberSheet({ config, onClose, onSend }: { config: InviteConfig; 
   };
 
   return (
-    <Sheet open onClose={onClose} title="Invite member">
+    <Sheet open onClose={onClose} title="Invite organization member">
       <View style={{ gap: 12 }}>
         <Field label="Full name"><KitInput value={name} onChangeText={setName} placeholder="Enter member's name" /></Field>
         <Field label="Designation"><KitInput value={designation} onChangeText={setDesignation} placeholder="e.g. Research Associate" /></Field>

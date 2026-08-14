@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ArrowLeft, CheckCircle2, Clock3, Eye, EyeOff, HelpCircle, Mail, Phone, RotateCw } from "lucide-react-native";
@@ -96,6 +96,28 @@ export default function ForgotPassword() {
     }
   };
 
+  const verifyOtp = async () => {
+    if (!otpValid || seconds === 0 || loading) return;
+    setLoading(true);
+    setErr("");
+    try {
+      await api.post("/auth/forgot/verify", {
+        recovery_id: recoveryId,
+        otp,
+      });
+      setStep("password");
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      setErr(
+        /invalid otp/i.test(detail || "")
+          ? "Invalid OTP. Please enter the correct OTP."
+          : detail || "We couldn't verify the code. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const goBack = () => {
     setErr("");
     if (step === "password") setStep("otp");
@@ -184,12 +206,13 @@ export default function ForgotPassword() {
               <Small color={colors.primary} weight="700">Resend OTP</Small>
             </Pressable>
             <Small style={s.resendCount}>{resends}/{MAX_RESENDS} resend attempts used</Small>
-            {!!err && <Small color={colors.destructive} style={s.error}>{err}</Small>}
+            {!!err && <Text style={s.otpError}>{err}</Text>}
             <View style={s.bottom}>
               <Button
                 testID="forgot-verify"
                 disabled={!otpValid || seconds === 0}
-                onPress={() => { setErr(""); setStep("password"); }}
+                loading={loading}
+                onPress={verifyOtp}
               >Continue</Button>
               <SupportLink onPress={() => router.push("/(auth)/help-support")} />
             </View>
@@ -305,6 +328,13 @@ const s = StyleSheet.create({
   input: { flex: 1, color: colors.foreground, fontFamily: fonts.regular, fontSize: 14 },
   inlineError: { marginTop: 7 },
   error: { marginTop: spacing.md, textAlign: "center" },
+  otpError: {
+    marginTop: spacing.md,
+    textAlign: "center",
+    color: "#D00000",
+    fontFamily: fonts.semibold,
+    fontSize: 13,
+  },
   bottom: { marginTop: "auto", paddingTop: spacing.lg },
   supportLink: { marginTop: spacing.sm, paddingVertical: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
   otpRow: { position: "relative", flexDirection: "row", justifyContent: "center", gap: 7, marginTop: spacing.xl },

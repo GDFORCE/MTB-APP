@@ -64,8 +64,15 @@ function QuestionSelect({ value, options, onChange }: { value: string; options: 
 
 export default function SecurityQuestions() {
   const router = useRouter();
-  const { role, payload } = useLocalSearchParams<{ role: string; variant: string; payload: string }>();
+  const { role, payload, registration_id, invited } = useLocalSearchParams<{
+    role: string;
+    variant?: string;
+    payload?: string;
+    registration_id?: string;
+    invited?: string;
+  }>();
   const fld = (() => { try { return JSON.parse(payload || "{}"); } catch { return {}; } })();
+  const isVerifiedInvite = invited === "1" && !!registration_id;
 
   const [questions, setQuestions] = useState<string[]>(["", "", ""]);
   const [answers, setAnswers] = useState<string[]>(["", "", ""]);
@@ -88,12 +95,23 @@ export default function SecurityQuestions() {
     startingRef.current = true;
     setLoading(true); setErr("");
     try {
+      const security_questions = questions.map((q, i) => ({ question: q, answer: answers[i] }));
+      if (isVerifiedInvite) {
+        await api.post("/auth/register/security-questions", {
+          registration_id,
+          security_questions,
+        });
+        router.push({
+          pathname: "/(auth)/set-password",
+          params: { registration_id, role: role || "patient", invited: "1" },
+        });
+        return;
+      }
       const profile: Record<string, any> = {};
       Object.keys(fld).forEach((k) => { if (!CORE.has(k) && fld[k]) profile[k] = fld[k]; });
       // Step 2 already normalized the number to E.164 against the chosen country,
       // so pass it through untouched rather than re-guessing a calling code.
       const phone = fld.phone ? String(fld.phone).trim() : undefined;
-      const security_questions = questions.map((q, i) => ({ question: q, answer: answers[i] }));
       const body: any = {
         full_name: fld.fullName,
         role: role || "patient",
@@ -128,7 +146,7 @@ export default function SecurityQuestions() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <AuthHeader eyebrow="Step 3 of 5" title="Only you would know" subtitle="Three security questions help us verify it's you and recover your account if it's ever locked." onBack={() => router.back()} step={3} />
+        <AuthHeader eyebrow={`Step ${isVerifiedInvite ? 4 : 3} of 5`} title="Only you would know" subtitle="Three security questions help us verify it's you and recover your account if it's ever locked." onBack={() => router.back()} step={isVerifiedInvite ? 4 : 3} />
 
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {questions.map((selected, i) => (
@@ -165,7 +183,7 @@ export default function SecurityQuestions() {
 
         <View style={s.footer}>
           <Springy onPress={submit} disabled={!allComplete} style={[s.cta, allComplete ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: allComplete ? colors.primaryFg : colors.mutedFg }}>{loading ? "Sending codes…" : "Continue"}</Text>
+            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: allComplete ? colors.primaryFg : colors.mutedFg }}>{loading ? (isVerifiedInvite ? "Saving…" : "Sending codes…") : "Continue"}</Text>
           </Springy>
         </View>
       </KeyboardAvoidingView>

@@ -183,7 +183,7 @@ export default function SmoConsole() {
             tabs={[
               { key: "trials", label: "Trials", count: trials.length },
               { key: "sites", label: "Sites", count: sites.length },
-              { key: "team", label: "Team", count: members.filter((m) => m.status !== "rejected").length },
+              { key: "team", label: "Organization Members", count: members.filter((m) => m.status !== "rejected").length },
               { key: "audit", label: "Audit", count: audit.length },
             ]}
             active={tab} onChange={setTab}
@@ -271,7 +271,7 @@ export default function SmoConsole() {
           )}
 
           {tab === "team" && (
-            loading ? <Loading label="Loading team…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
+            loading ? <Loading label="Loading organization members…" /> : error ? <ErrorCard message={error} onRetry={loadAll} /> : (
               <>
                 <TeamRoster
                   members={members}

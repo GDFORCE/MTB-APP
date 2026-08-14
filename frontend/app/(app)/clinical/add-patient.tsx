@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Alert, View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users, UserRound, Phone as PhoneIcon, ClipboardList } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { formatIsoCalendarDate } from "@/src/lib/visit-timing";
@@ -42,6 +42,14 @@ const formatDateInput = (value: string) => {
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 };
 
+const initialsFromName = (value: string) => value
+  .trim()
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 2)
+  .map(part => part[0]?.toUpperCase() || "")
+  .join("");
+
 function trialLabel(t: Trial) {
   const head = t.protocol_id || t.title || "Trial";
   return t.condition ? `${head} — ${t.condition}` : head;
@@ -54,6 +62,7 @@ export default function AddPatient() {
   const needsPiSelection = user?.role === "smo" || user?.role === "site";
   const [subjectId, setSubjectId] = useState("");
   const [initials, setInitials] = useState("");
+  const [initialsEdited, setInitialsEdited] = useState(false);
   const [fullName, setFullName] = useState("");
   const [dob, setDob] = useState("");
   const [gender, setGender] = useState("");
@@ -139,6 +148,7 @@ export default function AddPatient() {
 
   const selectedTrial = trials.find(t => t.id === trialId);
   const selectedPi = pis.find(pi => pi.id === piId);
+  const suggestedInitials = initialsFromName(fullName);
   const visible = showAll ? scheduleVisits : scheduleVisits.slice(0, 5);
   const phoneDigits = phone.replace(/\D/g, "");
   const canSubmit = !!subjectId.trim()
@@ -153,6 +163,31 @@ export default function AddPatient() {
     && !subjectDuplicate
     && !emailDuplicate
     && !saving;
+  const submitHint = !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10 || !email.trim()
+    ? "Complete the required patient details"
+    : !trialId
+      ? "Select a trial to continue"
+      : needsPiSelection && !piId
+        ? "Select the responsible PI"
+        : !scheduleGenerated || !scheduleVisits.length
+          ? "Generate the visit schedule to continue"
+          : "Ready to send the patient invitation";
+
+  const updateFullName = (value: string) => {
+    setFullName(value);
+    if (!initialsEdited) setInitials(initialsFromName(value));
+  };
+
+  const updateInitials = (value: string) => {
+    const normalized = value.replace(/[^a-z]/gi, "").slice(0, 4).toUpperCase();
+    setInitials(normalized);
+    setInitialsEdited(normalized !== suggestedInitials);
+  };
+
+  const restoreSuggestedInitials = () => {
+    setInitials(suggestedInitials);
+    setInitialsEdited(false);
+  };
 
   const checkInvitationAvailability = async (field: "subject" | "email") => {
     if (!trialId) return;
@@ -217,6 +252,7 @@ export default function AddPatient() {
         dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
         gender: gender || undefined,
         language: lang || undefined,
+        avatar_initials: initials || suggestedInitials || undefined,
         baseline_date: parsedBaseline ? toISO(parsedBaseline) : undefined,
         enrolled_date: new Date().toISOString().slice(0, 10),
       });
@@ -235,110 +271,125 @@ export default function AddPatient() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.surface }}>
+    <View style={s.screen}>
       <StatusBar barStyle="dark-content" backgroundColor={C.surface} />
       <SafeAreaView edges={["top"]} style={{ backgroundColor: C.surface }}>
         <View style={s.appBar}>
           <Pressable testID="back" onPress={() => router.back()} hitSlop={10} style={s.backBtn}>
             <ChevronLeft size={24} color={C.fg} />
           </Pressable>
-          <Text style={s.appBarTitle}>Add Patient</Text>
+          <View style={s.appBarCopy}>
+            <Text style={s.appBarTitle}>Add Patient</Text>
+            <Text style={s.appBarSubtitle}>Create and invite a trial participant</Text>
+          </View>
           <View style={{ width: 40 }} />
         </View>
       </SafeAreaView>
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 16 }} keyboardShouldPersistTaps="handled">
-          {/* Subject ID with duplicate detection */}
-          <Field label="Subject Number/ID *">
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <View style={[s.prefix]}><Text style={{ fontFamily: "monospace" as any, fontSize: 14, color: C.muted }}>SUBJ-</Text></View>
-              <TextInput
-                testID="subject-id"
-                value={subjectId}
-                onChangeText={t => {
-                  setSubjectId(t);
-                  setSubjectDuplicate(null);
-                  if (error) setError(null);
-                }}
-                onBlur={() => void checkInvitationAvailability("subject")}
-                style={[s.input, { flex: 1, fontFamily: "monospace" as any }, subjectDuplicate && s.duplicateInput]}
-              />
-            </View>
-            {subjectDuplicate ? <InlineDuplicate message={subjectDuplicate} /> : null}
-          </Field>
-
-          <Field label="Subject Initials">
-            <TextInput testID="initials" value={initials} onChangeText={setInitials} style={s.input} />
-          </Field>
-
-          <Field label="Full Name *">
-            <TextInput testID="full-name" value={fullName} onChangeText={setFullName} style={s.input} />
-          </Field>
-
-          <View style={{ flexDirection: "row", gap: 12 }}>
-            <View style={{ flex: 1 }}>
-              <Field label="Date of Birth *">
-                <TextInput testID="dob" value={dob} onChangeText={(value) => setDob(formatDateInput(value))} keyboardType="number-pad" maxLength={10} style={s.input} />
-              </Field>
+        <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={s.patientHero}>
+            <View style={s.patientAvatar}>
+              <Text style={s.patientAvatarText}>{initials || suggestedInitials || "P"}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Field label="Gender" active={genderOpen}>
-                <Pressable testID="gender-toggle" onPress={() => setGenderOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-                  <Text numberOfLines={1} style={{ color: gender ? C.fg : C.muted, fontSize: 14, lineHeight: 20, flex: 1, paddingRight: 12 }}>{gender || "Select"}</Text>
-                  <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
-                </Pressable>
-                {genderOpen && (
-                  <View style={s.dropdown}>
-                    {["Male", "Female", "Other", "Prefer not to say"].map(g => (
-                      <Pressable key={g} testID={`gender-${g}`} onPress={() => { setGender(g); setGenderOpen(false); }} style={s.dropdownRow}>
-                        <Text style={{ color: C.fg }}>{g}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-              </Field>
+              <Text style={s.patientHeroTitle}>{fullName.trim() || "New participant"}</Text>
+              <Text style={s.patientHeroText}>Complete the details below to create the subject record and send an invitation.</Text>
             </View>
           </View>
+          <FormSection icon={<UserRound size={18} color={C.primary} />} index="01" title="Patient details" subtitle="Identity and demographics" active={genderOpen}>
+            <Field label="Full Name *">
+              <TextInput testID="full-name" value={fullName} onChangeText={updateFullName} placeholder="Enter patient's full name" placeholderTextColor={C.muted + "99"} autoCapitalize="words" style={s.input} />
+            </Field>
 
-          <Field label="Phone *">
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <View style={s.prefix}><Text style={{ color: C.muted, fontSize: 14 }}>+91</Text></View>
-              <TextInput testID="phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" style={[s.input, { flex: 1 }]} />
-            </View>
-          </Field>
+            <Field
+              label="Subject Initials"
+              hint="Generated from the full name. You can still edit it."
+              action={initialsEdited && suggestedInitials ? (
+                <Pressable onPress={restoreSuggestedInitials} hitSlop={8} style={s.autoAction}>
+                  <Sparkles size={12} color={C.primary} />
+                  <Text style={s.autoActionText}>Use {suggestedInitials}</Text>
+                </Pressable>
+              ) : <Text style={s.autoLabel}>AUTO</Text>}
+            >
+              <TextInput testID="initials" value={initials} onChangeText={updateInitials} placeholder="Auto-generated" placeholderTextColor={C.muted + "99"} autoCapitalize="characters" maxLength={4} style={s.input} />
+            </Field>
 
-          <Field label="Email *">
-            <TextInput
-              testID="email"
-              value={email}
-              onChangeText={(value) => { setEmail(value); setEmailDuplicate(null); }}
-              onBlur={() => void checkInvitationAvailability("email")}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={[s.input, emailDuplicate && s.duplicateInput]}
-            />
-            {emailDuplicate ? <InlineDuplicate message={emailDuplicate} /> : null}
-          </Field>
-
-          <Field label="Preferred Language" active={langOpen}>
-            <Pressable testID="lang-toggle" onPress={() => setLangOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-              <Text numberOfLines={1} style={{ color: C.fg, fontSize: 14, lineHeight: 20, flex: 1, paddingRight: 12 }}>{lang}</Text>
-              <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
-            </Pressable>
-            {langOpen && (
-              <View style={s.dropdown}>
-                {["English", "Hindi", "Tamil", "Telugu"].map(l => (
-                  <Pressable key={l} testID={`lang-${l}`} onPress={() => { setLang(l); setLangOpen(false); }} style={s.dropdownRow}>
-                    <Text style={{ color: C.fg }}>{l}</Text>
-                  </Pressable>
-                ))}
+            <Field label="Subject Number/ID *" hint="Unique within the selected trial.">
+              <View style={s.inputPair}>
+                <View style={s.prefix}><Text style={s.monoPrefix}>SUBJ-</Text></View>
+                <TextInput
+                  testID="subject-id"
+                  value={subjectId}
+                  onChangeText={value => {
+                    setSubjectId(value.replace(/^SUBJ-/i, "").replace(/\s/g, "").toUpperCase());
+                    setSubjectDuplicate(null);
+                    if (error) setError(null);
+                  }}
+                  onBlur={() => void checkInvitationAvailability("subject")}
+                  placeholder="0001"
+                  placeholderTextColor={C.muted + "99"}
+                  autoCapitalize="characters"
+                  style={[s.input, { flex: 1, fontFamily: "monospace" as any }, subjectDuplicate && s.duplicateInput]}
+                />
               </View>
-            )}
-          </Field>
+              {subjectDuplicate ? <InlineDuplicate message={subjectDuplicate} /> : null}
+            </Field>
 
+            <View style={s.twoColumns}>
+              <View style={{ flex: 1 }}>
+                <Field label="Date of Birth *">
+                  <TextInput testID="dob" value={dob} onChangeText={(value) => setDob(formatDateInput(value))} placeholder="DD/MM/YYYY" placeholderTextColor={C.muted + "99"} keyboardType="number-pad" maxLength={10} style={s.input} />
+                </Field>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field label="Gender" active={genderOpen}>
+                  <Pressable testID="gender-toggle" onPress={() => setGenderOpen(open => !open)} style={[s.input, s.selectControl]}>
+                    <Text numberOfLines={1} style={[s.selectText, !gender && s.placeholderText]}>{gender || "Select"}</Text>
+                    <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: genderOpen ? "-90deg" : "90deg" }] }} />
+                  </Pressable>
+                  {genderOpen && <View style={s.dropdown}>{["Male", "Female", "Other", "Prefer not to say"].map(value => <Pressable key={value} testID={`gender-${value}`} onPress={() => { setGender(value); setGenderOpen(false); }} style={s.dropdownRow}><Text style={s.dropdownText}>{value}</Text></Pressable>)}</View>}
+                </Field>
+              </View>
+            </View>
+          </FormSection>
+
+          <FormSection icon={<PhoneIcon size={18} color={C.primary} />} index="02" title="Contact details" subtitle="Used to deliver and verify the invitation" active={langOpen}>
+            <Field label="Phone *">
+              <View style={s.inputPair}>
+                <View style={s.prefix}><Text style={s.prefixText}>+91</Text></View>
+                <TextInput testID="phone" value={phone} onChangeText={(value) => setPhone(value.replace(/\D/g, "").slice(0, 10))} placeholder="10-digit mobile number" placeholderTextColor={C.muted + "99"} keyboardType="phone-pad" maxLength={10} style={[s.input, { flex: 1 }]} />
+              </View>
+            </Field>
+
+            <Field label="Email *" hint="The invitation will be sent to this address.">
+              <TextInput
+                testID="email"
+                value={email}
+                onChangeText={(value) => { setEmail(value); setEmailDuplicate(null); }}
+                onBlur={() => void checkInvitationAvailability("email")}
+                placeholder="patient@example.com"
+                placeholderTextColor={C.muted + "99"}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={[s.input, emailDuplicate && s.duplicateInput]}
+              />
+              {emailDuplicate ? <InlineDuplicate message={emailDuplicate} /> : null}
+            </Field>
+
+            <Field label="Preferred Language" active={langOpen}>
+              <Pressable testID="lang-toggle" onPress={() => setLangOpen(open => !open)} style={[s.input, s.selectControl]}>
+                <Text numberOfLines={1} style={s.selectText}>{lang}</Text>
+                <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: langOpen ? "-90deg" : "90deg" }] }} />
+              </Pressable>
+              {langOpen && <View style={s.dropdown}>{["English", "Hindi", "Tamil", "Telugu"].map(value => <Pressable key={value} testID={`lang-${value}`} onPress={() => { setLang(value); setLangOpen(false); }} style={s.dropdownRow}><Text style={s.dropdownText}>{value}</Text></Pressable>)}</View>}
+            </Field>
+          </FormSection>
+
+          <FormSection icon={<ClipboardList size={18} color={C.primary} />} index="03" title="Study assignment" subtitle="Connect the participant to the right trial and team" active={trialOpen || piOpen}>
           <Field label="Assign to Trial *" active={trialOpen}>
-            <Pressable testID="trial-toggle" disabled={trialsLoading || !trials.length} onPress={() => setTrialOpen(o => !o)} style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <Pressable testID="trial-toggle" disabled={trialsLoading || !trials.length} onPress={() => setTrialOpen(open => !open)} style={[s.input, s.selectControl]}>
               {trialsLoading ? (
                 <ActivityIndicator size="small" color={C.primary} />
               ) : (
@@ -346,7 +397,7 @@ export default function AddPatient() {
                   {selectedTrial ? trialLabel(selectedTrial) : "No trials available"}
                 </Text>
               )}
-              <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
+              <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: trialOpen ? "-90deg" : "90deg" }] }} />
             </Pressable>
             {trialOpen && trials.length > 0 && (
               <View style={s.dropdown}>
@@ -365,7 +416,7 @@ export default function AddPatient() {
                 testID="pi-toggle"
                 disabled={piLoading || !!piLoadError || !pis.length}
                 onPress={() => setPiOpen(open => !open)}
-                style={[s.input, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}
+                style={[s.input, s.selectControl]}
               >
                 {piLoading ? (
                   <View testID="pi-loading" style={s.inlineState}>
@@ -377,7 +428,7 @@ export default function AddPatient() {
                     <Text style={{ color: selectedPi ? C.fg : C.muted, fontSize: 14, flex: 1 }} numberOfLines={1}>
                       {selectedPi?.full_name || selectedPi?.email || (piLoadError ? "Principal Investigators unavailable" : "No PI available in your organization")}
                     </Text>
-                    <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: "90deg" }] }} />
+                    <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: piOpen ? "-90deg" : "90deg" }] }} />
                   </>
                 )}
               </Pressable>
@@ -418,7 +469,7 @@ export default function AddPatient() {
                     </Text>
                     <Pressable testID="pi-open-team" onPress={() => router.push("/(app)/clinical/team")} style={s.stateAction}>
                       <Users size={14} color={C.primary} />
-                      <Text style={s.stateActionText}>Open Team</Text>
+                      <Text style={s.stateActionText}>Open Organization Members</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -429,19 +480,14 @@ export default function AddPatient() {
           {/* Patient Access Note */}
           <View style={s.infoNote}>
             <Sparkles size={16} color={C.info} />
-            <Text style={{ fontSize: 12, color: C.info, flex: 1 }}>
-              The patient will receive an invitation to access the app using the profile created here. Their login is linked to this subject record.
+            <Text style={s.infoNoteText}>
+              The patient receives an email invitation. Their account and visit schedule are created after registration.
             </Text>
           </View>
+          </FormSection>
 
-          {/* Divider */}
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 16, paddingVertical: 8 }}>
-            <View style={{ flex: 1, height: 1, backgroundColor: "#D9D2C7" }} />
-            <Text style={{ color: C.muted, fontSize: 13, fontWeight: "600" }}>Visit Dates</Text>
-            <View style={{ flex: 1, height: 1, backgroundColor: "#D9D2C7" }} />
-          </View>
-
-          <Field label="Baseline Date *">
+          <FormSection icon={<CalIcon size={18} color={C.primary} />} index="04" title="Visit schedule" subtitle="Preview protocol dates before sending the invite">
+          <Field label="Baseline Date *" hint="This date anchors all protocol visits.">
             <View style={{ position: "relative" }}>
               <TextInput
                 testID="baseline"
@@ -451,7 +497,9 @@ export default function AddPatient() {
                   setScheduleGenerated(false);
                   setScheduleVisits([]);
                 }}
-                style={[s.input, { paddingRight: 48, borderWidth: 2, borderColor: C.primary }]}
+                placeholder="DD/MM/YYYY"
+                placeholderTextColor={C.muted + "99"}
+                style={[s.input, { paddingRight: 48 }]}
               />
               <CalIcon size={20} color={C.primary} style={{ position: "absolute", right: 16, top: 14 }} />
             </View>
@@ -460,10 +508,10 @@ export default function AddPatient() {
           <Pressable
             testID="generate-schedule"
             onPress={() => void generateSchedule()}
-            disabled={scheduleLoading}
-            style={s.generateSchedule}
+            disabled={scheduleLoading || !trialId}
+            style={[s.generateSchedule, (!trialId || scheduleLoading) && { opacity: 0.55 }]}
           >
-            <Sparkles size={16} color={C.primary} />
+            {scheduleLoading ? <ActivityIndicator size="small" color={C.primary} /> : <Sparkles size={16} color={C.primary} />}
             <Text style={s.generateScheduleText}>{scheduleLoading ? "Generating…" : "Generate Schedule"}</Text>
           </Pressable>
 
@@ -488,6 +536,7 @@ export default function AddPatient() {
               <ChevronRight size={16} color={C.accent} style={{ transform: [{ rotate: showAll ? "-90deg" : "90deg" }] }} />
             </Pressable>
           </View> : null}
+          </FormSection>
 
           {/* Error banner (server duplicate 409 or generic failure) */}
           {error && (
@@ -496,29 +545,67 @@ export default function AddPatient() {
               <Text style={{ fontSize: 12, fontWeight: "600", color: C.destructive, flex: 1 }}>{error}</Text>
             </View>
           )}
+        </ScrollView>
 
-          {/* Submit */}
+          {/* Sticky submit action */}
+          <View style={s.footer}>
+          <Text style={[s.submitHint, canSubmit && { color: C.primary }]}>{submitHint}</Text>
           <Pressable
             testID="add-patient-submit"
             onPress={submit}
             disabled={!canSubmit}
-            style={[s.submit, !canSubmit && { backgroundColor: C.border }]}
+            style={[s.submit, !canSubmit && s.submitDisabled]}
           >
             <Text style={{ color: !canSubmit ? C.muted : C.primaryFg, fontSize: 15, fontWeight: "700" }}>
-              {saving ? "Adding…" : "Add Patient"}
+              {saving ? "Sending…" : "Send Patient Invitation"}
             </Text>
           </Pressable>
-        </ScrollView>
+          </View>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
-function Field({ label, children, active = false }: any) {
+function FormSection({ icon, index, title, subtitle, children, active = false }: {
+  icon: React.ReactNode;
+  index: string;
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+  active?: boolean;
+}) {
+  return (
+    <View style={[s.sectionCard, active && s.sectionCardActive]}>
+      <View style={s.sectionHeader}>
+        <View style={s.sectionIcon}>{icon}</View>
+        <View style={{ flex: 1 }}>
+          <View style={s.sectionTitleRow}>
+            <Text style={s.sectionIndex}>{index}</Text>
+            <Text style={s.sectionTitle}>{title}</Text>
+          </View>
+          <Text style={s.sectionSubtitle}>{subtitle}</Text>
+        </View>
+      </View>
+      <View style={s.sectionFields}>{children}</View>
+    </View>
+  );
+}
+
+function Field({ label, children, active = false, hint, action }: {
+  label: string;
+  children: React.ReactNode;
+  active?: boolean;
+  hint?: string;
+  action?: React.ReactNode;
+}) {
   return (
     <View style={{ position: "relative", zIndex: active ? 100 : 1, elevation: active ? 100 : 0 }}>
-      <Text style={{ fontSize: 13, fontWeight: "500", color: "rgba(46,27,51,0.80)", marginBottom: 6 }}>{label}</Text>
+      <View style={s.fieldLabelRow}>
+        <Text style={s.fieldLabel}>{label}</Text>
+        {action}
+      </View>
       {children}
+      {hint ? <Text style={s.fieldHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -533,25 +620,61 @@ function InlineDuplicate({ message }: { message: string }) {
 }
 
 const s = StyleSheet.create({
-  appBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 8 },
-  backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  appBarTitle: { flex: 1, fontSize: 18, fontWeight: "700", color: C.fg, textAlign: "center" },
-  input: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, color: C.fg, fontSize: 14 },
-  prefix: { paddingHorizontal: 16, paddingVertical: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },
-  dupWarn: { marginTop: 8, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.05)", borderWidth: 1, borderColor: "rgba(192,57,43,0.20)" },
+  screen: { flex: 1, backgroundColor: C.surface },
+  appBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10 },
+  backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: C.card, borderWidth: 1, borderColor: C.border },
+  appBarCopy: { flex: 1, alignItems: "center" },
+  appBarTitle: { fontSize: 18, fontWeight: "800", color: C.fg, textAlign: "center" },
+  appBarSubtitle: { marginTop: 2, fontSize: 11, color: C.muted, textAlign: "center" },
+  content: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 28, gap: 14 },
+  patientHero: { flexDirection: "row", alignItems: "center", gap: 13, padding: 16, borderRadius: 20, backgroundColor: C.primary, shadowColor: C.primary, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
+  patientAvatar: { width: 52, height: 52, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.16)", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)" },
+  patientAvatarText: { color: C.primaryFg, fontSize: 18, fontWeight: "800", letterSpacing: 0.5 },
+  patientHeroTitle: { color: C.primaryFg, fontSize: 16, fontWeight: "800" },
+  patientHeroText: { marginTop: 4, color: "rgba(255,255,255,0.78)", fontSize: 11, lineHeight: 16 },
+  sectionCard: { position: "relative", zIndex: 1, padding: 16, borderRadius: 20, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, shadowColor: C.fg, shadowOpacity: 0.04, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
+  sectionCardActive: { zIndex: 50, elevation: 8 },
+  sectionHeader: { flexDirection: "row", alignItems: "center", gap: 11, paddingBottom: 14, marginBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
+  sectionIcon: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(166,33,63,0.08)" },
+  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  sectionIndex: { color: C.primary, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  sectionTitle: { color: C.fg, fontSize: 15, fontWeight: "800" },
+  sectionSubtitle: { marginTop: 2, color: C.muted, fontSize: 11 },
+  sectionFields: { gap: 14 },
+  fieldLabelRow: { minHeight: 20, marginBottom: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  fieldLabel: { color: "rgba(46,27,51,0.84)", fontSize: 12, fontWeight: "700" },
+  fieldHint: { marginTop: 5, color: C.muted, fontSize: 10, lineHeight: 14 },
+  autoLabel: { color: C.primary, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  autoAction: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(166,33,63,0.08)" },
+  autoActionText: { color: C.primary, fontSize: 10, fontWeight: "700" },
+  input: { minHeight: 50, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#FFFDFC", color: C.fg, fontSize: 14 },
+  inputPair: { flexDirection: "row", gap: 8 },
+  prefix: { minWidth: 68, minHeight: 50, paddingHorizontal: 12, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#F8EFE4", alignItems: "center", justifyContent: "center" },
+  prefixText: { color: C.fg, fontSize: 14, fontWeight: "700" },
+  monoPrefix: { color: C.primary, fontFamily: "monospace" as any, fontSize: 13, fontWeight: "700" },
+  twoColumns: { flexDirection: "row", gap: 10 },
+  selectControl: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  selectText: { color: C.fg, fontSize: 14, lineHeight: 20, flex: 1 },
+  placeholderText: { color: C.muted },
+  dupWarn: { marginTop: 2, flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.05)", borderWidth: 1, borderColor: "rgba(192,57,43,0.20)" },
   duplicateInput: { borderColor: C.destructive, borderWidth: 2 },
   inlineDuplicate: { marginTop: 6, flexDirection: "row", alignItems: "flex-start", gap: 6 },
   inlineDuplicateText: { flex: 1, color: C.destructive, fontSize: 12, lineHeight: 17 },
-  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 30, elevation: 30, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, overflow: "hidden" },
-  dropdownRow: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 100, elevation: 30, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#FFFDFC", overflow: "hidden", shadowColor: C.fg, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
+  dropdownRow: { minHeight: 44, justifyContent: "center", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
+  dropdownText: { color: C.fg, fontSize: 13 },
   inlineState: { flexDirection: "row", alignItems: "center", gap: 8 },
-  piStateCard: { marginTop: 8, flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 14, backgroundColor: C.card, borderWidth: 1, borderColor: C.border },
+  piStateCard: { marginTop: 8, flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 13, backgroundColor: "#FFFDFC", borderWidth: 1, borderColor: C.border },
   piStateText: { color: C.destructive, fontSize: 12, lineHeight: 17 },
   stateAction: { alignSelf: "flex-start", minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: "rgba(166,33,63,0.08)" },
   stateActionText: { color: C.primary, fontSize: 12, fontWeight: "700" },
-  infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(123,107,184,0.05)", borderWidth: 1, borderColor: "rgba(123,107,184,0.20)" },
-  autoCalc: { backgroundColor: "rgba(123,107,184,0.05)", borderRadius: 16, padding: 16 },
-  generateSchedule: { minHeight: 46, borderRadius: 14, borderWidth: 1, borderColor: "rgba(166,33,63,0.35)", backgroundColor: "rgba(166,33,63,0.06)", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 13, backgroundColor: "rgba(123,107,184,0.06)", borderWidth: 1, borderColor: "rgba(123,107,184,0.18)" },
+  infoNoteText: { fontSize: 11, lineHeight: 16, color: C.info, flex: 1 },
+  autoCalc: { backgroundColor: "rgba(123,107,184,0.05)", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "rgba(123,107,184,0.12)" },
+  generateSchedule: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: "rgba(166,33,63,0.28)", backgroundColor: "rgba(166,33,63,0.06)", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
   generateScheduleText: { color: C.primary, fontSize: 14, fontWeight: "700" },
-  submit: { paddingVertical: 16, borderRadius: 999, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+  footer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 20 : 12, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.card },
+  submitHint: { marginBottom: 7, color: C.muted, fontSize: 10, textAlign: "center" },
+  submit: { minHeight: 50, borderRadius: 999, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
+  submitDisabled: { backgroundColor: C.border },
 });

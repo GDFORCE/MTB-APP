@@ -49,6 +49,8 @@ def delivery(monkeypatch):
 
 def teardown_module():
     async def clean():
+        await server.db.refresh_tokens.delete_many(
+            {'user_id': {'$in': CREATED_USER_IDS}})
         await server.db.users.delete_many({'id': {'$in': CREATED_USER_IDS}})
     run(clean())
     LOOP.close()
@@ -80,7 +82,7 @@ def test_recovery_works_with_email_and_phone(delivery):
                 assert forgot.status_code == 200, forgot.text
                 data = forgot.json()
                 assert data['channel'] == channel
-                assert data['expires_in'] == 120
+                assert data['expires_in'] == server.otp_service.OTP_TTL_MIN * 60
                 assert data['resend_limit'] == 3
                 sent_channel, sent_target, code = delivery[-1]
                 assert (sent_channel, sent_target) == (channel, user[channel])
@@ -94,6 +96,32 @@ def test_recovery_works_with_email_and_phone(delivery):
                     'email': user['email'], 'password': NEW_PASSWORD,
                 })
                 assert login.status_code == 200, login.text
+
+    run(flow())
+
+
+def test_incorrect_otp_is_rejected_on_verification_screen(delivery):
+    async def flow():
+        user = await register_user('verify-immediately')
+        async with make_client() as cli:
+            forgot = await cli.post('/api/auth/forgot', json={'email': user['email']})
+            assert forgot.status_code == 200, forgot.text
+            correct_code = delivery[-1][2]
+            wrong_code = '111111' if correct_code != '111111' else '222222'
+
+            invalid = await cli.post('/api/auth/forgot/verify', json={
+                'recovery_id': forgot.json()['recovery_id'],
+                'otp': wrong_code,
+            })
+            assert invalid.status_code == 400, invalid.text
+            assert invalid.json()['detail'] == 'Invalid OTP. Please enter the correct OTP.'
+
+            valid = await cli.post('/api/auth/forgot/verify', json={
+                'recovery_id': forgot.json()['recovery_id'],
+                'otp': correct_code,
+            })
+            assert valid.status_code == 200, valid.text
+            assert valid.json() == {'verified': True}
 
     run(flow())
 
@@ -127,7 +155,10 @@ def test_recovery_enforces_cooldown_expiry_and_three_resends(delivery):
             # The server, not the UI timer, is authoritative for expiry.
             await server.db.users.update_one(
                 {'id': user['id']},
-                {'$set': {'reset_otp_at': server.now() - timedelta(seconds=121)}})
+                {'$set': {
+                    'reset_otp_at': server.now() - timedelta(
+                        minutes=server.otp_service.OTP_TTL_MIN, seconds=1),
+                }})
             expired = await cli.post('/api/auth/reset', json={
                 'recovery_id': latest.json()['recovery_id'],
                 'otp': delivery[-1][2],
