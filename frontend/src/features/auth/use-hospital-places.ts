@@ -2,21 +2,27 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "@/src/api/client";
 
-export type GoogleHospitalPrediction = {
+export type GooglePlacePrediction = {
   place_id: string;
   name: string;
   description: string;
 };
+export type GoogleHospitalPrediction = GooglePlacePrediction;
+export type GooglePlaceScope = "hospitals" | "organizations";
 
 function newSessionToken() {
   // This URL-safe value groups billing requests; it is not a credential.
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`.slice(0, 36);
 }
 
-export function useHospitalPlaces(query: string, enabled = true) {
+export function useGooglePlaces(
+  query: string,
+  enabled = true,
+  scope: GooglePlaceScope = "hospitals",
+) {
   const sessionToken = useRef(newSessionToken());
-  const sessionCache = useRef(new Map<string, GoogleHospitalPrediction[]>());
-  const [predictions, setPredictions] = useState<GoogleHospitalPrediction[]>([]);
+  const sessionCache = useRef(new Map<string, GooglePlacePrediction[]>());
+  const [predictions, setPredictions] = useState<GooglePlacePrediction[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState("");
@@ -31,7 +37,7 @@ export function useHospitalPlaces(query: string, enabled = true) {
       setSearchError("");
       return;
     }
-    const cacheKey = clean.toLocaleLowerCase();
+    const cacheKey = `${scope}:${clean.toLocaleLowerCase()}`;
     const cached = sessionCache.current.get(cacheKey);
     if (cached) {
       setPredictions(cached);
@@ -49,7 +55,7 @@ export function useHospitalPlaces(query: string, enabled = true) {
     const delay = clean.length === 2 ? 800 : 350;
     const timer = setTimeout(async () => {
       try {
-        const response = await api.get("/public/places/hospitals/autocomplete", {
+        const response = await api.get(`/public/places/${scope}/autocomplete`, {
           params: { input: clean, session_token: sessionToken.current },
         });
         if (!ignore) {
@@ -72,13 +78,13 @@ export function useHospitalPlaces(query: string, enabled = true) {
       ignore = true;
       clearTimeout(timer);
     };
-  }, [enabled, query]);
+  }, [enabled, query, scope]);
 
-  const getAddress = async (prediction: GoogleHospitalPrediction) => {
+  const getAddress = async (prediction: GooglePlacePrediction) => {
     setSelectingPlaceId(prediction.place_id);
     try {
       const response = await api.get(
-        `/public/places/hospitals/${encodeURIComponent(prediction.place_id)}`,
+        `/public/places/${scope}/${encodeURIComponent(prediction.place_id)}`,
         { params: { session_token: sessionToken.current } },
       );
       return {
@@ -103,4 +109,8 @@ export function useHospitalPlaces(query: string, enabled = true) {
     selectingPlaceId,
     getAddress,
   };
+}
+
+export function useHospitalPlaces(query: string, enabled = true) {
+  return useGooglePlaces(query, enabled, "hospitals");
 }

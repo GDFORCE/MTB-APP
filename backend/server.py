@@ -5416,6 +5416,43 @@ async def hospital_place_details(
         raise HTTPException(502, "Hospital address search is temporarily unavailable")
 
 
+@api.get('/public/places/organizations/autocomplete')
+async def organization_place_autocomplete(
+    request: Request,
+    input: str = Query(min_length=2, max_length=120),
+    session_token: str = Query(min_length=1, max_length=36),
+):
+    await _enforce_places_rate_limit(request)
+    try:
+        predictions = await run_in_threadpool(
+            google_places.autocomplete_organizations, input, session_token)
+        return {"predictions": predictions}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except google_places.PlacesNotConfigured:
+        raise HTTPException(503, "Organization search is not configured")
+    except google_places.PlacesUpstreamError:
+        raise HTTPException(502, "Organization search is temporarily unavailable")
+
+
+@api.get('/public/places/organizations/{place_id}')
+async def organization_place_details(
+    place_id: str,
+    request: Request,
+    session_token: str = Query(min_length=1, max_length=36),
+):
+    await _enforce_places_rate_limit(request)
+    try:
+        return await run_in_threadpool(
+            google_places.place_address, place_id, session_token)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except google_places.PlacesNotConfigured:
+        raise HTTPException(503, "Organization search is not configured")
+    except google_places.PlacesUpstreamError:
+        raise HTTPException(502, "Organization search is temporarily unavailable")
+
+
 async def _public_platform_admin_contact() -> Optional[dict]:
     """Return the configured MTB Platform Administrator contact only.
 

@@ -16,7 +16,7 @@ import {
   RegistrationVariant,
   validateRegistration,
 } from "@/src/features/auth/registration-validation";
-import { GoogleHospitalPrediction, useHospitalPlaces } from "@/src/features/auth/use-hospital-places";
+import { GoogleHospitalPrediction, GooglePlacePrediction, useGooglePlaces, useHospitalPlaces } from "@/src/features/auth/use-hospital-places";
 
 // ── Role → header label + which form variant to render ──────────────────────
 const labelMap: Record<string, string> = {
@@ -379,6 +379,8 @@ export default function Register() {
   const [orgSearching, setOrgSearching] = useState(false);
   const [showOrgSuggestions, setShowOrgSuggestions] = useState(false);
   const [googleOrgLookupError, setGoogleOrgLookupError] = useState("");
+  const googleOrgEnabled = !isInvite && showOrgSuggestions && (variant === "site" || variant === "sponsor");
+  const googleOrgScope = variant === "site" ? "hospitals" : "organizations";
   const {
     predictions: googleOrgMatches,
     searching: googleOrgSearching,
@@ -386,10 +388,11 @@ export default function Register() {
     searchError: googleOrgSearchError,
     selectingPlaceId: selectingGoogleOrg,
     getAddress: getGoogleOrgAddress,
-  } = useHospitalPlaces(fld.orgName || "", variant === "site" && !isInvite && showOrgSuggestions);
+  } = useGooglePlaces(fld.orgName || "", googleOrgEnabled, googleOrgScope);
   useEffect(() => {
-    // Hospitals/sites use Google as their only visible suggestion source. MTB
-    // duplicate detection happens privately after selection and on Continue.
+    // Sites use Google as their only visible suggestion source. Sponsor/CRO
+    // registration combines Google company results with existing MTB matches.
+    // Duplicate detection remains authoritative on Continue.
     if (isPatient || isInvite || variant === "site") {
       setOrgMatches([]);
       setOrgSearching(false);
@@ -637,7 +640,7 @@ export default function Register() {
     setExistingOrgMatch(o);
     setShowOrgSuggestions(false);
   };
-  const pickGoogleOrg = async (prediction: GoogleHospitalPrediction) => {
+  const pickGoogleOrg = async (prediction: GooglePlacePrediction) => {
     setGoogleOrgLookupError("");
     setExistingOrgMatch(null);
     setFld((current) => ({ ...current, orgName: prediction.name }));
@@ -669,7 +672,7 @@ export default function Register() {
         }
       } catch {
         setGoogleOrgLookupError(
-          "Address loaded, but MTB could not verify this hospital yet. It will be checked again when you continue.",
+          "Address loaded, but MTB could not verify this organization yet. It will be checked again when you continue.",
         );
       } finally {
         setCheckingOrg(false);
@@ -824,14 +827,14 @@ export default function Register() {
                         </View>
                       ) : (
                         <>
-                          {variant === "site" && !!googleOrgSearchError && (
+                          {googleOrgEnabled && !!googleOrgSearchError && (
                             <View style={f.suggestRow}>
                               <Small color={colors.destructive}>{googleOrgSearchError}</Small>
                             </View>
                           )}
-                          {variant === "site" && !googleOrgSearchError && !googleOrgSearching && googleOrgHasSearched && googleOrgMatches.length === 0 && (
+                          {googleOrgEnabled && !googleOrgSearchError && !googleOrgSearching && googleOrgHasSearched && googleOrgMatches.length === 0 && orgMatches.length === 0 && (
                             <View style={f.suggestRow}>
-                              <Small>No matching hospitals found. You can enter the hospital manually.</Small>
+                              <Small>No matching {variant === "site" ? "hospitals" : "organizations"} found. You can enter the name manually.</Small>
                             </View>
                           )}
                           {variant !== "site" && orgMatches.length > 0 && <Text style={f.suggestGroupLabel}>Already on MTB</Text>}
@@ -844,13 +847,13 @@ export default function Register() {
                               </View>
                             </Pressable>
                           ))}
-                          {variant === "site" && googleOrgMatches.length > 0 && (
+                          {googleOrgEnabled && googleOrgMatches.length > 0 && (
                             <View style={f.suggestGroupRow}>
-                              <Text style={f.suggestGroupLabel}>Matching hospitals</Text>
+                              <Text style={f.suggestGroupLabel}>Matching {variant === "site" ? "hospitals" : "organizations"}</Text>
                               {googleOrgSearching && <ActivityIndicator size="small" color={colors.primary} />}
                             </View>
                           )}
-                          {variant === "site" && googleOrgMatches.map((prediction) => (
+                          {googleOrgEnabled && googleOrgMatches.map((prediction) => (
                             <Pressable
                               key={`google-${prediction.place_id}`}
                               onPress={() => void pickGoogleOrg(prediction)}
@@ -865,7 +868,7 @@ export default function Register() {
                               {selectingGoogleOrg === prediction.place_id && <ActivityIndicator size="small" color={colors.primary} />}
                             </Pressable>
                           ))}
-                          {variant === "site" && googleOrgMatches.length > 0 && <Text style={f.googleAttribution}>Google Maps</Text>}
+                          {googleOrgEnabled && googleOrgMatches.length > 0 && <Text style={f.googleAttribution}>Google Maps</Text>}
                         </>
                       )}
                     </View>

@@ -1,8 +1,9 @@
 """Small, billing-conscious client for Google Places API (New).
 
-The browser/mobile bundle never receives the API key.  Registration only needs
-hospital predictions and a selected place's address, so the response field
-masks deliberately exclude Pro fields such as ``displayName``.
+The browser/mobile bundle never receives the API key. Registration needs
+hospital predictions for site fields and broader place predictions for sponsor
+organizations. Response field masks deliberately exclude Pro fields such as
+``displayName``.
 """
 from __future__ import annotations
 
@@ -57,7 +58,11 @@ def _json_response(response: requests.Response) -> Dict[str, Any]:
     return payload
 
 
-def autocomplete_hospitals(input_text: str, session_token: str) -> List[dict]:
+def _autocomplete_places(
+    input_text: str,
+    session_token: str,
+    included_primary_types: List[str] | None = None,
+) -> List[dict]:
     query = " ".join(input_text.strip().split())
     # Two letters support short hospital brands such as "TX". A single letter
     # is too broad and would create noisy, avoidable paid requests.
@@ -69,10 +74,11 @@ def autocomplete_hospitals(input_text: str, session_token: str) -> List[dict]:
     body: Dict[str, Any] = {
         "input": query,
         "sessionToken": session_token,
-        "includedPrimaryTypes": ["hospital"],
         "includeQueryPredictions": False,
         "languageCode": os.environ.get("GOOGLE_PLACES_LANGUAGE", "en").strip() or "en",
     }
+    if included_primary_types:
+        body["includedPrimaryTypes"] = included_primary_types
     region = os.environ.get("GOOGLE_PLACES_REGION", "in").strip().lower()
     if region:
         body["regionCode"] = region
@@ -110,6 +116,17 @@ def autocomplete_hospitals(input_text: str, session_token: str) -> List[dict]:
                 "description": description or name,
             })
     return results
+
+
+def autocomplete_hospitals(input_text: str, session_token: str) -> List[dict]:
+    return _autocomplete_places(input_text, session_token, ["hospital"])
+
+
+def autocomplete_organizations(input_text: str, session_token: str) -> List[dict]:
+    # Google returns all place types when includedPrimaryTypes is omitted. This
+    # is intentional for sponsors/CROs because company offices have several
+    # different primary types in Places and no single reliable company type.
+    return _autocomplete_places(input_text, session_token)
 
 
 def place_address(place_id: str, session_token: str) -> dict:
