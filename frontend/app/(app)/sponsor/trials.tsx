@@ -51,7 +51,7 @@ const phaseFilters = [
 const statuses = ["All", "Active", "Completed", "Terminated"];
 
 function phaseKey(value?: string) {
-  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9/]/g, "");
 }
 
 function tone(status: string) {

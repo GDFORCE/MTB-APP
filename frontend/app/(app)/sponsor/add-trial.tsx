@@ -58,7 +58,55 @@ const EMPTY: Details = {
   total_visits: "",
   status: "active",
 };
-const PHASES = ["Phase I", "Phase II", "Phase III", "Phase IV"];
+const PHASES = [
+  "Phase 1",
+  "Phase 1/Phase 2",
+  "Phase 2",
+  "Phase 2/Phase 3",
+  "Phase 3",
+  "Phase 3/Phase 4",
+  "Phase 4",
+  "Post Marketing Servilliance",
+  "BA/BE",
+  "Not applicable",
+];
+
+const PHASE_ALIASES: Record<string, string> = {
+  phasei: "Phase 1",
+  phase1: "Phase 1",
+  "phasei/phaseii": "Phase 1/Phase 2",
+  "phasei/ii": "Phase 1/Phase 2",
+  "phase1/phase2": "Phase 1/Phase 2",
+  "phase1/2": "Phase 1/Phase 2",
+  phaseii: "Phase 2",
+  phase2: "Phase 2",
+  "phaseii/phaseiii": "Phase 2/Phase 3",
+  "phaseii/iii": "Phase 2/Phase 3",
+  "phase2/phase3": "Phase 2/Phase 3",
+  "phase2/3": "Phase 2/Phase 3",
+  phaseiii: "Phase 3",
+  phase3: "Phase 3",
+  "phaseiii/phaseiv": "Phase 3/Phase 4",
+  "phaseiii/iv": "Phase 3/Phase 4",
+  "phase3/phase4": "Phase 3/Phase 4",
+  "phase3/4": "Phase 3/Phase 4",
+  phaseiv: "Phase 4",
+  phase4: "Phase 4",
+  postmarketingsurveillance: "Post Marketing Servilliance",
+  postmarketingservilliance: "Post Marketing Servilliance",
+  "ba/be": "BA/BE",
+  babe: "BA/BE",
+  bioavailabilitybioequivalence: "BA/BE",
+  notapplicable: "Not applicable",
+  "n/a": "Not applicable",
+  na: "Not applicable",
+};
+
+function canonicalPhase(value: unknown) {
+  const raw = String(value || "").trim();
+  const key = raw.toLowerCase().replace(/[^a-z0-9/]/g, "");
+  return PHASE_ALIASES[key] || raw;
+}
 const STATUSES: { value: TrialStatus; label: string }[] = [
   { value: "active", label: "Active" },
   { value: "completed", label: "Completed" },
@@ -75,7 +123,7 @@ function normalized(raw: any): Details {
   return {
     ctri_number: raw?.ctri_number || "",
     title: raw?.title || "",
-    phase: raw?.phase || "",
+    phase: canonicalPhase(raw?.phase),
     indications: Array.isArray(raw?.indications) ? raw.indications.filter(Boolean) : [],
     drug: raw?.drug || "",
     duration: raw?.duration || "",
