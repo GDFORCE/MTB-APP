@@ -23,8 +23,36 @@ import { getSponsorDashboard } from "@/src/features/sponsor/api";
 import type { SponsorTrial } from "@/src/features/sponsor/types";
 import { colors, dawnGradient, fonts, shadows } from "@/src/theme/tokens";
 
-const phases = ["All", "Phase I", "Phase II", "Phase III", "Phase IV"];
+const phaseFilters = [
+  { label: "All", aliases: [] },
+  { label: "Phase 1", aliases: ["Phase 1", "Phase I"] },
+  {
+    label: "Phase 1/Phase 2",
+    aliases: ["Phase 1/Phase 2", "Phase I/Phase II", "Phase I/II", "Phase 1/2"],
+  },
+  { label: "Phase 2", aliases: ["Phase 2", "Phase II"] },
+  {
+    label: "Phase 2/Phase 3",
+    aliases: ["Phase 2/Phase 3", "Phase II/Phase III", "Phase II/III", "Phase 2/3"],
+  },
+  { label: "Phase 3", aliases: ["Phase 3", "Phase III"] },
+  {
+    label: "Phase 3/Phase 4",
+    aliases: ["Phase 3/Phase 4", "Phase III/Phase IV", "Phase III/IV", "Phase 3/4"],
+  },
+  { label: "Phase 4", aliases: ["Phase 4", "Phase IV"] },
+  {
+    label: "Post Marketing Servilliance",
+    aliases: ["Post Marketing Surveillance", "Post-Marketing Surveillance", "Post Marketing Servilliance"],
+  },
+  { label: "BA/BE", aliases: ["BA/BE", "BA BE", "Bioavailability/Bioequivalence"] },
+  { label: "Not applicable", aliases: ["Not applicable", "N/A", "NA"] },
+] as const;
 const statuses = ["All", "Active", "Completed", "Terminated"];
+
+function phaseKey(value?: string) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 
 function tone(status: string) {
   const value = status.toLowerCase();
@@ -72,7 +100,10 @@ export default function SponsorTrialsScreen() {
     const needle = search.trim().toLowerCase();
     return trials.filter((trial) => {
       const matchesStatus = status === "All" || trial.status.toLowerCase() === status.toLowerCase();
-      const matchesPhase = phase === "All" || trial.phase?.toLowerCase() === phase.toLowerCase();
+      const selectedPhase = phaseFilters.find((filter) => filter.label === phase);
+      const matchesPhase = phase === "All" || Boolean(
+        selectedPhase?.aliases.some((alias) => phaseKey(alias) === phaseKey(trial.phase)),
+      );
       const haystack = [trial.protocolId, trial.title, trial.phase, trial.condition, trial.drug].filter(Boolean).join(" ").toLowerCase();
       return matchesStatus && matchesPhase && (!needle || haystack.includes(needle));
     });
@@ -122,9 +153,9 @@ export default function SponsorTrialsScreen() {
             {phase !== "All" && <Pressable onPress={() => setPhase("All")}><Text style={s.clear}>Clear</Text></Pressable>}
           </View>
           <View style={s.phaseWrap}>
-            {phases.map((value) => (
-              <Pressable key={value} onPress={() => setPhase(value)} style={[s.phaseChip, phase === value && s.phaseChipActive]}>
-                <Text style={[s.phaseText, phase === value && s.phaseTextActive]}>{value}</Text>
+            {phaseFilters.map(({ label }) => (
+              <Pressable key={label} onPress={() => setPhase(label)} style={[s.phaseChip, phase === label && s.phaseChipActive]}>
+                <Text style={[s.phaseText, phase === label && s.phaseTextActive]}>{label}</Text>
               </Pressable>
             ))}
           </View>
