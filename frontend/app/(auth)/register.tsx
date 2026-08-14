@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { View, Text, TextInput, StyleSheet, ScrollView, Pressable, Modal, KeyboardAvoidingView, Platform, ActivityIndicator, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
@@ -16,6 +16,7 @@ import {
   RegistrationVariant,
   validateRegistration,
 } from "@/src/features/auth/registration-validation";
+import { GoogleHospitalPrediction, useHospitalPlaces } from "@/src/features/auth/use-hospital-places";
 
 // ── Role → header label + which form variant to render ──────────────────────
 const labelMap: Record<string, string> = {
@@ -85,7 +86,7 @@ const smoRegistrationInstructions = [
 // while new org registrations proceed directly.
 interface PlatformContact { name: string; designation?: string; email?: string; phone?: string }
 interface Org { id: string; name: string; type: string; address?: string; contact?: string; email?: string; website?: string; status?: string; platform_contact?: PlatformContact }
-type SmoHospital = { name: string; address: string; type: string; role: string };
+type SmoHospital = { name: string; address: string; type: string; role: string; googlePlaceId?: string };
 // Map the selected role to the org `type` used to narrow the directory search.
 function orgTypeFor(role?: string): string | undefined {
   if (role === "sponsor") return "sponsor";
@@ -170,6 +171,102 @@ function ModalHead({ icon, eyebrow, title, subtitle }: { icon: React.ReactNode; 
   );
 }
 
+function SmoHospitalFields({
+  hospital,
+  submitted,
+  onUpdate,
+}: {
+  hospital: SmoHospital;
+  submitted: boolean;
+  onUpdate: (patch: Partial<SmoHospital>) => void;
+}) {
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [lookupError, setLookupError] = useState("");
+  const {
+    predictions,
+    searching,
+    hasSearched,
+    searchError,
+    selectingPlaceId,
+    getAddress,
+  } = useHospitalPlaces(hospital.name, showSuggestions);
+
+  const selectGoogleHospital = async (prediction: GoogleHospitalPrediction) => {
+    setLookupError("");
+    onUpdate({ name: prediction.name });
+    try {
+      const details = await getAddress(prediction);
+      onUpdate({ name: prediction.name, address: details.address, googlePlaceId: details.placeId });
+    } catch {
+      setLookupError("Address could not be loaded. Please enter it manually.");
+    } finally {
+      setShowSuggestions(false);
+    }
+  };
+
+  return (
+    <>
+      <Field label="Hospital / Site Name" required error={submitted && !hospital.name.trim() ? "Hospital / site name is required." : undefined}>
+        <Input
+          value={hospital.name}
+          onChangeText={(name) => {
+            onUpdate({ name, googlePlaceId: undefined });
+            setLookupError("");
+            setShowSuggestions(true);
+          }}
+          onFocus={() => setShowSuggestions(true)}
+          placeholder="Search or enter hospital name"
+        />
+        {showSuggestions && hospital.name.trim().length >= 2 && (searching || predictions.length > 0 || hasSearched || !!searchError) && (
+          <View style={f.suggestBox}>
+            {!!searchError ? (
+              <View style={f.suggestRow}>
+                <Small color={colors.destructive}>{searchError}</Small>
+              </View>
+            ) : !searching && hasSearched && predictions.length === 0 ? (
+              <View style={f.suggestRow}>
+                <Small>No matching hospitals found. You can enter the hospital manually.</Small>
+              </View>
+            ) : searching && predictions.length === 0 ? (
+              <View style={f.suggestRow}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Small style={{ marginLeft: 8 }}>Searching Google…</Small>
+              </View>
+            ) : (
+              <>
+                <View style={f.suggestGroupRow}>
+                  <Text style={f.suggestGroupLabel}>Matching hospitals</Text>
+                  {searching && <ActivityIndicator size="small" color={colors.primary} />}
+                </View>
+                {predictions.map((prediction) => (
+                  <Pressable
+                    key={prediction.place_id}
+                    onPress={() => void selectGoogleHospital(prediction)}
+                    disabled={!!selectingPlaceId}
+                    style={f.suggestRow}
+                  >
+                    <View style={f.suggestIcon}><Building2 size={15} color={colors.primary} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Body weight="700" style={{ fontSize: 14 }}>{prediction.name}</Body>
+                      <Small numberOfLines={2}>{prediction.description}</Small>
+                    </View>
+                    {selectingPlaceId === prediction.place_id && <ActivityIndicator size="small" color={colors.primary} />}
+                  </Pressable>
+                ))}
+              </>
+            )}
+            {!searching && predictions.length > 0 && <Text style={f.googleAttribution}>Google Maps</Text>}
+          </View>
+        )}
+      </Field>
+      <Field label="Hospital / Site Location" required error={submitted && !hospital.address.trim() ? "Hospital / site location is required." : undefined}>
+        <Input value={hospital.address} onChangeText={(address) => onUpdate({ address })} placeholder="Area, City" />
+        {!!lookupError && <Small color={colors.destructive} style={f.fieldError}>{lookupError}</Small>}
+      </Field>
+    </>
+  );
+}
+
 export default function Register() {
   const router = useRouter();
   // `org`/`email` may arrive prefilled when the user came from an accepted invite.
@@ -248,7 +345,7 @@ export default function Register() {
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
   const [showInstructions, setShowInstructions] = useState(() => isOrganizationAdminRegistration);
   const [showDeclaration, setShowDeclaration] = useState(() => !isOrganizationAdminRegistration);
-  const [orgCheck, setOrgCheck] = useState<"exists" | null>(null);
+  const [orgCheck, setOrgCheck] = useState<"exists" | "new" | null>(null);
   const [orgContactError, setOrgContactError] = useState("");
   // True while Continue performs the authoritative org/contact lookup.
   const [checkingOrg, setCheckingOrg] = useState(false);
@@ -256,13 +353,26 @@ export default function Register() {
 
   // ── Live org directory lookup (debounced) ─────────────────────────────────
   const [orgMatches, setOrgMatches] = useState<Org[]>([]);
+  const [existingOrgMatch, setExistingOrgMatch] = useState<Org | null>(null);
   const [orgSearching, setOrgSearching] = useState(false);
   const [showOrgSuggestions, setShowOrgSuggestions] = useState(false);
-  // The exact (trimmed) query the current `orgMatches` were fetched for. Used by
-  // Continue to detect when the latest results are stale vs. the typed org name.
-  const lastSearchedQuery = useRef("");
+  const [googleOrgLookupError, setGoogleOrgLookupError] = useState("");
+  const {
+    predictions: googleOrgMatches,
+    searching: googleOrgSearching,
+    hasSearched: googleOrgHasSearched,
+    searchError: googleOrgSearchError,
+    selectingPlaceId: selectingGoogleOrg,
+    getAddress: getGoogleOrgAddress,
+  } = useHospitalPlaces(fld.orgName || "", variant === "site" && !isInvite && showOrgSuggestions);
   useEffect(() => {
-    if (isPatient || isInvite) return;
+    // Hospitals/sites use Google as their only visible suggestion source. MTB
+    // duplicate detection happens privately after selection and on Continue.
+    if (isPatient || isInvite || variant === "site") {
+      setOrgMatches([]);
+      setOrgSearching(false);
+      return;
+    }
     const q = (fld.orgName || "").trim();
     if (q.length < 2) { setOrgMatches([]); setOrgSearching(false); return; }
     setOrgSearching(true);
@@ -277,7 +387,6 @@ export default function Register() {
         const res = await api.get("/organizations", { params });
         if (ignore) return;
         setOrgMatches(Array.isArray(res.data) ? res.data : []);
-        lastSearchedQuery.current = q;
       } catch {
         if (!ignore) setOrgMatches([]);
       } finally {
@@ -285,7 +394,7 @@ export default function Register() {
       }
     }, 300);
     return () => { ignore = true; clearTimeout(t); };
-  }, [fld.orgName, role, isInvite, isPatient]);
+  }, [fld.orgName, role, isInvite, isPatient, variant]);
 
   // ── Terms & Conditions content (fetched when the modal opens) ─────────────
   const validation = useMemo(() => {
@@ -341,7 +450,9 @@ export default function Register() {
   const fieldError = (key: keyof RegistrationErrors) =>
     availabilityErrors[key] || (submitted || touched[key] ? validation.errors[key] : undefined);
   const normalizeOrgName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
-  const matchedOrg = orgMatches.find((o) => normalizeOrgName(o.name) === normalizeOrgName(fld.orgName || "")) || null;
+  const matchedOrg = existingOrgMatch
+    || orgMatches.find((o) => normalizeOrgName(o.name) === normalizeOrgName(fld.orgName || ""))
+    || null;
   const declarationText = isPatient
     ? "I confirm that the information I have provided is true, accurate and complete, and I agree to comply with the platform's Terms of Use and Privacy Policy."
     : "I confirm that I am authorized to register and represent this organization, that the information provided is accurate, and I agree to comply with the platform's Terms of Use and Privacy Policy.";
@@ -357,6 +468,8 @@ export default function Register() {
         address: hospital.address.trim(),
         type: hospital.type,
         role: hospital.role,
+        google_place_id: hospital.googlePlaceId || undefined,
+        address_source: hospital.googlePlaceId ? "google_places" : "manual",
       }));
     }
     if (isInvite) {
@@ -378,6 +491,29 @@ export default function Register() {
     });
   };
 
+  const existingOrganizationFromCheck = async (data: any): Promise<Org | null> => {
+    if (!data?.exists || !data?.organization) return null;
+    let platformContact = data.platform_contact || undefined;
+    // Older organizations may not have a designated public contact. Use the
+    // platform support contract without exposing organization members.
+    if (!platformContact?.email) {
+      try {
+        const supportResponse = await api.get("/support/contact");
+        if (supportResponse.data?.email) {
+          platformContact = {
+            name: supportResponse.data.name || "MTB Platform Support",
+            designation: "Platform Administrator",
+            email: supportResponse.data.email,
+            phone: supportResponse.data.phone || "",
+          };
+        }
+      } catch {
+        // The duplicate warning remains useful even without an email action.
+      }
+    }
+    return { ...data.organization, platform_contact: platformContact };
+  };
+
   const handleContinue = async () => {
     setSubmitted(true);
     setErr("");
@@ -392,33 +528,22 @@ export default function Register() {
     // organization's public administrator contact.
     setCheckingOrg(true);
     try {
-      const res = await api.get("/organizations/registration-check", { params: { name: q } });
-      lastSearchedQuery.current = q;
+      const res = await api.get("/organizations/registration-check", {
+        params: {
+          name: q,
+          google_place_id: fld.googlePlaceId || undefined,
+        },
+      });
       setOrgSearching(false);
-      if (res.data?.exists && res.data?.organization) {
-        let platformContact = res.data.platform_contact || undefined;
-        // Older organizations may not have a designated admin yet. Use the
-        // configured MTB support contact so access requests still have a route.
-        if (!platformContact?.email) {
-          try {
-            const supportResponse = await api.get("/support/contact");
-            if (supportResponse.data?.email) {
-              platformContact = {
-                name: supportResponse.data.name || "MTB Platform Support",
-                designation: "Platform Administrator",
-                email: supportResponse.data.email,
-                phone: supportResponse.data.phone || "",
-              };
-            }
-          } catch {
-            // The popup remains closable if no public contact is configured.
-          }
+      const fresh = await existingOrganizationFromCheck(res.data);
+      if (fresh) {
+        setExistingOrgMatch(fresh);
+        if (variant !== "site") {
+          setOrgMatches(current => [fresh, ...current.filter(org => org.id !== fresh.id)]);
         }
-        const fresh: Org = { ...res.data.organization, platform_contact: platformContact };
-        setOrgMatches(current => [fresh, ...current.filter(org => org.id !== fresh.id)]);
         setOrgCheck("exists");
       } else {
-        proceed();
+        setOrgCheck("new");
       }
     } catch {
       setErr("We couldn't check this organization right now. Please try again.");
@@ -428,14 +553,60 @@ export default function Register() {
   };
 
   const onOrgNameChange = (v: string) => {
-    setFld((s) => ({ ...s, orgName: v }));
+    setFld((s) => ({ ...s, orgName: v, googlePlaceId: "", addressSource: "manual" }));
     setTouched((current) => ({ ...current, orgName: true }));
+    setExistingOrgMatch(null);
+    setGoogleOrgLookupError("");
     setShowOrgSuggestions(true);
   };
   const pickOrg = (o: Org) => {
     setFld((s) => ({ ...s, orgName: o.name, orgAddress: o.address || s.orgAddress }));
     setTouched((current) => ({ ...current, orgName: true, orgAddress: true }));
+    setExistingOrgMatch(o);
     setShowOrgSuggestions(false);
+  };
+  const pickGoogleOrg = async (prediction: GoogleHospitalPrediction) => {
+    setGoogleOrgLookupError("");
+    setExistingOrgMatch(null);
+    setFld((current) => ({ ...current, orgName: prediction.name }));
+    setTouched((current) => ({ ...current, orgName: true }));
+    try {
+      const details = await getGoogleOrgAddress(prediction);
+      setFld((current) => ({
+        ...current,
+        orgName: prediction.name,
+        orgAddress: details.address,
+        googlePlaceId: details.placeId,
+        addressSource: "google_places",
+      }));
+      setTouched((current) => ({ ...current, orgAddress: true }));
+      // Keep the MTB directory private: check the stable Place ID immediately
+      // and surface only an exact duplicate warning, never a directory list.
+      setCheckingOrg(true);
+      try {
+        const response = await api.get("/organizations/registration-check", {
+          params: {
+            name: prediction.name,
+            google_place_id: details.placeId,
+          },
+        });
+        const existing = await existingOrganizationFromCheck(response.data);
+        if (existing) {
+          setExistingOrgMatch(existing);
+          setOrgCheck("exists");
+        }
+      } catch {
+        setGoogleOrgLookupError(
+          "Address loaded, but MTB could not verify this hospital yet. It will be checked again when you continue.",
+        );
+      } finally {
+        setCheckingOrg(false);
+      }
+    } catch {
+      setGoogleOrgLookupError("Address could not be loaded. Please enter it manually.");
+    } finally {
+      setShowOrgSuggestions(false);
+    }
   };
   const updateSmoHospital = (index: number, patch: Partial<SmoHospital>) => {
     setSmoHospitals((current) => current.map((hospital, i) => i === index ? { ...hospital, ...patch } : hospital));
@@ -558,23 +729,58 @@ export default function Register() {
                     style={[isInvite && f.readOnlyInput, fieldError("orgName") && f.inputError]}
                   />
                   {isInvite && <Small color={colors.mutedFg} style={f.lockedHint}>Assigned by your invitation.</Small>}
-                  {!isInvite && showOrgSuggestions && (fld.orgName || "").trim().length >= 2 && !matchedOrg && (orgSearching || orgMatches.length > 0) && (
+                  {!isInvite && showOrgSuggestions && (fld.orgName || "").trim().length >= 2 && !matchedOrg && (orgSearching || googleOrgSearching || googleOrgHasSearched || !!googleOrgSearchError || orgMatches.length > 0 || googleOrgMatches.length > 0) && (
                     <View style={f.suggestBox}>
-                      {orgSearching && orgMatches.length === 0 ? (
+                      {(orgSearching || googleOrgSearching) && orgMatches.length === 0 && googleOrgMatches.length === 0 ? (
                         <View style={f.suggestRow}>
                           <ActivityIndicator size="small" color={colors.primary} />
                           <Small style={{ marginLeft: 8 }}>Searching…</Small>
                         </View>
                       ) : (
-                        orgMatches.slice(0, 6).map((o) => (
-                          <Pressable key={o.id} onPress={() => pickOrg(o)} style={f.suggestRow}>
-                            <View style={f.suggestIcon}><Building2 size={15} color={colors.primary} /></View>
-                            <View style={{ flex: 1 }}>
-                              <Body weight="700" style={{ fontSize: 14 }}>{o.name}</Body>
-                              {o.address ? <Small numberOfLines={1}>{o.address}</Small> : null}
+                        <>
+                          {variant === "site" && !!googleOrgSearchError && (
+                            <View style={f.suggestRow}>
+                              <Small color={colors.destructive}>{googleOrgSearchError}</Small>
                             </View>
-                          </Pressable>
-                        ))
+                          )}
+                          {variant === "site" && !googleOrgSearchError && !googleOrgSearching && googleOrgHasSearched && googleOrgMatches.length === 0 && (
+                            <View style={f.suggestRow}>
+                              <Small>No matching hospitals found. You can enter the hospital manually.</Small>
+                            </View>
+                          )}
+                          {variant !== "site" && orgMatches.length > 0 && <Text style={f.suggestGroupLabel}>Already on MTB</Text>}
+                          {variant !== "site" && orgMatches.map((o) => (
+                            <Pressable key={`mtb-${o.id}`} onPress={() => pickOrg(o)} style={f.suggestRow}>
+                              <View style={f.suggestIcon}><Building2 size={15} color={colors.primary} /></View>
+                              <View style={{ flex: 1 }}>
+                                <Body weight="700" style={{ fontSize: 14 }}>{o.name}</Body>
+                                {o.address ? <Small numberOfLines={1}>{o.address}</Small> : null}
+                              </View>
+                            </Pressable>
+                          ))}
+                          {variant === "site" && googleOrgMatches.length > 0 && (
+                            <View style={f.suggestGroupRow}>
+                              <Text style={f.suggestGroupLabel}>Matching hospitals</Text>
+                              {googleOrgSearching && <ActivityIndicator size="small" color={colors.primary} />}
+                            </View>
+                          )}
+                          {variant === "site" && googleOrgMatches.map((prediction) => (
+                            <Pressable
+                              key={`google-${prediction.place_id}`}
+                              onPress={() => void pickGoogleOrg(prediction)}
+                              disabled={!!selectingGoogleOrg}
+                              style={f.suggestRow}
+                            >
+                              <View style={f.suggestIcon}><Building2 size={15} color={colors.primary} /></View>
+                              <View style={{ flex: 1 }}>
+                                <Body weight="700" style={{ fontSize: 14 }}>{prediction.name}</Body>
+                                <Small numberOfLines={2}>{prediction.description}</Small>
+                              </View>
+                              {selectingGoogleOrg === prediction.place_id && <ActivityIndicator size="small" color={colors.primary} />}
+                            </Pressable>
+                          ))}
+                          {variant === "site" && googleOrgMatches.length > 0 && <Text style={f.googleAttribution}>Google Maps</Text>}
+                        </>
                       )}
                     </View>
                   )}
@@ -583,6 +789,7 @@ export default function Register() {
                   <>
                     <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required error={fieldError("orgAddress")}>
                       <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
+                      {!!googleOrgLookupError && <Small color={colors.destructive} style={f.fieldError}>{googleOrgLookupError}</Small>}
                     </Field>
 
                     {variant === "smo" && (
@@ -599,12 +806,11 @@ export default function Register() {
                                 </Pressable>
                               )}
                             </View>
-                            <Field label="Hospital / Site Name" required error={submitted && !hospital.name.trim() ? "Hospital / site name is required." : undefined}>
-                              <Input value={hospital.name} onChangeText={(name) => updateSmoHospital(index, { name })} placeholder="Enter hospital or site name" />
-                            </Field>
-                            <Field label="Hospital / Site Location" required error={submitted && !hospital.address.trim() ? "Hospital / site location is required." : undefined}>
-                              <Input value={hospital.address} onChangeText={(address) => updateSmoHospital(index, { address })} placeholder="Area, City" />
-                            </Field>
+                            <SmoHospitalFields
+                              hospital={hospital}
+                              submitted={submitted}
+                              onUpdate={(patch) => updateSmoHospital(index, patch)}
+                            />
                             <Field label="Type of Hospital" required error={submitted && !hospital.type ? "Hospital type is required." : undefined}>
                               <Select value={hospital.type} placeholder="Type of Hospital" options={["Private", "Government"]} onChange={(type) => updateSmoHospital(index, { type })} />
                             </Field>
@@ -702,7 +908,32 @@ export default function Register() {
 
       {/* Org-existence prompt */}
       <ModalCard visible={orgCheck !== null} onClose={() => setOrgCheck(null)}>
-        {orgCheck === "exists" && matchedOrg ? (
+        {orgCheck === "new" ? (
+          <>
+            <ModalHead
+              icon={<Building2 size={24} color={colors.primary} />}
+              eyebrow="New organization"
+              title="Create a New Organization?"
+              subtitle={`Are you sure you want to create ${(fld.orgName || "this organization").trim()} as a new organization on the platform?`}
+            />
+            <View style={f.orgExistsActions}>
+              <Pressable
+                testID="cancel-create-organization"
+                onPress={() => setOrgCheck(null)}
+                style={[f.cta, f.orgExistsClose]}
+              >
+                <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.foreground }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                testID="confirm-create-organization"
+                onPress={() => { setOrgCheck(null); proceed(); }}
+                style={[f.cta, f.orgExistsContact]}
+              >
+                <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg, textAlign: "center" }}>Create Organization</Text>
+              </Pressable>
+            </View>
+          </>
+        ) : orgCheck === "exists" && matchedOrg ? (
           <>
             <ModalHead
               icon={<Building2 size={24} color={colors.primary} />}
@@ -760,6 +991,9 @@ const f = StyleSheet.create({
   suggestBox: { marginTop: 6, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, overflow: "hidden" },
   suggestRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   suggestIcon: { width: 30, height: 30, borderRadius: 8, backgroundColor: colors.primary + "1A", alignItems: "center", justifyContent: "center" },
+  suggestGroupLabel: { paddingHorizontal: 12, paddingTop: 9, paddingBottom: 5, fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: colors.mutedFg, backgroundColor: colors.surface },
+  suggestGroupRow: { minHeight: 30, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingRight: 12, backgroundColor: colors.surface },
+  googleAttribution: { paddingHorizontal: 12, paddingVertical: 7, textAlign: "right", fontFamily: fonts.medium, fontSize: 10, color: colors.mutedFg, backgroundColor: colors.surface },
   hospitalsSection: { marginTop: spacing.sm, marginBottom: spacing.md },
   hospitalsHelp: { marginTop: -8, marginBottom: spacing.md, lineHeight: 18 },
   hospitalCard: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, backgroundColor: colors.card, padding: spacing.md, marginBottom: 12 },

@@ -175,6 +175,8 @@ async def org_invite_member(body: OrgInviteIn, ctx=Depends(org_admin_ctx)):
         'full_name': body.full_name or '', 'designation': body.designation or '',
         'role': body.role, 'trial_id': None, 'invited_by': user['id'],
         'org': org['name'], 'org_id': org['id'], 'site': (body.site or '').strip(),
+        'inviter_name': user.get('full_name') or '',
+        'inviter_organization': org['name'],
         'status': 'pending', 'created_at': now(),
         'expires_at': now() + timedelta(days=INVITE_TTL_DAYS), 'resend_count': 0,
     }
@@ -185,6 +187,8 @@ async def org_invite_member(body: OrgInviteIn, ctx=Depends(org_admin_ctx)):
             email,
             _invite_link(token),
             doc['full_name'],
+            doc['inviter_name'],
+            doc['inviter_organization'],
         )
     except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
         await db.invitations.delete_one({'id': doc['id']})

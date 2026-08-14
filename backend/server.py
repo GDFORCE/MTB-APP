@@ -7,7 +7,7 @@ Production-grade FastAPI app with:
 - Real-time chat over WebSocket (1-to-1 + group, typing, read receipts)
 - MongoDB persistence
 """
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Form, Request
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ import jwt
 import otp_service
 import protocol_extraction as pe
 import storage as file_storage
+import google_places
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -559,6 +560,25 @@ async def find_organization_by_name(name: Optional[str]) -> Optional[dict]:
     )
 
 
+async def find_existing_organization(
+    name: Optional[str] = None,
+    google_place_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Match a real-world place identifier first, then the normalized name.
+
+    Place IDs protect against duplicate registrations when Google's canonical
+    hospital name differs from the name already stored on MTB. Older records
+    without a Place ID continue to use the existing exact normalized-name rule.
+    """
+    place_id = str(google_place_id or '').strip()
+    if place_id and google_places.PLACE_ID_RE.fullmatch(place_id):
+        organization = await db.organizations.find_one(
+            {'google_place_id': place_id}, {'_id': 0})
+        if organization:
+            return organization
+    return await find_organization_by_name(name)
+
+
 async def ensure_organization(
     name: Optional[str],
     org_type: str = 'site',
@@ -570,10 +590,12 @@ async def ensure_organization(
     name = ' '.join((name or '').strip().split())
     if not name:
         return None, False
-    existing = await find_organization_by_name(name)
+    details = details or {}
+    google_place_id = str(
+        details.get('googlePlaceId') or details.get('google_place_id') or '').strip()
+    existing = await find_existing_organization(name, google_place_id)
     if existing:
         return existing, False
-    details = details or {}
     organization = {
         'id': str(uuid.uuid4()), 'name': name,
         'name_key': organization_name_key(name),
@@ -586,11 +608,14 @@ async def ensure_organization(
         'website': (details.get('website') or '').strip(),
         'status': 'active', 'created_at': now(),
     }
+    if google_places.PLACE_ID_RE.fullmatch(google_place_id):
+        organization['google_place_id'] = google_place_id
+        organization['address_source'] = 'google_places'
     try:
         await db.organizations.insert_one(organization)
         created = True
     except DuplicateKeyError:
-        organization = await find_organization_by_name(name)
+        organization = await find_existing_organization(name, google_place_id)
         created = False
     if created:
         await write_audit(actor, 'organization.create',
@@ -755,7 +780,13 @@ async def forgot(body: ForgotIn):
     if previous_count >= OTP_MAX_RESENDS + 1:
         raise HTTPException(429, 'Maximum resend attempts reached. Please try again later.')
     code = DEV_OTP_CODE if DEV_OTP_MODE and not _channel_configured(channel) else otp_service.generate_code()
-    await _deliver_otp(channel, target, code)
+    await _deliver_otp(
+        channel,
+        target,
+        code,
+        user_name=user.get('full_name') or '',
+        purpose='password_recovery',
+    )
     await db.users.update_one(
         {'id': user['id']},
         {'$set': {
@@ -919,7 +950,14 @@ async def _enforce_rate_limit(identifier: str):
             upsert=True,
         )
 
-async def _deliver_otp(channel: str, target: str, code: str):
+async def _deliver_otp(
+    channel: str,
+    target: str,
+    code: str,
+    *,
+    user_name: str = '',
+    purpose: str = 'registration',
+):
     """Send a code, mapping provider failures to clean HTTP errors. Blocking
     provider I/O runs in a threadpool so it never stalls the event loop."""
     # DEV-ONLY: don't try to send on a channel with no provider; the fixed dev
@@ -929,7 +967,13 @@ async def _deliver_otp(channel: str, target: str, code: str):
         return
     try:
         if channel == 'email':
-            await run_in_threadpool(otp_service.send_email, target, code)
+            await run_in_threadpool(
+                otp_service.send_email,
+                target,
+                code,
+                user_name,
+                purpose,
+            )
         else:
             await run_in_threadpool(otp_service.send_sms, target, code)
     except otp_service.OTPConfigError:
@@ -1235,12 +1279,17 @@ async def register_start(body: RegisterStartIn):
                 raise HTTPException(400, 'Select a hospital type: Private or Government')
             if hospital_role not in smo_roles:
                 raise HTTPException(400, 'Select a hospital role: PI, CRC, or Administrative')
-            hospitals.append({
+            normalized_hospital = {
                 'name': name,
                 'address': address,
                 'type': hospital_types[hospital_type],
                 'role': smo_roles[hospital_role],
-            })
+            }
+            google_place_id = str(hospital.get('google_place_id') or '').strip()
+            if google_places.PLACE_ID_RE.fullmatch(google_place_id):
+                normalized_hospital['google_place_id'] = google_place_id
+                normalized_hospital['address_source'] = 'google_places'
+            hospitals.append(normalized_hospital)
         profile['hospitals'] = hospitals
 
     if 'email' in channels and not email:
@@ -1258,7 +1307,12 @@ async def register_start(body: RegisterStartIn):
         if not organization:
             raise HTTPException(
                 400, 'Organization name is required when registering an organization')
-        organization_record = await find_organization_by_name(organization)
+        google_place_id = str(
+            profile.get('googlePlaceId') or profile.get('google_place_id') or '').strip()
+        if google_place_id and not google_places.PLACE_ID_RE.fullmatch(google_place_id):
+            raise HTTPException(400, 'Invalid Google Place ID')
+        organization_record = await find_existing_organization(
+            organization, google_place_id)
         if organization_record:
             raise HTTPException(
                 409,
@@ -1339,7 +1393,13 @@ async def register_start(body: RegisterStartIn):
     for ch in channels:
         target = email if ch == 'email' else phone
         assert target  # validated present above for every required channel
-        await _deliver_otp(ch, target, codes[ch])
+        await _deliver_otp(
+            ch,
+            target,
+            codes[ch],
+            user_name=doc['full_name'],
+            purpose='registration',
+        )
 
     await db.pending_registrations.insert_one(doc)
     return {
@@ -1434,7 +1494,13 @@ async def register_resend(body: RegisterResendIn):
     await _enforce_rate_limit(target)
 
     code = otp_service.generate_code()
-    await _deliver_otp(body.channel, target, code)
+    await _deliver_otp(
+        body.channel,
+        target,
+        code,
+        user_name=pending.get('full_name') or '',
+        purpose='registration',
+    )
     await db.pending_registrations.update_one(
         {'id': pending['id']},
         {'$set': {f'{body.channel}_otp_hash': pwd_ctx.hash(code),
@@ -1486,7 +1552,13 @@ async def change_contact_start(body: ChangeContactStartIn, user=Depends(current_
         'expires_at': now() + timedelta(minutes=otp_service.OTP_TTL_MIN),
     }
     # Deliver first — if the send fails we raise and persist nothing.
-    await _deliver_otp(field, value, code)
+    await _deliver_otp(
+        field,
+        value,
+        code,
+        user_name=user.get('full_name') or '',
+        purpose='contact_change',
+    )
     await db.pending_contact_changes.insert_one(doc)
     return {'field': field, 'value': value, 'channel': field,
             'expires_in': otp_service.OTP_TTL_MIN * 60}
@@ -2874,6 +2946,8 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
             'full_name': body.pi_name.strip(), 'role': 'pi',
             'trial_id': trial_id, 'invited_by': user['id'],
             'org': site_name, 'organization': site_name,
+            'inviter_name': user.get('full_name') or '',
+            'inviter_organization': site_name,
             'status': 'accepted' if registered_pi else 'pending',
             'accepted_user_id': registered_pi.get('id') if registered_pi else None,
             'accepted_at': now() if registered_pi else None,
@@ -2889,6 +2963,8 @@ async def sponsor_add_trial_site(trial_id: str, body: SponsorTrialSiteIn,
                     invitation['email'],
                     _invite_link(invitation['token']),
                     invitation['full_name'],
+                    invitation['inviter_name'],
+                    invitation['inviter_organization'],
                 )
             except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
                 await db.invitations.delete_one({'id': invitation['id']})
@@ -4724,6 +4800,8 @@ async def invite_patient_for_enrollment(body: PatientIn, user=Depends(current_us
         'full_name': body.full_name, 'designation': '', 'role': 'patient',
         'trial_id': body.trial_id, 'invited_by': user['id'],
         'org': caller_org, 'site': '',
+        'inviter_name': user.get('full_name') or '',
+        'inviter_organization': caller_org,
         'status': 'pending', 'created_at': now(),
         'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
         'resend_count': 0, 'patient_data': patient_data,
@@ -4735,6 +4813,8 @@ async def invite_patient_for_enrollment(body: PatientIn, user=Depends(current_us
             invitation['email'],
             _invite_link(token),
             invitation['full_name'],
+            invitation['inviter_name'],
+            invitation['inviter_organization'],
         )
     except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
         await db.invitations.delete_one({'id': invitation['id']})
@@ -4786,6 +4866,72 @@ async def list_organizations(type: Optional[str] = None, search: Optional[str] =
     return organizations
 
 
+async def _enforce_places_rate_limit(request: Request):
+    """Limit public Places proxy traffic per client without retaining raw IPs."""
+    raw_client = request.client.host if request.client else "unknown"
+    client_key = hashlib.sha256(raw_client.encode("utf-8")).hexdigest()[:24]
+    key = f"places:{client_key}"
+    n = now()
+    window_seconds = 60
+    limit = max(10, int(os.environ.get("GOOGLE_PLACES_REQUESTS_PER_MINUTE", "60")))
+    try:
+        doc = await db.public_api_throttle.find_one({"_id": key})
+        if doc and (n - doc["window_start"]).total_seconds() < window_seconds:
+            if doc["count"] >= limit:
+                raise HTTPException(429, "Too many address searches. Please wait a moment and try again.")
+            await db.public_api_throttle.update_one({"_id": key}, {"$inc": {"count": 1}})
+        else:
+            await db.public_api_throttle.replace_one(
+                {"_id": key},
+                {"_id": key, "count": 1, "window_start": n,
+                 "expires_at": n + timedelta(seconds=window_seconds)},
+                upsert=True,
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Address assistance should keep working during a transient throttle-store
+        # issue; Google Cloud's quota remains the hard spending backstop.
+        logging.warning("Places rate-limit store unavailable: %s", exc)
+
+
+@api.get('/public/places/hospitals/autocomplete')
+async def hospital_place_autocomplete(
+    request: Request,
+    input: str = Query(min_length=2, max_length=120),
+    session_token: str = Query(min_length=1, max_length=36),
+):
+    await _enforce_places_rate_limit(request)
+    try:
+        predictions = await run_in_threadpool(
+            google_places.autocomplete_hospitals, input, session_token)
+        return {"predictions": predictions}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except google_places.PlacesNotConfigured:
+        raise HTTPException(503, "Hospital address search is not configured")
+    except google_places.PlacesUpstreamError:
+        raise HTTPException(502, "Hospital address search is temporarily unavailable")
+
+
+@api.get('/public/places/hospitals/{place_id}')
+async def hospital_place_details(
+    place_id: str,
+    request: Request,
+    session_token: str = Query(min_length=1, max_length=36),
+):
+    await _enforce_places_rate_limit(request)
+    try:
+        return await run_in_threadpool(
+            google_places.place_address, place_id, session_token)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except google_places.PlacesNotConfigured:
+        raise HTTPException(503, "Hospital address search is not configured")
+    except google_places.PlacesUpstreamError:
+        raise HTTPException(502, "Hospital address search is temporarily unavailable")
+
+
 async def _public_platform_admin_contact() -> Optional[dict]:
     """Return the configured MTB Platform Administrator contact only.
 
@@ -4806,14 +4952,21 @@ async def _public_platform_admin_contact() -> Optional[dict]:
 
 
 @api.get('/organizations/registration-check')
-async def organization_registration_check(name: str):
+async def organization_registration_check(
+    name: str,
+    google_place_id: Optional[str] = Query(default=None, max_length=255),
+):
     """Authoritative duplicate check used at the end of org registration.
 
-    Matching is case-insensitive and whitespace-normalized. Contact information
+    A Google Place ID is authoritative when supplied; exact normalized name is
+    the fallback for manual entry and older organizations. Contact information
     is always the configured MTB Platform Administrator, never organization
     members such as PIs, CRCs, investigators, or organization admins.
     """
-    organization = await find_organization_by_name(name)
+    place_id = str(google_place_id or '').strip()
+    if place_id and not google_places.PLACE_ID_RE.fullmatch(place_id):
+        raise HTTPException(400, 'Invalid Google Place ID')
+    organization = await find_existing_organization(name, place_id)
     if not organization:
         return {'exists': False, 'organization': None, 'platform_contact': None}
     public_organization = {
@@ -5737,7 +5890,7 @@ async def seed_demo():
     today = n.date()
     start_today = n.replace(hour=0, minute=0, second=0, microsecond=0)
     pw = pwd_ctx.hash(SEED_PASSWORD)     # one hash — all demo users share the password
-    pet = pwd_ctx.hash('bruno')
+    demo_security_answer = pwd_ctx.hash('delhi')
 
     # 1) Organizations — one per org type.
     for org_name, otype in [('Pfizer Global', 'sponsor'), ('IQVIA India', 'cro'),
@@ -5765,8 +5918,8 @@ async def seed_demo():
             'role': role, 'full_name': name, 'organization': org,
             'phone': '+91 98765 43210', 'hashed_password': pw,
             'avatar_initials': ''.join(w[0].upper() for w in name.replace('Dr. ', '').split()[:2]) or 'U',
-            'security_question': 'What is the name of your first pet?',
-            'security_answer_hash': pet,
+            'security_question': 'What is the name of the place you are born?',
+            'security_answer_hash': demo_security_answer,
             'created_at': n, 'is_online': False,
         }, update=extra or None)
 
@@ -7167,6 +7320,9 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
         'supervising_pi_id': user['id'] if user.get('role') == 'pi' and (body.role or '').lower() == 'crc' else '',
         'org': (body.organization or user.get('organization') or '').strip(),
         'site': (body.site or '').strip(),
+        'inviter_name': user.get('full_name') or '',
+        'inviter_organization': (
+            body.organization or user.get('organization') or '').strip(),
         'status': 'pending', 'created_at': now(),
         'expires_at': now() + timedelta(days=INVITE_TTL_DAYS),
         'resend_count': 0,
@@ -7184,6 +7340,8 @@ async def create_invitation(body: InvitationIn, user=Depends(current_user)):
                 body.email,
                 invite_link,
                 body.full_name or '',
+                doc['inviter_name'],
+                doc['inviter_organization'],
             )
         except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
             await db.invitations.delete_one({'id': doc['id']})
@@ -7277,12 +7435,20 @@ async def resend_invitation(invitation_id: str, user=Depends(require_roles('pi',
          '$inc': {'resend_count': 1}})
     invite_link = _invite_link(inv['token'])
     if inv.get('email'):
+        original_inviter = await db.users.find_one(
+            {'id': inv.get('invited_by')},
+            {'_id': 0, 'full_name': 1, 'organization': 1},
+        ) or {}
         try:
             await run_in_threadpool(
                 otp_service.send_invitation_email,
                 inv['email'],
                 invite_link,
                 inv.get('full_name', ''),
+                inv.get('inviter_name') or original_inviter.get('full_name')
+                or user.get('full_name') or '',
+                inv.get('inviter_organization')
+                or original_inviter.get('organization') or inv.get('org') or '',
             )
         except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
             raise HTTPException(502, 'The invitation email could not be delivered.')
@@ -8507,6 +8673,7 @@ async def _ensure_indexes():
         await db.pending_registrations.create_index('expires_at', expireAfterSeconds=0)
         await db.pending_contact_changes.create_index('expires_at', expireAfterSeconds=0)
         await db.otp_throttle.create_index('expires_at', expireAfterSeconds=0)
+        await db.public_api_throttle.create_index('expires_at', expireAfterSeconds=0)
         # Enforce unique emails at the DB layer (defence-in-depth vs. concurrent signups).
         await db.users.create_index(
             'email', unique=True,
@@ -8524,6 +8691,11 @@ async def _ensure_indexes():
         await db.organizations.create_index(
             'name_key', unique=True,
             partialFilterExpression={'name_key': {'$type': 'string', '$gt': ''}},
+        )
+        await db.organizations.create_index(
+            'google_place_id', unique=True,
+            partialFilterExpression={
+                'google_place_id': {'$type': 'string', '$gt': ''}},
         )
     except Exception as e:
         logging.warning('Index setup deferred (DB unreachable or existing duplicates?): %s', e)

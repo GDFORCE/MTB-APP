@@ -17,6 +17,7 @@ ORG_NAME = f"CONTACT-{RUN_ID} Hospital"
 ORG_ID = str(uuid.uuid4())
 ADMIN_ID = str(uuid.uuid4())
 STAFF_ID = str(uuid.uuid4())
+GOOGLE_PLACE_ID = f"ChIJcontact{RUN_ID}"
 LOOP = asyncio.new_event_loop()
 
 
@@ -38,6 +39,7 @@ def world():
             "id": ORG_ID,
             "name": ORG_NAME,
             "type": "site",
+            "google_place_id": GOOGLE_PLACE_ID,
             "status": "active",
             "email": "public-office@example.com",
             "contact": "+91-1800-000-000",
@@ -133,6 +135,13 @@ def test_registration_check_is_exact_normalized_and_returns_admin_contact():
                 "/api/organizations/registration-check",
                 params={"name": f"Missing {RUN_ID}"},
             )
+            place_match = await cli.get(
+                "/api/organizations/registration-check",
+                params={
+                    "name": "A different Google display name",
+                    "google_place_id": GOOGLE_PLACE_ID,
+                },
+            )
         assert existing.status_code == 200, existing.text
         assert existing.json()["exists"] is True
         assert existing.json()["organization"] == {
@@ -141,6 +150,10 @@ def test_registration_check_is_exact_normalized_and_returns_admin_contact():
         async with client() as cli:
             support = await cli.get("/api/support/contact")
         assert existing.json()["platform_contact"]["email"] == support.json()["email"]
+        assert place_match.status_code == 200, place_match.text
+        assert place_match.json()["organization"] == {
+            "id": ORG_ID, "name": ORG_NAME, "type": "site"
+        }
         assert f"admin-{RUN_ID}" not in existing.text
         assert missing.status_code == 200, missing.text
         assert missing.json() == {

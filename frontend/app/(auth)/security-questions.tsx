@@ -10,11 +10,25 @@ import { Rise } from "@/src/components/Rise";
 import { Springy } from "@/src/components/Springy";
 import { api } from "@/src/api/client";
 
-// Three questions, each from a distinct pool so the same one can't be picked twice.
+// Every role uses the same ordered catalogue. Each registration chooses one
+// question from each group, giving users variety across personal history,
+// first products/accounts, and education/language while preventing duplicates.
 const QUESTION_POOLS: string[][] = [
-  ["What is the name of your first pet?", "What was the name of your first school?", "What was your childhood nickname?"],
-  ["What city were you born in?", "What is your favourite book?", "What was the make of your first car?"],
-  ["What is your mother's maiden name?", "What is the name of your closest childhood friend?", "In what town did your parents meet?"],
+  [
+    "What is the name of the place you are born?",
+    "What is your mother's first name?",
+    "What was your childhood nickname?",
+  ],
+  [
+    "What was the brand of your first mobile phone?",
+    "What was the brand of your first Laptop?",
+    "What was the name of the first bank where you opened an account?",
+  ],
+  [
+    "What was the name of your first school?",
+    "What was your favorite subject in school?",
+    "What was the first language you learned?",
+  ],
 ];
 
 const CORE = new Set(["fullName", "email", "phone", "phoneCountry", "orgName", "inviteToken"]);

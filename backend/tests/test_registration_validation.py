@@ -355,6 +355,7 @@ def test_smo_self_registration_requires_and_stores_hospitals(monkeypatch):
 
 def test_normal_registration_rejects_existing_organization(monkeypatch):
     org_name = f'Existing {RUN_ID} {uuid.uuid4().hex[:6]}'
+    google_place_id = f'ChIJexisting{uuid.uuid4().hex[:16]}'
 
     async def no_delivery(*_args, **_kwargs):
         return None
@@ -368,7 +369,8 @@ def test_normal_registration_rejects_existing_organization(monkeypatch):
     async def flow():
         organization = None
         try:
-            organization, created = await server.ensure_organization(org_name, 'site')
+            organization, created = await server.ensure_organization(
+                org_name, 'site', details={'googlePlaceId': google_place_id})
             assert created is True
             phone = f"+919{int(uuid.uuid4().hex[:8], 16) % 1_000_000_000:09d}"
             async with make_client() as cli:
@@ -380,8 +382,21 @@ def test_normal_registration_rejects_existing_organization(monkeypatch):
                     'organization': org_name,
                     'profile': {'designation': 'PI'},
                 })
+                place_id_response = await cli.post('/api/auth/register/start', json={
+                    'full_name': 'Google Place Duplicate',
+                    'role': 'pi',
+                    'email': f'place-duplicate-{uuid.uuid4().hex[:8]}@example.com',
+                    'phone': f"+919{int(uuid.uuid4().hex[:8], 16) % 1_000_000_000:09d}",
+                    'organization': f'A different display name {uuid.uuid4().hex[:6]}',
+                    'profile': {
+                        'designation': 'PI',
+                        'googlePlaceId': google_place_id,
+                    },
+                })
             assert response.status_code == 409, response.text
             assert 'invite' in response.json()['detail'].lower()
+            assert place_id_response.status_code == 409, place_id_response.text
+            assert 'invite' in place_id_response.json()['detail'].lower()
         finally:
             if organization:
                 await server.db.organizations.delete_one({'id': organization['id']})

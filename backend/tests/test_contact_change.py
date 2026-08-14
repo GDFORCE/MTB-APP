@@ -35,7 +35,7 @@ LOOP = asyncio.new_event_loop()
 _user_ids = []
 
 # No real SMTP/SMS during tests — value validation still runs before delivery.
-async def _noop_deliver(channel, target, code):
+async def _noop_deliver(channel, target, code, **_metadata):
     return None
 server._deliver_otp = _noop_deliver
 

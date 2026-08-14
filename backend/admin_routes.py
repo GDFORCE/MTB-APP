@@ -249,6 +249,9 @@ async def admin_create_user(body: AdminUserCreate, admin=Depends(current_user)):
             'phone': body.phone or '', 'full_name': body.full_name, 'role': body.role,
             'trial_id': None, 'invited_by': admin['id'],
             'org': (body.organization or '').strip(), 'site': '',
+            'inviter_name': admin.get('full_name') or '',
+            'inviter_organization': (
+                body.organization or admin.get('organization') or 'My Trial Board').strip(),
             'status': 'pending', 'created_at': now(),
             'expires_at': now() + timedelta(days=INVITE_TTL_DAYS), 'resend_count': 0,
         }
@@ -259,6 +262,8 @@ async def admin_create_user(body: AdminUserCreate, admin=Depends(current_user)):
                 email,
                 _invite_link(inv['token']),
                 inv['full_name'],
+                inv['inviter_name'],
+                inv['inviter_organization'],
             )
         except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
             await db.invitations.delete_one({'id': inv['id']})
@@ -626,6 +631,9 @@ async def admin_create_invitation(body: AdminInvitationIn, admin=Depends(current
         'role': body.role, 'entityType': body.entityType or '',
         'trial_id': body.trial_id, 'invited_by': admin['id'],
         'org': (body.organization or '').strip(), 'site': (body.site or '').strip(),
+        'inviter_name': admin.get('full_name') or '',
+        'inviter_organization': (
+            body.organization or admin.get('organization') or 'My Trial Board').strip(),
         'status': 'pending', 'created_at': now(),
         'expires_at': now() + timedelta(days=INVITE_TTL_DAYS), 'resend_count': 0,
     }
@@ -637,6 +645,8 @@ async def admin_create_invitation(body: AdminInvitationIn, admin=Depends(current
                 doc['email'],
                 _invite_link(doc['token']),
                 doc['full_name'],
+                doc['inviter_name'],
+                doc['inviter_organization'],
             )
         except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
             await db.invitations.delete_one({'id': doc['id']})
@@ -657,12 +667,21 @@ async def admin_resend_invitation(invitation_id: str, admin=Depends(current_user
         '$set': {'status': 'pending', 'expires_at': new_exp, 'last_sent_at': now()},
         '$inc': {'resend_count': 1}})
     if inv.get('email'):
+        original_inviter = await db.users.find_one(
+            {'id': inv.get('invited_by')},
+            {'_id': 0, 'full_name': 1, 'organization': 1},
+        ) or {}
         try:
             await run_in_threadpool(
                 otp_service.send_invitation_email,
                 inv['email'],
                 _invite_link(inv['token']),
                 inv.get('full_name', ''),
+                inv.get('inviter_name') or original_inviter.get('full_name')
+                or admin.get('full_name') or '',
+                inv.get('inviter_organization')
+                or original_inviter.get('organization') or inv.get('org')
+                or 'My Trial Board',
             )
         except (otp_service.OTPConfigError, otp_service.OTPDeliveryError):
             raise HTTPException(502, 'The invitation email could not be delivered.')

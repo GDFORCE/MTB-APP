@@ -36,7 +36,7 @@ def make_client():
 def delivery(monkeypatch):
     sent = []
 
-    async def capture(channel, target, code):
+    async def capture(channel, target, code, **_metadata):
         sent.append((channel, target, code))
 
     async def no_throttle(*_args, **_kwargs):
