@@ -283,10 +283,14 @@ class ScheduleDraft(BaseModel):
         description="One of: 'linear' (fixed visit list), 'cyclic' (repeating cycles), "
         "'crossover' (periods + washout), 'multi_arm' (different schedule per arm), "
         "'intra_day' (hour-level timepoints only), 'none' (document has no schedule).")
-    anchor_study_day: Optional[Literal[0, 1]] = Field(
+    # Deliberately a plain int rather than Literal[0, 1]: Gemini's structured-output
+    # Schema only accepts string enum values, so an integer Literal makes the SDK
+    # reject the entire request before it is sent. The validator below keeps the
+    # 0/1 domain that the rest of the pipeline relies on.
+    anchor_study_day: Optional[int] = Field(
         default=None,
         description="Protocol study-day number on the baseline/randomization anchor "
-        "date: normally 0 or 1. null when the document is ambiguous.")
+        "date: must be 0 or 1. null when the document is ambiguous.")
     includes_day_zero: Optional[bool] = Field(
         default=None,
         description="Whether the protocol explicitly includes Day 0. This must be "
@@ -312,6 +316,22 @@ class ScheduleDraft(BaseModel):
         default=None,
         description="Where in the document the schedule came from (e.g. 'Appendix I, p42; "
         "cycle length from section 2.5, p15'). Helps the reviewer check your work.")
+
+    @field_validator("anchor_study_day", mode="before")
+    @classmethod
+    def constrain_anchor_study_day(cls, value):
+        """Enforce the 0/1 domain the schema can no longer express.
+
+        An anchor outside that domain means the model misread the convention, so
+        treat it as unknown — the downstream day math already handles null, and
+        failing the parse would discard an otherwise usable schedule.
+        """
+        if isinstance(value, str):
+            value = value.strip()
+            value = int(value) if value in ("0", "1") else None
+        if isinstance(value, bool) or value not in (0, 1):
+            return None
+        return value
 
     @model_validator(mode="after")
     def validate_day_numbering(self):

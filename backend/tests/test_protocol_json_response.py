@@ -21,6 +21,25 @@ from protocol_extraction import (  # noqa: E402
 )
 
 
+def assert_gemini_compatible_enums(schema, path="ScheduleDraft"):
+    """Gemini's Schema type only accepts string enum values.
+
+    A non-string enum (e.g. `Literal[0, 1]`) makes the SDK reject the request
+    before it is sent, which surfaces as a total extraction failure rather than
+    a degraded result — so guard the request schema here instead.
+    """
+    if isinstance(schema, dict):
+        for value in schema.get("enum", []):
+            assert isinstance(value, str), (
+                f"{path}.enum contains non-string {value!r}; "
+                "Gemini rejects the whole request schema")
+        for key, value in schema.items():
+            assert_gemini_compatible_enums(value, f"{path}.{key}")
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            assert_gemini_compatible_enums(value, f"{path}[{index}]")
+
+
 def test_explicit_null_visit_window_uses_documented_default():
     """The live provider uses null when the protocol gives no visit window."""
     schedule = ExtractedSchedule.model_validate({
@@ -206,6 +225,7 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
     ]
     assert async_client.models.calls[3]["config"]["response_schema"] is ScheduleDraft
     assert "additionalProperties" not in json.dumps(ScheduleDraft.model_json_schema())
+    assert_gemini_compatible_enums(ScheduleDraft.model_json_schema())
     assert schedule.visits[0].name == "Screening"
     assert schedule.verification_status == "verified"
     assert schedule.verification_confidence == 0.98
