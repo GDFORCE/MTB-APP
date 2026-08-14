@@ -176,8 +176,7 @@ export default function InviteMember() {
             <View style={s.scopeText}>
               <Body weight="700">Organization-scoped access</Body>
               <Small style={s.scopeSub}>
-                This invitation only joins the member to {user?.organization || "your organization"}.
-                Patient invitations remain a separate flow.
+                Please send the invitation only to members working in your organization. Don&apos;t send to external members as they may join into your organization and get access to your organizational information.
               </Small>
             </View>
           </Card>
