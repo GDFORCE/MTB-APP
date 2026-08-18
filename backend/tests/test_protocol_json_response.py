@@ -11,6 +11,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from protocol_extraction import (  # noqa: E402
     ClaudeProtocolExtractor,
+    CanonicalScheduleResponse,
     ExtractedSchedule,
     GeminiProtocolExtractor,
     OllamaProtocolExtractor,
@@ -40,8 +41,8 @@ def assert_gemini_compatible_enums(schema, path="ScheduleDraft"):
             assert_gemini_compatible_enums(value, f"{path}[{index}]")
 
 
-def test_explicit_null_visit_window_uses_documented_default():
-    """The live provider uses null when the protocol gives no visit window."""
+def test_explicit_null_visit_window_stays_unknown():
+    """An unstated window must not become a plausible-looking default."""
     schedule = ExtractedSchedule.model_validate({
         "schedule_kind": "linear",
         "visits": [{
@@ -52,10 +53,10 @@ def test_explicit_null_visit_window_uses_documented_default():
         }],
     })
 
-    assert schedule.visits[0].window_days == 3
+    assert schedule.visits[0].window_days is None
 
 
-def test_explicit_null_repeat_member_window_uses_documented_default():
+def test_explicit_null_repeat_member_window_stays_unknown():
     schedule = ExtractedSchedule.model_validate({
         "schedule_kind": "cyclic",
         "repeating_blocks": [{
@@ -71,7 +72,7 @@ def test_explicit_null_repeat_member_window_uses_documented_default():
         }],
     })
 
-    assert schedule.repeating_blocks[0].members[0].window_days == 3
+    assert schedule.repeating_blocks[0].members[0].window_days is None
 
 
 def test_json_extractor_does_not_retry_valid_schedule_with_null_windows():
@@ -119,19 +120,44 @@ def test_json_extractor_does_not_retry_valid_schedule_with_null_windows():
 
     assert messages.calls == 1
     assert len(schedule.visits) == 18
-    assert {visit.window_days for visit in schedule.visits} == {3}
+    assert {visit.window_days for visit in schedule.visits} == {None}
 
 
 def test_gemini_extractor_uses_native_pdf_and_structured_response():
     payload = {
         "schedule_kind": "linear",
-        "visits": [{
-            "name": "Screening",
-            "day_offset": -14,
-            "window_days": 3,
-            "activities": ["Informed consent"],
-        }],
-        "repeating_blocks": [],
+        "anchor_study_day": 1,
+        "includes_day_zero": False,
+        "canonical_plan": {
+                "anchors": [{
+                    "id": "anchor-baseline", "name": "Baseline",
+                    "anchor_type": "first_dose",
+                    "evidence_ids": ["timing-p12-01"],
+                }],
+            "activities": [{
+                "id": "activity-consent", "name": "Informed consent",
+                "evidence_ids": ["activity-p12-01"],
+            }],
+            "events": [{
+                "id": "event-screening", "name": "Screening",
+                "event_type": "Screening",
+                "timing": {
+                    "kind": "offset", "anchor_id": "anchor-baseline",
+                    "offset": {"value": -14, "unit": "day"},
+                    "source_label": "Day -14",
+                    "evidence_ids": ["timing-p12-01"],
+                },
+                "window": {
+                    "state": "stated",
+                    "early": {"value": 3, "unit": "day"},
+                    "late": {"value": 3, "unit": "day"},
+                    "source_label": "±3 days",
+                    "evidence_ids": ["window-p12-01"],
+                },
+                "activity_ids": ["activity-consent"],
+                "evidence_ids": ["visit-p12-01"],
+            }],
+        },
         "assumptions": [],
         "source_notes": "Schedule of Assessments",
     }
@@ -144,6 +170,16 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
         async def generate_content(self, **kwargs):
             self.calls.append(kwargs)
             schema_name = kwargs["config"]["response_schema"].__name__
+            if schema_name == "DocumentTaskClassification":
+                return SimpleNamespace(parsed={
+                    "document_type": "protocol",
+                    "analysis_task": "full_protocol_schedule",
+                    "schedule_archetypes": ["linear"],
+                    "complexity": "simple",
+                    "has_schedule": True,
+                    "confidence": 0.99,
+                    "evidence": ["Schedule of Assessments"],
+                })
             if schema_name == "ScheduleDocumentMap":
                 return SimpleNamespace(parsed={
                     "has_schedule": True,
@@ -156,8 +192,20 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
                 })
             if schema_name == "ScheduleTimingEvidence":
                 return SimpleNamespace(parsed={
-                    "visit_timing": ["Screening Day -14"],
-                    "visit_windows": [],
+                    "visit_timing": [{
+                        "evidence_id": "timing-p12-01",
+                        "claim": "Screening Day -14",
+                        "source_location": "Schedule table, page 12",
+                        "source_quote": "Day -14",
+                        "confidence": 0.99,
+                    }],
+                    "visit_windows": [{
+                        "evidence_id": "window-p12-01",
+                        "claim": "Screening window is +/-3 days",
+                        "source_location": "Schedule table, page 12",
+                        "source_quote": "+/-3 days",
+                        "confidence": 0.99,
+                    }],
                     "cycle_rules": [],
                     "relative_timing": [],
                     "open_ended_rules": [],
@@ -165,9 +213,21 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
                 })
             if schema_name == "ScheduleVisitEvidence":
                 return SimpleNamespace(parsed={
-                    "visit_columns": ["Screening"],
+                    "visit_columns": [{
+                        "evidence_id": "visit-p12-01",
+                        "claim": "Screening visit",
+                        "source_location": "Schedule table, page 12",
+                        "source_quote": "Screening",
+                        "confidence": 0.99,
+                    }],
                     "special_visits": [],
-                    "activity_assignments": ["Screening: Informed consent"],
+                    "activity_assignments": [{
+                        "evidence_id": "activity-p12-01",
+                        "claim": "Informed consent at Screening",
+                        "source_location": "Schedule table, page 12",
+                        "source_quote": "Informed consent X",
+                        "confidence": 0.99,
+                    }],
                     "table_footnotes": [],
                     "arm_period_differences": [],
                     "conflicts_or_unknowns": [],
@@ -207,6 +267,7 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
     fake_types = SimpleNamespace(
         Part=SimpleNamespace(from_bytes=lambda **kwargs: kwargs),
         GenerateContentConfig=lambda **kwargs: kwargs,
+        ThinkingConfig=lambda **kwargs: kwargs,
     )
     extractor = GeminiProtocolExtractor(api_key="test")
     extractor._client = lambda: (
@@ -214,18 +275,18 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
 
     schedule = asyncio.run(extractor.extract(b"%PDF-test"))
 
-    assert len(async_client.models.calls) == 5
+    assert len(async_client.models.calls) == 7
     call = async_client.models.calls[0]
     assert call["model"] == "gemini-3.6-flash"
     assert call["contents"][0]["mime_type"] == "application/pdf"
     assert [item["config"]["response_schema"].__name__
             for item in async_client.models.calls] == [
-        "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
-        "ScheduleDraft", "ScheduleAudit",
+        "DocumentTaskClassification", "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
+        "CanonicalScheduleResponse", "CanonicalScheduleResponse", "ScheduleAudit",
     ]
-    assert async_client.models.calls[3]["config"]["response_schema"] is ScheduleDraft
-    assert "additionalProperties" not in json.dumps(ScheduleDraft.model_json_schema())
-    assert_gemini_compatible_enums(ScheduleDraft.model_json_schema())
+    assert async_client.models.calls[4]["config"]["response_schema"] is CanonicalScheduleResponse
+    assert "additionalProperties" not in json.dumps(CanonicalScheduleResponse.model_json_schema())
+    assert_gemini_compatible_enums(CanonicalScheduleResponse.model_json_schema())
     assert schedule.visits[0].name == "Screening"
     assert schedule.verification_status == "verified"
     assert schedule.verification_confidence == 0.98
@@ -235,7 +296,19 @@ def test_gemini_extractor_uses_native_pdf_and_structured_response():
 def test_gemini_retries_only_the_malformed_structured_stage():
     valid_payload = {
         "schedule_kind": "linear",
-        "visits": [{"name": "Baseline", "day_offset": 0}],
+        "canonical_plan": {
+            "anchors": [{
+                "id": "anchor-baseline", "name": "Baseline",
+                "anchor_type": "first_dose",
+            }],
+            "events": [{
+                "id": "event-baseline", "name": "Baseline",
+                "timing": {
+                    "kind": "offset", "anchor_id": "anchor-baseline",
+                    "offset": {"value": 0, "unit": "day"},
+                },
+            }],
+        },
     }
 
     class Models:
@@ -260,6 +333,7 @@ def test_gemini_retries_only_the_malformed_structured_stage():
     fake_types = SimpleNamespace(
         Part=SimpleNamespace(from_bytes=lambda **kwargs: kwargs),
         GenerateContentConfig=lambda **kwargs: kwargs,
+        ThinkingConfig=lambda **kwargs: kwargs,
     )
     extractor = GeminiProtocolExtractor(api_key="test")
     extractor._client = lambda: (
@@ -273,7 +347,7 @@ def test_gemini_retries_only_the_malformed_structured_stage():
         max_tokens=1000,
     ))
 
-    assert result.visits[0].name == "Baseline"
+    assert result.canonical_plan.events[0].name == "Baseline"
     assert len(async_client.models.calls) == 2
     assert "STRUCTURED OUTPUT RETRY" in async_client.models.calls[1]["contents"][1]
 

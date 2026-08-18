@@ -12,11 +12,16 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.gdforce.mytrialboard",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/mtb-adaptive-icon.png",
         "backgroundColor": "#FBF2E8"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "androidNavigationBar": {
       "backgroundColor": "#FEFAF1",
@@ -34,7 +39,7 @@
         "expo-secure-store",
         {
           "configureAndroidBackup": true,
-          "faceIDPermission": "Allow My Trial Board to securely unlock your remembered session."
+          "faceIDPermission": "Allow My Trial Board to securely unlock your session."
         }
       ],
       [
@@ -55,6 +60,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7e47abe3-bbf9-4687-8dd2-1254aa4dda8a"
+      }
     }
   }
 }

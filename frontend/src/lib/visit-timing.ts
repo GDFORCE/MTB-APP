@@ -18,7 +18,110 @@ export type VisitWindow = {
   window_after?: number | null;
 };
 
+/**
+ * Procedure-level protocol detail. These values must stay separate from the
+ * visit window: for example a PK draw may have a +/- 2 minute tolerance even
+ * when the enclosing visit has no early/late allowance at all.
+ */
+export type ProtocolProcedure = {
+  id?: string;
+  name: string;
+  timing?: string;
+  window?: string;
+  condition?: string;
+  description?: string;
+  evidence_ids?: string[];
+};
+
 const cleanLabel = (value?: string | null) => value?.trim() || "";
+
+const textValue = (value: unknown): string => typeof value === "string" ? value.trim() : "";
+
+/**
+ * Accept both the canonical extraction shape (`name`, timing/window/condition)
+ * and historical patient-safe rows (`label`, description). Invalid entries
+ * are ignored instead of leaking `[object Object]` into the editor.
+ */
+export function normalizeProtocolProcedures(value: unknown): ProtocolProcedure[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry): ProtocolProcedure[] => {
+    if (typeof entry === "string") {
+      const name = entry.trim();
+      return name ? [{ name }] : [];
+    }
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as Record<string, unknown>;
+    const name = textValue(item.name) || textValue(item.label);
+    if (!name) return [];
+    const evidenceIds = Array.isArray(item.evidence_ids)
+      ? item.evidence_ids.map(textValue).filter(Boolean)
+      : [];
+    return [{
+      id: textValue(item.id) || undefined,
+      name,
+      timing: textValue(item.timing) || undefined,
+      window: textValue(item.window) || undefined,
+      condition: textValue(item.condition) || undefined,
+      description: textValue(item.description) || undefined,
+      evidence_ids: evidenceIds.length ? evidenceIds : undefined,
+    }];
+  });
+}
+
+/** Normalise newline/array API values without merging distinct constraints. */
+export function normalizeProtocolConstraints(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? value.split(/\r?\n/) : [];
+  return values.map(textValue).filter(Boolean);
+}
+
+/** Concise export/read-only description without reclassifying any window. */
+export function formatProtocolProcedure(procedure: ProtocolProcedure): string {
+  const details = [
+    procedure.timing ? `Timing: ${procedure.timing}` : "",
+    procedure.window ? `Procedure tolerance: ${procedure.window}` : "",
+    procedure.condition ? `Condition: ${procedure.condition}` : "",
+    procedure.description || "",
+  ].filter(Boolean);
+  return details.length ? `${procedure.name} (${details.join("; ")})` : procedure.name;
+}
+
+const SIMPLE_STUDY_DAY = /^day\s*([+-]?\d+)$/i;
+const SIMPLE_STUDY_DAY_RANGE = /^day\s*([+-]?\d+)\s*(?:-|–|—|to)\s*(?:day\s*)?([+-]?\d+)$/i;
+
+const formatSignedDay = (value: number) => value >= 0 ? `+${value}` : String(value);
+
+/**
+ * Compact value for the schedule editor's Day column.
+ *
+ * A protocol's printed Day 1 is display evidence, while day_offset=0 is the
+ * calendar arithmetic used to place that visit on the baseline date. Prefer
+ * an exact protocol Day label for display, then fall back to the canonical
+ * baseline offset. Free-form timing prose never belongs in this narrow column.
+ */
+export function formatScheduleDay(
+  timing: Pick<VisitTiming, "day_offset" | "day_end" | "source_day_label" | "source_timing_label">,
+  unspecifiedLabel = "-",
+): string {
+  const sourceLabel = cleanLabel(timing.source_day_label)
+    || cleanLabel(timing.source_timing_label);
+  const sourceRange = sourceLabel.match(SIMPLE_STUDY_DAY_RANGE);
+  if (sourceRange) {
+    return `${formatSignedDay(Number(sourceRange[1]))} to ${formatSignedDay(Number(sourceRange[2]))}`;
+  }
+  const sourceDay = sourceLabel.match(SIMPLE_STUDY_DAY);
+  if (sourceDay) return formatSignedDay(Number(sourceDay[1]));
+
+  const start = timing.day_offset;
+  if (typeof start !== "number" || !Number.isFinite(start)) return unspecifiedLabel;
+  if (
+    typeof timing.day_end === "number"
+    && Number.isFinite(timing.day_end)
+    && timing.day_end !== start
+  ) {
+    return `${formatSignedDay(start)} to ${formatSignedDay(timing.day_end)}`;
+  }
+  return formatSignedDay(start);
+}
 
 /**
  * Human-readable protocol timing. The stored offset is calendar arithmetic,
@@ -115,9 +218,9 @@ export function parseOptionalDayOffset(value: string): number | null {
 }
 
 export function formatVisitWindow(window: VisitWindow, compact = false): string {
-  const symmetric = typeof window.window_days === "number" && Number.isFinite(window.window_days)
-    ? Math.max(0, window.window_days)
-    : 0;
+  const hasSymmetricWindow = typeof window.window_days === "number"
+    && Number.isFinite(window.window_days);
+  const symmetric = hasSymmetricWindow ? Math.max(0, window.window_days as number) : 0;
   const hasAsymmetricWindow = typeof window.window_before === "number"
     || typeof window.window_after === "number";
   if (hasAsymmetricWindow) {
@@ -125,6 +228,7 @@ export function formatVisitWindow(window: VisitWindow, compact = false): string 
     const after = typeof window.window_after === "number" ? window.window_after : symmetric;
     return `-${before}${compact ? "d" : " days"} / +${after}${compact ? "d" : " days"}`;
   }
+  if (!hasSymmetricWindow) return "-";
   return `±${symmetric}${compact ? "d" : ` ${symmetric === 1 ? "day" : "days"}`}`;
 }
 

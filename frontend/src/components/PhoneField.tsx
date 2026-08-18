@@ -230,6 +230,7 @@ const s = StyleSheet.create({
     ...(Platform.OS === "web" ? ({ outlineStyle: "none" } as object) : null),
   },
   list: { paddingHorizontal: 6, paddingBottom: 6 },
+  listContent: { paddingBottom: 6 },
   row: {
     flexDirection: "row", alignItems: "center", gap: 12,
     paddingHorizontal: spacing.sm + 2, paddingVertical: 11, borderRadius: radii.md,

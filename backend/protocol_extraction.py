@@ -49,6 +49,15 @@ from typing import List, Literal, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from schedule_schema import (
+    CanonicalSchedulePlan,
+    DocumentTaskClassification,
+    SourceEvidence,
+    canonical_from_flat,
+    project_canonical_plan,
+    validate_canonical_plan,
+)
+
 log = logging.getLogger(__name__)
 
 # Google's newest stable multimodal model supports native PDF input and
@@ -72,10 +81,14 @@ OLLAMA_FINAL_EVIDENCE_CHARS = 48000
 MAX_PDF_BYTES = 25 * 1024 * 1024
 
 # Output cap. The declarative schema keeps responses small (a 6-cycle protocol
-# is ~8 rows + one repeating block, not 25 enumerated rows), so this is generous
-# even with adaptive thinking, and stays well under the SDK's non-streaming
-# timeout guard.
-MAX_OUTPUT_TOKENS = 16000
+# is ~8 rows + one repeating block, not 25 enumerated rows), but the canonical
+# schedule graph (anchors/phases/branches/events/activities/recurrences/
+# conditions/conflicts, each carrying evidence_ids) is verbose per visit, and a
+# real multi-arm/crossover protocol can still hit this cap mid-object, which
+# yields invalid JSON rather than a short schedule. Raised from 16000; shared
+# by the Claude (legacy) path too, so stays under Anthropic's non-streaming
+# duration guard.
+MAX_OUTPUT_TOKENS = 24000
 
 # How far to expand a repetition the protocol leaves open-ended ("continue until
 # progression", "every 8th week thereafter"). Bounded so one vague protocol
@@ -103,6 +116,16 @@ class ConditionalActivity(BaseModel):
         description="The 1-based cycle numbers this assessment applies to, e.g. [2, 4, 6].")
 
 
+class FieldEvidence(BaseModel):
+    """Evidence IDs supporting one extracted field or field group."""
+
+    field: str = Field(
+        description="Supported field: name, timing, window, activities, arm, or period.")
+    evidence_ids: List[str] = Field(
+        default_factory=list,
+        description="IDs from the evidence packets that directly support this field.")
+
+
 class RepeatMember(BaseModel):
     """One visit inside a repeating cycle."""
     name_template: str = Field(
@@ -122,7 +145,9 @@ class RepeatMember(BaseModel):
     hour_offset_basis: Optional[Literal["absolute", "within_day"]] = None
     hour_end: Optional[float] = None
     visit_type: Optional[str] = Field(default=None, description="See ExtractedVisit.visit_type.")
-    window_days: int = Field(default=3, description="Visit window as +/- days.")
+    window_days: Optional[int] = Field(
+        default=None, ge=0,
+        description="Visit window as +/- days; null when the protocol does not state one.")
     window_before: Optional[int] = Field(default=None, ge=0)
     window_after: Optional[int] = Field(default=None, ge=0)
     arm: Optional[str] = None
@@ -133,17 +158,9 @@ class RepeatMember(BaseModel):
     conditional_activities: List[ConditionalActivity] = Field(
         default_factory=list,
         description="Assessments performed only in specific cycles.")
-
-    @field_validator("window_days", mode="before")
-    @classmethod
-    def default_unknown_window(cls, value):
-        """Free-form model JSON often spells an unstated window as null.
-
-        An unknown visit window has always meant the application default (+/-3
-        days). Treat explicit JSON null the same as an omitted field instead of
-        rejecting an otherwise valid extracted schedule.
-        """
-        return 3 if value is None else value
+    field_evidence: List[FieldEvidence] = Field(
+        default_factory=list,
+        description="Evidence IDs supporting this repeating visit's fields.")
 
 
 class RepeatingBlock(BaseModel):
@@ -175,6 +192,18 @@ class RepeatingBlock(BaseModel):
         description="The visits that occur within each cycle of this block.")
 
 
+class ExtractedProcedure(BaseModel):
+    """One procedure plus its own timing/window, separate from visit tolerance."""
+
+    id: str = ""
+    name: str
+    timing: str = ""
+    window: str = ""
+    condition: str = ""
+    constraints: List[str] = Field(default_factory=list)
+    evidence_ids: List[str] = Field(default_factory=list)
+
+
 class ExtractedVisit(BaseModel):
     """One scheduled visit / timepoint from the Schedule of Assessments."""
     name: str = Field(
@@ -204,6 +233,16 @@ class ExtractedVisit(BaseModel):
         description="Exact timing text printed by the protocol, such as 'Day 0', "
         "'Day 8', 'Week 4', 'Cycle 2 Day 1', or 'Unscheduled'. Do not rewrite it "
         "as an offset. null only when no timing label is present.")
+    calendar_offset_value: Optional[float] = Field(
+        default=None,
+        description="Set only when day_offset was approximated from a calendar "
+        "Month/Year label with no exact day count (30 days/month, 365 days/year). "
+        "The protocol's own number, e.g. 3 for 'Month 3' (negative if before "
+        "baseline). null whenever day_offset is exact or unset.")
+    calendar_offset_unit: Optional[Literal["month", "year"]] = Field(
+        default=None,
+        description="Unit paired with calendar_offset_value: 'month' or 'year'. "
+        "null whenever calendar_offset_value is null.")
     day_end: Optional[int] = Field(
         default=None,
         description="For a visit that spans MULTIPLE consecutive days as a single entry "
@@ -223,11 +262,11 @@ class ExtractedVisit(BaseModel):
         default=None,
         description="End of an hour RANGE, e.g. 'Hour -4 to Hour 0' -> hour_offset=-4, "
         "hour_end=0. null for a single timepoint.")
-    window_days: int = Field(
-        default=3,
+    window_days: Optional[int] = Field(
+        default=None, ge=0,
         description="Visit window as a single +/- number of days (e.g. '+/- 3 days' -> 3). "
         "For an asymmetric window use the larger side here and also set window_before / "
-        "window_after. Default 3 when no window is stated.")
+        "window_after. null when no window is stated; never invent a default.")
     window_before: Optional[int] = Field(
         default=None,
         description="Days the visit may occur EARLY, when the protocol gives an asymmetric "
@@ -259,12 +298,20 @@ class ExtractedVisit(BaseModel):
         description="Assessments / procedures marked (X or a footnote symbol) in this "
         "visit's column, using the protocol's own procedure names, deduplicated and "
         "concise (e.g. 'Vitals', 'ECG', 'PK sampling', 'Randomization').")
-
-    @field_validator("window_days", mode="before")
-    @classmethod
-    def default_unknown_window(cls, value):
-        """Accept a model's explicit null as the documented +/-3 day default."""
-        return 3 if value is None else value
+    procedures: List[ExtractedProcedure] = Field(
+        default_factory=list,
+        description="Structured activity details, including activity-level timing and windows.")
+    operational_constraints: List[str] = Field(
+        default_factory=list,
+        description="Non-visit-window constraints such as housing minimums, infusion duration, "
+                    "washout gaps, PK tolerances, and conditional rules.")
+    canonical_event_id: Optional[str] = None
+    extraction_warning: bool = False
+    review_status: Literal["pending", "ok"] = "ok"
+    field_evidence: List[FieldEvidence] = Field(
+        default_factory=list,
+        description="Evidence IDs supporting this visit's name, timing, window, "
+                    "activities, arm, and period. Unsupported fields must remain null.")
 
     @model_validator(mode="after")
     def default_extracted_hour_semantics(self):
@@ -316,6 +363,15 @@ class ScheduleDraft(BaseModel):
         default=None,
         description="Where in the document the schedule came from (e.g. 'Appendix I, p42; "
         "cycle length from section 2.5, p15'). Helps the reviewer check your work.")
+    classification: Optional[DocumentTaskClassification] = Field(
+        default=None,
+        description="AI classification completed before schedule extraction.")
+    canonical_plan: Optional[CanonicalSchedulePlan] = Field(
+        default=None,
+        description="Version-2 schedule graph preserving temporal and protocol semantics.")
+    evidence_facts: List[SourceEvidence] = Field(
+        default_factory=list,
+        description="Atomic source facts used by the canonical plan and compatibility rows.")
 
     @field_validator("anchor_study_day", mode="before")
     @classmethod
@@ -350,6 +406,33 @@ class ExtractedSchedule(ScheduleDraft):
     verification_iterations: int = Field(default=0, ge=0)
     verification_issues: List[str] = Field(default_factory=list)
     verification_scores: dict[str, Optional[float]] = Field(default_factory=dict)
+    canonical_validation: List[str] = Field(default_factory=list)
+    requires_schedule_selection: bool = Field(
+        default=False,
+        description="True when this document prints more than one independent "
+        "Schedule of Assessments (see classification.schedule_options) and no "
+        "selection was made yet. Extraction stopped after classification; "
+        "visits is empty and the caller must re-run with the chosen "
+        "schedule_options[].id before a real schedule is produced.")
+
+
+class CanonicalScheduleResponse(BaseModel):
+    """Compact provider contract: the AI authors one schedule, not two copies."""
+
+    schedule_kind: Optional[str] = None
+    anchor_study_day: Optional[int] = None
+    includes_day_zero: Optional[bool] = None
+    canonical_plan: CanonicalSchedulePlan
+    assumptions: List[str] = Field(default_factory=list)
+    source_notes: Optional[str] = None
+
+    @field_validator("anchor_study_day", mode="before")
+    @classmethod
+    def constrain_anchor_study_day(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            value = int(value) if value in ("0", "1") else None
+        return value if not isinstance(value, bool) and value in (0, 1) else None
 
 
 class ExtractedTrialDetails(BaseModel):
@@ -656,6 +739,7 @@ def _expand_blocks(schedule: ExtractedSchedule,
                     arm=member.arm,
                     period=member.period,
                     activities=acts,
+                    field_evidence=member.field_evidence,
                 ))
     return out
 
@@ -702,11 +786,25 @@ def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
     """
     assumptions: List[str] = list(schedule.assumptions)
     warnings: List[str] = []
-
-    visits, timing_warnings = normalize_extracted_timing(schedule)
-    warnings.extend(timing_warnings)
-    visits.extend(_expand_blocks(schedule, assumptions, warnings))
-    _resolve_relative(visits, warnings)
+    if schedule.canonical_plan is not None:
+        # The AI authors one canonical graph.  Flat rows are a deterministic
+        # compatibility projection and any model-authored duplicate rows are ignored.
+        projected, projection_warnings = project_canonical_plan(
+            schedule.canonical_plan,
+            open_ended_preview_count=OPEN_ENDED_CYCLE_CAP,
+        )
+        visits = [ExtractedVisit.model_validate(row) for row in projected]
+        warnings.extend(projection_warnings)
+        canonical_plan = schedule.canonical_plan
+    else:
+        # Historical/API callers may still provide flat visits.  Normalize those
+        # first, then construct a canonical fallback from the normalized structure.
+        visits, timing_warnings = normalize_extracted_timing(schedule)
+        warnings.extend(timing_warnings)
+        normalized = schedule.model_copy(update={"visits": visits})
+        canonical_plan = canonical_from_flat(normalized)
+        visits.extend(_expand_blocks(normalized, assumptions, warnings))
+        _resolve_relative(visits, warnings)
 
     # Drop exact duplicates — a model that both enumerated cycle 2 AND described
     # it in a repeating block should not double-book the patient.
@@ -736,7 +834,7 @@ def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
         _visit_elapsed_seconds(v),
     ))
 
-    return schedule.model_copy(update={
+    result = schedule.model_copy(update={
         "visits": deduped,
         "repeating_blocks": [],     # consumed
         "assumptions": assumptions + warnings,
@@ -744,6 +842,19 @@ def expand_schedule(schedule: ExtractedSchedule) -> ExtractedSchedule:
             "needs_review" if warnings else schedule.verification_status
         ),
         "verification_issues": list(schedule.verification_issues) + warnings,
+    })
+    canonical_issues = validate_canonical_plan(
+        canonical_plan,
+        ({item.evidence_id for item in result.evidence_facts}
+         if result.evidence_facts else None),
+    )
+    return result.model_copy(update={
+        "canonical_plan": canonical_plan,
+        "canonical_validation": canonical_issues,
+        "verification_status": (
+            "needs_review" if warnings or canonical_issues else result.verification_status
+        ),
+        "verification_issues": list(result.verification_issues) + canonical_issues,
     })
 
 
@@ -836,7 +947,12 @@ SS = study site, V = virtual, T/C = telephone); otherwise infer the phase.
 - Telephonic visits (phone contacts, or a column marked only with a telephone icon) are \
 real visits — include them with visit_type 'Telephonic'.
 - `window_days`: the +/- window. If asymmetric ("+3 days only"), set `window_days` to the \
-larger side AND set `window_before` / `window_after`.
+larger side AND set `window_before` / `window_after`. If the protocol does not state a \
+window, leave all three fields null. Never substitute an application default.
+- Every populated visit field must cite evidence IDs in `field_evidence`. Cite the visit \
+label under `name`, all day/week/month/hour/relative values under `timing`, windows under \
+`window`, procedures under `activities`, and arm/period values under their own fields. \
+If no evidence ID supports a value, leave that value null instead of guessing.
 
 ## Documents that have no schedule
 
@@ -863,7 +979,9 @@ terminated, defaulting to active when no status is stated."""
 
 @runtime_checkable
 class ProtocolExtractor(Protocol):
-    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+    async def extract(
+        self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
+    ) -> ExtractedSchedule:
         ...
 
 
@@ -961,10 +1079,11 @@ class ClaudeProtocolExtractor:
                 'Each visit must include name, visit_type, day_offset, day_end, '
                 'source_day_label, hour_offset, hour_offset_basis, hour_end, '
                 'window_days, window_before, window_after, '
-                'relative_to, relative_offset_days, arm, period, activities. '
+                'relative_to, relative_offset_days, arm, period, activities, '
+                'field_evidence. '
                 'Use null only for unknown nullable fields and [] for unknown lists. '
-                'window_days must always be a non-negative integer; use 3 when the '
-                'protocol does not state a visit window.'
+                'window_days must be a non-negative integer when stated and null when '
+                'the protocol does not state a visit window.'
             ),
             messages=[{
                 'role': 'user',
@@ -997,8 +1116,16 @@ class ClaudeProtocolExtractor:
                 return await self._extract_without_grammar(client, pdf_bytes, repair=True)
             raise ExtractionError('the AI response was not valid schedule JSON') from exc
 
-    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
-        """Read a protocol and return its EXPANDED visit schedule."""
+    async def extract(
+        self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
+    ) -> ExtractedSchedule:
+        """Read a protocol and return its EXPANDED visit schedule.
+
+        This legacy single-shot path has no classification stage, so it never
+        detects multiple independent Schedules of Assessments and
+        ``selected_schedule_option_id`` is accepted only to satisfy
+        ``ProtocolExtractor`` and is otherwise unused.
+        """
         anthropic, client = self._client()
         # Structured-output grammar compilation can time out for the nested
         # clinical schedule schema. Use Anthropic's normal Messages API and
@@ -1083,6 +1210,41 @@ class ClaudeProtocolExtractor:
         return parsed
 
 
+def _structured_failure_detail(response, exc: Exception) -> str:
+    """Summarise WHY a structured response failed, without logging its content.
+
+    Protocol page text is confidential, so this reports field locations, error
+    types, the provider finish reason and response size — never input values.
+    Truncation (finish_reason MAX_TOKENS) and schema violations look identical
+    in the logs otherwise, and they need opposite fixes.
+    """
+    parts: list[str] = []
+    finish_reason = None
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            finish_reason = getattr(candidates[0], "finish_reason", None)
+    except Exception:  # diagnostics must never mask the original failure
+        finish_reason = None
+    if finish_reason is not None:
+        parts.append(f"finish_reason={getattr(finish_reason, 'name', finish_reason)}")
+    raw = getattr(response, "text", None) or ""
+    parts.append(f"response_chars={len(raw)}")
+    errors_fn = getattr(exc, "errors", None)
+    if callable(errors_fn):
+        try:
+            summary = [
+                f"{'.'.join(str(part) for part in item.get('loc', ()))}:{item.get('type')}"
+                for item in errors_fn()[:6]
+            ]
+            parts.append("fields=" + ", ".join(summary))
+        except Exception:
+            parts.append(f"error={type(exc).__name__}")
+    else:
+        parts.append(f"error={str(exc)[:200]}")
+    return "; ".join(parts)
+
+
 class GeminiProtocolExtractor:
     """Google Gemini backend with native PDF input and structured output."""
 
@@ -1114,14 +1276,16 @@ class GeminiProtocolExtractor:
         *,
         system_instruction: str | None,
         max_tokens: int,
+        model_override: str | None = None,
     ):
         if system_instruction is None:
             system_instruction = _SYSTEM_PROMPT
         last_parse_error: Exception | None = None
+        retry_detail = ""
         # Verification fields are populated by our audit/finalizer, not Gemini.
         # In particular, verification_scores is a dictionary and produces JSON
         # Schema `additionalProperties`, which the Gemini Developer API rejects.
-        provider_schema = ScheduleDraft if schema is ExtractedSchedule else schema
+        provider_schema = CanonicalScheduleResponse if schema is ExtractedSchedule else schema
 
         # A provider can return HTTP 200 while its structured response is empty,
         # truncated, or fails schema validation. Retry only that one graph stage;
@@ -1132,24 +1296,40 @@ class GeminiProtocolExtractor:
             retry_instruction = "" if attempt == 0 else (
                 "\n\nSTRUCTURED OUTPUT RETRY: The previous response could not be "
                 "validated. Return one complete JSON object matching the requested "
-                "schema. Do not use markdown, commentary, or omit required fields."
+                "schema. Do not use markdown, commentary, or omit required fields.\n"
+                "Every evidence entry needs a non-empty evidence_id, claim, "
+                "source_location and source_quote plus a confidence between 0 and 1. "
+                "If you cannot quote a source for a fact, omit that fact instead of "
+                "sending a blank field. Prefer fewer, complete entries over a long "
+                "list that gets cut off before the closing brace.\n"
+                + (f"The previous attempt failed on: {retry_detail}"
+                   if retry_detail else "")
             )
             try:
+                contents = []
+                if pdf_bytes:
+                    contents.append(types.Part.from_bytes(
+                        data=pdf_bytes,
+                        mime_type="application/pdf",
+                    ))
+                contents.append(prompt + retry_instruction)
                 response = await async_client.models.generate_content(
-                    model=self._model,
-                    contents=[
-                        types.Part.from_bytes(
-                            data=pdf_bytes,
-                            mime_type="application/pdf",
-                        ),
-                        prompt + retry_instruction,
-                    ],
+                    model=model_override or self._model,
+                    contents=contents,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
                         max_output_tokens=max_tokens,
                         temperature=0.1,
                         response_mime_type="application/json",
                         response_schema=provider_schema,
+                        # Without this, a thinking-capable model defaults to an
+                        # automatic thinking budget that shares max_output_tokens
+                        # with the actual answer — invisible reasoning tokens can
+                        # consume most of the budget and truncate the JSON before
+                        # it's written (finish_reason=MAX_TOKENS with no field-level
+                        # error). This task is schema-conformant extraction, not
+                        # open-ended reasoning, so thinking buys nothing here.
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
                     ),
                 )
             except errors.APIError as exc:
@@ -1178,23 +1358,38 @@ class GeminiProtocolExtractor:
                 return schema.model_validate_json(raw)
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 last_parse_error = exc
+                retry_detail = _structured_failure_detail(response, exc)
                 log.warning(
-                    "Gemini returned invalid %s structured output (attempt %d/2): %s",
-                    schema.__name__, attempt + 1, type(exc).__name__)
+                    "Gemini returned invalid %s structured output (attempt %d/2): "
+                    "%s [%s]",
+                    schema.__name__, attempt + 1, type(exc).__name__, retry_detail)
 
         raise ExtractionError(
             f"Gemini could not return valid {schema.__name__} structured JSON "
             "after one retry") from last_parse_error
 
-    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+    async def extract(
+        self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
+    ) -> ExtractedSchedule:
         from protocol_agent import run_schedule_extraction_agent
 
         max_refinements = int(os.getenv(
             "PROTOCOL_EXTRACTION_MAX_REFINEMENTS", "2"))
+        confirmation_model = os.getenv(
+            "GEMINI_PROTOCOL_CONFIRMATION_MODEL",
+            os.getenv("PROTOCOL_CONFIRMATION_MODEL", self._model),
+        )
+
+        async def confirm_generate(*args, **kwargs):
+            return await self._generate(
+                *args, **kwargs, model_override=confirmation_model)
+
         expanded = await run_schedule_extraction_agent(
             pdf_bytes,
             self._generate,
             max_refinements=max_refinements,
+            confirmation_generate=confirm_generate,
+            selected_schedule_option_id=selected_schedule_option_id,
         )
         log.info(
             "Gemini agent extraction: kind=%s expanded=%d assumptions=%d "
@@ -1209,17 +1404,28 @@ class GeminiProtocolExtractor:
         return expanded
 
     async def extract_bundle(
-        self, pdf_bytes: bytes,
+        self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
     ) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
         """Return metadata + schedule without a separate metadata model call."""
         from protocol_agent import run_protocol_extraction_agent
 
         max_refinements = int(os.getenv(
             "PROTOCOL_EXTRACTION_MAX_REFINEMENTS", "2"))
+        confirmation_model = os.getenv(
+            "GEMINI_PROTOCOL_CONFIRMATION_MODEL",
+            os.getenv("PROTOCOL_CONFIRMATION_MODEL", self._model),
+        )
+
+        async def confirm_generate(*args, **kwargs):
+            return await self._generate(
+                *args, **kwargs, model_override=confirmation_model)
+
         return await run_protocol_extraction_agent(
             pdf_bytes,
             self._generate,
             max_refinements=max_refinements,
+            confirmation_generate=confirm_generate,
+            selected_schedule_option_id=selected_schedule_option_id,
         )
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
@@ -1360,7 +1566,13 @@ class OpenRouterProtocolExtractor:
             raise ExtractionError(
                 "the OpenRouter response was not valid structured JSON") from exc
 
-    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+    async def extract(
+        self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
+    ) -> ExtractedSchedule:
+        # This legacy single-shot path has no classification stage, so it
+        # never detects multiple independent Schedules of Assessments;
+        # selected_schedule_option_id is accepted only to satisfy
+        # ProtocolExtractor and is otherwise unused.
         parsed = await self._generate(
             pdf_bytes,
             "Extract this protocol's visit schedule. Search the whole document "
@@ -1600,7 +1812,13 @@ class OllamaProtocolExtractor:
         except ValueError as exc:
             raise ExtractionError("the local model response was not valid structured JSON") from exc
 
-    async def extract(self, pdf_bytes: bytes) -> ExtractedSchedule:
+    async def extract(
+        self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
+    ) -> ExtractedSchedule:
+        # This legacy single-shot path has no classification stage, so it
+        # never detects multiple independent Schedules of Assessments;
+        # selected_schedule_option_id is accepted only to satisfy
+        # ProtocolExtractor and is otherwise unused.
         parsed = await self._generate(
             pdf_bytes,
             "Extract this protocol's visit schedule. Search all provided pages for "
@@ -1643,17 +1861,27 @@ def get_details_extractor():
 
 async def extract_protocol_bundle(
     pdf_bytes: bytes,
+    *,
+    selected_schedule_option_id: str | None = None,
 ) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
     """Extract details and schedule together when the provider supports it.
 
     Gemini reuses its decomposed discovery pass, eliminating the standalone
     metadata request. Other providers retain a compatible fallback.
+
+    ``selected_schedule_option_id`` chooses one schedule when the classifier
+    finds a document with more than one independent Schedule of Assessments
+    (see ``ExtractedSchedule.requires_schedule_selection``). Leave it unset on
+    the first call; if the returned schedule requires a selection, re-call
+    with the id of the option the caller chose.
     """
     extractor = get_extractor()
     combined = getattr(extractor, "extract_bundle", None)
     if callable(combined):
-        return await combined(pdf_bytes)
-    schedule = await extractor.extract(pdf_bytes)
+        return await combined(
+            pdf_bytes, selected_schedule_option_id=selected_schedule_option_id)
+    schedule = await extractor.extract(
+        pdf_bytes, selected_schedule_option_id=selected_schedule_option_id)
     details_extractor = extractor if hasattr(extractor, "extract_details") else get_details_extractor()
     details = await details_extractor.extract_details(pdf_bytes)
     return details, schedule

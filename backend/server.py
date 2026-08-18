@@ -25,6 +25,7 @@ import jwt
 
 import otp_service
 import protocol_extraction as pe
+from schedule_schema import apply_temporal_amount, classify_visit_activities, TemporalAmount
 import storage as file_storage
 import google_places
 
@@ -218,7 +219,6 @@ class LoginIn(BaseModel):
     # a registered email address or a mobile number as the login identifier.
     email: str = Field(min_length=1, max_length=254)
     password: str
-    remember_me: bool = False
 
 
 class RefreshIn(BaseModel):
@@ -352,7 +352,12 @@ class VisitIn(BaseModel):
     name: str
     day_offset: Optional[int] = None
     day_end: Optional[int] = None
-    window_days: int = Field(default=3, ge=0)
+    # Set only when day_offset is a 30-day/365-day approximation of a
+    # protocol Month/Year label. Lets per-patient scheduling redo the math
+    # with the patient's real baseline date instead of the approximation.
+    calendar_offset_value: Optional[float] = None
+    calendar_offset_unit: Optional[Literal['month', 'year']] = None
+    window_days: Optional[int] = Field(default=None, ge=0)
     # Keep protocol timing semantics instead of flattening every visit to a
     # symmetric, whole-day baseline offset.
     hour_offset: Optional[float] = None
@@ -370,6 +375,7 @@ class VisitIn(BaseModel):
     period: Optional[str] = None
     activities: List[str] = []
     procedures: List[Dict] = Field(default_factory=list)
+    operational_constraints: List[str] = Field(default_factory=list)
     visit_type: Optional[str] = ''
     location: Optional[str] = ''
     checklist: List[str] = []   # "before you come in" patient-prep steps
@@ -379,6 +385,7 @@ class VisitIn(BaseModel):
     extraction_warning: bool = False
     review_status: Literal['pending', 'ok'] = 'ok'
     extracted_from_protocol: bool = False
+    field_evidence: List[Dict] = Field(default_factory=list)
 
 class VisitUpdate(BaseModel):
     """Partial edit of an existing visit TEMPLATE (Task 4.1 edit mode). Only the
@@ -390,6 +397,8 @@ class VisitUpdate(BaseModel):
     visit_number: Optional[int] = None
     day_offset: Optional[int] = None
     day_end: Optional[int] = None
+    calendar_offset_value: Optional[float] = None
+    calendar_offset_unit: Optional[Literal['month', 'year']] = None
     window_days: Optional[int] = Field(default=None, ge=0)
     hour_offset: Optional[float] = None
     hour_offset_basis: Optional[Literal['absolute', 'within_day']] = None
@@ -406,6 +415,7 @@ class VisitUpdate(BaseModel):
     period: Optional[str] = None
     activities: Optional[List[str]] = None
     procedures: Optional[List[Dict]] = None
+    operational_constraints: Optional[List[str]] = None
     visit_type: Optional[str] = None
     location: Optional[str] = None
     checklist: Optional[List[str]] = None
@@ -415,6 +425,7 @@ class VisitUpdate(BaseModel):
     extraction_warning: Optional[bool] = None
     review_status: Optional[Literal['pending', 'ok']] = None
     extracted_from_protocol: Optional[bool] = None
+    field_evidence: Optional[List[Dict]] = None
 
 class PatientIn(BaseModel):
     full_name: str
@@ -511,7 +522,6 @@ async def issue_refresh_token(
     role: str,
     *,
     family_id: Optional[str] = None,
-    remember_me: bool = True,
 ) -> tuple[str, dict]:
     """Issue a one-time opaque refresh token and persist only its SHA-256 hash."""
     raw = secrets.token_urlsafe(48)
@@ -522,7 +532,6 @@ async def issue_refresh_token(
         'family_id': family_id or str(uuid.uuid4()),
         'user_id': user_id,
         'role': role,
-        'remember_me': bool(remember_me),
         'status': 'active',
         'created_at': issued_at,
         'expires_at': issued_at + timedelta(days=REFRESH_DAYS),
@@ -763,7 +772,7 @@ async def register(body: RegisterIn):
         await db.users.update_one(
             {'id': uid}, {'$set': {'org_admin': doc['org_admin']}})
     access = make_token(uid, body.role, 'access')
-    refresh, _ = await issue_refresh_token(uid, body.role, remember_me=True)
+    refresh, _ = await issue_refresh_token(uid, body.role)
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
 
 @api.post('/auth/login')
@@ -782,16 +791,14 @@ async def login(body: LoginIn):
     if user.get('status') == 'Suspended':
         raise HTTPException(403, 'Your account has been suspended. Contact support.')
     access = make_token(user['id'], user['role'], 'access')
-    refresh, refresh_doc = await issue_refresh_token(
-        user['id'], user['role'], remember_me=body.remember_me)
+    refresh, refresh_doc = await issue_refresh_token(user['id'], user['role'])
     await write_audit(
         user, 'auth.login', 'Signed in successfully',
-        remember_me=body.remember_me, family_id=refresh_doc['family_id'])
+        family_id=refresh_doc['family_id'])
     return {
         'access_token': access,
         'refresh_token': refresh,
         'expires_in': ACCESS_MIN * 60,
-        'remember_me': body.remember_me,
         'user': serialize({**user}),
     }
 
@@ -838,7 +845,6 @@ async def refresh_token(body: RefreshIn):
     rotated, replacement = await issue_refresh_token(
         user['id'], user['role'],
         family_id=consumed['family_id'],
-        remember_me=bool(consumed.get('remember_me')),
     )
     await db.refresh_tokens.update_one(
         {'id': consumed['id']},
@@ -1410,7 +1416,7 @@ async def _finalize_registration(pending: dict) -> dict:
             await db.organizations.delete_one({'id': organization['id']})
         raise
     access = make_token(uid, doc['role'], 'access')
-    refresh, _ = await issue_refresh_token(uid, doc['role'], remember_me=True)
+    refresh, _ = await issue_refresh_token(uid, doc['role'])
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
 
 
@@ -2154,14 +2160,34 @@ async def extract_protocol_details(file: UploadFile = File(...),
     return {'details': details}
 
 
+def _schedule_options_payload(schedule: pe.ExtractedSchedule) -> dict:
+    """The picker payload for a document with more than one independent
+    Schedule of Assessments (e.g. separate substudies), before any schedule
+    is actually built. The caller re-submits the same PDF with the chosen
+    schedule_options[].id to get a real schedule."""
+    options = (
+        schedule.classification.schedule_options if schedule.classification else [])
+    return {
+        'needs_schedule_selection': True,
+        'schedule_options': [option.model_dump() for option in options],
+    }
+
+
 @api.post('/protocols/extract',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_protocol_alias(file: UploadFile = File(...),
+                                 schedule_option_id: Optional[str] = Form(None),
                                  user=Depends(current_user)):
     """Extract trial details and an audited schedule from one protocol analysis.
 
     The schedule is cached briefly and consumed after the trial is created, so
     the Visit Schedule screen does not upload/analyse the same PDF again.
+
+    When the protocol prints more than one independent Schedule of
+    Assessments (e.g. separate substudies), the first call returns
+    ``needs_schedule_selection`` with the available ``schedule_options``
+    instead of a schedule. Re-POST the same file with ``schedule_option_id``
+    set to build the schedule for that choice.
     """
     content_type = (file.content_type or '').lower()
     filename = (file.filename or '').lower()
@@ -2173,7 +2199,8 @@ async def extract_protocol_alias(file: UploadFile = File(...),
     if len(data) > pe.MAX_PDF_BYTES:
         raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
     try:
-        extracted_details, schedule = await pe.extract_protocol_bundle(data)
+        extracted_details, schedule = await pe.extract_protocol_bundle(
+            data, selected_schedule_option_id=schedule_option_id)
     except pe.ExtractionNotConfigured as exc:
         raise HTTPException(
             503, f'Protocol extraction is not configured on the server: {exc}')
@@ -2181,6 +2208,13 @@ async def extract_protocol_alias(file: UploadFile = File(...),
         raise HTTPException(503, f'Protocol extraction is temporarily unavailable: {exc}')
     except pe.ExtractionError as exc:
         raise HTTPException(502, f'Could not analyse protocol: {exc}')
+
+    if schedule.requires_schedule_selection:
+        await write_audit(
+            user, 'trial.extract_protocol_needs_selection',
+            f'{file.filename or "protocol PDF"} contains more than one '
+            'Schedule of Assessments; awaiting sponsor selection')
+        return _schedule_options_payload(schedule)
 
     details = extracted_details.model_dump()
     details['status'] = (
@@ -2206,6 +2240,7 @@ async def extract_protocol_alias(file: UploadFile = File(...),
         'details': details,
         'extraction_id': extraction_id,
         'schedule_visit_count': len(schedule.visits),
+        'needs_schedule_selection': False,
         'verification': {
             'status': schedule.verification_status,
             'confidence': schedule.verification_confidence,
@@ -3677,7 +3712,55 @@ async def smo_dashboard(user=Depends(current_user)):
         'sites': network_sites,
     })
 
-def _schedule_extraction_payload(schedule: pe.ExtractedSchedule) -> dict:
+async def _persist_schedule_definition(
+    trial_id: str,
+    schedule: pe.ExtractedSchedule,
+    user: dict,
+    *,
+    source_extraction_id: str,
+) -> str:
+    """Persist the immutable AI draft without replacing an approved schedule."""
+    existing = await db.schedule_definitions.find_one({
+        'trial_id': trial_id,
+        'source_extraction_id': source_extraction_id,
+    }, {'_id': 0, 'id': 1})
+    if existing:
+        return existing['id']
+    definition_id = str(uuid.uuid4())
+    document = {
+        'id': definition_id,
+        'trial_id': trial_id,
+        'schema_version': '2.0',
+        'status': 'draft_review',
+        'classification': (
+            schedule.classification.model_dump() if schedule.classification else None),
+        'canonical_plan': (
+            schedule.canonical_plan.model_dump() if schedule.canonical_plan else None),
+        'evidence_facts': [item.model_dump() for item in schedule.evidence_facts],
+        'canonical_validation': schedule.canonical_validation,
+        'compatibility_visits': [item.model_dump() for item in schedule.visits],
+        'verification': {
+            'status': schedule.verification_status,
+            'confidence': schedule.verification_confidence,
+            'issues': schedule.verification_issues,
+            'accuracy': schedule.verification_scores,
+        },
+        'source_extraction_id': source_extraction_id,
+        'created_by': user['id'],
+        'created_at': now(),
+    }
+    await db.schedule_definitions.insert_one(document)
+    await db.trials.update_one(
+        {'id': trial_id},
+        {'$set': {'current_schedule_definition_id': definition_id}})
+    return definition_id
+
+
+def _schedule_extraction_payload(
+    schedule: pe.ExtractedSchedule,
+    *,
+    schedule_definition_id: str | None = None,
+) -> dict:
     """Convert an extracted schedule to the existing editor response contract."""
     visits = []
     global_warning = schedule.verification_status == 'needs_review'
@@ -3686,26 +3769,43 @@ def _schedule_extraction_payload(schedule: pe.ExtractedSchedule) -> dict:
         # Undated ET/Unscheduled visits remain visible but require review. An
         # explicitly absolute hour is independently calculable even when its
         # day offset is null (including Hour 0).
-        warning = global_warning or not _has_calculable_template_time(row)
+        warning = (
+            global_warning
+            or bool(row.get('extraction_warning'))
+            or not _has_calculable_template_time(row)
+        )
         # Never turn an unknown day into baseline. The editor can retain the
         # row as manual-review/undated and save that state explicitly.
         row['anchor_study_day'] = schedule.anchor_study_day
         row['includes_day_zero'] = schedule.includes_day_zero
         row['arm_label'] = row.get('arm') or ''
-        row['clinical_tasks'] = row.get('activities') or []
-        row['admin_tasks'] = []
+        # Assessments, paperwork and site logistics arrive in one protocol list.
+        # Route them to the editor's two columns instead of copying everything
+        # into Clinical Tasks and leaving Admin Tasks permanently empty.
+        clinical_tasks, admin_tasks = classify_visit_activities(
+            row.get('activities') or [])
+        row['clinical_tasks'] = clinical_tasks
+        row['admin_tasks'] = admin_tasks
         row['comments'] = ''
         row['extraction_warning'] = warning
-        row['review_status'] = 'pending' if warning else 'ok'
+        row['review_status'] = 'pending' if warning else row.get('review_status', 'ok')
         row['extracted_from_protocol'] = True
         visits.append(row)
     return {
+        'schema_version': '2.0',
+        'schedule_definition_id': schedule_definition_id,
         'visits': visits,
         'assumptions': schedule.assumptions,
         'schedule_kind': schedule.schedule_kind,
         'anchor_study_day': schedule.anchor_study_day,
         'includes_day_zero': schedule.includes_day_zero,
         'source_notes': schedule.source_notes,
+        'classification': (
+            schedule.classification.model_dump() if schedule.classification else None),
+        'canonical_plan': (
+            schedule.canonical_plan.model_dump() if schedule.canonical_plan else None),
+        'evidence_facts': [item.model_dump() for item in schedule.evidence_facts],
+        'canonical_validation': schedule.canonical_validation,
         'verification': {
             'status': schedule.verification_status,
             'confidence': schedule.verification_confidence,
@@ -3719,12 +3819,18 @@ def _schedule_extraction_payload(schedule: pe.ExtractedSchedule) -> dict:
 @api.post('/trials/{trial_id}/extract-schedule',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_schedule(trial_id: str, file: UploadFile = File(...),
+                           schedule_option_id: Optional[str] = Form(None),
                            user=Depends(current_user)):
     """AI-assisted: read an uploaded protocol PDF and return its Schedule of
     Assessments as visit templates for the caller to REVIEW and edit before
     saving. Never writes visits — the sponsor confirms via the normal save flow.
     Trial-ownership scoped (same rule as the schedule endpoints). The PDF is
-    streamed to the extractor and discarded; nothing is persisted here."""
+    streamed to the extractor and discarded; nothing is persisted here.
+
+    When the protocol prints more than one independent Schedule of
+    Assessments (e.g. separate substudies), this returns
+    ``needs_schedule_selection`` with ``schedule_options`` instead of visits.
+    Re-POST the same file with ``schedule_option_id`` to build that schedule."""
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -3745,7 +3851,8 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         raise HTTPException(400, 'The uploaded file does not look like a PDF')
 
     try:
-        schedule = await pe.get_extractor().extract(data)
+        schedule = await pe.get_extractor().extract(
+            data, selected_schedule_option_id=schedule_option_id)
     except pe.ExtractionNotConfigured as exc:
         raise HTTPException(503, 'Protocol extraction is not configured on the '
                             f'server: {exc}. Set the selected provider API key and restart.')
@@ -3759,11 +3866,26 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     except pe.ExtractionError as e:
         raise HTTPException(502, f'Could not extract the schedule: {e}')
 
+    if schedule.requires_schedule_selection:
+        await write_audit(
+            user, 'trial.extract_schedule_needs_selection',
+            f'Protocol PDF for {trial.get("protocol_id") or trial_id} contains '
+            'more than one Schedule of Assessments; awaiting sponsor selection',
+            trial_id=trial_id)
+        return _schedule_options_payload(schedule)
+
     await write_audit(
         user, 'trial.extract_schedule',
         f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
         f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
-    return _schedule_extraction_payload(schedule)
+    definition_id = await _persist_schedule_definition(
+        trial_id, schedule, user,
+        source_extraction_id=f'direct:{uuid.uuid4()}',
+    )
+    return {
+        **_schedule_extraction_payload(schedule, schedule_definition_id=definition_id),
+        'needs_schedule_selection': False,
+    }
 
 
 @api.post('/trials/{trial_id}/protocol-extractions/{extraction_id}/consume',
@@ -3804,12 +3926,33 @@ async def consume_protocol_extraction(
     await db.protocol_extractions.update_one(
         {'id': extraction_id},
         {'$set': {'trial_id': trial_id, 'consumed_at': now()}})
+    definition_id = await _persist_schedule_definition(
+        trial_id, schedule, user, source_extraction_id=extraction_id)
     await write_audit(
         user, 'trial.consume_protocol_extraction',
         f'Reused prepared protocol schedule for '
         f'{trial.get("protocol_id") or trial_id}',
         trial_id=trial_id, target_id=trial_id)
-    return _schedule_extraction_payload(schedule)
+    return _schedule_extraction_payload(
+        schedule, schedule_definition_id=definition_id)
+
+
+@api.get('/trials/{trial_id}/schedule-definition',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))])
+async def get_schedule_definition(trial_id: str, user=Depends(current_user)):
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
+    definition_id = trial.get('current_schedule_definition_id')
+    if not definition_id:
+        raise HTTPException(404, 'No canonical schedule definition exists for this trial')
+    definition = await db.schedule_definitions.find_one(
+        {'id': definition_id, 'trial_id': trial_id}, {'_id': 0})
+    if not definition:
+        raise HTTPException(404, 'Canonical schedule definition was not found')
+    return serialize(definition)
 
 # ── Visit schedule ──────────────────────────────────────────────────────────
 @api.post('/visits')
@@ -4062,7 +4205,10 @@ async def _patient_visit_detail(patient: dict, visit: dict) -> dict:
         completed_by = await db.users.find_one(
             {'id': visit['completed_by']}, {'_id': 0}) or {}
     scheduled = visit.get('scheduled_date')
-    window_days = visit.get('window_days', template.get('window_days', 0))
+    window_days = visit.get('window_days')
+    if window_days is None:
+        window_days = template.get('window_days')
+    window_width = int(window_days or 0)
     window_start = visit.get('window_start')
     window_end = visit.get('window_end')
     if scheduled and (not window_start or not window_end):
@@ -4071,8 +4217,8 @@ async def _patient_visit_detail(patient: dict, visit: dict) -> dict:
                 str(scheduled).replace('Z', '+00:00'))
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
-            window_start = window_start or parsed - timedelta(days=window_days)
-            window_end = window_end or parsed + timedelta(days=window_days)
+            window_start = window_start or parsed - timedelta(days=window_width)
+            window_end = window_end or parsed + timedelta(days=window_width)
         except (TypeError, ValueError):
             pass
     preparation = template.get('checklist') or visit.get('checklist') or []
@@ -4216,7 +4362,7 @@ def _patient_visit_anchor(patient) -> datetime:
 
 def _schedule_window(template: dict, scheduled: datetime) -> tuple[datetime, datetime]:
     """Return a protocol visit window, preserving asymmetric windows when set."""
-    symmetric = int(template.get('window_days', 3) or 0)
+    symmetric = int(template.get('window_days') or 0)
     before = template.get('window_before')
     after = template.get('window_after')
     before_days = symmetric if before is None else int(before)
@@ -4290,6 +4436,16 @@ def _calculate_template_datetime(anchor: datetime, template: dict) -> datetime:
     basis = normalized.get('hour_offset_basis')
     if offset is None and basis != 'absolute':
         raise ValueError('Visit has no calculable day offset')
+    # day_offset above is a 30-day/365-day approximation of a protocol
+    # Month/Year label. Now that a real patient anchor date exists, exact
+    # calendar math (true month lengths, leap years) beats that
+    # approximation, so prefer it whenever the visit carries no separate
+    # hour-level timing that the approximation path would otherwise apply.
+    calendar_value = normalized.get('calendar_offset_value')
+    calendar_unit = normalized.get('calendar_offset_unit')
+    if calendar_value is not None and calendar_unit in ('month', 'year') and hour is None:
+        return apply_temporal_amount(
+            anchor, TemporalAmount(value=calendar_value, unit=calendar_unit))
     elapsed = pe.canonical_elapsed_time(
         int(offset) if offset is not None else None,
         normalized.get('hour_offset'),
@@ -4348,6 +4504,8 @@ def _build_schedule_preview(templates: List[dict], baseline: datetime, arm_label
             'source_day_label': template.get('source_day_label') or '',
             'day_offset': template.get('day_offset'),
             'day_end': template.get('day_end'),
+            'calendar_offset_value': template.get('calendar_offset_value'),
+            'calendar_offset_unit': template.get('calendar_offset_unit'),
             'hour_offset': template.get('hour_offset'),
             'hour_offset_basis': template.get('hour_offset_basis'),
             'hour_end': template.get('hour_end'),
@@ -4583,7 +4741,7 @@ async def materialize_visit_instances(patient) -> int:
             sched = scheduled_end = window_start = window_end = None
             operational_status = 'manual_review'
             manual_review_reason = str(exc)
-        wd = t.get('window_days', 3)
+        wd = t.get('window_days')
         clinical_tasks = _visit_task_snapshot(t, 'clinical', t.get('clinical_tasks') or [])
         admin_tasks = _visit_task_snapshot(t, 'admin', t.get('admin_tasks') or [])
         docs.append({
@@ -4637,7 +4795,7 @@ async def _materialize_new_template_for_enrolled(template) -> int:
     if not template or not template.get('id') or not template.get('trial_id'):
         return 0
     n = now()
-    wd = template.get('window_days', 3)
+    wd = template.get('window_days')
     created = 0
     async for patient in db.patients.find({'trial_id': template['trial_id']}, {'_id': 0}):
         # only patients who were already materialized need the retro-fit
@@ -4747,7 +4905,7 @@ async def _rematerialize_template_change(template) -> int:
             sched = scheduled_end = window_start = window_end = None
             operational_status = 'manual_review'
             manual_review_reason = str(exc)
-        wd = template.get('window_days', 3)
+        wd = template.get('window_days')
         await db.visit_instances.update_one({'id': inst['id']}, {'$set': {
             'name': template.get('name', ''),
             # keep the instance's ordinal consistent with the template when the
@@ -8240,9 +8398,10 @@ _SCHEDULE_DIFF_FIELDS = (
     'anchor_study_day', 'includes_day_zero', 'hour_offset',
     'hour_offset_basis', 'hour_end', 'relative_to', 'relative_offset_days',
     'period', 'arm_label', 'arm', 'window_days', 'window_before',
-    'window_after', 'activities',
+    'window_after', 'activities', 'procedures', 'operational_constraints',
     'checklist', 'clinical_tasks', 'admin_tasks', 'comments',
     'extraction_warning', 'review_status', 'extracted_from_protocol',
+    'field_evidence',
 )
 
 
@@ -8502,12 +8661,13 @@ async def share_pdf(token: str):
         before = v.get('window_before')
         after = v.get('window_after')
         if before is not None or after is not None:
-            symmetric = int(v.get('window_days', 3) or 0)
+            symmetric = int(v.get('window_days') or 0)
             window_label = (
                 f"-{symmetric if before is None else before}/"
                 f"+{symmetric if after is None else after}d")
         else:
-            window_label = f"±{v.get('window_days', 3)}d"
+            window_label = (
+                f"±{v['window_days']}d" if v.get('window_days') is not None else '-')
         if v.get('day_end') is not None and not v.get('source_day_label'):
             label += f" to baseline {int(v['day_end']):+d} days"
         if v.get('hour_end') is not None and v.get('source_day_label'):

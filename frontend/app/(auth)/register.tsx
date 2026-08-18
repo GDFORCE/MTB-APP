@@ -750,6 +750,9 @@ export default function Register() {
                     editable={!inviteEmailLocked}
                     keyboardType="email-address"
                     autoCapitalize="none"
+                    textContentType="username"
+                    autoComplete="email"
+                    importantForAutofill="yes"
                     placeholder="patient@example.com"
                     style={[inviteEmailLocked && f.readOnlyInput, fieldError("email") && f.inputError]}
                   />
@@ -783,6 +786,9 @@ export default function Register() {
                     editable={!inviteEmailLocked}
                     keyboardType="email-address"
                     autoCapitalize="none"
+                    textContentType="username"
+                    autoComplete="email"
+                    importantForAutofill="yes"
                     style={[inviteEmailLocked && f.readOnlyInput, fieldError("email") && f.inputError]}
                   />
                   {inviteEmailLocked && <Small color={colors.mutedFg} style={f.lockedHint}>Fixed by your invitation.</Small>}

@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -14,12 +15,15 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   AlertTriangle,
+  ArrowRight,
   CalendarDays,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  FileStack,
+  GripVertical,
   Download,
   Edit3,
   MessageSquareText,
@@ -32,11 +36,16 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import { api } from "@/src/api/client";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
-import { Body, Button, Card, Eyebrow, Small } from "@/src/components/ui";
+import { Body, Button, Small } from "@/src/components/ui";
 import {
+  formatScheduleDay,
+  formatProtocolProcedure,
   formatVisitTiming,
   formatVisitWindow,
+  normalizeProtocolConstraints,
+  normalizeProtocolProcedures,
   parseOptionalDayOffset,
+  ProtocolProcedure,
 } from "@/src/lib/visit-timing";
 import { colors, fonts, radii, shadows, spacing } from "@/src/theme/tokens";
 
@@ -47,6 +56,8 @@ type Row = {
   day_offset: string;
   source_day_label: string;
   day_end: number | null;
+  calendar_offset_value: number | null;
+  calendar_offset_unit: "month" | "year" | null;
   hour_offset: number | null;
   hour_end: number | null;
   hour_offset_basis: "absolute" | "within_day" | null;
@@ -61,12 +72,15 @@ type Row = {
   includes_day_zero: boolean | null;
   window_days: string;
   activities: string;
+  procedures: ProtocolProcedure[];
+  operational_constraints: string;
   clinical_tasks: string;
   admin_tasks: string;
   comments: string;
   extraction_warning: boolean;
   review_status: "pending" | "ok";
   extracted_from_protocol: boolean;
+  field_evidence: { field: string; evidence_ids: string[] }[];
 };
 
 type ExtractedVisit = {
@@ -75,6 +89,8 @@ type ExtractedVisit = {
   source_day_label?: string | null;
   source_timing_label?: string | null;
   day_end?: number | null;
+  calendar_offset_value?: number | null;
+  calendar_offset_unit?: "month" | "year" | null;
   hour_offset?: number | null;
   hour_end?: number | null;
   hour_offset_basis?: "absolute" | "within_day" | null;
@@ -88,13 +104,16 @@ type ExtractedVisit = {
   visit_type?: string | null;
   anchor_study_day?: 0 | 1 | null;
   includes_day_zero?: boolean | null;
-  window_days: number;
+  window_days: number | null;
   activities: string[];
+  procedures?: unknown;
+  operational_constraints?: string[] | string | null;
   clinical_tasks?: string[];
   admin_tasks?: string[];
   comments?: string;
   extraction_warning?: boolean;
   review_status?: "pending" | "ok";
+  field_evidence?: { field: string; evidence_ids: string[] }[];
 };
 
 type ExtractionVerification = {
@@ -110,6 +129,13 @@ type ScheduleNumbering = {
   includes_day_zero?: boolean | null;
 };
 
+type ScheduleOption = {
+  id: string;
+  label: string;
+  description: string;
+  source_location: string;
+};
+
 const hasAbsoluteHourTiming = (timing: {
   hour_offset?: number | null;
   hour_offset_basis?: "absolute" | "within_day" | null;
@@ -122,6 +148,8 @@ const blankRow = (name = "New Visit"): Row => ({
   day_offset: "0",
   source_day_label: "",
   day_end: null,
+  calendar_offset_value: null,
+  calendar_offset_unit: null,
   hour_offset: null,
   hour_end: null,
   hour_offset_basis: null,
@@ -134,14 +162,17 @@ const blankRow = (name = "New Visit"): Row => ({
   visit_type: null,
   anchor_study_day: null,
   includes_day_zero: null,
-  window_days: "3",
+  window_days: "",
   activities: "",
+  procedures: [],
+  operational_constraints: "",
   clinical_tasks: "",
   admin_tasks: "",
   comments: "",
   extraction_warning: false,
   review_status: "ok",
   extracted_from_protocol: false,
+  field_evidence: [],
 });
 
 const templateToRow = (template: any): Row => {
@@ -156,6 +187,8 @@ const templateToRow = (template: any): Row => {
       || template.source_timing_label?.trim()
       || "",
     day_end: template.day_end ?? null,
+    calendar_offset_value: template.calendar_offset_value ?? null,
+    calendar_offset_unit: template.calendar_offset_unit ?? null,
     hour_offset: template.hour_offset ?? null,
     hour_end: template.hour_end ?? null,
     hour_offset_basis: template.hour_offset_basis ?? null,
@@ -168,14 +201,17 @@ const templateToRow = (template: any): Row => {
     visit_type: template.visit_type ?? null,
     anchor_study_day: template.anchor_study_day ?? null,
     includes_day_zero: template.includes_day_zero ?? null,
-    window_days: String(template.window_days ?? 3),
+    window_days: template.window_days == null ? "" : String(template.window_days),
     activities: (template.activities ?? []).join(", "),
+    procedures: normalizeProtocolProcedures(template.procedures),
+    operational_constraints: normalizeProtocolConstraints(template.operational_constraints).join("\n"),
     clinical_tasks: (template.clinical_tasks ?? []).join(", "),
     admin_tasks: (template.admin_tasks ?? []).join(", "),
     comments: template.comments ?? "",
     extraction_warning: Boolean(template.extraction_warning),
     review_status: template.review_status === "pending" ? "pending" : "ok",
     extracted_from_protocol: Boolean(template.extracted_from_protocol),
+    field_evidence: Array.isArray(template.field_evidence) ? template.field_evidence : [],
   };
 };
 
@@ -193,6 +229,8 @@ const extractedVisitsToRows = (
       || visit.source_timing_label?.trim()
       || "",
     day_end: visit.day_end ?? null,
+    calendar_offset_value: visit.calendar_offset_value ?? null,
+    calendar_offset_unit: visit.calendar_offset_unit ?? null,
     hour_offset: visit.hour_offset ?? null,
     hour_end: visit.hour_end ?? null,
     hour_offset_basis: visit.hour_offset_basis ?? null,
@@ -205,14 +243,17 @@ const extractedVisitsToRows = (
     visit_type: visit.visit_type ?? null,
     anchor_study_day: visit.anchor_study_day ?? numbering.anchor_study_day ?? null,
     includes_day_zero: visit.includes_day_zero ?? numbering.includes_day_zero ?? null,
-    window_days: String(visit.window_days ?? 3),
+    window_days: visit.window_days == null ? "" : String(visit.window_days),
     activities: (visit.activities ?? []).join(", "),
+    procedures: normalizeProtocolProcedures(visit.procedures),
+    operational_constraints: normalizeProtocolConstraints(visit.operational_constraints).join("\n"),
     clinical_tasks: (visit.clinical_tasks ?? visit.activities ?? []).join(", "),
     admin_tasks: (visit.admin_tasks ?? []).join(", "),
     comments: visit.comments ?? "",
     extraction_warning: Boolean(visit.extraction_warning) || missingComputableTiming,
     review_status: visit.review_status === "pending" || missingComputableTiming ? "pending" : "ok",
     extracted_from_protocol: true,
+    field_evidence: Array.isArray(visit.field_evidence) ? visit.field_evidence : [],
   };
 });
 
@@ -221,6 +262,8 @@ const sameRow = (left: Row, right: Row) =>
   && parseOptionalDayOffset(left.day_offset) === parseOptionalDayOffset(right.day_offset)
   && left.source_day_label.trim() === right.source_day_label.trim()
   && left.day_end === right.day_end
+  && left.calendar_offset_value === right.calendar_offset_value
+  && left.calendar_offset_unit === right.calendar_offset_unit
   && left.hour_offset === right.hour_offset
   && left.hour_end === right.hour_end
   && left.hour_offset_basis === right.hour_offset_basis
@@ -233,25 +276,34 @@ const sameRow = (left: Row, right: Row) =>
   && left.visit_type === right.visit_type
   && left.anchor_study_day === right.anchor_study_day
   && left.includes_day_zero === right.includes_day_zero
-  && parseInt(left.window_days || "3", 10) === parseInt(right.window_days || "3", 10)
+  && (left.window_days.trim() === "" ? null : Number(left.window_days))
+    === (right.window_days.trim() === "" ? null : Number(right.window_days))
   && left.activities.trim() === right.activities.trim()
+  && JSON.stringify(left.procedures) === JSON.stringify(right.procedures)
+  && left.operational_constraints.trim() === right.operational_constraints.trim()
   && left.clinical_tasks.trim() === right.clinical_tasks.trim()
   && left.admin_tasks.trim() === right.admin_tasks.trim()
   && left.comments.trim() === right.comments.trim()
   && left.extraction_warning === right.extraction_warning
   && left.review_status === right.review_status
-  && left.extracted_from_protocol === right.extracted_from_protocol;
+  && left.extracted_from_protocol === right.extracted_from_protocol
+  && JSON.stringify(left.field_evidence) === JSON.stringify(right.field_evidence);
 
-const timingForRow = (row: Row) => formatVisitTiming({
+const dayForRow = (row: Row) => formatScheduleDay({
   day_offset: parseOptionalDayOffset(row.day_offset),
+  day_end: row.day_end,
   source_day_label: row.source_day_label,
+});
+
+const canonicalTimingForRow = (row: Row) => formatVisitTiming({
+  day_offset: parseOptionalDayOffset(row.day_offset),
   day_end: row.day_end,
   hour_offset: row.hour_offset,
   hour_end: row.hour_end,
   hour_offset_basis: row.hour_offset_basis,
   relative_to: row.relative_to,
   relative_offset_days: row.relative_offset_days,
-});
+}, "-");
 
 const rowNeedsReview = (row: Row) => (
   row.extraction_warning
@@ -266,6 +318,7 @@ export default function VisitScheduleEditor() {
     id: string;
     extractionId?: string;
   }>();
+  const pickedAssetRef = useRef<DocumentPicker.DocumentPickerAsset | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [original, setOriginal] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,11 +329,15 @@ export default function VisitScheduleEditor() {
   const [extracting, setExtracting] = useState(false);
   const [extractErr, setExtractErr] = useState("");
   const [verification, setVerification] = useState<ExtractionVerification | null>(null);
+  const [scheduleOptions, setScheduleOptions] = useState<ScheduleOption[]>([]);
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [pickingOptionId, setPickingOptionId] = useState("");
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "ok">("all");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [confirmSave, setConfirmSave] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showReviewNotes, setShowReviewNotes] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -302,6 +359,7 @@ export default function VisitScheduleEditor() {
             includes_day_zero: prepared.data?.includes_day_zero ?? null,
           });
           setVerification(preparedVerification);
+          setShowReviewNotes(false);
           if (loaded.length) {
             setNotice(preparedVerification?.status === "verified"
               ? "The schedule prepared from your first protocol upload is ready for review. No second AI extraction was used."
@@ -372,6 +430,82 @@ export default function VisitScheduleEditor() {
     });
   };
 
+  // ── Drag-to-reorder ──────────────────────────────────────────────────────
+  // Rows have variable height (a long visit name wraps), so the drop target is
+  // found by measuring each row rather than assuming a fixed row height.
+  // PanResponder is used instead of a gesture library because this screen sits
+  // in a plain ScrollView and the app has no GestureHandlerRootView.
+  const dragFromRef = useRef<number | null>(null);
+  const dragOverRef = useRef<number | null>(null);
+  const rowLayoutsRef = useRef<{ y: number; height: number }[]>([]);
+  const visibleOrderRef = useRef<number[]>([]);
+  const [dragPosition, setDragPosition] = useState<number | null>(null);
+  const [dropPosition, setDropPosition] = useState<number | null>(null);
+  const [dragTranslate, setDragTranslate] = useState(0);
+
+  // Held in a ref so the single PanResponder instance always calls the latest
+  // closure over rows/filters without being rebuilt on every render.
+  const endDragRef = useRef<() => void>(() => {});
+  endDragRef.current = () => {
+    const from = dragFromRef.current;
+    const to = dragOverRef.current;
+    dragFromRef.current = null;
+    dragOverRef.current = null;
+    setDragPosition(null);
+    setDropPosition(null);
+    setDragTranslate(0);
+    if (from === null || to === null || from === to) return;
+    // Positions are indices into the *visible* list; translate them back to the
+    // underlying rows so reordering stays correct under an active filter.
+    const order = visibleOrderRef.current;
+    const fromIndex = order[from];
+    const toIndex = order[to];
+    if (fromIndex === undefined || toIndex === undefined) return;
+    move(fromIndex, toIndex);
+  };
+
+  const dragResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => dragFromRef.current !== null,
+      onMoveShouldSetPanResponder: () => dragFromRef.current !== null,
+      onPanResponderGrant: () => {
+        dragOverRef.current = dragFromRef.current;
+        setDragPosition(dragFromRef.current);
+        setDropPosition(dragFromRef.current);
+        setDragTranslate(0);
+      },
+      onPanResponderMove: (_event, gesture) => {
+        const from = dragFromRef.current;
+        if (from === null) return;
+        setDragTranslate(gesture.dy);
+        const layouts = rowLayoutsRef.current;
+        const source = layouts[from];
+        if (!source) return;
+        const centre = source.y + source.height / 2 + gesture.dy;
+        let target = from;
+        for (let position = 0; position < layouts.length; position += 1) {
+          const layout = layouts[position];
+          if (!layout) continue;
+          if (centre >= layout.y && centre <= layout.y + layout.height) {
+            target = position;
+            break;
+          }
+          // Past the last row, or above the first: clamp to that end.
+          if (centre < layout.y && position === 0) target = 0;
+          if (centre > layout.y + layout.height && position === layouts.length - 1) {
+            target = position;
+          }
+        }
+        if (target !== dragOverRef.current) {
+          dragOverRef.current = target;
+          setDropPosition(target);
+        }
+      },
+      onPanResponderRelease: () => endDragRef.current(),
+      onPanResponderTerminate: () => endDragRef.current(),
+    }),
+  ).current;
+
   const acknowledge = (index: number) => {
     setRows((current) => current.map((row, rowIndex) => (
       rowIndex === index
@@ -380,22 +514,10 @@ export default function VisitScheduleEditor() {
     )));
   };
 
-  const autofill = async () => {
-    setExtractErr("");
-    let asset: DocumentPicker.DocumentPickerAsset;
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
-        copyToCacheDirectory: true,
-        multiple: false,
-      });
-      if (result.canceled || !result.assets?.length) return;
-      asset = result.assets[0];
-    } catch {
-      setExtractErr("Couldn't open the file picker.");
-      return;
-    }
-
+  const runAutofill = async (
+    asset: DocumentPicker.DocumentPickerAsset,
+    scheduleOptionId?: string,
+  ) => {
     const form = new FormData();
     if (Platform.OS === "web") {
       const file = (asset as any).file as File | undefined;
@@ -411,8 +533,10 @@ export default function VisitScheduleEditor() {
         type: asset.mimeType || "application/pdf",
       } as any);
     }
+    if (scheduleOptionId) form.append("schedule_option_id", scheduleOptionId);
 
     setExtracting(true);
+    setShowSchedulePicker(false);
     try {
       const response = await api.post(`/trials/${id}/extract-schedule`, form, {
         // Do not set Content-Type manually: React Native/Axios must add its
@@ -420,9 +544,18 @@ export default function VisitScheduleEditor() {
         // API request, especially for a full multi-page PDF.
         timeout: 900000,
       });
+      if (response.data?.needs_schedule_selection) {
+        // This protocol has more than one independent Schedule of
+        // Assessments (e.g. separate substudies). Let the sponsor choose
+        // which one to build before running the full analysis on it.
+        setScheduleOptions(response.data.schedule_options || []);
+        setShowSchedulePicker(true);
+        return;
+      }
       const visits: ExtractedVisit[] = response.data?.visits ?? [];
       const agentVerification: ExtractionVerification | null = response.data?.verification ?? null;
       setVerification(agentVerification);
+      setShowReviewNotes(false);
       if (!visits.length) {
         setExtractErr("No visit schedule was found in that PDF. You can still build it manually.");
         return;
@@ -452,13 +585,43 @@ export default function VisitScheduleEditor() {
     }
   };
 
+  const autofill = async () => {
+    setExtractErr("");
+    let asset: DocumentPicker.DocumentPickerAsset;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: "application/pdf",
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      asset = result.assets[0];
+    } catch {
+      setExtractErr("Couldn't open the file picker.");
+      return;
+    }
+    pickedAssetRef.current = asset;
+    await runAutofill(asset);
+  };
+
+  const chooseSchedule = async (optionId: string) => {
+    if (!pickedAssetRef.current) return;
+    setPickingOptionId(optionId);
+    try {
+      await runAutofill(pickedAssetRef.current, optionId);
+    } finally {
+      setPickingOptionId("");
+    }
+  };
+
   const validate = () => {
     if (!rows.length) return "Add at least one visit before saving.";
     const invalidIndex = rows.findIndex((row) => (
       !row.name.trim()
       || (row.day_offset.trim() !== "" && parseOptionalDayOffset(row.day_offset) === null)
-      || !Number.isFinite(Number(row.window_days))
-      || Number(row.window_days) < 0
+      || (row.window_days.trim() !== "" && (
+        !Number.isInteger(Number(row.window_days)) || Number(row.window_days) < 0
+      ))
     ));
     if (invalidIndex >= 0) {
       return `Check the name, whole-day baseline offset, and window for Visit ${invalidIndex + 1}.`;
@@ -501,6 +664,8 @@ export default function VisitScheduleEditor() {
           day_offset: dayOffset,
           source_day_label: row.source_day_label.trim() || null,
           day_end: row.day_end,
+          calendar_offset_value: row.calendar_offset_value,
+          calendar_offset_unit: row.calendar_offset_unit,
           hour_offset: row.hour_offset,
           hour_end: row.hour_end,
           hour_offset_basis: row.hour_offset_basis,
@@ -513,14 +678,17 @@ export default function VisitScheduleEditor() {
           visit_type: row.visit_type,
           anchor_study_day: row.anchor_study_day,
           includes_day_zero: row.includes_day_zero,
-          window_days: parseInt(row.window_days || "3", 10),
+          window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
           activities: row.activities.split(",").map((value) => value.trim()).filter(Boolean),
+          procedures: row.procedures,
+          operational_constraints: normalizeProtocolConstraints(row.operational_constraints),
           clinical_tasks: row.clinical_tasks.split(",").map((value) => value.trim()).filter(Boolean),
           admin_tasks: row.admin_tasks.split(",").map((value) => value.trim()).filter(Boolean),
           comments: row.comments.trim(),
           extraction_warning: row.extraction_warning,
           review_status: row.review_status,
           extracted_from_protocol: row.extracted_from_protocol,
+          field_evidence: row.field_evidence,
         };
         if (row.id) {
           const previous = original.find((item) => item.id === row.id);
@@ -564,7 +732,8 @@ export default function VisitScheduleEditor() {
       "Offset end (days)", "Hour offset", "Hour end", "Hour offset basis",
       "Window days", "Window before", "Window after", "Relative to", "Relative offset days",
       "Arm", "Period", "Visit type", "Anchor study day", "Includes Day 0", "Activities",
-      "Clinical tasks", "Administrative tasks", "Comments", "Review status",
+      "Structured procedures", "Operational constraints", "Clinical tasks",
+      "Administrative tasks", "Comments", "Review status",
     ];
     const lines = rows.map((row, index) => [
       index + 1,
@@ -586,6 +755,8 @@ export default function VisitScheduleEditor() {
       row.anchor_study_day ?? "",
       row.includes_day_zero ?? "",
       row.activities,
+      row.procedures.map(formatProtocolProcedure).join(" | "),
+      normalizeProtocolConstraints(row.operational_constraints).join(" | "),
       row.clinical_tasks,
       row.admin_tasks,
       row.comments,
@@ -633,6 +804,10 @@ export default function VisitScheduleEditor() {
         ? rowNeedsReview(row)
         : !rowNeedsReview(row))
     ));
+  // Keep the drag gesture's view of the list in step with what is rendered:
+  // visible position -> underlying row index, and drop stale row measurements.
+  visibleOrderRef.current = visibleRows.map(({ index }) => index);
+  rowLayoutsRef.current.length = visibleRows.length;
   const selectedRow = selectedIndex === null ? null : rows[selectedIndex];
   const isProtocolExtract = rows.some((row) => row.extracted_from_protocol);
 
@@ -694,32 +869,12 @@ export default function VisitScheduleEditor() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          // The list must not scroll out from under a row being dragged.
+          scrollEnabled={dragPosition === null}
         >
-          <Card style={styles.extractCard}>
-            <View style={styles.extractHeading}>
-              <View style={styles.sparkIcon}><Sparkles size={17} color={colors.primary} /></View>
-              <View style={styles.flex}>
-                <Eyebrow>Protocol assistant</Eyebrow>
-                <Small style={styles.extractCopy}>
-                  Upload a protocol PDF to draft its Schedule of Assessments.
-                </Small>
-              </View>
-            </View>
-            <Pressable
-              testID="extract-protocol"
-              onPress={autofill}
-              disabled={extracting}
-              style={[styles.extractButton, extracting && styles.disabled]}
-            >
-              {extracting
-                ? <ActivityIndicator size="small" color={colors.primary} />
-                : <Sparkles size={16} color={colors.primary} />}
-              <Small color={colors.primary} weight="700">
-                {extracting ? "Reading protocol..." : "Auto-fill from protocol PDF"}
-              </Small>
-            </Pressable>
-            {!!extractErr && <Small color={colors.destructive} style={styles.inlineMessage}>{extractErr}</Small>}
-          </Card>
+          {!!extractErr && (
+            <Small color={colors.destructive} style={styles.inlineMessage}>{extractErr}</Small>
+          )}
 
           <View style={styles.summary}>
             <View style={styles.summaryLeft}>
@@ -745,12 +900,30 @@ export default function VisitScheduleEditor() {
             )}
           </View>
 
-          {editing && (
-            <View style={styles.editHint}>
-              <Edit3 size={14} color={colors.primary} />
-              <Small color={colors.primary} weight="700">
-                Editing: tap a visit for details, use arrows to reorder, or remove it.
-              </Small>
+          {!!verification?.issues?.length && (
+            <View style={styles.reviewNotesBlock}>
+              <Pressable
+                testID="review-notes-toggle"
+                onPress={() => setShowReviewNotes((value) => !value)}
+                style={styles.reviewNotesToggle}
+              >
+                {showReviewNotes
+                  ? <ChevronUp size={14} color={colors.mutedFg} />
+                  : <ChevronDown size={14} color={colors.mutedFg} />}
+                <Small color={colors.mutedFg} weight="700">
+                  {showReviewNotes ? "Hide" : "Show"} why {verification.issues.length}{" "}
+                  field{verification.issues.length === 1 ? "" : "s"} were flagged
+                </Small>
+              </Pressable>
+              {showReviewNotes && (
+                <View style={styles.reviewNotesList}>
+                  {verification.issues.map((issue, issueIndex) => (
+                    <Small key={issueIndex} color={colors.mutedFg} style={styles.reviewNoteItem}>
+                      {"• "}{issue}
+                    </Small>
+                  ))}
+                </View>
+              )}
             </View>
           )}
 
@@ -784,47 +957,45 @@ export default function VisitScheduleEditor() {
               {editing && <View style={styles.orderCell} />}
               <Small weight="700" style={styles.numberCell}>#</Small>
               <Small weight="700" style={styles.nameCell}>Visit name</Small>
-              <Small weight="700" style={styles.dayCell}>Timing</Small>
+              <Small weight="700" style={styles.dayCell}>Day</Small>
               <Small weight="700" style={styles.windowCell}>Window</Small>
               {editing && <View style={styles.deleteCell} />}
             </View>
 
-            {visibleRows.map(({ row, index }) => {
+            {visibleRows.map(({ row, index }, position) => {
               const warning = rowNeedsReview(row);
+              const dragging = dragPosition === position;
+              const isDropTarget = dropPosition === position && dragPosition !== position;
               return (
                 <Pressable
                   key={row.id ?? `new-${index}`}
                   testID={`visit-row-${index}`}
                   onPress={() => setSelectedIndex(index)}
+                  onLayout={(event) => {
+                    const { y, height } = event.nativeEvent.layout;
+                    rowLayoutsRef.current[position] = { y, height };
+                  }}
                   style={[
                     styles.tableGrid,
                     styles.tableRow,
                     editing && styles.tableGridEditing,
                     warning && styles.warningRow,
+                    isDropTarget && styles.dropTargetRow,
+                    dragging && styles.draggingRow,
+                    dragging && { transform: [{ translateY: dragTranslate }] },
                   ]}
                 >
                   {editing && (
-                    <View style={styles.orderCell}>
-                      <Pressable
-                        disabled={index === 0}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          move(index, index - 1);
-                        }}
-                        style={styles.orderButton}
-                      >
-                        <ChevronUp size={13} color={index === 0 ? colors.border : colors.mutedFg} />
-                      </Pressable>
-                      <Pressable
-                        disabled={index === rows.length - 1}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          move(index, index + 1);
-                        }}
-                        style={styles.orderButton}
-                      >
-                        <ChevronDown size={13} color={index === rows.length - 1 ? colors.border : colors.mutedFg} />
-                      </Pressable>
+                    <View
+                      testID={`drag-visit-${index}`}
+                      style={styles.orderCell}
+                      onTouchStart={() => { dragFromRef.current = position; }}
+                      {...dragResponder.panHandlers}
+                    >
+                      <GripVertical
+                        size={16}
+                        color={dragging ? colors.primary : colors.mutedFg}
+                      />
                     </View>
                   )}
                   <View style={styles.numberCell}>
@@ -836,10 +1007,10 @@ export default function VisitScheduleEditor() {
                     <Body weight="700" numberOfLines={1}>{row.name || "Untitled visit"}</Body>
                     {!!row.comments && <MessageSquareText size={11} color={colors.mutedFg} />}
                   </View>
-                  <Small numberOfLines={2} style={styles.dayCell}>{timingForRow(row)}</Small>
+                  <Small numberOfLines={1} style={styles.dayCell}>{dayForRow(row)}</Small>
                   <Small style={styles.windowCell}>
                     {formatVisitWindow({
-                      window_days: Number(row.window_days || 0),
+                      window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
                       window_before: row.window_before,
                       window_after: row.window_after,
                     }, true)}
@@ -899,7 +1070,10 @@ export default function VisitScheduleEditor() {
       <VisitDetailSheet
         row={selectedRow}
         index={selectedIndex}
-        editing={editing}
+        // Tapping a visit opens the editor itself, so it is always editable.
+        // The list's own edit toggle still gates the drag handles and the
+        // inline delete column; nothing here is persisted until Save Template.
+        editing
         onClose={() => setSelectedIndex(null)}
         onChange={updateRow}
         onAcknowledge={acknowledge}
@@ -944,6 +1118,62 @@ export default function VisitScheduleEditor() {
             <Pressable testID="return-to-trial" onPress={goToTrial} style={styles.successAction}>
               <Small color={colors.primaryFg} weight="700">Return to trial</Small>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={showSchedulePicker}
+        animationType="fade"
+        onRequestClose={() => setShowSchedulePicker(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.pickerCard}>
+            <View style={styles.pickerHeader}>
+              <View style={styles.pickerOrb}><FileStack size={22} color={colors.primary} /></View>
+              <Pressable
+                testID="close-schedule-picker"
+                hitSlop={12}
+                onPress={() => setShowSchedulePicker(false)}
+              >
+                <X size={21} color={colors.mutedFg} />
+              </Pressable>
+            </View>
+            <Body weight="700" style={styles.confirmTitle}>Choose a schedule to build</Body>
+            <Small style={styles.confirmCopy}>
+              This protocol contains more than one Schedule of Assessments. Pick the one you
+              want extracted — the others will not be included.
+            </Small>
+            <ScrollView style={styles.pickerScroll} contentContainerStyle={styles.pickerScrollContent}>
+              {scheduleOptions.map((option) => (
+                <Pressable
+                  key={option.id}
+                  testID={`schedule-option-${option.id}`}
+                  disabled={!!pickingOptionId}
+                  onPress={() => chooseSchedule(option.id)}
+                  style={({ pressed }) => [
+                    styles.pickerOption,
+                    pressed && !pickingOptionId && styles.pickerOptionPressed,
+                  ]}
+                >
+                  <View style={styles.pickerOptionText}>
+                    <Body weight="600">{option.label}</Body>
+                    {!!option.description && (
+                      <Small style={styles.pickerOptionDescription}>{option.description}</Small>
+                    )}
+                    {!!option.source_location && (
+                      <Small color={colors.mutedFg} style={styles.pickerOptionLocation}>
+                        {option.source_location}
+                      </Small>
+                    )}
+                  </View>
+                  {pickingOptionId === option.id
+                    ? <ActivityIndicator color={colors.primary} />
+                    : <ArrowRight size={18} color={colors.mutedFg} />}
+                </Pressable>
+              ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1003,11 +1233,11 @@ function VisitDetailSheet({
                     <Body weight="700">Visit {index + 1} · {row.name}</Body>
                     <View style={styles.metaLine}>
                       <CalendarDays size={12} color={colors.mutedFg} />
-                      <Small>{timingForRow(row)}</Small>
+                      <Small>{dayForRow(row)}</Small>
                       <Small>·</Small>
                       <Small>
-                        Window {formatVisitWindow({
-                          window_days: Number(row.window_days || 0),
+                        Visit tolerance {formatVisitWindow({
+                          window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
                           window_before: row.window_before,
                           window_after: row.window_after,
                         })}
@@ -1035,20 +1265,11 @@ function VisitDetailSheet({
                 </View>
               )}
 
+
               {editing && (
                 <>
-                  <Field label="Protocol timing label">
-                    <TextInput
-                      testID={`vsource-day-label-${index}`}
-                      value={row.source_day_label}
-                      onChangeText={(value) => onChange(index, "source_day_label", value)}
-                      placeholder="For example: Day 0, Week 4, Unscheduled"
-                      placeholderTextColor={colors.mutedFg}
-                      style={styles.input}
-                    />
-                  </Field>
                   <View style={styles.twoColumns}>
-                  <Field label="Offset from baseline (days)">
+                  <Field label="Day">
                     <TextInput
                       testID={`vday-${index}`}
                       value={row.day_offset}
@@ -1059,7 +1280,7 @@ function VisitDetailSheet({
                       style={styles.input}
                     />
                   </Field>
-                  <Field label="Window (± days)">
+                  <Field label="Window">
                     <TextInput
                       testID={`vwin-${index}`}
                       value={row.window_days}
@@ -1070,12 +1291,14 @@ function VisitDetailSheet({
                   </Field>
                   </View>
                   <Small color={colors.mutedFg} style={styles.offsetHelp}>
-                    0 is the baseline date. Use negative values before baseline and positive values after it.
+                    0 is the baseline date. Leave visit tolerance blank when the protocol does not state one.
                   </Small>
                 </>
               )}
 
+
               <TaskField
+                key={`clinical-${index}`}
                 icon={<Stethoscope size={16} color={colors.primary} />}
                 title="Clinical Tasks"
                 value={row.clinical_tasks}
@@ -1085,14 +1308,16 @@ function VisitDetailSheet({
                 onChange={(value) => onChange(index, "clinical_tasks", value)}
               />
               <TaskField
+                key={`admin-${index}`}
                 icon={<ClipboardList size={16} color={colors.success} />}
-                title="Administrative Tasks"
+                title="Admin Tasks"
                 value={row.admin_tasks}
                 editing={editing}
                 placeholder="eCRF, consent, drug accountability"
                 onChange={(value) => onChange(index, "admin_tasks", value)}
               />
               <TaskField
+                key={`other-${index}`}
                 icon={<CheckCircle2 size={16} color={colors.info} />}
                 title="Other Activities"
                 value={row.activities}
@@ -1122,6 +1347,56 @@ function VisitDetailSheet({
                   </Small>
                 )}
               </View>
+
+              <View style={styles.detailDivider} />
+              <View style={styles.timingSummary}>
+                <View style={styles.timingSummaryBlock}>
+                  <Small color={colors.mutedFg} weight="700">PROTOCOL TIMING (SOURCE)</Small>
+                  <Body weight="700" style={styles.timingSummaryValue}>
+                    {row.source_day_label.trim() || "-"}
+                  </Body>
+                  <Small color={colors.mutedFg}>
+                    Computed placement: {canonicalTimingForRow(row)}
+                  </Small>
+                </View>
+                <View style={styles.timingSummaryBlock}>
+                  <Small color={colors.mutedFg} weight="700">VISIT TOLERANCE</Small>
+                  <Body weight="700" style={styles.timingSummaryValue}>
+                    {formatVisitWindow({
+                      window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
+                      window_before: row.window_before,
+                      window_after: row.window_after,
+                    })}
+                  </Body>
+                  <Small color={colors.mutedFg}>
+                    How early or late the whole visit may occur. Procedure tolerances are separate.
+                  </Small>
+                </View>
+              </View>
+
+              {editing && (
+                  <Field label="Protocol timing (exact source text)">
+                    <TextInput
+                      testID={`vsource-day-label-${index}`}
+                      value={row.source_day_label}
+                      onChangeText={(value) => onChange(index, "source_day_label", value)}
+                      placeholder="For example: Day 0, Week 4, Unscheduled"
+                      placeholderTextColor={colors.mutedFg}
+                      style={styles.input}
+                    />
+                  </Field>
+              )}
+
+              <ProcedureField
+                procedures={row.procedures}
+                editing={editing}
+                onChange={(value) => onChange(index, "procedures", value)}
+              />
+              <ConstraintField
+                value={row.operational_constraints}
+                editing={editing}
+                onChange={(value) => onChange(index, "operational_constraints", value)}
+              />
 
               {warning && (
                 <Pressable
@@ -1193,24 +1468,62 @@ function TaskField({
   placeholder: string;
   onChange: (value: string) => void;
 }) {
-  const tasks = (value || fallback).split(",").map((item) => item.trim()).filter(Boolean);
+  const source = value || fallback;
+  const tasks = source.split(",").map((item) => item.trim()).filter(Boolean);
+  // One row per task, edited in place. The parent still stores a comma-joined
+  // string, so the row list is held locally: a blank row the user just added
+  // would otherwise vanish on the next render before it has been typed into.
+  const [rows, setRows] = useState<string[]>(tasks);
+  const commit = (next: string[]) => {
+    setRows(next);
+    onChange(next.map((item) => item.trim()).filter(Boolean).join(", "));
+  };
+  if (editing) {
+    return (
+      <View>
+        <View style={styles.sectionTitle}>
+          {icon}
+          <Body weight="700">{title}</Body>
+        </View>
+        <View style={styles.taskList}>
+          {rows.map((task, taskIndex) => (
+            <View key={taskIndex} style={styles.taskEditRow}>
+              <TextInput
+                value={task}
+                onChangeText={(text) => commit(
+                  rows.map((item, position) => (position === taskIndex ? text : item)))}
+                placeholder={placeholder}
+                placeholderTextColor={colors.mutedFg}
+                style={[styles.input, styles.flex]}
+              />
+              <Pressable
+                accessibilityLabel={`Remove ${task || "task"}`}
+                onPress={() => commit(rows.filter((_, position) => position !== taskIndex))}
+                style={styles.taskRemove}
+              >
+                <X size={15} color={colors.destructive} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+        <Pressable
+          accessibilityLabel={`Add ${title.toLowerCase()} task`}
+          onPress={() => commit([...rows, ""])}
+          style={styles.addTaskButton}
+        >
+          <Plus size={14} color={colors.primary} />
+          <Small color={colors.primary} weight="700">Add task</Small>
+        </Pressable>
+      </View>
+    );
+  }
   return (
     <View>
       <View style={styles.sectionTitle}>
         {icon}
         <Body weight="700">{title}</Body>
       </View>
-      {editing ? (
-        <TextInput
-          value={value}
-          onChangeText={onChange}
-          placeholder={placeholder}
-          placeholderTextColor={colors.mutedFg}
-          multiline
-          textAlignVertical="top"
-          style={[styles.input, styles.taskInput]}
-        />
-      ) : tasks.length ? (
+      {tasks.length ? (
         <View style={styles.taskList}>
           {tasks.map((task, taskIndex) => (
             <View key={`${task}-${taskIndex}`} style={styles.taskRow}>
@@ -1226,6 +1539,156 @@ function TaskField({
   );
 }
 
+function ProcedureField({
+  procedures,
+  editing,
+  onChange,
+}: {
+  procedures: ProtocolProcedure[];
+  editing: boolean;
+  onChange: (value: ProtocolProcedure[]) => void;
+}) {
+  const update = (index: number, field: keyof ProtocolProcedure, value: string) => {
+    onChange(procedures.map((procedure, procedureIndex) => (
+      procedureIndex === index ? { ...procedure, [field]: value } : procedure
+    )));
+  };
+  return (
+    <View>
+      <View style={styles.sectionTitle}>
+        <Stethoscope size={16} color={colors.primary} />
+        <Body weight="700">Procedure timing & tolerances</Body>
+      </View>
+      {procedures.length ? (
+        <View style={styles.procedureList}>
+          {procedures.map((procedure, procedureIndex) => (
+            <View key={procedure.id || `${procedure.name}-${procedureIndex}`} style={styles.procedureCard}>
+              {editing ? (
+                <>
+                  <View style={styles.procedureEditHeader}>
+                    <TextInput
+                      value={procedure.name}
+                      onChangeText={(value) => update(procedureIndex, "name", value)}
+                      placeholder="Procedure name"
+                      placeholderTextColor={colors.mutedFg}
+                      style={[styles.input, styles.flex]}
+                    />
+                    <Pressable
+                      accessibilityLabel={`Remove ${procedure.name || "procedure"}`}
+                      onPress={() => onChange(procedures.filter((_, index) => index !== procedureIndex))}
+                      style={styles.deleteButton}
+                    >
+                      <Trash2 size={15} color={colors.destructive} />
+                    </Pressable>
+                  </View>
+                  <TextInput
+                    value={procedure.timing || ""}
+                    onChangeText={(value) => update(procedureIndex, "timing", value)}
+                    placeholder="Procedure timing, e.g. 0.5 h post-dose"
+                    placeholderTextColor={colors.mutedFg}
+                    style={styles.input}
+                  />
+                  <TextInput
+                    value={procedure.window || ""}
+                    onChangeText={(value) => update(procedureIndex, "window", value)}
+                    placeholder="Procedure tolerance, e.g. ±2 minutes"
+                    placeholderTextColor={colors.mutedFg}
+                    style={styles.input}
+                  />
+                  <TextInput
+                    value={procedure.condition || procedure.description || ""}
+                    onChangeText={(value) => update(procedureIndex, "condition", value)}
+                    placeholder="Condition or instruction"
+                    placeholderTextColor={colors.mutedFg}
+                    style={styles.input}
+                  />
+                </>
+              ) : (
+                <>
+                  <Body weight="700">{procedure.name}</Body>
+                  {!!procedure.timing && <ProcedureLine label="Timing" value={procedure.timing} />}
+                  {!!procedure.window && <ProcedureLine label="Procedure tolerance" value={procedure.window} />}
+                  {!!procedure.condition && <ProcedureLine label="Condition" value={procedure.condition} />}
+                  {!!procedure.description && !procedure.condition && (
+                    <ProcedureLine label="Details" value={procedure.description} />
+                  )}
+                </>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Small color={colors.mutedFg} style={styles.emptyTask}>
+          No procedure-level timing or tolerance was extracted.
+        </Small>
+      )}
+      {editing && (
+        <Pressable
+          onPress={() => onChange([...procedures, { name: "New procedure" }])}
+          style={styles.addProcedureButton}
+        >
+          <Plus size={14} color={colors.primary} />
+          <Small color={colors.primary} weight="700">Add procedure</Small>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+function ProcedureLine({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.procedureLine}>
+      <Small color={colors.mutedFg} weight="700">{label}:</Small>
+      <Small style={styles.flex}>{value}</Small>
+    </View>
+  );
+}
+
+function ConstraintField({
+  value,
+  editing,
+  onChange,
+}: {
+  value: string;
+  editing: boolean;
+  onChange: (value: string) => void;
+}) {
+  const constraints = normalizeProtocolConstraints(value);
+  return (
+    <View>
+      <View style={styles.sectionTitle}>
+        <ClipboardList size={16} color={colors.warning} />
+        <Body weight="700">Operational constraints</Body>
+      </View>
+      <Small color={colors.mutedFg} style={styles.constraintHelp}>
+        Housing, infusion, washout, sampling, and conditional rules. These are not visit windows.
+      </Small>
+      {editing ? (
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          placeholder="One protocol constraint per line"
+          placeholderTextColor={colors.mutedFg}
+          multiline
+          textAlignVertical="top"
+          style={[styles.input, styles.constraintInput]}
+        />
+      ) : constraints.length ? (
+        <View style={styles.taskList}>
+          {constraints.map((constraint, index) => (
+            <View key={`${constraint}-${index}`} style={styles.taskRow}>
+              <View style={[styles.taskDot, styles.constraintDot]} />
+              <Small style={styles.flex}>{constraint}</Small>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Small color={colors.mutedFg} style={styles.emptyTask}>No operational constraints specified.</Small>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md },
@@ -1234,18 +1697,16 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: "row", alignItems: "center", gap: 5 },
   headerIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   headerIconActive: { backgroundColor: "rgba(255,255,255,0.16)" },
-  extractCard: { padding: 14 },
-  extractHeading: { flexDirection: "row", alignItems: "center", gap: 10 },
-  sparkIcon: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary + "12" },
-  extractCopy: { marginTop: 3, lineHeight: 17 },
-  extractButton: { marginTop: 12, minHeight: 42, borderRadius: radii.md, borderWidth: 1, borderColor: colors.primary + "45", backgroundColor: colors.primary + "0D", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
   disabled: { opacity: 0.65 },
   summary: { marginTop: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   summaryLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
   sourcePill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.primary + "12" },
   pendingPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.warning + "14" },
   verifiedPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.success + "12" },
-  editHint: { marginTop: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: radii.md, borderWidth: 1, borderColor: colors.primary + "25", backgroundColor: colors.primary + "0A", flexDirection: "row", alignItems: "center", gap: 7 },
+  reviewNotesBlock: { marginTop: 8 },
+  reviewNotesToggle: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 4 },
+  reviewNotesList: { marginTop: 4, gap: 6, paddingHorizontal: 2 },
+  reviewNoteItem: { lineHeight: 18 },
   filters: { marginTop: 12, flexDirection: "row", gap: 7 },
   filterChip: { minHeight: 34, paddingHorizontal: 10, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, flexDirection: "row", alignItems: "center", gap: 5 },
   filterChipActive: { borderColor: colors.primary, backgroundColor: colors.primary },
@@ -1257,11 +1718,22 @@ const styles = StyleSheet.create({
   tableHeader: { minHeight: 37, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   tableRow: { borderBottomWidth: 1, borderBottomColor: colors.border },
   warningRow: { backgroundColor: colors.warning + "09" },
-  orderCell: { width: 27, alignItems: "center", justifyContent: "center", gap: 1 },
-  orderButton: { width: 24, height: 19, alignItems: "center", justifyContent: "center" },
+  // A comfortable touch target for dragging, not just the icon's own size.
+  orderCell: { width: 30, minHeight: 40, alignItems: "center", justifyContent: "center" },
+  draggingRow: {
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    zIndex: 20,
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  dropTargetRow: { backgroundColor: colors.primary + "12" },
   numberCell: { width: 26, alignItems: "center", justifyContent: "center", textAlign: "center" },
   nameCell: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 5 },
-  dayCell: { width: 96, textAlign: "center", lineHeight: 15 },
+  dayCell: { width: 48, textAlign: "center", lineHeight: 15 },
   windowCell: { width: 80, textAlign: "center" },
   deleteCell: { width: 29, alignItems: "center", justifyContent: "center" },
   deleteButton: { width: 29, height: 29, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.destructive + "0C" },
@@ -1282,6 +1754,16 @@ const styles = StyleSheet.create({
   secondaryAction: { flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.primary + "45", alignItems: "center", justifyContent: "center" },
   primaryAction: { flex: 1, minHeight: 44, borderRadius: radii.md, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
   successAction: { alignSelf: "stretch", marginTop: 20, minHeight: 46, borderRadius: radii.md, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  pickerCard: { width: "100%", maxWidth: 440, maxHeight: "82%", padding: 20, borderRadius: radii.xl, backgroundColor: colors.card, ...shadows.md },
+  pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  pickerOrb: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary + "16" },
+  pickerScroll: { flexGrow: 0, marginTop: 15 },
+  pickerScrollContent: { gap: 10, paddingBottom: 4 },
+  pickerOption: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  pickerOptionPressed: { borderColor: colors.primary, backgroundColor: colors.secondary },
+  pickerOptionText: { flex: 1 },
+  pickerOptionDescription: { marginTop: 3, lineHeight: 17 },
+  pickerOptionLocation: { marginTop: 3, fontFamily: fonts.mono, fontSize: 11 },
   sheetBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(46,27,51,0.48)" },
   sheetKeyboard: { maxHeight: "89%" },
   sheet: { maxHeight: "100%", borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: colors.card, overflow: "hidden", ...shadows.md },
@@ -1291,6 +1773,9 @@ const styles = StyleSheet.create({
   visitBadgeWarning: { backgroundColor: colors.warning + "16" },
   nameInput: { fontFamily: fonts.semibold, fontSize: 15 },
   metaLine: { marginTop: 4, flexDirection: "row", alignItems: "center", gap: 5 },
+  timingSummary: { gap: 8 },
+  timingSummaryBlock: { padding: 11, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  timingSummaryValue: { marginTop: 3, marginBottom: 3 },
   closeButton: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
   sheetContent: { padding: 17, paddingBottom: 22, gap: 18 },
   warningBanner: { padding: 10, borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning + "35", backgroundColor: colors.warning + "10", flexDirection: "row", alignItems: "flex-start", gap: 7 },
@@ -1302,6 +1787,14 @@ const styles = StyleSheet.create({
   sectionTitle: { marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 7 },
   taskInput: { minHeight: 67 },
   taskList: { gap: 7 },
+  procedureList: { gap: 8 },
+  procedureCard: { gap: 7, padding: 11, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  procedureLine: { flexDirection: "row", alignItems: "flex-start", gap: 5 },
+  procedureEditHeader: { flexDirection: "row", alignItems: "center", gap: 7 },
+  addProcedureButton: { marginTop: 8, minHeight: 36, borderRadius: radii.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.primary + "55", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
+  constraintHelp: { marginTop: -5, marginBottom: 8, lineHeight: 17 },
+  constraintInput: { minHeight: 88 },
+  constraintDot: { backgroundColor: colors.warning },
   taskRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   taskDot: { width: 6, height: 6, marginTop: 6, borderRadius: 3, backgroundColor: colors.primary },
   emptyTask: { fontStyle: "italic" },
@@ -1311,5 +1804,9 @@ const styles = StyleSheet.create({
   undatedNote: { padding: 10, borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning + "35", backgroundColor: colors.warning + "10", flexDirection: "row", alignItems: "flex-start", gap: 7 },
   sheetFooter: { paddingHorizontal: 17, paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border, flexDirection: "row", gap: 10 },
   sheetDelete: { flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.destructive + "35", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  taskEditRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  taskRemove: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
+  addTaskButton: { flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingVertical: spacing.xs },
+  detailDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
   sheetDone: { flex: 1, minHeight: 44, borderRadius: radii.md, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
 });

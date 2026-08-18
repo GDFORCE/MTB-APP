@@ -126,9 +126,12 @@ export type SponsorTrialDetail = {
     source_timing_label?: string | null;
     anchor_study_day?: 0 | 1 | null;
     includes_day_zero?: boolean | null;
-    window_days: number;
+    window_days: number | null;
     window_before?: number | null;
     window_after?: number | null;
+    activities?: string[];
+    procedures?: import("@/src/lib/visit-timing").ProtocolProcedure[];
+    operational_constraints?: string[];
   }[];
   documents: {
     id: string;

@@ -64,12 +64,14 @@ function QuestionSelect({ value, options, onChange }: { value: string; options: 
 
 export default function SecurityQuestions() {
   const router = useRouter();
-  const { role, payload, registration_id, invited } = useLocalSearchParams<{
+  const { role, payload, registration_id, invited, email, phone } = useLocalSearchParams<{
     role: string;
     variant?: string;
     payload?: string;
     registration_id?: string;
     invited?: string;
+    email?: string;
+    phone?: string;
   }>();
   const fld = (() => { try { return JSON.parse(payload || "{}"); } catch { return {}; } })();
   const isVerifiedInvite = invited === "1" && !!registration_id;
@@ -103,7 +105,13 @@ export default function SecurityQuestions() {
         });
         router.push({
           pathname: "/(auth)/set-password",
-          params: { registration_id, role: role || "patient", invited: "1" },
+          params: {
+            registration_id,
+            role: role || "patient",
+            invited: "1",
+            email: email || "",
+            phone: phone || "",
+          },
         });
         return;
       }
@@ -111,11 +119,11 @@ export default function SecurityQuestions() {
       Object.keys(fld).forEach((k) => { if (!CORE.has(k) && fld[k]) profile[k] = fld[k]; });
       // Step 2 already normalized the number to E.164 against the chosen country,
       // so pass it through untouched rather than re-guessing a calling code.
-      const phone = fld.phone ? String(fld.phone).trim() : undefined;
+      const normalizedPhone = fld.phone ? String(fld.phone).trim() : undefined;
       const body: any = {
         full_name: fld.fullName,
         role: role || "patient",
-        phone,
+        phone: normalizedPhone,
         organization: fld.orgName || undefined,
         profile,
         security_questions,

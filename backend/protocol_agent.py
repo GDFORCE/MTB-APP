@@ -1,21 +1,46 @@
 """Bounded evaluator/optimizer agent for protocol schedule extraction."""
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
-from typing import Awaitable, Callable, Literal, TypedDict
+import os
+from collections import Counter
+from collections.abc import MutableMapping
+from typing import Any, Awaitable, Callable, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field, field_validator
 
+from protocol_document_index import (
+    PdfIndexingError,
+    ProtocolDocumentIndex,
+    ProtocolDocumentIndexCache,
+    RetrievalTask,
+    build_protocol_document_index,
+    render_page_selection,
+    retrieve_protocol_pages,
+)
 from protocol_extraction import (
     MAX_OUTPUT_TOKENS,
     ExtractionError,
+    ExtractionNotConfigured,
     ExtractedSchedule,
     ExtractedTrialDetails,
     expand_schedule,
 )
+from schedule_schema import DocumentTaskClassification, SourceEvidence
 
 log = logging.getLogger(__name__)
+
+# Bar for the AI audit's per-dimension accuracy and for evidence-confidence
+# gating. Was a hardcoded 0.95 — strict enough that most real (imperfect,
+# scanned, OCR'd) protocols never reached "verified" and instead looped
+# through refine_node, burning extra Gemini calls and raising the odds of an
+# eventual hard failure. Self-reported by the same model doing the extraction,
+# so treat this as a review-priority knob, not a truth signal: lower it to see
+# more full drafts marked verified, raise it to flag more for manual review.
+MIN_ACCEPT_CONFIDENCE = float(os.getenv("PROTOCOL_EXTRACTION_MIN_CONFIDENCE", "0.75"))
 
 
 class ScheduleAuditIssue(BaseModel):
@@ -63,7 +88,7 @@ class ScheduleAccuracyDimension(BaseModel):
     def accepted(self) -> bool:
         if not self.applicable:
             return True
-        return self.passed and self.accuracy is not None and self.accuracy >= 0.90
+        return self.passed and self.accuracy is not None and self.accuracy >= MIN_ACCEPT_CONFIDENCE
 
 
 class ScheduleAudit(BaseModel):
@@ -175,26 +200,78 @@ class ScheduleDocumentMap(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class EvidenceFact(BaseModel):
+    """One atomic, traceable fact read from the protocol."""
+
+    evidence_id: str = Field(
+        description="Unique stable ID within this extraction, such as timing-p12-01.")
+    claim: str = Field(description="The normalized fact supported by the source.")
+    source_location: str = Field(
+        description="Page plus table, section, footnote, row, or column location.")
+    source_quote: str = Field(
+        description="Short exact text or table-cell content supporting the claim.")
+    page_evidence_id: str = Field(
+        default="",
+        description="Optional ID of the retrieved PDF page/table evidence record.")
+    confidence: float = Field(
+        ge=0, le=1,
+        description="Reading confidence. Low-confidence facts must remain reviewable.")
+
+    @field_validator("evidence_id", "claim", "source_location", "source_quote")
+    @classmethod
+    def evidence_text_is_not_blank(cls, value: str):
+        value = value.strip()
+        if not value:
+            raise ValueError("evidence fields cannot be blank")
+        return value
+
+
 class ScheduleTimingEvidence(BaseModel):
     """Page-cited timing facts collected independently of visit construction."""
 
-    visit_timing: list[str] = Field(default_factory=list)
-    visit_windows: list[str] = Field(default_factory=list)
-    cycle_rules: list[str] = Field(default_factory=list)
-    relative_timing: list[str] = Field(default_factory=list)
-    open_ended_rules: list[str] = Field(default_factory=list)
-    conflicts_or_unknowns: list[str] = Field(default_factory=list)
+    visit_timing: list[EvidenceFact] = Field(default_factory=list)
+    visit_windows: list[EvidenceFact] = Field(default_factory=list)
+    cycle_rules: list[EvidenceFact] = Field(default_factory=list)
+    relative_timing: list[EvidenceFact] = Field(default_factory=list)
+    open_ended_rules: list[EvidenceFact] = Field(default_factory=list)
+    conflicts_or_unknowns: list[EvidenceFact] = Field(default_factory=list)
 
 
 class ScheduleVisitEvidence(BaseModel):
     """Page-cited visit-column, activity, and footnote facts."""
 
-    visit_columns: list[str] = Field(default_factory=list)
-    special_visits: list[str] = Field(default_factory=list)
-    activity_assignments: list[str] = Field(default_factory=list)
-    table_footnotes: list[str] = Field(default_factory=list)
-    arm_period_differences: list[str] = Field(default_factory=list)
-    conflicts_or_unknowns: list[str] = Field(default_factory=list)
+    visit_columns: list[EvidenceFact] = Field(default_factory=list)
+    special_visits: list[EvidenceFact] = Field(default_factory=list)
+    activity_assignments: list[EvidenceFact] = Field(default_factory=list)
+    table_footnotes: list[EvidenceFact] = Field(default_factory=list)
+    arm_period_differences: list[EvidenceFact] = Field(default_factory=list)
+    conflicts_or_unknowns: list[EvidenceFact] = Field(default_factory=list)
+
+
+_CLASSIFICATION_PROMPT = """You are the classification stage of a clinical-protocol
+analysis pipeline. Read the whole attached PDF before extraction. Classify the document
+as a protocol, amendment, synopsis, schedule-only document, reference, mixed bundle, or
+unrelated document. Select the actual task and every applicable schedule archetype:
+linear, cyclic, crossover, multi-arm, multi-phase, event-driven, intra-day, long-term
+extension, or mixed. Detect appended/reference protocols and whether version comparison
+is required. Capture protocol ID, version, amendment ID, and jurisdiction only when
+stated. Cite page/section evidence for the classification. Never infer that a document
+is simple merely because its first schedule table is simple.
+
+MULTIPLE INDEPENDENT SCHEDULES: some protocols (commonly seamless Phase 2/3 designs)
+print more than one genuinely separate Schedule of Assessments/Activities/Events table —
+distinct substudies or sub-protocols, each with its own visit list, duration, and
+population (e.g. "Substudy A – Phase 2", "Substudy 2 – Induction", "Substudy 3 –
+Maintenance", each with its own Schedule of Assessments table). This is DIFFERENT from a
+single schedule shared by multiple arms/cohorts/periods (that stays multi_arm/multi_phase
+with schedule_options left empty) — the test is whether the protocol prints separate
+tables that a reviewer must choose between, not merely separate columns of one table.
+When you find more than one such independent schedule, populate schedule_options with one
+entry per schedule using the protocol's own short name/code as the label and id, a
+one-sentence description (population/duration/purpose), and the table's page/section
+location. Leave schedule_options empty for every other document, including one with
+multiple arms, cohorts, periods, or phases sharing a single table. Return only the
+requested classification schema."""
 
 
 _DISCOVERY_PROMPT = """You are the discovery stage of a clinical-protocol schedule
@@ -217,7 +294,9 @@ Determine whether the baseline/randomization anchor is printed as Day 0 or Day 1
 whether the protocol includes Day 0. Preserve every exact Day/Week/Cycle/Hour label.
 Week 1 is ambiguous unless the protocol defines its relationship to the anchor; do not
 blindly convert it to seven days. Preserve conflicts and unknowns instead of guessing. Every fact must carry a page,
-section, table, footnote, or nearby-label citation. Return only the requested schema."""
+section, table, footnote, or nearby-label citation. Return each fact atomically with a
+unique evidence_id, a short exact source_quote, its precise source_location, and reading
+confidence. Do not combine unrelated facts under one ID. Return only the requested schema."""
 
 _VISIT_EVIDENCE_PROMPT = """You are the visit-matrix specialist in a decomposed
 protocol-analysis pipeline. Do not calculate final absolute offsets or construct the final
@@ -226,12 +305,29 @@ and its protocol label, including screening, baseline, early termination, unsche
 safety follow-up, telephone, and hourly visits. Capture activities per column, table
 footnotes, conditional activities, and genuine arm/period differences. Preserve unreadable
 or conflicting evidence rather than guessing. Cite a page, table, footnote, or nearby label
-for every fact. Return only the requested schema."""
+for every fact. Return each fact atomically with a unique evidence_id, short exact
+source_quote, precise source_location, and reading confidence. Do not combine unrelated
+visit columns or procedures under one ID. Return only the requested schema."""
 
 _SYNTHESIS_PROMPT = """You are the synthesis stage of a decomposed clinical-protocol
 schedule pipeline. Build the complete schedule from the attached PDF and the three
 page-cited evidence packets in the user message. The evidence guides you but the PDF is
 authoritative.
+
+The supplied CLASSIFICATION is authoritative about the analysis task unless the PDF
+contains direct contradictory evidence, which must be recorded as a conflict. Populate
+canonical_plan as the only AI-authored source-of-truth schedule graph. Leave visits and
+repeating_blocks empty; the server deterministically generates the backward-compatible
+mobile-editor projection after validation. Never author a second flat copy of the
+schedule. Use stable unique IDs. Preserve calendar month/year offsets with
+calendar_mode=calendar; never turn them
+into 30/365-day approximations. Represent discharge, last dose, progression, consent,
+randomization, and similar triggers as anchors. Keep open-ended schedules as recurrence
+rules rather than pretending that an arbitrary number of cycles is permanent. Separate
+visit windows from activity/procedure windows. Record conflicting source statements in
+canonical_plan.conflicts instead of choosing one silently. Define arms, cohorts, periods,
+and treatment sequences as branches and express "if/when/only for" applicability as
+conditions rather than deleting conditional visits.
 
 Preserve each exact timing string in source_day_label. Set anchor_study_day to 0 or 1 and
 includes_day_zero only when supported by the protocol. Derive simple Day D offsets using:
@@ -242,21 +338,61 @@ real visits whose timing is unknown with a null day offset. Use relative_to and
 relative_offset_days for timing against another visit. Use hour offsets only for genuine
 intra-day schedules and set hour_offset_basis to absolute; Hour 26 is exactly 26 elapsed
 hours and must not also carry another 24-hour addition. Preserve asymmetric windows.
+An unstated window is null, never +/-3 or any other default.
 
-For collapsed cycles, emit one repeating_blocks entry and let the server expand it; do
-not enumerate repeated cycles manually. Keep explicitly different Cycle 1 visits outside
-the block. Use separate blocks when cadence changes. Put cycle-specific procedures in
-conditional_activities. Duplicate visits by arm only when timing genuinely differs, and
-label crossover periods, washouts, and extensions. Include early termination, unscheduled,
-telephone, and safety follow-up visits when present. Never invent missing facts: record
+For every canonical anchor, event, activity, timing, window, recurrence, transition,
+condition, and conflict, attach supporting evidence IDs in its evidence_ids field. Only
+use IDs present in the supplied evidence packets. If a value has no supporting evidence
+ID, leave it unresolved or empty rather than guessing.
+
+For collapsed cycles, emit recurrence rules in canonical_plan; do not populate legacy
+repeating_blocks and do not enumerate repeated cycles manually. Use separate recurrence
+rules when cadence changes. Put cycle-specific procedures in conditions. Duplicate events
+by arm only when timing genuinely differs, and label crossover periods, washouts, and
+extensions. Include early termination, unscheduled, telephone, and safety follow-up
+events when present.
+
+Classify every event's event_type using the protocol's own visit-type codes when present
+(e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone), otherwise using its role in the
+schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
+'end_of_treatment', 'end_of_study', 'early_termination', 'unscheduled', or 'telephonic'
+(a phone/telephone-icon contact). Do not leave every event at the generic default
+'visit' — the first screening visit, the dosing/randomization visit, telephone-only
+contacts, and the final visit are almost always determinable from the protocol text or
+their position in the schedule. Never invent missing facts: record
 uncertainties or evidence conflicts in assumptions and cite source locations in
 source_notes. If discovery shows no schedule and the PDF confirms it, return schedule_kind
-none with no visits. Return only the requested schedule schema."""
+none with no visits. Return only the requested schedule schema.
+
+TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
+
+_CONFIRMATION_PROMPT = """You are the independent confirmation agent. Reconstruct the
+complete protocol schedule from the PDF and supplied evidence packets without seeing or
+assuming any builder answer. Your job is independent confirmation, not stylistic review.
+
+Use only evidence-supported facts. Attach evidence IDs to every populated canonical
+object and nested timing/window. Leave unknown timing unresolved and unstated windows as
+not_stated. Never apply default windows, never invent events, and never perform uncertain
+Week/Month conversions. Use canonical recurrence rules for collapsed cycles and preserve
+Day 0/Day 1 semantics. Populate canonical_plan only. Leave visits and repeating_blocks
+empty because deterministic server code creates that projection. This independently
+reconstructed graph will be compared deeply with the builder graph by deterministic code.
+Preserve calendar units, event anchors, recurrence rules, activity-level windows,
+conditions, transitions, branches, and conflicts without flattening away their meaning.
+Classify every event's event_type using the protocol's own visit-type codes when present
+(e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone), otherwise using its role in the
+schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
+'end_of_treatment', 'end_of_study', 'early_termination', 'unscheduled', or 'telephonic'.
+Do not leave every event at the generic default 'visit'.
+
+TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
 
-_AUDIT_PROMPT = """You are the independent quality-control reviewer for a clinical-trial
-visit schedule. Compare the candidate JSON against the attached protocol PDF from scratch.
-Do not trust the candidate and do not merely critique its formatting.
+_AUDIT_PROMPT = f"""You are the adjudicating quality-control reviewer for a clinical-trial
+visit schedule. Compare the builder schedule, independently reconstructed confirmation
+schedule, and deterministic disagreement list against the attached protocol PDF. Do not
+trust either schedule and do not merely critique formatting. Every disagreement must be
+resolved from cited protocol evidence or remain a major issue.
 
 Score these dimensions INDEPENDENTLY:
 1. VISIT COVERAGE — is every Schedule of Assessments/Activities/Events column represented,
@@ -272,10 +408,11 @@ Score these dimensions INDEPENDENTLY:
    with no invented, omitted, or duplicated visits, activities, or timing values?
 
 For each applicable dimension, list what was checked, assign its own accuracy, and pass it
-only at 0.90 or higher. Mark a dimension not applicable only after confirming the protocol
-contains no such information. Overall schedule accuracy is a separate end-to-end judgment,
-NOT an average. For example, 95% procedure-mapping accuracy does not imply 95% overall
-schedule accuracy. A strong dimension must never compensate for a weak one.
+only at {MIN_ACCEPT_CONFIDENCE:.2f} or higher. Mark a dimension not applicable only after
+confirming the protocol contains no such information. Overall schedule accuracy is a
+separate end-to-end judgment, NOT an average. For example, high procedure-mapping accuracy
+does not imply equally high overall schedule accuracy. A strong dimension must never
+compensate for a weak one.
 
 Also check treatment-plan prose elsewhere in the PDF that defines cadence or maximum
 cycles. `confidence` measures confidence in your evidence review; it is not an accuracy
@@ -294,76 +431,954 @@ Apply every evidence-backed audit repair. Preserve candidate facts that the audi
 challenge. Search nearby footnotes and cross-referenced treatment-plan sections for each
 missing fact. Never accept an audit claim blindly: if it conflicts with the PDF, retain
 the PDF-supported value and explain the conflict in assumptions. Never invent a value.
-Use repeating_blocks for collapsed cycles; do not manually enumerate them."""
+Use canonical recurrence rules for collapsed cycles; do not manually enumerate them.
+Preserve or add valid evidence_ids for every populated canonical object, use not_stated
+for unstated windows, and make the smallest possible evidence-supported change. Classify
+every event's event_type ('screening', 'baseline', 'randomization', 'treatment',
+'follow_up', 'end_of_treatment', 'end_of_study', 'early_termination', 'unscheduled',
+'telephonic', or the protocol's own visit-type code) instead of leaving it at the
+generic default 'visit'. Populate
+canonical_plan only and leave visits and repeating_blocks empty; deterministic server
+code rebuilds the compatibility rows. Do not discard calendar units, event triggers,
+recurrence, activity windows, conditions, transitions, branches, or unresolved source
+conflicts.
+
+TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
+
+
+_TIMING_FIELDS = {
+    "day_offset", "day_end", "source_day_label", "hour_offset", "hour_end",
+    "hour_offset_basis", "relative_to", "relative_offset_days",
+}
+
+
+# ─────────────────── deterministic PDF page retrieval ───────────────────
+# Every stage receives a page-cited text selection chosen by deterministic
+# scoring instead of the whole protocol. The original PDF stays attached so
+# scanned pages, figures, and anything the retriever missed remain readable;
+# the packet narrows attention, it never becomes the only permitted source.
+
+_StageRetrieval = tuple[RetrievalTask, int, int]
+
+_STAGE_RETRIEVAL: dict[str, _StageRetrieval] = {
+    "classify": ("classification", 14, 45_000),
+    "discover": ("schedule_discovery", 24, 80_000),
+    "timing": ("timing", 24, 80_000),
+    "visit_evidence": ("activities", 24, 80_000),
+    "synthesize": ("review", 28, 90_000),
+    "confirm": ("review", 28, 90_000),
+    "audit": ("review", 24, 80_000),
+    "repair": ("review", 24, 80_000),
+}
+
+_DEFAULT_RETRIEVAL: _StageRetrieval = ("review", 24, 80_000)
+
+
+def _page_context_block(state: "ExtractionAgentState", stage_key: str) -> str:
+    """Render the retrieved page packet for one stage, or '' when unavailable."""
+    index = state.get("page_index")
+    if index is None:
+        return ""
+    task, max_pages, max_characters = _STAGE_RETRIEVAL.get(
+        stage_key, _DEFAULT_RETRIEVAL)
+    cache = state.get("page_context_cache")
+    cache_key = f"{task}:{max_pages}:{max_characters}"
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+    try:
+        selection = retrieve_protocol_pages(
+            index, task=task, max_pages=max_pages, neighbour_radius=1)
+        rendered = render_page_selection(selection, max_characters=max_characters)
+    except (ValueError, PdfIndexingError) as exc:  # never fail a stage on retrieval
+        log.warning("page retrieval for stage %s unavailable: %s", stage_key, exc)
+        return ""
+    notes = [
+        f"document_sha256={index.document_sha256}",
+        f"selected PDF pages: {', '.join(map(str, selection.page_numbers)) or 'none'}",
+        f"{selection.omitted_page_count} page(s) of this PDF are not reproduced below",
+        *selection.retrieval_warnings,
+    ]
+    block = (
+        "RETRIEVED SOURCE PAGES (deterministic selection from the attached PDF; "
+        "page numbers are physical one-based PDF pages):\n"
+        + rendered
+        + "\n\nRETRIEVAL NOTES:\n- "
+        + "\n- ".join(notes)
+        + "\n\nThese pages are a focus aid, not a boundary. The attached PDF remains "
+        "authoritative: read any other page when a fact is missing here, and never "
+        "treat a page absent from this selection as evidence that a fact is unstated. "
+        "When a fact comes from a page reproduced above, copy that page's evidence_id "
+        "into page_evidence_id and keep its PDF page number in source_location."
+    )
+    if cache is not None:
+        cache[cache_key] = block
+    return block
+
+
+def _stage_prompt(state: "ExtractionAgentState", stage_key: str, body: str) -> str:
+    """Prefix a stage instruction with its retrieved page packet and guidance."""
+    sections = [_page_context_block(state, stage_key)]
+    if stage_key not in ("classify", "discover"):
+        sections.append(_classification_guidance(
+            state.get("classification"), state.get("selected_schedule_option_id")))
+    sections.append(body)
+    return "\n\n".join(section for section in sections if section)
+
+
+# ────────────────── classification-driven extraction routing ──────────────────
+
+_DOCUMENT_GUIDANCE: dict[str, str] = {
+    "amendment": (
+        "This is an amendment. Extract the amended schedule, state which protocol "
+        "version each changed fact belongs to, and record any pre-amendment value "
+        "that survives elsewhere in the bundle as a conflict rather than deleting it."
+    ),
+    "mixed": (
+        "This bundle contains more than one document. Keep each document's schedule "
+        "facts separate, identify which document a fact came from in its "
+        "source_location, and record cross-document contradictions as conflicts."
+    ),
+    "synopsis": (
+        "This is a synopsis, so its schedule is usually incomplete. Extract only what "
+        "is printed and record the missing detail in assumptions; do not fill gaps "
+        "from a typical protocol."
+    ),
+    "schedule_only": (
+        "This is a schedule table/flow-chart document with no surrounding prose. The "
+        "cycle length, cycle count, and window definitions are usually in the table "
+        "header rows and footnotes — read every footnote marker before concluding a "
+        "value is unstated, and leave genuinely absent values unresolved."
+    ),
+    "reference": (
+        "This is a reference document appended to a protocol. Extract a schedule only "
+        "if it prints one; otherwise return schedule_kind none."
+    ),
+    "unrelated": (
+        "This document is not a protocol. Do not manufacture a schedule; return "
+        "schedule_kind none with an empty visit list."
+    ),
+}
+
+_TASK_GUIDANCE: dict[str, str] = {
+    "amendment_comparison": (
+        "Task: version comparison. Locate both the amended and the appended/referenced "
+        "base version, compare them field by field, and record every difference. When "
+        "the two versions disagree and the governing version is not stated, record an "
+        "unresolved conflict instead of silently preferring one."
+    ),
+    "schedule_table_only": (
+        "Task: table-focused extraction. Work from the schedule table, its header rows, "
+        "its column labels, and its footnotes. Do not infer cadence from prose that is "
+        "not present in this document."
+    ),
+    "no_schedule": (
+        "Task: no schedule. Confirm the absence and return schedule_kind none."
+    ),
+}
+
+_ARCHETYPE_GUIDANCE: dict[str, str] = {
+    "cyclic": (
+        "Cyclic/oncology: build cycle templates with recurrence rules. Emit a separate "
+        "recurrence whenever the cadence changes, capture the maximum cycle count and "
+        "the end condition (progression, toxicity, withdrawal), and keep a genuinely "
+        "open-ended tail as an open recurrence rather than an invented final cycle."
+    ),
+    "crossover": (
+        "Crossover: model each period, its treatment sequence, and every washout. "
+        "Attach visits to their period branch, keep sequence-specific timing distinct, "
+        "and express washout duration as a transition/constraint, not as a visit."
+    ),
+    "multi_arm": (
+        "Multi-arm: define arms as branches. Duplicate an event per arm only when the "
+        "arms genuinely differ in timing, windows, or activities; otherwise emit the "
+        "shared event once with no arm."
+    ),
+    "multi_phase": (
+        "Multi-phase: define each phase (screening, run-in, treatment, follow-up, "
+        "extension) and attach every event to its phase, keeping the day numbering "
+        "convention of each phase explicit."
+    ),
+    "intra_day": (
+        "Intra-day: preserve hour and minute timepoints exactly. Hour N means N elapsed "
+        "hours from the anchor and must not gain an extra day. Keep procedure-level "
+        "tolerances on the activity, never on the visit window."
+    ),
+    "event_driven": (
+        "Event-driven: represent last dose, discharge, disease progression, surgery, "
+        "end of treatment, and similar triggers as anchors, and leave the calculated "
+        "day unresolved when the trigger date is patient-specific."
+    ),
+    "long_term_extension": (
+        "Long-term extension: keep the extension as its own phase with its own anchor "
+        "and cadence; do not continue the core-study day numbering unless the protocol "
+        "explicitly does."
+    ),
+    "linear": (
+        "Linear: enumerate every printed visit column in order, including screening, "
+        "baseline, early termination, unscheduled, telephone, and safety follow-up."
+    ),
+    "mixed": (
+        "Mixed structure: more than one archetype applies. Model each part with the "
+        "structure the protocol actually prints instead of forcing one shape."
+    ),
+}
+
+
+def _classification_guidance(
+    classification: DocumentTaskClassification | None,
+    selected_schedule_option_id: str | None = None,
+) -> str:
+    """Turn the classification decision into stage-specific extraction rules."""
+    if classification is None:
+        return ""
+    lines: list[str] = []
+    document_rule = _DOCUMENT_GUIDANCE.get(classification.document_type)
+    if document_rule:
+        lines.append(document_rule)
+    task_rule = _TASK_GUIDANCE.get(classification.analysis_task)
+    if task_rule:
+        lines.append(task_rule)
+    for archetype in classification.schedule_archetypes:
+        rule = _ARCHETYPE_GUIDANCE.get(archetype)
+        if rule and rule not in lines:
+            lines.append(rule)
+    if len(classification.schedule_options) > 1:
+        selected = next(
+            (option for option in classification.schedule_options
+             if option.id == selected_schedule_option_id), None)
+        if selected is not None:
+            lines.append(
+                "This protocol prints more than one independent Schedule of "
+                f"Assessments. The reviewer selected: '{selected.label}'"
+                + (f" — {selected.description}" if selected.description else "")
+                + (f" (found at {selected.source_location})"
+                   if selected.source_location else "")
+                + ". Build the schedule ONLY for this selected schedule: use "
+                "only ITS visit table, timing, windows, and activities. Do not "
+                "pull in visits, timing, or activities that belong exclusively "
+                "to another listed schedule/substudy, even if they share a "
+                "screening period or background therapy with the selected one.")
+        else:
+            options = "; ".join(
+                f"{option.id} ({option.label})"
+                for option in classification.schedule_options)
+            lines.append(
+                "This protocol prints more than one independent Schedule of "
+                f"Assessments: {options}. No selection has been made yet, so "
+                "record the schedule_options for review rather than merging "
+                "every schedule into one.")
+    if classification.has_attached_reference:
+        lines.append(
+            "An appended/referenced protocol was detected. Read it, and mark any fact "
+            "that exists only in the appended reference with its own source_location.")
+    if classification.needs_version_comparison:
+        lines.append(
+            "Version comparison is required. Every schedule fact must state which "
+            "protocol version it belongs to.")
+    if classification.complexity == "complex":
+        lines.append(
+            "This document was classified complex. Prefer leaving a fact unresolved "
+            "over resolving it from a simpler reading than the protocol supports.")
+    if not classification.has_schedule:
+        lines.append(
+            "Classification found no visit schedule. Do not synthesize one; if the PDF "
+            "contradicts that classification, record the contradiction as a conflict.")
+    if not lines:
+        return ""
+    header = (
+        "EXTRACTION GUIDANCE (derived from the authoritative classification: "
+        f"document_type={classification.document_type}, "
+        f"analysis_task={classification.analysis_task}, "
+        f"archetypes={', '.join(classification.schedule_archetypes) or 'none'}):"
+    )
+    return header + "\n- " + "\n- ".join(lines)
+
+
+def _evidence_catalog(
+    timing: ScheduleTimingEvidence,
+    visits: ScheduleVisitEvidence,
+) -> tuple[dict[str, EvidenceFact], set[str], set[str], set[str]]:
+    timing_facts = [
+        *timing.visit_timing, *timing.cycle_rules, *timing.relative_timing,
+        *timing.open_ended_rules,
+    ]
+    window_facts = list(timing.visit_windows)
+    visit_facts = [
+        *visits.visit_columns, *visits.special_visits,
+        *visits.activity_assignments, *visits.table_footnotes,
+        *visits.arm_period_differences,
+    ]
+    all_facts = [
+        *timing_facts, *window_facts, *timing.conflicts_or_unknowns,
+        *visit_facts, *visits.conflicts_or_unknowns,
+    ]
+    catalog = {fact.evidence_id: fact for fact in all_facts}
+    return (
+        catalog,
+        {fact.evidence_id for fact in timing_facts},
+        {fact.evidence_id for fact in window_facts},
+        {fact.evidence_id for fact in visit_facts},
+    )
+
+
+def _validate_evidence_links(
+    schedule: ExtractedSchedule,
+    timing: ScheduleTimingEvidence,
+    visits: ScheduleVisitEvidence,
+) -> list[str]:
+    """Reject unsupported values instead of trusting plausible model output."""
+    catalog, timing_ids, window_ids, visit_ids = _evidence_catalog(timing, visits)
+    issues: list[str] = []
+    evidence_ids = [
+        fact.evidence_id
+        for packet in (timing, visits)
+        for value in packet.__dict__.values()
+        if isinstance(value, list)
+        for fact in value
+        if isinstance(fact, EvidenceFact)
+    ]
+    duplicates = sorted(
+        evidence_id for evidence_id, count in Counter(evidence_ids).items() if count > 1)
+    if duplicates:
+        issues.append("Evidence IDs are not unique: " + ", ".join(duplicates))
+    expanded = expand_schedule(schedule)
+    for index, visit in enumerate(expanded.visits, 1):
+        label = visit.name or f"visit {index}"
+        links = {
+            item.field.strip().lower(): set(item.evidence_ids)
+            for item in visit.field_evidence
+        }
+        referenced = set().union(*links.values()) if links else set()
+        unknown = sorted(referenced - set(catalog))
+        if unknown:
+            issues.append(f"'{label}' cites unknown evidence IDs: {', '.join(unknown)}")
+
+        def require(field: str, allowed: set[str]) -> None:
+            refs = links.get(field, set())
+            if not refs:
+                issues.append(f"'{label}' has no evidence for {field}")
+                return
+            if not refs.intersection(allowed):
+                issues.append(f"'{label}' cites the wrong evidence category for {field}")
+            weak = [ref for ref in refs if ref in catalog and catalog[ref].confidence < MIN_ACCEPT_CONFIDENCE]
+            if weak:
+                issues.append(
+                    f"'{label}' uses below-threshold confidence evidence for {field}: "
+                    + ", ".join(sorted(weak)))
+
+        require("name", visit_ids)
+        if any(getattr(visit, field, None) is not None for field in _TIMING_FIELDS):
+            require("timing", timing_ids)
+        if any(value is not None for value in (
+            visit.window_days, visit.window_before, visit.window_after,
+        )):
+            require("window", window_ids)
+        if visit.activities:
+            require("activities", visit_ids)
+        if visit.arm:
+            require("arm", visit_ids)
+        if visit.period:
+            require("period", visit_ids)
+
+    # Flat rows are only a deterministic projection. Validate the richer graph
+    # directly so a procedure window, recurrence, condition, or transition cannot
+    # bypass evidence checks merely because the mobile table does not show it.
+    plan = schedule.canonical_plan
+    if plan is not None:
+        known_ids = set(catalog)
+
+        def require_canonical(
+            path: str,
+            refs: list[str],
+            allowed: set[str] | None = None,
+        ) -> None:
+            refs = list(dict.fromkeys(refs))
+            if not refs:
+                issues.append(f"Canonical {path} has no evidence")
+                return
+            unknown = sorted(set(refs) - known_ids)
+            if unknown:
+                issues.append(
+                    f"Canonical {path} cites unknown evidence IDs: "
+                    + ", ".join(unknown))
+            if allowed is not None and not set(refs).intersection(allowed):
+                issues.append(f"Canonical {path} cites the wrong evidence category")
+            weak = sorted(
+                ref for ref in refs
+                if ref in catalog and catalog[ref].confidence < MIN_ACCEPT_CONFIDENCE)
+            if weak:
+                issues.append(
+                    f"Canonical {path} uses below-threshold confidence evidence: "
+                    + ", ".join(weak))
+
+        for item in plan.anchors:
+            require_canonical(f"anchor {item.id}", item.evidence_ids, timing_ids)
+        for item in plan.phases:
+            require_canonical(f"phase {item.id}", item.evidence_ids)
+        for item in plan.branches:
+            require_canonical(f"branch {item.id}", item.evidence_ids)
+        for item in plan.activities:
+            require_canonical(f"activity {item.id}", item.evidence_ids, visit_ids)
+            if item.timing is not None:
+                require_canonical(
+                    f"activity {item.id} timing", item.timing.evidence_ids)
+            if item.window is not None and item.window.state != "not_stated":
+                require_canonical(
+                    f"activity {item.id} window", item.window.evidence_ids)
+        for item in plan.events:
+            require_canonical(f"event {item.id}", item.evidence_ids, visit_ids)
+            require_canonical(
+                f"event {item.id} timing", item.timing.evidence_ids, timing_ids)
+            if item.window.state != "not_stated":
+                require_canonical(
+                    f"event {item.id} window", item.window.evidence_ids, window_ids)
+        for collection_name, collection in (
+            ("recurrence", plan.recurrences),
+            ("transition", plan.transitions),
+            ("condition", plan.conditions),
+            ("conflict", plan.conflicts),
+        ):
+            for item in collection:
+                require_canonical(
+                    f"{collection_name} {item.id}", item.evidence_ids)
+    return issues
+
+
+def _visit_signature(visit) -> tuple:
+    clean = lambda value: str(value or "").strip().lower()
+    return (
+        clean(visit.name), clean(visit.visit_type), visit.day_offset, visit.day_end,
+        visit.hour_offset, clean(visit.hour_offset_basis), visit.hour_end,
+        visit.window_days, visit.window_before, visit.window_after,
+        clean(visit.relative_to), visit.relative_offset_days, clean(visit.arm),
+        clean(visit.period), tuple(sorted(clean(item) for item in visit.activities)),
+    )
+
+
+def _canonical_schedule_signatures(plan) -> dict[str, Counter]:
+    """Return ID-independent semantic signatures for every graph collection.
+
+    Builder and confirmer may choose different internal IDs for the same protocol
+    concept. Comparing raw JSON would therefore create false disagreements. These
+    signatures resolve references to semantic labels and compare all schedule-bearing
+    fields while deliberately excluding evidence IDs (validated separately).
+    """
+    clean = lambda value: " ".join(str(value or "").split()).casefold()
+
+    def number(value):
+        return None if value is None else round(float(value), 8)
+
+    def amount(value):
+        return None if value is None else (number(value.value), value.unit)
+
+    anchor_refs = {
+        item.id: ("anchor", clean(item.name), item.anchor_type)
+        for item in plan.anchors
+    }
+    phase_refs = {
+        item.id: ("phase", clean(item.name), item.phase_type)
+        for item in plan.phases
+    }
+    branch_refs = {
+        item.id: ("branch", clean(item.name), item.branch_type)
+        for item in plan.branches
+    }
+    event_refs = {
+        item.id: ("event", clean(item.name), clean(item.event_type))
+        for item in plan.events
+    }
+    activity_refs = {
+        item.id: ("activity", clean(item.name))
+        for item in plan.activities
+    }
+    refs = anchor_refs | phase_refs | branch_refs | event_refs | activity_refs
+
+    def ref(value):
+        if value is None:
+            return None
+        return refs.get(value, ("unknown-reference", clean(value)))
+
+    def timing(value):
+        if value is None:
+            return None
+        return (
+            value.kind, ref(value.anchor_id), amount(value.offset),
+            amount(value.range_start), amount(value.range_end), value.relation,
+            value.calendar_mode, clean(value.source_label),
+        )
+
+    def window(value):
+        if value is None:
+            return None
+        return (
+            value.scope, value.state, amount(value.early), amount(value.late),
+            clean(value.source_label),
+        )
+
+    signatures: dict[str, Counter] = {
+        "anchors": Counter(
+            (clean(item.name), item.anchor_type, clean(item.source_label))
+            for item in plan.anchors
+        ),
+        "phases": Counter(
+            (clean(item.name), item.phase_type, ref(item.parent_phase_id))
+            for item in plan.phases
+        ),
+        "branches": Counter(
+            (clean(item.name), item.branch_type, ref(item.parent_branch_id))
+            for item in plan.branches
+        ),
+        "activities": Counter(
+            (clean(item.name), timing(item.timing), window(item.window),
+             clean(item.conditional_text))
+            for item in plan.activities
+        ),
+        "events": Counter(
+            (
+                clean(item.name), clean(item.event_type), ref(item.phase_id),
+                ref(item.arm_id), ref(item.period_id), timing(item.timing),
+                window(item.window),
+                tuple(sorted((ref(activity_id) for activity_id in item.activity_ids),
+                             key=repr)),
+                item.required, clean(item.conditional_text),
+            )
+            for item in plan.events
+        ),
+        "recurrences": Counter(
+            (
+                tuple(sorted((ref(event_id) for event_id in item.event_ids), key=repr)),
+                amount(item.frequency), item.start_occurrence, item.end_occurrence,
+                ref(item.until_event_id), clean(item.source_label),
+            )
+            for item in plan.recurrences
+        ),
+        "transitions": Counter(
+            (ref(item.from_event_id), ref(item.to_event_id), item.relation,
+             amount(item.amount))
+            for item in plan.transitions
+        ),
+        "conditions": Counter(
+            (
+                clean(item.expression),
+                tuple(sorted((ref(target_id) for target_id in item.applies_to_ids),
+                             key=repr)),
+            )
+            for item in plan.conditions
+        ),
+        "conflicts": Counter(
+            (clean(item.field_path), clean(item.description), clean(item.resolution),
+             item.status)
+            for item in plan.conflicts
+        ),
+    }
+    return signatures
+
+
+def _signature_preview(signature: tuple, count: int) -> str:
+    rendered = repr(signature)
+    if len(rendered) > 240:
+        rendered = rendered[:237] + "..."
+    return f"{rendered} (x{count})" if count > 1 else rendered
+
+
+def _schedule_disagreements(
+    builder: ExtractedSchedule,
+    confirmer: ExtractedSchedule,
+) -> list[str]:
+    """Compare independently authored, deterministically expanded schedules."""
+    left, right = expand_schedule(builder), expand_schedule(confirmer)
+    issues: list[str] = []
+    for field in ("schedule_kind", "anchor_study_day", "includes_day_zero", "total_cycles"):
+        if getattr(left, field) != getattr(right, field):
+            issues.append(
+                f"Builder/confirmer disagree on {field}: "
+                f"{getattr(left, field)!r} vs {getattr(right, field)!r}")
+    left_rows = Counter(_visit_signature(visit) for visit in left.visits)
+    right_rows = Counter(_visit_signature(visit) for visit in right.visits)
+    builder_only = list((left_rows - right_rows).elements())
+    confirmer_only = list((right_rows - left_rows).elements())
+    if builder_only or confirmer_only:
+        issues.append(
+            "Independent schedules differ: "
+            f"builder has {len(left.visits)} visit(s), confirmer has {len(right.visits)} visit(s).")
+        for row in builder_only[:5]:
+            issues.append(f"Builder-only or differing visit: {row[0] or '<unnamed>'}")
+        for row in confirmer_only[:5]:
+            issues.append(f"Confirmer-only or differing visit: {row[0] or '<unnamed>'}")
+    if (left.canonical_plan is None) != (right.canonical_plan is None):
+        issues.append("Builder/confirmer disagree on whether a canonical schedule graph exists")
+    elif left.canonical_plan and right.canonical_plan:
+        for field in ("schema_version", "protocol_id", "protocol_version", "title"):
+            builder_value = getattr(left.canonical_plan, field)
+            confirmer_value = getattr(right.canonical_plan, field)
+            normalized_builder = " ".join(str(builder_value or "").split()).casefold()
+            normalized_confirmer = " ".join(str(confirmer_value or "").split()).casefold()
+            if normalized_builder != normalized_confirmer:
+                issues.append(
+                    f"Builder/confirmer canonical {field} differs: "
+                    f"{builder_value!r} vs {confirmer_value!r}")
+        builder_signatures = _canonical_schedule_signatures(left.canonical_plan)
+        confirmer_signatures = _canonical_schedule_signatures(right.canonical_plan)
+        for collection, builder_rows in builder_signatures.items():
+            confirmer_rows = confirmer_signatures[collection]
+            builder_only = builder_rows - confirmer_rows
+            confirmer_only = confirmer_rows - builder_rows
+            if not builder_only and not confirmer_only:
+                continue
+            issues.append(
+                f"Builder/confirmer canonical {collection} differ: "
+                f"builder has {sum(builder_rows.values())}, "
+                f"confirmer has {sum(confirmer_rows.values())}.")
+            for signature, count in sorted(builder_only.items(), key=lambda item: repr(item[0]))[:3]:
+                issues.append(
+                    f"Builder-only canonical {collection}: "
+                    + _signature_preview(signature, count))
+            for signature, count in sorted(confirmer_only.items(), key=lambda item: repr(item[0]))[:3]:
+                issues.append(
+                    f"Confirmer-only canonical {collection}: "
+                    + _signature_preview(signature, count))
+    return issues
+
+
+def _structural_issues(schedule: ExtractedSchedule) -> list[str]:
+    expanded = expand_schedule(schedule)
+    issues = list(expanded.verification_issues)
+    if expanded.schedule_kind == "none" and expanded.visits:
+        issues.append("schedule_kind is none but visits were produced")
+    if expanded.schedule_kind not in (None, "none") and not expanded.visits:
+        issues.append("a schedule kind was identified but no visits were produced")
+    signatures = Counter(_visit_signature(visit) for visit in expanded.visits)
+    duplicates = [row for row, count in signatures.items() if count > 1]
+    for row in duplicates[:5]:
+        issues.append(f"duplicate compiled visit: {row[0] or '<unnamed>'}")
+    dated = [visit.day_offset for visit in expanded.visits if visit.day_offset is not None]
+    if len(dated) >= 3 and len(set(dated)) == 1:
+        issues.append(f"all {len(dated)} dated visits collapse onto day {dated[0]}")
+    return list(dict.fromkeys(issues))
 
 
 Generate = Callable[..., Awaitable[BaseModel]]
+StageCheckpoint = MutableMapping[str, Any]
+
+_CHECKPOINT_FORMAT = "canonical-schedule-agent-v1"
+_CHECKPOINT_PDF_KEY = "__pdf_sha256__"
+_CHECKPOINT_FORMAT_KEY = "__format__"
 
 
 class ExtractionAgentState(TypedDict, total=False):
     pdf_bytes: bytes
+    page_index: ProtocolDocumentIndex | None
+    page_context_cache: MutableMapping[str, str]
+    selected_schedule_option_id: str | None
+    classification: DocumentTaskClassification
     document_map: ScheduleDocumentMap
     timing_evidence: ScheduleTimingEvidence
     visit_evidence: ScheduleVisitEvidence
     candidate: ExtractedSchedule
+    confirmation_candidate: ExtractedSchedule
+    confirmation_issues: list[str]
     audit: ScheduleAudit
     refinement_count: int
     max_refinements: int
     result: ExtractedSchedule
     stage_warnings: list[str]
     stop_after_stage_error: bool
+    stage_checkpoint: StageCheckpoint
 
 
-def build_schedule_extraction_graph(generate: Generate):
+def build_schedule_extraction_graph(
+    generate: Generate,
+    confirmation_generate: Generate | None = None,
+    *,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+):
     """Compile discovery -> evidence -> synthesis -> audit -> repair."""
+    confirmation_generate = confirmation_generate or generate
+    stage_max_attempts = max(1, min(int(stage_max_attempts), 5))
+    retry_base_delay_seconds = max(0.0, float(retry_base_delay_seconds))
+
+    async def run_stage(
+        state: ExtractionAgentState,
+        stage_key: str,
+        prompt: str,
+        schema,
+        *,
+        system_instruction: str,
+        max_tokens: int,
+        stage_generate: Generate | None = None,
+    ):
+        """Reuse a completed stage or retry only the failing provider call.
+
+        The checkpoint is plain JSON-compatible data, so an API worker may persist
+        it between attempts. A malformed cached value is ignored and regenerated;
+        completed upstream stages are never paid for again during a resumed run.
+        """
+        checkpoint = state["stage_checkpoint"]
+        cached = checkpoint.get(stage_key)
+        if cached is not None:
+            try:
+                value = cached.model_dump() if isinstance(cached, BaseModel) else cached
+                restored = schema.model_validate(value)
+                log.info("schedule extraction stage %s restored from checkpoint", stage_key)
+                return restored
+            except (TypeError, ValueError):
+                log.warning("ignoring invalid schedule extraction checkpoint %s", stage_key)
+                checkpoint.pop(stage_key, None)
+
+        stage_generate = stage_generate or generate
+        last_error: BaseException | None = None
+        for attempt in range(1, stage_max_attempts + 1):
+            try:
+                result = await stage_generate(
+                    state["pdf_bytes"], prompt, schema,
+                    system_instruction=system_instruction,
+                    max_tokens=max_tokens,
+                )
+                if not isinstance(result, schema):
+                    result = schema.model_validate(
+                        result.model_dump() if isinstance(result, BaseModel) else result)
+                checkpoint[stage_key] = result.model_dump(mode="json")
+                return result
+            except ExtractionNotConfigured:
+                # Missing credentials cannot recover through backoff.
+                raise
+            except (ExtractionError, TimeoutError, ConnectionError) as exc:
+                last_error = exc
+                if attempt >= stage_max_attempts:
+                    break
+                delay = retry_base_delay_seconds * (2 ** (attempt - 1))
+                log.warning(
+                    "schedule extraction stage %s failed (attempt %d/%d); "
+                    "retrying in %.2fs: %s",
+                    stage_key, attempt, stage_max_attempts, delay, exc,
+                )
+                if delay:
+                    await asyncio.sleep(delay)
+        assert last_error is not None
+        if isinstance(last_error, ExtractionError):
+            raise last_error
+        raise ExtractionError(
+            f"schedule extraction stage {stage_key} failed after "
+            f"{stage_max_attempts} attempt(s)") from last_error
+
+    async def classify_node(state: ExtractionAgentState):
+        classification = await run_stage(
+            state, "classify",
+            _stage_prompt(
+                state, "classify",
+                "Classify this document and the schedule-analysis task before extraction."),
+            DocumentTaskClassification,
+            system_instruction=_CLASSIFICATION_PROMPT,
+            max_tokens=2500,
+        )
+        return {"classification": classification}
 
     async def discover_node(state: ExtractionAgentState):
-        document_map = await generate(
-            state["pdf_bytes"],
-            "Map the protocol sections needed to reconstruct its visit schedule.",
+        document_map = await run_stage(
+            state, "discover",
+            _stage_prompt(
+                state, "discover",
+                "CLASSIFICATION:\n" + state["classification"].model_dump_json()
+                + "\n\n" + _classification_guidance(
+                    state["classification"], state.get("selected_schedule_option_id"))
+                + "\n\nMap the protocol sections needed to reconstruct its visit schedule."),
             ScheduleDocumentMap,
             system_instruction=_DISCOVERY_PROMPT,
-            max_tokens=3500,
+            max_tokens=6000,
         )
         return {"document_map": document_map, "refinement_count": 0}
 
     async def timing_node(state: ExtractionAgentState):
-        timing = await generate(
-            state["pdf_bytes"],
-            "DOCUMENT MAP:\n" + state["document_map"].model_dump_json(),
+        timing = await run_stage(
+            state, "timing",
+            _stage_prompt(
+                state, "timing",
+                "CLASSIFICATION:\n" + state["classification"].model_dump_json()
+                + "\n\nDOCUMENT MAP:\n" + state["document_map"].model_dump_json()),
             ScheduleTimingEvidence,
             system_instruction=_TIMING_PROMPT,
-            max_tokens=5000,
+            max_tokens=12000,
         )
         return {"timing_evidence": timing}
 
     async def visit_evidence_node(state: ExtractionAgentState):
-        visits = await generate(
-            state["pdf_bytes"],
-            "DOCUMENT MAP:\n" + state["document_map"].model_dump_json(),
+        visits = await run_stage(
+            state, "visit_evidence",
+            _stage_prompt(
+                state, "visit_evidence",
+                "CLASSIFICATION:\n" + state["classification"].model_dump_json()
+                + "\n\nDOCUMENT MAP:\n" + state["document_map"].model_dump_json()),
             ScheduleVisitEvidence,
             system_instruction=_VISIT_EVIDENCE_PROMPT,
-            max_tokens=7000,
+            max_tokens=14000,
         )
         return {"visit_evidence": visits}
 
+    async def needs_selection_node(state: ExtractionAgentState):
+        """Stop right after classification when the reviewer must pick a schedule.
+
+        Reached only when classification found more than one independent
+        Schedule of Assessments and the caller has not yet supplied
+        selected_schedule_option_id. Discovery/timing/synthesis/audit would
+        otherwise be spent building a schedule that merges incompatible
+        substudies, so they are skipped entirely until a choice is made.
+        """
+        classification = state["classification"]
+        options = classification.schedule_options
+        note = (
+            "This document contains more than one independent Schedule of "
+            "Assessments ("
+            + "; ".join(f"{option.id}: {option.label}" for option in options)
+            + "). Extraction stopped after classification; re-run with the "
+            "chosen schedule_options[].id to build that schedule."
+        )
+        log.info(
+            "schedule extraction stopped: %d schedule options found, awaiting "
+            "selection (document_type=%s)",
+            len(options), classification.document_type)
+        candidate = ExtractedSchedule(
+            schedule_kind=None,
+            visits=[],
+            assumptions=[note],
+            requires_schedule_selection=True,
+            source_notes="; ".join(
+                option.source_location for option in options
+                if option.source_location) or None,
+        )
+        not_applicable = ScheduleAccuracyDimension(
+            applicable=False, accuracy=None, passed=False, summary=note)
+        audit = ScheduleAudit(
+            approved=True,
+            confidence=classification.confidence,
+            visit_coverage=not_applicable,
+            timing=not_applicable,
+            windows=not_applicable,
+            visit_types=not_applicable,
+            procedure_mapping=not_applicable,
+            overall_schedule=not_applicable,
+            verified_items=list(classification.evidence),
+            issues=[],
+            summary=note,
+        )
+        return {
+            "candidate": candidate,
+            "confirmation_candidate": candidate,
+            "confirmation_issues": [],
+            "timing_evidence": ScheduleTimingEvidence(),
+            "visit_evidence": ScheduleVisitEvidence(),
+            "audit": audit,
+        }
+
+    async def no_schedule_node(state: ExtractionAgentState):
+        """Stop schedule synthesis cleanly when the document has no schedule.
+
+        Reached only when the classifier and the discovery map agree. An empty
+        result is the correct answer here, so the later stages are skipped
+        instead of being asked to audit a schedule that should not exist.
+        """
+        classification = state["classification"]
+        note = (
+            "Classification and discovery agree that this document contains no visit "
+            "schedule, so schedule extraction stopped after metadata discovery.")
+        log.info(
+            "schedule extraction stopped: no schedule (document_type=%s task=%s)",
+            classification.document_type, classification.analysis_task)
+        candidate = ExtractedSchedule(
+            schedule_kind="none",
+            visits=[],
+            assumptions=[note],
+            source_notes="; ".join(
+                state["document_map"].schedule_locations
+                or classification.evidence) or None,
+        )
+        not_applicable = ScheduleAccuracyDimension(
+            applicable=False, accuracy=None, passed=False, summary=note)
+        audit = ScheduleAudit(
+            approved=True,
+            confidence=min(
+                classification.confidence,
+                1.0 if state["document_map"].has_schedule is False else 0.5),
+            visit_coverage=not_applicable,
+            timing=not_applicable,
+            windows=not_applicable,
+            visit_types=not_applicable,
+            procedure_mapping=not_applicable,
+            overall_schedule=not_applicable,
+            verified_items=list(classification.evidence),
+            issues=[],
+            summary=note,
+        )
+        return {
+            "candidate": candidate,
+            "confirmation_candidate": candidate,
+            "confirmation_issues": [],
+            "timing_evidence": ScheduleTimingEvidence(),
+            "visit_evidence": ScheduleVisitEvidence(),
+            "audit": audit,
+        }
+
     async def synthesize_node(state: ExtractionAgentState):
-        evidence = (
-            "DOCUMENT MAP:\n" + state["document_map"].model_dump_json()
+        evidence = _stage_prompt(
+            state, "synthesize",
+            "CLASSIFICATION:\n" + state["classification"].model_dump_json()
+            + "\n\nDOCUMENT MAP:\n" + state["document_map"].model_dump_json()
             + "\n\nTIMING EVIDENCE:\n" + state["timing_evidence"].model_dump_json()
             + "\n\nVISIT/ACTIVITY EVIDENCE:\n" + state["visit_evidence"].model_dump_json()
         )
-        candidate = await generate(
-            state["pdf_bytes"],
-            evidence,
+        candidate = await run_stage(
+            state, "synthesize", evidence,
             ExtractedSchedule,
             system_instruction=_SYNTHESIS_PROMPT,
             max_tokens=MAX_OUTPUT_TOKENS,
         )
         return {"candidate": candidate}
 
+    async def confirm_node(state: ExtractionAgentState):
+        evidence = _stage_prompt(
+            state, "confirm",
+            "CLASSIFICATION:\n" + state["classification"].model_dump_json()
+            + "\n\nDOCUMENT MAP:\n" + state["document_map"].model_dump_json()
+            + "\n\nTIMING EVIDENCE:\n" + state["timing_evidence"].model_dump_json()
+            + "\n\nVISIT/ACTIVITY EVIDENCE:\n" + state["visit_evidence"].model_dump_json()
+        )
+        try:
+            refinement = state.get("refinement_count", 0)
+            confirmation = await run_stage(
+                state, f"confirm:{refinement}", evidence,
+                ExtractedSchedule,
+                system_instruction=_CONFIRMATION_PROMPT,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                stage_generate=confirmation_generate,
+            )
+        except ExtractionError as exc:
+            warning = (
+                "Independent confirmation could not be completed. The schedule "
+                "cannot be marked verified."
+            )
+            log.warning("schedule confirmation unavailable: %s", exc)
+            return {
+                "confirmation_candidate": state["candidate"],
+                "confirmation_issues": [warning],
+                "stage_warnings": list(state.get("stage_warnings", [])) + [warning],
+                "stop_after_stage_error": True,
+            }
+        issues = _schedule_disagreements(state["candidate"], confirmation)
+        issues.extend(_validate_evidence_links(
+            state["candidate"], state["timing_evidence"], state["visit_evidence"]))
+        issues.extend(
+            "Confirmer: " + issue for issue in _validate_evidence_links(
+                confirmation, state["timing_evidence"], state["visit_evidence"]))
+        issues.extend(_structural_issues(state["candidate"]))
+        issues.extend(
+            "Confirmer: " + issue for issue in _structural_issues(confirmation))
+        return {
+            "confirmation_candidate": confirmation,
+            "confirmation_issues": list(dict.fromkeys(issues)),
+        }
+
     async def audit_node(state: ExtractionAgentState):
-        candidate_json = state["candidate"].model_dump_json(
+        candidate_json = expand_schedule(state["candidate"]).model_dump_json(
             exclude={
                 "verification_status",
                 "verification_confidence",
@@ -372,9 +1387,20 @@ def build_schedule_extraction_graph(generate: Generate):
                 "verification_scores",
             })
         try:
-            audit = await generate(
-                state["pdf_bytes"],
-                "Audit this candidate schedule against the PDF:\n\n" + candidate_json,
+            refinement = state.get("refinement_count", 0)
+            audit = await run_stage(
+                state, f"audit:{refinement}",
+                _stage_prompt(
+                    state, "audit",
+                    "BUILDER SCHEDULE:\n" + candidate_json
+                    + "\n\nINDEPENDENT CONFIRMATION SCHEDULE:\n"
+                    + expand_schedule(state["confirmation_candidate"]).model_dump_json(exclude={
+                        "verification_status", "verification_confidence",
+                        "verification_iterations", "verification_issues",
+                        "verification_scores",
+                    })
+                    + "\n\nDETERMINISTIC DISAGREEMENTS:\n"
+                    + "\n".join(state.get("confirmation_issues", []))),
                 ScheduleAudit,
                 system_instruction=_AUDIT_PROMPT,
                 max_tokens=6000,
@@ -408,9 +1434,17 @@ def build_schedule_extraction_graph(generate: Generate):
             })
         audit = state["audit"].model_dump_json()
         try:
-            repaired = await generate(
-                state["pdf_bytes"],
-                "CANDIDATE SCHEDULE:\n" + candidate + "\n\nAUDIT:\n" + audit,
+            refinement = state.get("refinement_count", 0)
+            repaired = await run_stage(
+                state, f"repair:{refinement}",
+                _stage_prompt(
+                    state, "repair",
+                    "CANDIDATE SCHEDULE:\n" + candidate
+                    + "\n\nINDEPENDENT CONFIRMATION:\n"
+                    + state["confirmation_candidate"].model_dump_json()
+                    + "\n\nDETERMINISTIC DISAGREEMENTS:\n"
+                    + "\n".join(state.get("confirmation_issues", []))
+                    + "\n\nAUDIT:\n" + audit),
                 ExtractedSchedule,
                 system_instruction=_REPAIR_PROMPT,
                 max_tokens=MAX_OUTPUT_TOKENS,
@@ -441,7 +1475,20 @@ def build_schedule_extraction_graph(generate: Generate):
             unresolved.append(
                 "Verification did not approve this schedule, but returned no "
                 "specific major finding. Review the protocol manually before saving.")
-        candidate = state["candidate"]
+        evidence_facts = []
+        for packet in (state["timing_evidence"], state["visit_evidence"]):
+            for value in packet.__dict__.values():
+                if isinstance(value, list):
+                    evidence_facts.extend(
+                        SourceEvidence.model_validate(item.model_dump())
+                        for item in value if isinstance(item, EvidenceFact))
+        unique_evidence = {
+            item.evidence_id: item for item in evidence_facts
+        }
+        candidate = state["candidate"].model_copy(update={
+            "classification": state["classification"],
+            "evidence_facts": list(unique_evidence.values()),
+        })
         stage_warnings = list(state.get("stage_warnings", []))
         unresolved.extend(stage_warnings)
         if unresolved:
@@ -450,9 +1497,13 @@ def build_schedule_extraction_graph(generate: Generate):
             })
         expanded = expand_schedule(candidate)
         deterministic_issues = list(expanded.verification_issues)
+        confirmation_issues = list(state.get("confirmation_issues", []))
+        scores = audit.accuracy_scores()
+        scores["independent_confirmation"] = 0.0 if confirmation_issues else 1.0
         result = expanded.model_copy(update={
             "verification_status": (
                 "verified" if audit.accepted
+                and not confirmation_issues
                 and expanded.verification_status != "needs_review"
                 else "needs_review"
             ),
@@ -461,16 +1512,54 @@ def build_schedule_extraction_graph(generate: Generate):
             "verification_issues": (
                 deterministic_issues
                 + [issue.finding for issue in audit.issues]
+                + confirmation_issues
                 + stage_warnings
             ),
-            "verification_scores": audit.accuracy_scores(),
+            "verification_scores": scores,
         })
         return {"result": result}
+
+    def route_after_classification(state: ExtractionAgentState):
+        """Stop before spending discovery/timing/synthesis on the wrong merge.
+
+        Trusted on the classifier alone (no second-stage confirmation, unlike
+        route_after_discovery): schedule_options is itself a deliberate,
+        evidence-cited structured decision, and the failure mode of trusting
+        it is only the same "everything merged into one schedule" outcome the
+        pipeline already produced before this check existed. A single
+        schedule_options entry is not treated as multiple — that just records
+        the one schedule's identity and needs no reviewer choice.
+        """
+        classification = state["classification"]
+        if (
+            len(classification.schedule_options) > 1
+            and not state.get("selected_schedule_option_id")
+        ):
+            return "needs_selection"
+        return "discover"
+
+    def route_after_discovery(state: ExtractionAgentState):
+        """Let the classification change the workflow, not only the prompts.
+
+        Schedule synthesis is skipped only when the AI classifier and the
+        independent discovery map BOTH report no schedule. One of them alone is
+        not enough: a classifier can misread a schedule-only appendix, and a
+        discovery pass can miss a table the classifier saw.
+        """
+        classification = state["classification"]
+        document_map = state["document_map"]
+        classifier_says_none = (
+            classification.analysis_task == "no_schedule"
+            or not classification.has_schedule
+        )
+        if classifier_says_none and not document_map.has_schedule:
+            return "no_schedule"
+        return "timing"
 
     def route_after_audit(state: ExtractionAgentState):
         if state.get("stop_after_stage_error"):
             return "finalize"
-        if state["audit"].accepted:
+        if state["audit"].accepted and not state.get("confirmation_issues"):
             return "finalize"
         if state.get("refinement_count", 0) >= state["max_refinements"]:
             return "finalize"
@@ -480,25 +1569,39 @@ def build_schedule_extraction_graph(generate: Generate):
         return "finalize" if state.get("stop_after_stage_error") else "audit"
 
     graph = StateGraph(ExtractionAgentState)
+    graph.add_node("classify", classify_node)
+    graph.add_node("needs_selection", needs_selection_node)
     graph.add_node("discover", discover_node)
     graph.add_node("timing", timing_node)
     graph.add_node("visit_evidence", visit_evidence_node)
+    graph.add_node("no_schedule", no_schedule_node)
     graph.add_node("synthesize", synthesize_node)
+    graph.add_node("confirm", confirm_node)
     graph.add_node("audit", audit_node)
     graph.add_node("refine", refine_node)
     graph.add_node("finalize", finalize_node)
-    graph.add_edge(START, "discover")
-    graph.add_edge("discover", "timing")
+    graph.add_edge(START, "classify")
+    graph.add_conditional_edges(
+        "classify", route_after_classification,
+        {"discover": "discover", "needs_selection": "needs_selection"},
+    )
+    graph.add_edge("needs_selection", "finalize")
+    graph.add_conditional_edges(
+        "discover", route_after_discovery,
+        {"timing": "timing", "no_schedule": "no_schedule"},
+    )
+    graph.add_edge("no_schedule", "finalize")
     graph.add_edge("timing", "visit_evidence")
     graph.add_edge("visit_evidence", "synthesize")
-    graph.add_edge("synthesize", "audit")
+    graph.add_edge("synthesize", "confirm")
+    graph.add_edge("confirm", "audit")
     graph.add_conditional_edges(
         "audit", route_after_audit,
         {"refine": "refine", "finalize": "finalize"},
     )
     graph.add_conditional_edges(
         "refine", route_after_refine,
-        {"audit": "audit", "finalize": "finalize"},
+        {"audit": "confirm", "finalize": "finalize"},
     )
     graph.add_edge("finalize", END)
     return graph.compile()
@@ -509,9 +1612,21 @@ async def run_schedule_extraction_agent(
     generate: Generate,
     *,
     max_refinements: int = 2,
+    confirmation_generate: Generate | None = None,
+    stage_checkpoint: StageCheckpoint | None = None,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+    page_index: ProtocolDocumentIndex | None = None,
+    selected_schedule_option_id: str | None = None,
 ) -> ExtractedSchedule:
     final_state = await _run_schedule_extraction_graph(
-        pdf_bytes, generate, max_refinements=max_refinements)
+        pdf_bytes, generate, max_refinements=max_refinements,
+        confirmation_generate=confirmation_generate,
+        stage_checkpoint=stage_checkpoint,
+        stage_max_attempts=stage_max_attempts,
+        retry_base_delay_seconds=retry_base_delay_seconds,
+        page_index=page_index,
+        selected_schedule_option_id=selected_schedule_option_id)
     return final_state["result"]
 
 
@@ -520,12 +1635,29 @@ async def run_protocol_extraction_agent(
     generate: Generate,
     *,
     max_refinements: int = 2,
+    confirmation_generate: Generate | None = None,
+    stage_checkpoint: StageCheckpoint | None = None,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+    page_index: ProtocolDocumentIndex | None = None,
+    selected_schedule_option_id: str | None = None,
 ) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
     """Extract metadata and schedule from one shared decomposed model workflow."""
     final_state = await _run_schedule_extraction_graph(
-        pdf_bytes, generate, max_refinements=max_refinements)
-    document_map = final_state["document_map"]
+        pdf_bytes, generate, max_refinements=max_refinements,
+        confirmation_generate=confirmation_generate,
+        stage_checkpoint=stage_checkpoint,
+        stage_max_attempts=stage_max_attempts,
+        retry_base_delay_seconds=retry_base_delay_seconds,
+        page_index=page_index,
+        selected_schedule_option_id=selected_schedule_option_id)
     schedule = final_state["result"]
+    # document_map does not exist when extraction stopped early at
+    # needs_selection — the schedule requires a reviewer choice before any
+    # metadata discovery ran, so trial details are returned empty.
+    document_map = final_state.get("document_map")
+    if document_map is None:
+        return ExtractedTrialDetails(), schedule
     status = document_map.study_status.lower().strip()
     if status not in ("active", "completed", "terminated"):
         status = "active"
@@ -543,14 +1675,83 @@ async def run_protocol_extraction_agent(
     return details, schedule
 
 
+def _page_index_cache() -> ProtocolDocumentIndexCache | None:
+    """Content-addressed index cache, when the deployment configured one.
+
+    Page text is protocol content, so the directory must be private and follow
+    the same retention policy as the source PDF. Without the setting the index
+    is simply rebuilt per request.
+    """
+    directory = os.getenv("PROTOCOL_PAGE_INDEX_CACHE_DIR", "").strip()
+    return ProtocolDocumentIndexCache(directory) if directory else None
+
+
+async def _build_page_index(pdf_bytes: bytes) -> ProtocolDocumentIndex | None:
+    """Index the PDF text once for the whole graph, or continue without it.
+
+    Retrieval only narrows what each stage reads. A PDF that cannot be indexed
+    (scanned, encrypted, malformed text layer) must still be extractable from
+    the attached document, so an indexing failure is logged, never raised.
+    """
+    cache = _page_index_cache()
+    try:
+        if cache is not None:
+            return await asyncio.to_thread(cache.get_or_build, pdf_bytes)
+        return await asyncio.to_thread(build_protocol_document_index, pdf_bytes)
+    except PdfIndexingError as exc:
+        log.warning("protocol page index unavailable; using the PDF alone: %s", exc)
+    except OSError as exc:
+        # An unwritable cache must not cost the caller its extraction.
+        log.warning("protocol page index cache unusable: %s", exc)
+        try:
+            return await asyncio.to_thread(build_protocol_document_index, pdf_bytes)
+        except Exception as inner:
+            log.warning("protocol page index failed: %s", inner)
+    except Exception as exc:  # a retrieval aid must never block extraction
+        log.warning("protocol page index failed unexpectedly: %s", exc, exc_info=True)
+    return None
+
+
 async def _run_schedule_extraction_graph(
     pdf_bytes: bytes,
     generate: Generate,
     *,
     max_refinements: int,
+    confirmation_generate: Generate | None = None,
+    stage_checkpoint: StageCheckpoint | None = None,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+    page_index: ProtocolDocumentIndex | None = None,
+    selected_schedule_option_id: str | None = None,
 ) -> ExtractionAgentState:
-    graph = build_schedule_extraction_graph(generate)
+    checkpoint = stage_checkpoint if stage_checkpoint is not None else {}
+    pdf_digest = hashlib.sha256(pdf_bytes).hexdigest()
+    checkpoint_digest = checkpoint.get(_CHECKPOINT_PDF_KEY)
+    if checkpoint_digest is not None and checkpoint_digest != pdf_digest:
+        raise ValueError("stage checkpoint belongs to a different protocol PDF")
+    checkpoint_format = checkpoint.get(_CHECKPOINT_FORMAT_KEY)
+    if checkpoint_format not in (None, _CHECKPOINT_FORMAT):
+        # Code/schema changes invalidate stage values, but the caller's mapping
+        # remains the checkpoint container for the new run.
+        for key in list(checkpoint):
+            if not str(key).startswith("__"):
+                checkpoint.pop(key, None)
+    checkpoint[_CHECKPOINT_PDF_KEY] = pdf_digest
+    checkpoint[_CHECKPOINT_FORMAT_KEY] = _CHECKPOINT_FORMAT
+    graph = build_schedule_extraction_graph(
+        generate, confirmation_generate,
+        stage_max_attempts=stage_max_attempts,
+        retry_base_delay_seconds=retry_base_delay_seconds,
+    )
+    if page_index is None:
+        page_index = await _build_page_index(pdf_bytes)
+    elif page_index.document_sha256 != pdf_digest:
+        raise ValueError("the supplied page index belongs to a different protocol PDF")
     return await graph.ainvoke({
         "pdf_bytes": pdf_bytes,
+        "page_index": page_index,
+        "page_context_cache": {},
         "max_refinements": max(0, min(max_refinements, 3)),
+        "stage_checkpoint": checkpoint,
+        "selected_schedule_option_id": (selected_schedule_option_id or "").strip() or None,
     })

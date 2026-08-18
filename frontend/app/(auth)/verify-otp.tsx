@@ -161,13 +161,21 @@ export default function VerifyOtp() {
             registration_id: params.registration_id,
             role: params.role,
             invited: "1",
+            email: params.email || "",
+            phone: params.phone || "",
           },
         });
         return;
       }
       router.push({
         pathname: "/(auth)/set-password",
-        params: { registration_id: params.registration_id, role: params.role, invited: params.invited || "" },
+        params: {
+          registration_id: params.registration_id,
+          role: params.role,
+          invited: params.invited || "",
+          email: params.email || "",
+          phone: params.phone || "",
+        },
       });
     } catch (e: any) {
       const detail = String(e?.response?.data?.detail || "");

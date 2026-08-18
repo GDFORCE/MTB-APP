@@ -1,4 +1,4 @@
-"""Persistent-login refresh rotation and theft detection."""
+"""Refresh-token rotation, logout, and theft detection."""
 import asyncio
 import sys
 import uuid
@@ -29,7 +29,7 @@ def make_client():
     )
 
 
-def test_remembered_session_rotates_and_reuse_revokes_family():
+def test_session_rotates_and_reuse_revokes_family():
     user_id = str(uuid.uuid4())
     email = f'remember-{RUN_ID}@example.com'
 
@@ -37,7 +37,7 @@ def test_remembered_session_rotates_and_reuse_revokes_family():
         await server.db.users.insert_one({
             'id': user_id,
             'email': email,
-            'full_name': 'Remember Me Test',
+            'full_name': 'Refresh Token Test',
             'role': 'pi',
             'phone': '',
             'organization': f'Remember Org {RUN_ID}',
@@ -49,7 +49,6 @@ def test_remembered_session_rotates_and_reuse_revokes_family():
                 login = await cli.post('/api/auth/login', json={
                     'email': email,
                     'password': PASSWORD,
-                    'remember_me': True,
                 })
                 assert login.status_code == 200, login.text
                 first = login.json()['refresh_token']
@@ -62,7 +61,6 @@ def test_remembered_session_rotates_and_reuse_revokes_family():
                 first_doc = await server.db.refresh_tokens.find_one({
                     'token_hash': server._refresh_token_hash(first)})
                 assert first_doc['status'] == 'active'
-                assert first_doc['remember_me'] is True
                 assert 29 <= (first_doc['expires_at'] - first_doc['created_at']).days <= 30
 
                 rotated = await cli.post('/api/auth/refresh', json={
@@ -112,7 +110,7 @@ def test_logout_revokes_refresh_family():
         try:
             async with make_client() as cli:
                 login = await cli.post('/api/auth/login', json={
-                    'email': email, 'password': PASSWORD, 'remember_me': False})
+                    'email': email, 'password': PASSWORD})
                 token = login.json()['refresh_token']
                 logged_out = await cli.post('/api/auth/logout', json={
                     'refresh_token': token})
@@ -122,7 +120,6 @@ def test_logout_revokes_refresh_family():
                 assert refresh.status_code == 401, refresh.text
                 token_doc = await server.db.refresh_tokens.find_one({
                     'token_hash': server._refresh_token_hash(token)})
-                assert token_doc['remember_me'] is False
                 assert token_doc['status'] == 'revoked'
         finally:
             await server.db.refresh_tokens.delete_many({'user_id': user_id})

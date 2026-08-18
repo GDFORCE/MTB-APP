@@ -94,6 +94,26 @@ def test_undated_preview_is_manual_review_not_baseline():
     assert "no calculable day offset" in rows[0]["manual_review_reason"]
 
 
+def test_unstated_window_stays_unknown_and_does_not_create_tolerance():
+    template = {
+        "id": "baseline", "visit_number": 1, "name": "Baseline",
+        "day_offset": 0, "window_days": None,
+    }
+    start, end = server._schedule_window(template, ANCHOR)
+    assert start == ANCHOR
+    assert end == ANCHOR
+
+    schedule = ExtractedSchedule.model_validate({
+        "schedule_kind": "linear",
+        "visits": [{"name": "Baseline", "day_offset": 0, "window_days": None}],
+    })
+    payload = server._schedule_extraction_payload(schedule)
+    assert payload["visits"][0]["window_days"] is None
+    assert server.VisitIn(
+        trial_id="trial-1", visit_number=1, name="Baseline",
+    ).window_days is None
+
+
 def test_asymmetric_window_and_day_range_are_preserved():
     template = {
         "source_day_label": "Day 14-17",

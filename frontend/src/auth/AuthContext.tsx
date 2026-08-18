@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, tokenStore, setSessionExpiredHandler } from '../api/client';
+import { commitAutofillContext } from '../../modules/mtb-autofill';
 
 export type Role = 'sponsor' | 'cro' | 'smo' | 'site' | 'pi' | 'crc' | 'patient';
 export type User = { id: string; email: string; full_name: string; role: Role; phone?: string; organization?: string; avatar_initials?: string; org_admin?: boolean; site?: string };
@@ -8,7 +9,7 @@ type Session = { access_token: string; refresh_token: string; user: User };
 interface Ctx {
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string, rememberMe?: boolean) => Promise<User>;
+  signIn: (email: string, password: string) => Promise<User>;
   signUp: (data: any) => Promise<User>;
   applySession: (data: Session) => Promise<User>;
   signOut: () => Promise<void>;
@@ -30,7 +31,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error: any) {
       setUser(null);
       if ([400, 401, 403].includes(error?.response?.status)) {
-        await tokenStore.setPersistence(false);
+        await Promise.all([
+          tokenStore.del('access_token'),
+          tokenStore.del('refresh_token'),
+        ]);
       }
     }
   }, []);
@@ -43,9 +47,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => setSessionExpiredHandler(null);
   }, []);
 
-  const signIn = async (email: string, password: string, rememberMe = false) => {
-    const r = await api.post('/auth/login', { email, password, remember_me: rememberMe });
-    await tokenStore.setPersistence(rememberMe);
+  const signIn = async (email: string, password: string) => {
+    const r = await api.post('/auth/login', { email, password });
+    // Expo Router swaps screens inside one Android Activity, so Android cannot
+    // infer that the login form was submitted. Explicitly finish the OS
+    // autofill context while the hinted fields are still mounted. No
+    // credential value crosses this bridge or enters app storage.
+    commitAutofillContext();
     await tokenStore.set('access_token', r.data.access_token);
     await tokenStore.set('refresh_token', r.data.refresh_token);
     setUser(r.data.user);
@@ -53,7 +61,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
   const signUp = async (data: any) => {
     const r = await api.post('/auth/register', data);
-    await tokenStore.setPersistence(true);
     await tokenStore.set('access_token', r.data.access_token);
     await tokenStore.set('refresh_token', r.data.refresh_token);
     setUser(r.data.user);
@@ -61,7 +68,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
   // Persist tokens + user from a server session payload (used by OTP-verified registration).
   const applySession = async (data: Session) => {
-    await tokenStore.setPersistence(true);
     await tokenStore.set('access_token', data.access_token);
     await tokenStore.set('refresh_token', data.refresh_token);
     setUser(data.user);
@@ -72,7 +78,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       if (refreshToken) await api.post('/auth/logout', { refresh_token: refreshToken });
     } finally {
-      await tokenStore.setPersistence(false);
+      await Promise.all([
+        tokenStore.del('access_token'),
+        tokenStore.del('refresh_token'),
+      ]);
       setUser(null);
     }
   };

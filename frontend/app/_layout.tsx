@@ -78,7 +78,7 @@ export default function RootLayout() {
     <AuthProvider>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
       <RouterGuard />
-      <View style={styles.app} importantForAutofill="noExcludeDescendants">
+      <View style={styles.app}>
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }} />
         <OfflineOverlay />
       </View>

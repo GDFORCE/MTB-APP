@@ -20,7 +20,14 @@ const RULES: { label: string; test: (p: string) => boolean }[] = [
 
 export default function SetPassword() {
   const router = useRouter();
-  const { registration_id, role } = useLocalSearchParams<{ registration_id: string; role: string; invited?: string }>();
+  const { registration_id, role, email, phone } = useLocalSearchParams<{
+    registration_id: string;
+    role: string;
+    invited?: string;
+    email?: string;
+    phone?: string;
+  }>();
+  const loginIdentifier = String(email || phone || "");
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -76,10 +83,36 @@ export default function SetPassword() {
         <AuthHeader eyebrow="Step 5 of 5" title="Set your password" subtitle="This is the last step — your account is created right after." onBack={() => router.back()} step={5} />
 
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {!!loginIdentifier && (
+            <Rise delay={150}>
+              <Text style={s.label}>Login ID</Text>
+              <TextInput
+                value={loginIdentifier}
+                editable={false}
+                autoCapitalize="none"
+                keyboardType={email ? "email-address" : "phone-pad"}
+                textContentType="username"
+                autoComplete={email ? "email" : "username"}
+                importantForAutofill="yes"
+                style={[s.identityInput, s.identityInputReadOnly]}
+              />
+            </Rise>
+          )}
           <Rise delay={200}>
             <Text style={s.label}>Create Password <Text style={{ color: colors.accent }}>*</Text></Text>
             <View style={s.inputRow}>
-              <TextInput value={password} onChangeText={setPassword} secureTextEntry={!showPw} placeholder="Enter a strong password" placeholderTextColor={colors.mutedFg + "99"} autoCapitalize="none" style={s.input} />
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPw}
+                placeholder="Enter a strong password"
+                placeholderTextColor={colors.mutedFg + "99"}
+                autoCapitalize="none"
+                textContentType="newPassword"
+                autoComplete="new-password"
+                importantForAutofill="yes"
+                style={s.input}
+              />
               <Pressable onPress={() => setShowPw((v) => !v)} hitSlop={8} style={s.eye}>{showPw ? <EyeOff size={18} color={colors.mutedFg} /> : <Eye size={18} color={colors.mutedFg} />}</Pressable>
             </View>
           </Rise>
@@ -94,6 +127,9 @@ export default function SetPassword() {
                 placeholder="Re-enter your password"
                 placeholderTextColor={colors.mutedFg + "99"}
                 autoCapitalize="none"
+                textContentType="newPassword"
+                autoComplete="new-password"
+                importantForAutofill="yes"
                 style={s.input}
                 accessibilityHint={showMismatch ? "Passwords do not match" : undefined}
               />
@@ -157,6 +193,8 @@ export default function SetPassword() {
 
 const s = StyleSheet.create({
   label: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground, marginBottom: 6 },
+  identityInput: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular, marginBottom: spacing.md },
+  identityInputReadOnly: { backgroundColor: colors.surface, color: colors.mutedFg },
   inputRow: { flexDirection: "row", alignItems: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14 },
   inputRowError: { borderColor: colors.destructive, backgroundColor: colors.destructive + "08" },
   input: { flex: 1, paddingVertical: 12, fontSize: 15, color: colors.foreground, fontFamily: fonts.regular },

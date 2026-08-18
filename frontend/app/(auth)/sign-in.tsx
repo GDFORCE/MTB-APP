@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { View, TextInput, StyleSheet, ScrollView, Pressable, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Eye, EyeOff, ArrowLeft, Check } from "lucide-react-native";
+import { Eye, EyeOff, ArrowLeft } from "lucide-react-native";
 import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Small, Button } from "@/src/components/ui";
 import { MtbLogo } from "@/src/components/MtbLogo";
@@ -14,13 +14,12 @@ export default function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async () => {
     setLoading(true); setError("");
-    try { await signIn(email.trim(), password, rememberMe); }
+    try { await signIn(email.trim(), password); }
     catch (e: any) { setError(e?.response?.data?.detail || "Login failed"); }
     finally { setLoading(false); }
   };
@@ -45,13 +44,25 @@ export default function SignIn() {
               onChangeText={setEmail}
               autoCapitalize="none"
               keyboardType="default"
+              textContentType="username"
+              autoComplete="email"
+              importantForAutofill="yes"
               placeholder="Email address or phone number"
               style={s.input}
             />
 
             <Small color={colors.foreground} style={{ marginBottom: 6, marginTop: spacing.md, fontWeight: "600" as any }}>Password</Small>
             <View style={{ position: "relative" }}>
-              <TextInput testID="signin-password" value={password} onChangeText={setPassword} secureTextEntry={!showPw} style={[s.input, { paddingRight: 48 }]} />
+              <TextInput
+                testID="signin-password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPw}
+                textContentType="password"
+                autoComplete="current-password"
+                importantForAutofill="yes"
+                style={[s.input, { paddingRight: 48 }]}
+              />
               <Pressable testID="toggle-password" onPress={() => setShowPw(!showPw)} style={s.eye}>
                 {showPw ? <EyeOff size={20} color={colors.mutedFg} /> : <Eye size={20} color={colors.mutedFg} />}
               </Pressable>
@@ -59,19 +70,6 @@ export default function SignIn() {
             {error ? <Small color={colors.destructive} style={{ marginTop: 8 }}>{error}</Small> : null}
 
             <View style={s.loginOptions}>
-              <Pressable
-                testID="signin-remember-me"
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: rememberMe }}
-                accessibilityLabel="Remember me"
-                onPress={() => setRememberMe((current) => !current)}
-                style={s.rememberOption}
-              >
-                <View style={[s.checkbox, rememberMe && s.checkboxChecked]}>
-                  {rememberMe ? <Check size={14} strokeWidth={3} color={colors.primaryFg} /> : null}
-                </View>
-                <Small color={colors.foreground} style={s.rememberLabel}>Remember me</Small>
-              </Pressable>
               <Pressable onPress={() => router.push("/(auth)/forgot-password")} hitSlop={8}>
                 <Small color={colors.accent} style={{ fontWeight: "700" as any }}>Forgot?</Small>
               </Pressable>
@@ -111,10 +109,6 @@ const s = StyleSheet.create({
   back: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground },
   eye: { position: "absolute", right: 12, top: 12 },
-  loginOptions: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  rememberOption: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 8 },
-  checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.card, alignItems: "center", justifyContent: "center" },
-  checkboxChecked: { borderColor: colors.primary, backgroundColor: colors.primary },
-  rememberLabel: { fontWeight: "600" as any },
+  loginOptions: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
   demoBox: { marginTop: spacing.xl, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 });

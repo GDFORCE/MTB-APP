@@ -3,26 +3,49 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from protocol_agent import (  # noqa: E402
+    MIN_ACCEPT_CONFIDENCE,
+    EvidenceFact,
     ScheduleAudit,
     ScheduleDocumentMap,
     ScheduleTimingEvidence,
     ScheduleVisitEvidence,
+    _schedule_disagreements,
     run_protocol_extraction_agent,
     run_schedule_extraction_agent,
 )
 from protocol_extraction import ExtractionError, ExtractedSchedule  # noqa: E402
+from schedule_schema import DocumentTaskClassification  # noqa: E402
 
 
 def _schedule(name: str, day: int) -> ExtractedSchedule:
     return ExtractedSchedule.model_validate({
         "schedule_kind": "linear",
-        "visits": [{"name": name, "day_offset": day}],
+        "visits": [{
+            "name": name,
+            "day_offset": day,
+            "field_evidence": [
+                {"field": "name", "evidence_ids": ["visit-p12-01"]},
+                {"field": "timing", "evidence_ids": ["timing-p12-01"]},
+            ],
+        }],
         "source_notes": "Schedule table",
     })
+
+
+def _fact(evidence_id: str, claim: str) -> EvidenceFact:
+    return EvidenceFact(
+        evidence_id=evidence_id,
+        claim=claim,
+        source_location="Schedule of Assessments, page 12",
+        source_quote=claim,
+        confidence=0.99,
+    )
 
 
 def _audit(*, approved: bool, finding: str | None = None) -> ScheduleAudit:
@@ -64,6 +87,15 @@ def _audit(*, approved: bool, finding: str | None = None) -> ScheduleAudit:
 
 def _decomposition_responses():
     return [
+        DocumentTaskClassification(
+            document_type="protocol",
+            analysis_task="full_protocol_schedule",
+            schedule_archetypes=["linear"],
+            complexity="simple",
+            has_schedule=True,
+            confidence=0.99,
+            evidence=["Schedule of Assessments, page 12"],
+        ),
         ScheduleDocumentMap(
             has_schedule=True,
             schedule_kind="linear",
@@ -79,10 +111,10 @@ def _decomposition_responses():
             stated_total_visits=2,
         ),
         ScheduleTimingEvidence(
-            visit_timing=["Baseline is Day 1 (page 12)"],
+            visit_timing=[_fact("timing-p12-01", "Baseline is Day 1")],
         ),
         ScheduleVisitEvidence(
-            visit_columns=["Baseline (page 12)"],
+            visit_columns=[_fact("visit-p12-01", "Baseline")],
         ),
     ]
 
@@ -90,7 +122,9 @@ def _decomposition_responses():
 def test_agent_repairs_then_reaudits_until_verified():
     responses = _decomposition_responses() + [
         _schedule("Baseline", 0),
+        _schedule("Baseline", 0),
         _audit(approved=False, finding="Day 30 follow-up is missing."),
+        _schedule("Follow-up", 30),
         _schedule("Follow-up", 30),
         _audit(approved=True),
     ]
@@ -106,8 +140,9 @@ def test_agent_repairs_then_reaudits_until_verified():
         b"%PDF-test", generate, max_refinements=2))
 
     assert [call[2].__name__ for call in calls] == [
-        "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
-        "ExtractedSchedule", "ScheduleAudit", "ExtractedSchedule", "ScheduleAudit"]
+        "DocumentTaskClassification", "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
+        "ExtractedSchedule", "ExtractedSchedule", "ScheduleAudit",
+        "ExtractedSchedule", "ExtractedSchedule", "ScheduleAudit"]
     assert result.visits[0].name == "Follow-up"
     assert result.verification_status == "verified"
     assert result.verification_iterations == 1
@@ -117,6 +152,7 @@ def test_agent_repairs_then_reaudits_until_verified():
 
 def test_agent_stops_at_bound_and_surfaces_unresolved_issue():
     responses = _decomposition_responses() + [
+        _schedule("Baseline", 0),
         _schedule("Baseline", 0),
         _audit(approved=False, finding="Day 30 follow-up is missing."),
     ]
@@ -163,7 +199,8 @@ def test_high_procedure_accuracy_cannot_hide_bad_overall_schedule():
         "issues": [],
         "summary": "Procedures match, but the schedule cadence does not.",
     })
-    responses = _decomposition_responses() + [_schedule("Baseline", 0), audit]
+    responses = _decomposition_responses() + [
+        _schedule("Baseline", 0), _schedule("Baseline", 0), audit]
 
     async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
         response = responses.pop(0)
@@ -183,6 +220,7 @@ def test_high_procedure_accuracy_cannot_hide_bad_overall_schedule():
 def test_metadata_and_schedule_share_one_agent_workflow():
     responses = _decomposition_responses() + [
         _schedule("Baseline", 0),
+        _schedule("Baseline", 0),
         _audit(approved=True),
     ]
     calls = []
@@ -197,8 +235,8 @@ def test_metadata_and_schedule_share_one_agent_workflow():
         b"%PDF-test", generate, max_refinements=2))
 
     assert calls == [
-        "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
-        "ExtractedSchedule", "ScheduleAudit",
+        "DocumentTaskClassification", "ScheduleDocumentMap", "ScheduleTimingEvidence", "ScheduleVisitEvidence",
+        "ExtractedSchedule", "ExtractedSchedule", "ScheduleAudit",
     ]
     assert details.title == "Combined extraction study"
     assert details.ctri_number == "CTRI/2026/08/123456"
@@ -216,9 +254,14 @@ def test_agent_cannot_verify_a_deterministically_corrected_day_offset():
             "name": "Day 8",
             "source_day_label": "Day 8",
             "day_offset": 8,
+            "field_evidence": [
+                {"field": "name", "evidence_ids": ["visit-p12-01"]},
+                {"field": "timing", "evidence_ids": ["timing-p12-01"]},
+            ],
         }],
     })
-    responses = _decomposition_responses() + [corrected, _audit(approved=True)]
+    responses = _decomposition_responses() + [
+        corrected, corrected.model_copy(deep=True), _audit(approved=True)]
 
     async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
         response = responses.pop(0)
@@ -235,6 +278,7 @@ def test_agent_cannot_verify_a_deterministically_corrected_day_offset():
 
 def test_agent_retains_valid_candidate_when_repair_output_is_malformed():
     responses = _decomposition_responses() + [
+        _schedule("Baseline", 0),
         _schedule("Baseline", 0),
         _audit(approved=False, finding="Day 30 follow-up is missing."),
     ]
@@ -256,7 +300,8 @@ def test_agent_retains_valid_candidate_when_repair_output_is_malformed():
 
 
 def test_agent_returns_review_draft_when_audit_is_unavailable():
-    responses = _decomposition_responses() + [_schedule("Baseline", 0)]
+    responses = _decomposition_responses() + [
+        _schedule("Baseline", 0), _schedule("Baseline", 0)]
 
     async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
         if schema is ScheduleAudit:
@@ -274,3 +319,182 @@ def test_agent_returns_review_draft_when_audit_is_unavailable():
     assert result.verification_scores["overall_schedule"] is None
     assert any("verification could not be completed" in item
                for item in result.verification_issues)
+
+
+def test_independent_disagreement_blocks_verification():
+    responses = _decomposition_responses() + [
+        _schedule("Baseline", 0),
+        _schedule("Follow-up", 30),
+        _audit(approved=True),
+    ]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=0))
+
+    assert result.verification_status == "needs_review"
+    assert result.verification_scores["independent_confirmation"] == 0.0
+    assert any("Independent schedules differ" in issue
+               for issue in result.verification_issues)
+
+
+def test_missing_field_evidence_blocks_verification():
+    unsupported = ExtractedSchedule.model_validate({
+        "schedule_kind": "linear",
+        "visits": [{"name": "Baseline", "day_offset": 0}],
+    })
+    responses = _decomposition_responses() + [
+        unsupported, unsupported.model_copy(deep=True), _audit(approved=True)]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=0))
+
+    assert result.verification_status == "needs_review"
+    assert any("no evidence for name" in issue for issue in result.verification_issues)
+    assert any("no evidence for timing" in issue for issue in result.verification_issues)
+
+
+def test_below_threshold_evidence_blocks_verification():
+    responses = _decomposition_responses()
+    responses[2].visit_timing[0].confidence = MIN_ACCEPT_CONFIDENCE - 0.01
+    responses += [
+        _schedule("Baseline", 0), _schedule("Baseline", 0), _audit(approved=True)]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=0))
+
+    assert result.verification_status == "needs_review"
+    assert any("below-threshold confidence evidence" in issue
+               for issue in result.verification_issues)
+
+
+def _canonical_schedule(*, prefix: str, activity_window_minutes: int) -> ExtractedSchedule:
+    return ExtractedSchedule.model_validate({
+        "schedule_kind": "linear",
+        "canonical_plan": {
+            "anchors": [{
+                "id": f"{prefix}-baseline",
+                "name": "First dose",
+                "anchor_type": "first_dose",
+                "source_label": "Day 1",
+            }],
+            "activities": [{
+                "id": f"{prefix}-pk",
+                "name": "PK blood draw",
+                "window": {
+                    "scope": "activity",
+                    "state": "stated",
+                    "early": {"value": activity_window_minutes, "unit": "minute"},
+                    "late": {"value": activity_window_minutes, "unit": "minute"},
+                },
+            }],
+            "events": [{
+                "id": f"{prefix}-day1",
+                "name": "Dosing Visit",
+                "event_type": "site",
+                "timing": {
+                    "kind": "offset",
+                    "anchor_id": f"{prefix}-baseline",
+                    "offset": {"value": 0, "unit": "day"},
+                    "source_label": "Day 1",
+                },
+                "activity_ids": [f"{prefix}-pk"],
+            }],
+        },
+    })
+
+
+def test_canonical_comparison_is_deep_and_id_independent():
+    builder = _canonical_schedule(prefix="builder", activity_window_minutes=2)
+    same_semantics = _canonical_schedule(prefix="confirmer", activity_window_minutes=2)
+    changed_window = _canonical_schedule(prefix="confirmer", activity_window_minutes=5)
+
+    assert not any(
+        "canonical" in issue.casefold()
+        for issue in _schedule_disagreements(builder, same_semantics)
+    )
+    issues = _schedule_disagreements(builder, changed_window)
+    assert any("canonical activities differ" in issue for issue in issues)
+    assert any("Builder-only canonical activities" in issue for issue in issues)
+    assert any("Confirmer-only canonical activities" in issue for issue in issues)
+
+
+def test_agent_retries_only_the_failed_stage():
+    responses = _decomposition_responses() + [
+        _schedule("Baseline", 0), _schedule("Baseline", 0), _audit(approved=True)]
+    calls: list[str] = []
+    failed_once = False
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        nonlocal failed_once
+        calls.append(schema.__name__)
+        if schema is DocumentTaskClassification and not failed_once:
+            failed_once = True
+            raise ExtractionError("temporary 503")
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-retry", generate, max_refinements=0,
+        stage_max_attempts=2, retry_base_delay_seconds=0))
+
+    assert calls[:3] == [
+        "DocumentTaskClassification", "DocumentTaskClassification", "ScheduleDocumentMap"]
+    assert calls.count("ScheduleDocumentMap") == 1
+    assert result.verification_status == "verified"
+
+
+def test_agent_resumes_completed_stages_from_json_checkpoint():
+    checkpoint: dict = {}
+    first_responses = _decomposition_responses()
+    first_calls: list[str] = []
+
+    async def interrupted_generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        first_calls.append(schema.__name__)
+        if schema is ExtractedSchedule:
+            raise ExtractionError("synthesis temporarily unavailable")
+        response = first_responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    with pytest.raises(ExtractionError):
+        asyncio.run(run_schedule_extraction_agent(
+            b"%PDF-checkpoint", interrupted_generate, max_refinements=0,
+            stage_checkpoint=checkpoint, stage_max_attempts=1,
+            retry_base_delay_seconds=0))
+
+    assert {"classify", "discover", "timing", "visit_evidence"}.issubset(checkpoint)
+    assert "synthesize" not in checkpoint
+
+    second_responses = [
+        _schedule("Baseline", 0), _schedule("Baseline", 0), _audit(approved=True)]
+    resumed_calls: list[str] = []
+
+    async def resumed_generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        resumed_calls.append(schema.__name__)
+        response = second_responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-checkpoint", resumed_generate, max_refinements=0,
+        stage_checkpoint=checkpoint, stage_max_attempts=1,
+        retry_base_delay_seconds=0))
+
+    assert resumed_calls == ["ExtractedSchedule", "ExtractedSchedule", "ScheduleAudit"]
+    assert result.verification_status == "verified"

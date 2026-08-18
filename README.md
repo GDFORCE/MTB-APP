@@ -40,24 +40,28 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 
 With `PROTOCOL_EXTRACTION_PROVIDER=gemini`, schedule extraction runs as a
 bounded LangGraph evaluator/optimizer workflow. Gemini maps the document,
-collects timing evidence, collects visit/activity evidence, synthesizes the
-schedule, and independently audits it against the PDF. A targeted repair pass
-fixes evidence-backed omissions or errors before re-auditing. Configure the
-maximum number of repair passes in `backend/.env`:
+collects traceable timing and visit/activity evidence, builds one schedule, and
+independently reconstructs a second confirmation schedule without seeing the
+builder output. Deterministic code expands and compares both schedules before
+an adjudicating audit. A repair pass fixes evidence-backed omissions or errors
+before both confirmation and audit run again. Configure the maximum number of
+repair passes in `backend/.env`:
 
 ```dotenv
 PROTOCOL_EXTRACTION_PROVIDER=gemini
 GEMINI_API_KEY=your-key
+GEMINI_PROTOCOL_CONFIRMATION_MODEL=your-independent-confirmation-model
 PROTOCOL_EXTRACTION_MAX_REFINEMENTS=2
 ```
 
 The API returns `verification.status`, audit confidence, refinement count,
 remaining issues, and separate accuracy values for visit coverage, timing,
 windows, visit types, procedure mapping, and the overall schedule. Every
-applicable dimension must pass independently; a strong procedure score cannot
-hide weak timing or an incomplete schedule. A schedule that reaches the limit
-with unresolved findings is marked `needs_review`; extraction remains a draft
-requiring human approval.
+applicable dimension must score at least 95%, all populated fields must link to
+high-confidence evidence, and the builder and confirmer must agree. Missing
+windows remain unknown instead of becoming a fabricated default. A schedule
+that reaches the limit with unresolved findings is marked `needs_review`;
+extraction remains a draft requiring human approval.
 
 The Add Trial PDF upload uses this same workflow to populate both screens. It
 returns trial metadata and stores the audited schedule for two

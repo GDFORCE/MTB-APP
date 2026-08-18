@@ -101,3 +101,14 @@ credentials.json
 
 # Git worktrees (used for isolated feature work)
 .worktrees/
+
+# Manual backup snapshots and scratch/temp working files
+.backup-protocol-upgrade-*/
+.tmp/
+
+# Protocol PDFs uploaded locally for testing — may be confidential/proprietary
+/pdf.pdf
+/*.pdf
+
+# Native module local Android build cache
+frontend/modules/**/android/.gradle/

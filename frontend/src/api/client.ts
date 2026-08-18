@@ -41,46 +41,15 @@ const persistentStore = {
     : SecureStore.deleteItemAsync(k, nativeSecureOptions(k)),
 };
 
-// A non-remembered login remains usable for the lifetime of the current app
-// process, but its tokens are never left in device storage for the next launch.
-const memoryTokens = new Map<string, string>();
-let persistSession = false;
-let persistenceLoaded = false;
-
-async function loadPersistencePreference() {
-  if (persistenceLoaded) return;
-  persistSession = (await persistentStore.get('remember_session')) === '1';
-  persistenceLoaded = true;
-}
-
 export const tokenStore = {
   async get(k: string) {
-    const inMemory = memoryTokens.get(k);
-    return inMemory !== undefined ? inMemory : persistentStore.get(k);
+    return persistentStore.get(k);
   },
   async set(k: string, v: string) {
-    await loadPersistencePreference();
-    memoryTokens.set(k, v);
-    if (persistSession) await persistentStore.set(k, v);
-    else await persistentStore.del(k);
+    await persistentStore.set(k, v);
   },
   async del(k: string) {
-    memoryTokens.delete(k);
     await persistentStore.del(k);
-  },
-  async setPersistence(remember: boolean) {
-    persistSession = remember;
-    persistenceLoaded = true;
-    if (remember) await persistentStore.set('remember_session', '1');
-    else await persistentStore.del('remember_session');
-    if (!remember) {
-      memoryTokens.delete('access_token');
-      memoryTokens.delete('refresh_token');
-      await Promise.all([
-        persistentStore.del('access_token'),
-        persistentStore.del('refresh_token'),
-      ]);
-    }
   },
 };
 
@@ -146,7 +115,10 @@ api.interceptors.response.use(
       return api(original);
     }
     // Refresh failed → hard sign-out; only route to session-timeout if a session existed.
-    await tokenStore.setPersistence(false);
+    await Promise.all([
+      tokenStore.del('access_token'),
+      tokenStore.del('refresh_token'),
+    ]);
     if (hadSession) {
       onSessionExpired?.();
       router.replace('/session-timeout');

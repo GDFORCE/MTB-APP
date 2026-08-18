@@ -227,7 +227,6 @@ def test_phone_only_patient_can_log_in_with_phone_number():
                     # value is now an email-or-phone identifier.
                     'email': raw_phone,
                     'password': PASSWORD,
-                    'remember_me': False,
                 })
                 wrong_password = await cli.post('/api/auth/login', json={
                     'email': raw_phone,
