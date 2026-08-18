@@ -1329,7 +1329,11 @@ class GeminiProtocolExtractor:
                         # it's written (finish_reason=MAX_TOKENS with no field-level
                         # error). This task is schema-conformant extraction, not
                         # open-ended reasoning, so thinking buys nothing here.
-                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                        # thinking_budget=0 (fully disabled) is rejected outright
+                        # by newer models (400 INVALID_ARGUMENT) — 1 is the
+                        # smallest budget every generation observed so far
+                        # accepts, so it keeps this protection everywhere.
+                        thinking_config=types.ThinkingConfig(thinking_budget=1),
                     ),
                 )
             except errors.APIError as exc:
