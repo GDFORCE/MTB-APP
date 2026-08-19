@@ -23,6 +23,7 @@ import {
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
+import { sanitizeDesignation, sanitizeDigits, sanitizeName, sanitizeOrgName } from "@/src/lib/validators";
 
 const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 
@@ -375,10 +376,10 @@ function AddInviteSheet({ open, onClose, onCreated }: { open: boolean; onClose: 
         </View>
       ) : (
         <View style={{ gap: 12 }}>
-          <FormField label="Full name"><Input value={form.full_name} onChangeText={(v) => setForm({ ...form, full_name: v })} placeholder="Dr. Jane Doe" /></FormField>
+          <FormField label="Full name"><Input value={form.full_name} onChangeText={(v) => setForm({ ...form, full_name: sanitizeName(v) })} placeholder="Dr. Jane Doe" /></FormField>
           <FormField label="Email"><Input value={form.email} onChangeText={(v) => setForm({ ...form, email: v })} placeholder="jane@org.com" keyboardType="email-address" autoCapitalize="none" /></FormField>
-          <FormField label="Phone"><Input value={form.phone} onChangeText={(v) => setForm({ ...form, phone: v })} placeholder="+91-XXXXXXXXXX" keyboardType="phone-pad" /></FormField>
-          <FormField label="Designation"><Input value={form.designation} onChangeText={(v) => setForm({ ...form, designation: v })} placeholder="Principal Investigator" /></FormField>
+          <FormField label="Phone"><Input value={form.phone} onChangeText={(v) => setForm({ ...form, phone: sanitizeDigits(v, 10) })} placeholder="+91-XXXXXXXXXX" keyboardType="phone-pad" /></FormField>
+          <FormField label="Designation"><Input value={form.designation} onChangeText={(v) => setForm({ ...form, designation: sanitizeDesignation(v) })} placeholder="Principal Investigator" /></FormField>
           <FormField label="Role">
             <View style={st.chipWrap}>
               {CREATE_ROLES.map((r) => (
@@ -397,8 +398,8 @@ function AddInviteSheet({ open, onClose, onCreated }: { open: boolean; onClose: 
               ))}
             </View>
           </FormField>
-          <FormField label="Organization"><Input value={form.organization} onChangeText={(v) => setForm({ ...form, organization: v })} placeholder="Organization name" /></FormField>
-          <FormField label="Site"><Input value={form.site} onChangeText={(v) => setForm({ ...form, site: v })} placeholder="Site name (optional)" /></FormField>
+          <FormField label="Organization"><Input value={form.organization} onChangeText={(v) => setForm({ ...form, organization: sanitizeOrgName(v) })} placeholder="Organization name" /></FormField>
+          <FormField label="Site"><Input value={form.site} onChangeText={(v) => setForm({ ...form, site: sanitizeOrgName(v) })} placeholder="Site name (optional)" /></FormField>
           {err && <RNText style={st.errText}>{err}</RNText>}
           <SheetActions cancelLabel="Cancel" onCancel={onClose} confirmLabel="Send invitation" onConfirm={submit} disabled={!valid} loading={saving} />
         </View>

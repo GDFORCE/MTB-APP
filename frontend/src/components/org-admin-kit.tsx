@@ -32,6 +32,7 @@ import { useRouter } from "expo-router";
 import { colors as C, dawnGradient, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
+import { sanitizeDesignation, sanitizeName } from "@/src/lib/validators";
 
 const W = { w10: "rgba(255,255,255,0.10)", w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w60: "rgba(255,255,255,0.60)", w70: "rgba(255,255,255,0.70)", w75: "rgba(255,255,255,0.75)" };
 
@@ -921,8 +922,8 @@ function InviteMemberSheet({ config, onClose, onSend }: { config: InviteConfig; 
   return (
     <Sheet open onClose={onClose} title="Invite organization member">
       <View style={{ gap: 12 }}>
-        <Field label="Full name"><KitInput value={name} onChangeText={setName} placeholder="Enter member's name" /></Field>
-        <Field label="Designation"><KitInput value={designation} onChangeText={setDesignation} placeholder="e.g. Research Associate" /></Field>
+        <Field label="Full name"><KitInput value={name} onChangeText={(v: string) => setName(sanitizeName(v))} placeholder="Enter member's name" /></Field>
+        <Field label="Designation"><KitInput value={designation} onChangeText={(v: string) => setDesignation(sanitizeDesignation(v))} placeholder="e.g. Research Associate" /></Field>
         <Field label="Email ID" required><KitInput value={email} onChangeText={setEmail} placeholder="member@example.com" keyboardType="email-address" autoCapitalize="none" /></Field>
         <Field label="Role">
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

@@ -19,6 +19,7 @@ import { colors as C, fonts } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { formatVisitTiming, formatVisitWindow } from "@/src/lib/visit-timing";
+import { sanitizeAddress, sanitizeOrgName } from "@/src/lib/validators";
 import {
   useOrgContext, useToast, ConsoleHeader, DeckTabs, AuditTrail, TeamRoster,
   DelegationGate, Loading, ErrorCard, EmptyCard,
@@ -388,8 +389,8 @@ function AddSiteSheet({ open, onClose, onSubmit }: { open: boolean; onClose: () 
   return (
     <Sheet open={open} onClose={onClose} title="Add affiliated hospital">
       <View style={{ gap: 12 }}>
-        <Field label="Hospital name" required><KitInput value={name} onChangeText={setName} placeholder="e.g. Apollo Mumbai" /></Field>
-        <Field label="Hospital address"><KitInput value={address} onChangeText={setAddress} multiline placeholder="Street, city, PIN" /></Field>
+        <Field label="Hospital name" required><KitInput value={name} onChangeText={(v: string) => setName(sanitizeOrgName(v))} placeholder="e.g. Apollo Mumbai" /></Field>
+        <Field label="Hospital address"><KitInput value={address} onChangeText={(v: string) => setAddress(sanitizeAddress(v))} multiline placeholder="Street, city, PIN" /></Field>
         {err && <RNText style={st.errTxt}>{err}</RNText>}
         <PrimaryButton label="Add hospital" disabled={!name.trim()} loading={busy} onPress={submit} bg={C.violet} gradient={false} />
       </View>

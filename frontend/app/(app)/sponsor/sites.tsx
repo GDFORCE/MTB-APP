@@ -46,6 +46,7 @@ import type {
   SponsorTrial,
 } from "@/src/features/sponsor/types";
 import type { PickedAsset } from "@/src/lib/upload";
+import { sanitizeAddress, sanitizeDesignation, sanitizeDigits, sanitizeName, sanitizeOrgName } from "@/src/lib/validators";
 import { colors, dawnGradient, fonts, shadows } from "@/src/theme/tokens";
 
 type SiteAccess = "full" | "restricted" | "view_only";
@@ -926,14 +927,14 @@ export default function SponsorSitesScreen() {
                   )}
 
                   <Text style={styles.panelLabel}>SITE DETAILS</Text>
-                  <FormField label="SITE / HOSPITAL NAME *" value={siteName} onChangeText={setSiteName} placeholder="Apollo Site 04" />
-                  <FormField label="ADDRESS" value={address} onChangeText={setAddress} placeholder="Building and street" />
+                  <FormField label="SITE / HOSPITAL NAME *" value={siteName} onChangeText={(v: string) => setSiteName(sanitizeOrgName(v))} placeholder="Apollo Site 04" />
+                  <FormField label="ADDRESS" value={address} onChangeText={(v: string) => setAddress(sanitizeAddress(v))} placeholder="Building and street" />
                   <View style={styles.fieldRow}>
                     <View style={styles.fieldHalf}>
-                      <FormField label="CITY" value={city} onChangeText={setCity} placeholder="Mumbai" />
+                      <FormField label="CITY" value={city} onChangeText={(v: string) => setCity(sanitizeAddress(v))} placeholder="Mumbai" />
                     </View>
                     <View style={styles.fieldHalf}>
-                      <FormField label="STATE" value={stateName} onChangeText={setStateName} placeholder="Maharashtra" />
+                      <FormField label="STATE" value={stateName} onChangeText={(v: string) => setStateName(sanitizeName(v))} placeholder="Maharashtra" />
                     </View>
                   </View>
 
@@ -978,13 +979,13 @@ export default function SponsorSitesScreen() {
                       </Text>
                     </View>
                   )}
-                  <FormField label="PI NAME *" value={piName} onChangeText={setPiName} placeholder="Dr. First Last" />
-                  <FormField label="DEPARTMENT" value={department} onChangeText={setDepartment} placeholder="Endocrinology" />
-                  <FormField label="PI PHONE" value={piPhone} onChangeText={setPiPhone} placeholder="+91 98765 43210" keyboardType="phone-pad" />
+                  <FormField label="PI NAME *" value={piName} onChangeText={(v: string) => setPiName(sanitizeName(v))} placeholder="Dr. First Last" />
+                  <FormField label="DEPARTMENT" value={department} onChangeText={(v: string) => setDepartment(sanitizeDesignation(v))} placeholder="Endocrinology" />
+                  <FormField label="PI PHONE" value={piPhone} onChangeText={(v: string) => setPiPhone(sanitizeDigits(v, 10))} placeholder="+91 98765 43210" keyboardType="phone-pad" />
                   <FormField
                     label="TARGET ALLOCATION"
                     value={targetEnrollment}
-                    onChangeText={setTargetEnrollment}
+                    onChangeText={(v: string) => setTargetEnrollment(sanitizeDigits(v))}
                     placeholder="e.g. 40"
                     keyboardType="number-pad"
                   />

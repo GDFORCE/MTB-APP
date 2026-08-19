@@ -6,6 +6,7 @@ import { colors, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
+import { sanitizeName } from "@/src/lib/validators";
 
 export default function InvitePatient() {
   const router = useRouter();
@@ -65,7 +66,7 @@ export default function InvitePatient() {
               <Small>The patient receives a secure link to register and download the app. Their record is auto-linked to your trial.</Small>
             </Card>
             <Eyebrow style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>Patient details</Eyebrow>
-            <F label="Full name" value={name} onChange={setName} testID="invite-name" />
+            <F label="Full name" value={name} onChange={(v: string) => setName(sanitizeName(v))} testID="invite-name" />
             <F label="Email" value={email} onChange={(v: string) => { setEmail(v); if (err) setErr(null); }} testID="invite-email" keyboardType="email-address" />
             <F label="Phone (optional)" value={phone} onChange={(v: string) => { setPhone(v); if (err) setErr(null); }} testID="invite-phone" keyboardType="phone-pad" />
             {err ? <Small testID="invite-error" color={colors.destructive}>{err}</Small> : null}

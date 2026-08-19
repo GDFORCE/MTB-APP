@@ -29,6 +29,7 @@ import { useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
+import { sanitizeDigits, sanitizeName, sanitizeOrgName } from "@/src/lib/validators";
 
 const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 
@@ -430,9 +431,9 @@ function AddUserSheet({ open, onClose, onCreated }: { open: boolean; onClose: ()
   return (
     <Sheet open={open} onClose={onClose} title="Add user">
       <View style={{ gap: 12 }}>
-        <FormField label="Full name"><Input value={form.full_name} onChangeText={(v) => setForm({ ...form, full_name: v })} placeholder="Jane Doe" /></FormField>
+        <FormField label="Full name"><Input value={form.full_name} onChangeText={(v) => setForm({ ...form, full_name: sanitizeName(v) })} placeholder="Jane Doe" /></FormField>
         <FormField label="Email"><Input value={form.email} onChangeText={(v) => setForm({ ...form, email: v })} placeholder="jane@org.com" keyboardType="email-address" autoCapitalize="none" /></FormField>
-        <FormField label="Phone"><Input value={form.phone} onChangeText={(v) => setForm({ ...form, phone: v })} placeholder="+91-XXXXXXXXXX" keyboardType="phone-pad" /></FormField>
+        <FormField label="Phone"><Input value={form.phone} onChangeText={(v) => setForm({ ...form, phone: sanitizeDigits(v, 10) })} placeholder="+91-XXXXXXXXXX" keyboardType="phone-pad" /></FormField>
         <FormField label="Role">
           <View style={st.chipWrap}>
             {CREATE_ROLES.map((r) => (
@@ -442,7 +443,7 @@ function AddUserSheet({ open, onClose, onCreated }: { open: boolean; onClose: ()
             ))}
           </View>
         </FormField>
-        <FormField label="Organization"><Input value={form.organization} onChangeText={(v) => setForm({ ...form, organization: v })} placeholder="Join existing or create new" /></FormField>
+        <FormField label="Organization"><Input value={form.organization} onChangeText={(v) => setForm({ ...form, organization: sanitizeOrgName(v) })} placeholder="Join existing or create new" /></FormField>
         <Pressable onPress={() => setForm({ ...form, send_invite: !form.send_invite })} style={st.switchRow}>
           <RNText style={st.switchLabel}>Send onboarding invitation</RNText>
           <Switch value={form.send_invite} onValueChange={(v) => setForm({ ...form, send_invite: v })} trackColor={{ true: C.primary, false: C.border }} thumbColor={C.white} />

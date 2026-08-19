@@ -17,6 +17,7 @@ import {
   validateRegistration,
 } from "@/src/features/auth/registration-validation";
 import { GoogleHospitalPrediction, GooglePlacePrediction, useGooglePlaces, useHospitalPlaces } from "@/src/features/auth/use-hospital-places";
+import { sanitizeAddress, sanitizeDesignation, sanitizeName, sanitizeOrgName } from "@/src/lib/validators";
 
 // ── Role → header label + which form variant to render ──────────────────────
 const labelMap: Record<string, string> = {
@@ -211,7 +212,7 @@ function SmoHospitalFields({
         <Input
           value={hospital.name}
           onChangeText={(name) => {
-            onUpdate({ name, googlePlaceId: undefined });
+            onUpdate({ name: sanitizeOrgName(name), googlePlaceId: undefined });
             setLookupError("");
             setShowSuggestions(true);
           }}
@@ -261,7 +262,7 @@ function SmoHospitalFields({
         )}
       </Field>
       <Field label="Hospital / Site Location" required error={submitted && !hospital.address.trim() ? "Hospital / site location is required." : undefined}>
-        <Input value={hospital.address} onChangeText={(address) => onUpdate({ address })} placeholder="Area, City" />
+        <Input value={hospital.address} onChangeText={(address) => onUpdate({ address: sanitizeAddress(address) })} placeholder="Area, City" />
         {!!lookupError && <Small color={colors.destructive} style={f.fieldError}>{lookupError}</Small>}
       </Field>
     </>
@@ -627,7 +628,8 @@ export default function Register() {
     }
   };
 
-  const onOrgNameChange = (v: string) => {
+  const onOrgNameChange = (raw: string) => {
+    const v = sanitizeOrgName(raw);
     setFld((s) => ({ ...s, orgName: v, googlePlaceId: "", addressSource: "manual" }));
     setTouched((current) => ({ ...current, orgName: true }));
     setExistingOrgMatch(null);
@@ -725,8 +727,8 @@ export default function Register() {
 
           <Rise delay={200}>
             {/* Common identity fields */}
-            <Field label="Full Name" required error={fieldError("fullName")}><Input value={fld.fullName} onChangeText={up("fullName")} style={fieldError("fullName") && f.inputError} /></Field>
-            {!isPatient && <Field label="Designation" required error={fieldError("designation")}><Input value={fld.designation} onChangeText={up("designation")} style={fieldError("designation") && f.inputError} /></Field>}
+            <Field label="Full Name" required error={fieldError("fullName")}><Input value={fld.fullName} onChangeText={(v) => up("fullName")(sanitizeName(v))} style={fieldError("fullName") && f.inputError} /></Field>
+            {!isPatient && <Field label="Designation" required error={fieldError("designation")}><Input value={fld.designation} onChangeText={(v) => up("designation")(sanitizeDesignation(v))} style={fieldError("designation") && f.inputError} /></Field>}
 
             {isPatient ? (
               <>
@@ -883,7 +885,7 @@ export default function Register() {
                 {!isInvite && (
                   <>
                     <Field label={variant === "smo" ? "SMO Address" : "Organization Address"} required error={fieldError("orgAddress")}>
-                      <Input value={fld.orgAddress} onChangeText={up("orgAddress")} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
+                      <Input value={fld.orgAddress} onChangeText={(v) => up("orgAddress")(sanitizeAddress(v))} multiline placeholder="Building / Street, City, State, PIN" style={[{ height: 64, textAlignVertical: "top" }, fieldError("orgAddress") && f.inputError]} />
                       {!!googleOrgLookupError && <Small color={colors.destructive} style={f.fieldError}>{googleOrgLookupError}</Small>}
                     </Field>
 

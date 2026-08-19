@@ -17,6 +17,7 @@ import * as ImagePicker from "expo-image-picker";
 import { uploadFile, fetchFileUri } from "@/src/lib/upload";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 import { APP_LOCALES, localeLabel, normalizeLocale, setLanguage, type AppLocale } from "@/src/i18n";
+import { sanitizeName } from "@/src/lib/validators";
 
 type Section = "main" | "edit-profile" | "change-password" | "notification-prefs" | "terms" | "privacy" | "help" | "faq" | "contact-support" | "tickets";
 
@@ -529,7 +530,7 @@ export default function Profile() {
             </Rise>
             <Rise delay={110}>
               <View style={p.card}>
-                <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => { setProf({ ...prof, fullName: v }); setProfileFeedback(null); }} style={p.input} /></Field>
+                <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => { setProf({ ...prof, fullName: sanitizeName(v) }); setProfileFeedback(null); }} style={p.input} /></Field>
                 <Field label="Date of Birth *"><TextInput value={prof.dob} onChangeText={v => { setProf({ ...prof, dob: v }); setProfileFeedback(null); }} placeholder="YYYY-MM-DD" placeholderTextColor={colors.mutedFg + "99"} style={p.input} /></Field>
                 <Field label="Gender *">
                   <Pressable onPress={() => setGenderOpen(true)} style={[p.input, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>

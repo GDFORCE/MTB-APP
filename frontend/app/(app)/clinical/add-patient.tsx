@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { formatIsoCalendarDate } from "@/src/lib/visit-timing";
+import { sanitizeName } from "@/src/lib/validators";
 
 const C = {
   surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
@@ -178,7 +179,8 @@ export default function AddPatient() {
             ? "Generate the visit schedule to continue"
             : "Ready to send the patient invitation";
 
-  const updateFullName = (value: string) => {
+  const updateFullName = (raw: string) => {
+    const value = sanitizeName(raw);
     setFullName(value);
     if (!initialsEdited) setInitials(initialsFromName(value));
   };

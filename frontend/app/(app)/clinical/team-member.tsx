@@ -24,6 +24,7 @@ import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import { Body, Button, Card, Eyebrow, Small } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
+import { sanitizeDesignation, sanitizeDigits, sanitizeName } from "@/src/lib/validators";
 
 type Member = {
   id: string;
@@ -249,20 +250,20 @@ export default function TeamMemberDetail() {
                   icon={UserRound}
                   label="Full name"
                   value={form.full_name}
-                  onChangeText={(value) => setForm((current) => ({ ...current, full_name: value }))}
+                  onChangeText={(value) => setForm((current) => ({ ...current, full_name: sanitizeName(value) }))}
                 />
                 <EditableRow
                   icon={ShieldCheck}
                   label="Designation"
                   value={form.designation}
-                  onChangeText={(value) => setForm((current) => ({ ...current, designation: value }))}
+                  onChangeText={(value) => setForm((current) => ({ ...current, designation: sanitizeDesignation(value) }))}
                 />
                 <EditableRow
                   icon={Phone}
                   label="Phone"
                   value={form.phone}
                   keyboardType="phone-pad"
-                  onChangeText={(value) => setForm((current) => ({ ...current, phone: value }))}
+                  onChangeText={(value) => setForm((current) => ({ ...current, phone: sanitizeDigits(value, 10) }))}
                 />
                 <DetailRow icon={Mail} label="Email (account identifier)" value={member.email} />
                 <DetailRow icon={Building2} label="Organization" value={member.organization} last />

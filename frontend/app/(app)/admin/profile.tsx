@@ -28,6 +28,7 @@ import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAuth } from "@/src/auth/AuthContext";
 import { useAdminDrawer } from "./_layout";
 import { Loading, ErrorCard, Toast, Input, SheetActions, st } from "./users";
+import { sanitizeName } from "@/src/lib/validators";
 
 type Me = {
   id?: string; full_name?: string; email?: string; phone?: string; role?: string;
@@ -300,7 +301,7 @@ function EditProfileSheet({ open, me, onClose, onSaved, onError }: { open: boole
       <View style={{ gap: 12 }}>
         <View style={{ gap: 6 }}>
           <RNText style={st.fieldLabel}>Full name</RNText>
-          <Input value={fullName} onChangeText={setFullName} placeholder="Your name" />
+          <Input value={fullName} onChangeText={(v: string) => setFullName(sanitizeName(v))} placeholder="Your name" />
         </View>
         <RNText style={pf.sheetHint}>Email and phone are changed via OTP verification from the profile screen.</RNText>
         <SheetActions cancelLabel="Cancel" onCancel={onClose} confirmLabel="Save" onConfirm={save} disabled={!fullName.trim()} loading={saving} />

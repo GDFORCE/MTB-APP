@@ -18,6 +18,7 @@ import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
+import { sanitizeName } from "@/src/lib/validators";
 
 // ── Password strength rules (mirrors patient profile) ─────────────────────────
 const passwordRules = [
@@ -210,7 +211,7 @@ function EditProfile() {
                 <View><Eyebrow color={colors.primary}>PERSONAL DETAILS</Eyebrow><Small style={{ marginTop: 1 }}>How your name appears across the app</Small></View>
               </View>
               <Field label="Full Name *">
-                <TextInput testID="edit-full-name" value={prof.fullName} onChangeText={v => setProf({ ...prof, fullName: v })} placeholder="Enter your full name" placeholderTextColor={colors.mutedFg + "88"} style={p.editInput} />
+                <TextInput testID="edit-full-name" value={prof.fullName} onChangeText={v => setProf({ ...prof, fullName: sanitizeName(v) })} placeholder="Enter your full name" placeholderTextColor={colors.mutedFg + "88"} style={p.editInput} />
               </Field>
             </View>
           </Rise>

@@ -14,6 +14,7 @@ import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { useOrgContext } from "@/src/components/org-admin-kit";
+import { sanitizeDesignation, sanitizeName } from "@/src/lib/validators";
 
 type InviteRole = "pi" | "crc" | "sponsor" | "cro";
 
@@ -203,14 +204,14 @@ export default function InviteMember() {
           <Field
             label="Full name"
             value={name}
-            onChangeText={setName}
+            onChangeText={(v) => setName(sanitizeName(v))}
             placeholder="e.g. Dr. Aisha Rao"
             testID="member-invite-name"
           />
           <Field
             label="Designation"
             value={designation}
-            onChangeText={setDesignation}
+            onChangeText={(v) => setDesignation(sanitizeDesignation(v))}
             placeholder="e.g. Senior Research Coordinator"
             testID="member-invite-designation"
           />

@@ -28,6 +28,7 @@ import { useLocalSearchParams } from "expo-router";
 import { api } from "@/src/api/client";
 import { colors as C, fonts } from "@/src/theme/tokens";
 import { useAdminDrawer } from "./_layout";
+import { sanitizeAddress, sanitizeDigits, sanitizeOrgName } from "@/src/lib/validators";
 
 const W = { w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)" };
 const ORG_TYPES = ["sponsor", "cro", "smo", "site"] as const;
@@ -393,7 +394,7 @@ function NameRequestCard({ req, busy, onApprove, onReject }: {
         <RNText style={st.reqNew} numberOfLines={1}>{req.requested_name || "—"}</RNText>
       </View>
       <RNText style={st.fieldLabel}>Final name</RNText>
-      <Input value={final} onChangeText={setFinal} placeholder="Approved organization name" />
+      <Input value={final} onChangeText={(v: string) => setFinal(sanitizeOrgName(v))} placeholder="Approved organization name" />
       {rejecting && (
         <>
           <RNText style={st.fieldLabel}>Rejection reason</RNText>
@@ -527,7 +528,7 @@ function OrgFormSheet({ open, org, onClose, onSaved }: {
   return (
     <Sheet open={open} onClose={onClose} title={org ? "Edit organization" : "Add organization"}>
       <View style={{ gap: 12 }}>
-        <FormField label="Name"><Input value={form.name} onChangeText={(v) => setForm({ ...form, name: v })} placeholder="Organization name" /></FormField>
+        <FormField label="Name"><Input value={form.name} onChangeText={(v) => setForm({ ...form, name: sanitizeOrgName(v) })} placeholder="Organization name" /></FormField>
         <FormField label="Type">
           <View style={st.chipWrap}>
             {ORG_TYPES.map((t) => (
@@ -537,8 +538,8 @@ function OrgFormSheet({ open, org, onClose, onSaved }: {
             ))}
           </View>
         </FormField>
-        <FormField label="Address"><Input value={form.address} onChangeText={(v) => setForm({ ...form, address: v })} placeholder="Street, city, region" /></FormField>
-        <FormField label="Contact"><Input value={form.contact} onChangeText={(v) => setForm({ ...form, contact: v })} placeholder="+91-XXXXXXXXXX" keyboardType="phone-pad" /></FormField>
+        <FormField label="Address"><Input value={form.address} onChangeText={(v) => setForm({ ...form, address: sanitizeAddress(v) })} placeholder="Street, city, region" /></FormField>
+        <FormField label="Contact"><Input value={form.contact} onChangeText={(v) => setForm({ ...form, contact: sanitizeDigits(v, 10) })} placeholder="+91-XXXXXXXXXX" keyboardType="phone-pad" /></FormField>
         <FormField label="Email"><Input value={form.email} onChangeText={(v) => setForm({ ...form, email: v })} placeholder="contact@org.com" keyboardType="email-address" autoCapitalize="none" /></FormField>
         <FormField label="Website"><Input value={form.website} onChangeText={(v) => setForm({ ...form, website: v })} placeholder="www.org.com" autoCapitalize="none" /></FormField>
         {err && <RNText style={st.errText}>{err}</RNText>}
