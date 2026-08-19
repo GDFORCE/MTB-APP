@@ -16,6 +16,7 @@ from protocol_agent import (  # noqa: E402
     ScheduleTimingEvidence,
     ScheduleVisitEvidence,
     _schedule_disagreements,
+    _visit_coverage_issues,
     run_protocol_extraction_agent,
     run_schedule_extraction_agent,
 )
@@ -243,6 +244,74 @@ def test_metadata_and_schedule_share_one_agent_workflow():
     assert details.target_enrollment == 80
     assert details.total_visits == 2
     assert schedule.verification_status == "verified"
+
+
+def test_visit_coverage_issue_when_columns_outnumber_built_visits():
+    """Builder and confirmer both under-count relative to the evidence catalog.
+
+    This is the direction the pre-existing evidence checks never covered:
+    every cited evidence ID is valid, and builder/confirmer agree with each
+    other, but both silently dropped columns the visit-evidence stage found.
+    """
+    visit_evidence = ScheduleVisitEvidence(visit_columns=[
+        _fact("visit-01", "Baseline"),
+        _fact("visit-02", "Week 4"),
+        _fact("visit-03", "Week 8"),
+        _fact("visit-04", "Week 12"),
+    ])
+    builder = _schedule("Baseline", 0)
+    confirmer = _schedule("Baseline", 0)
+
+    issues = _visit_coverage_issues(builder, confirmer, visit_evidence)
+
+    assert len(issues) == 1
+    assert "4 distinct visit column(s)" in issues[0]
+    assert "builder produced 1 visit(s)" in issues[0]
+    assert "confirmer produced 1 visit(s)" in issues[0]
+
+
+def test_visit_coverage_issue_not_raised_when_counts_match():
+    visit_evidence = ScheduleVisitEvidence(visit_columns=[
+        _fact("visit-01", "Baseline"),
+    ])
+    builder = _schedule("Baseline", 0)
+    confirmer = _schedule("Baseline", 0)
+
+    assert _visit_coverage_issues(builder, confirmer, visit_evidence) == []
+
+
+def test_agent_stays_needs_review_when_evidence_outnumbers_visits_even_if_audit_approves():
+    """An approving audit must not be enough on its own to reach 'verified'.
+
+    Mirrors the real-world failure the visit-coverage check targets: both
+    independent passes collapse the same wide table down to one visit, and
+    the audit (working from the schedules, not the raw evidence catalog)
+    approves anyway.
+    """
+    responses = [
+        _decomposition_responses()[0],
+        _decomposition_responses()[1],
+        _decomposition_responses()[2],
+        ScheduleVisitEvidence(visit_columns=[
+            _fact("visit-01", "Baseline"),
+            _fact("visit-02", "Week 4"),
+            _fact("visit-03", "Week 8"),
+        ]),
+        _schedule("Baseline", 0),
+        _schedule("Baseline", 0),
+        _audit(approved=True),
+    ]
+
+    async def generate(_pdf_bytes, _prompt, schema, **_kwargs):
+        response = responses.pop(0)
+        assert isinstance(response, schema)
+        return response
+
+    result = asyncio.run(run_schedule_extraction_agent(
+        b"%PDF-test", generate, max_refinements=0))
+
+    assert result.verification_status == "needs_review"
+    assert any("distinct visit column(s)" in issue for issue in result.verification_issues)
 
 
 def test_agent_cannot_verify_a_deterministically_corrected_day_offset():

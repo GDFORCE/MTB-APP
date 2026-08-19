@@ -307,7 +307,21 @@ footnotes, conditional activities, and genuine arm/period differences. Preserve 
 or conflicting evidence rather than guessing. Cite a page, table, footnote, or nearby label
 for every fact. Return each fact atomically with a unique evidence_id, short exact
 source_quote, precise source_location, and reading confidence. Do not combine unrelated
-visit columns or procedures under one ID. Return only the requested schema."""
+visit columns or procedures under one ID.
+
+WIDE TABLES SPANNING MULTIPLE PAGES: a Schedule of Assessments/Activities often prints one
+column per visit under a single shared header row (e.g. "Week: 4 8 12 16 20 24 28 32 ..."),
+frequently wrapping across several PDF pages with the header row repeated on each page. Every
+one of those columns is a distinct real visit, even when: it has no name beyond its number
+(emit a visit_columns fact for it anyway, e.g. "Week 8 Visit"); it is immediately adjacent to
+visits with near-identical activity patterns; or its interval to the previous column later
+changes (e.g. every 4 weeks through Week 44, then every 8-12 weeks through Week 132). Before
+finishing, count every column header on every page the table spans and confirm you produced
+one visit_columns fact per column — do not silently compress a long run of plain numbered
+columns down to a handful of "representative" milestones (screening/baseline/one early
+visit/final visits). Dropping the unlabeled numeric columns in between is the single most
+common failure in this task; treat every printed column as mandatory unless a footnote
+states it is optional or conditional. Return only the requested schema."""
 
 _SYNTHESIS_PROMPT = """You are the synthesis stage of a decomposed clinical-protocol
 schedule pipeline. Build the complete schedule from the attached PDF and the three
@@ -352,6 +366,14 @@ by arm only when timing genuinely differs, and label crossover periods, washouts
 extensions. Include early termination, unscheduled, telephone, and safety follow-up
 events when present.
 
+Every visit_columns fact in the supplied evidence packet must become an event, or be
+covered by a recurrence rule whose expansion reproduces it exactly — never both dropped
+and left out of every recurrence. A wide, plainly-numbered column (e.g. "Week 8", "Week
+12") with no distinct name is still a real, mandatory event; do not compress a long run of
+such columns into only the screening/baseline/early/final visits. Before returning, count
+the distinct visit_columns facts you were given and confirm every one is represented
+either as its own event or inside a recurrence range.
+
 Classify every event's event_type using the protocol's own visit-type codes when present
 (e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone), otherwise using its role in the
 schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
@@ -384,6 +406,13 @@ Classify every event's event_type using the protocol's own visit-type codes when
 schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
 'end_of_treatment', 'end_of_study', 'early_termination', 'unscheduled', or 'telephonic'.
 Do not leave every event at the generic default 'visit'.
+
+Every visit_columns fact in the supplied evidence packet must become an event, or be
+covered by a recurrence rule whose expansion reproduces it exactly. A wide, plainly-
+numbered column with no distinct name is still a real, mandatory event; do not compress a
+long run of such columns into only the screening/baseline/early/final visits. Before
+returning, count the distinct visit_columns facts you were given and confirm every one is
+represented either as its own event or inside a recurrence range.
 
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
@@ -442,6 +471,13 @@ canonical_plan only and leave visits and repeating_blocks empty; deterministic s
 code rebuilds the compatibility rows. Do not discard calendar units, event triggers,
 recurrence, activity windows, conditions, transitions, branches, or unresolved source
 conflicts.
+
+If the audit reports missing visit columns, treat the supplied VISIT/ACTIVITY EVIDENCE
+packet as the checklist: every visit_columns fact there must end up represented as an
+event or inside a recurrence range. A wide, plainly-numbered column with no distinct name
+is still a real, mandatory event — do not leave it out because it looks like a duplicate
+of its neighbors. Count the distinct visit_columns facts and confirm every one is covered
+before returning.
 
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
@@ -1040,6 +1076,45 @@ def _schedule_disagreements(
     return issues
 
 
+def _visit_coverage_issues(
+    builder: ExtractedSchedule,
+    confirmer: ExtractedSchedule,
+    visit_evidence: ScheduleVisitEvidence,
+) -> list[str]:
+    """Flag a schedule that built fewer visits than columns were inventoried.
+
+    The audit LLM cannot be relied on to catch this alone: it is scored from a
+    separately-retrieved page selection and is never shown the visit_columns
+    evidence packet, so an identical collapse by both the builder and confirmer
+    (the common failure mode on wide, plainly-numbered tables) can pass audit
+    unnoticed. This check needs no model call and is immune to the builder and
+    confirmer making the same mistake, since it compares each against the
+    evidence catalog rather than against each other.
+    """
+    clean = lambda value: " ".join(str(value or "").split()).casefold()
+    columns = {}
+    for fact in visit_evidence.visit_columns:
+        key = clean(fact.claim) or clean(fact.source_quote)
+        if key:
+            columns.setdefault(key, fact)
+    if not columns:
+        return []
+    builder_count = len(expand_schedule(builder).visits)
+    confirmer_count = len(expand_schedule(confirmer).visits)
+    fewest = min(builder_count, confirmer_count)
+    # Allow slack of one: a schedule may legitimately consolidate an
+    # arm/period duplicate of the same column into a single visit.
+    if fewest >= len(columns) - 1:
+        return []
+    sample = [fact.claim or fact.source_quote for fact in list(columns.values())[:8]]
+    return [
+        f"Visit evidence lists {len(columns)} distinct visit column(s), but the "
+        f"builder produced {builder_count} visit(s) and the confirmer produced "
+        f"{confirmer_count} visit(s). Check for dropped columns, for example: "
+        + "; ".join(sample)
+    ]
+
+
 def _structural_issues(schedule: ExtractedSchedule) -> list[str]:
     expanded = expand_schedule(schedule)
     issues = list(expanded.verification_issues)
@@ -1364,6 +1439,8 @@ def build_schedule_extraction_graph(
                 "stop_after_stage_error": True,
             }
         issues = _schedule_disagreements(state["candidate"], confirmation)
+        issues.extend(_visit_coverage_issues(
+            state["candidate"], confirmation, state["visit_evidence"]))
         issues.extend(_validate_evidence_links(
             state["candidate"], state["timing_evidence"], state["visit_evidence"]))
         issues.extend(
@@ -1400,7 +1477,11 @@ def build_schedule_extraction_graph(
                         "verification_scores",
                     })
                     + "\n\nDETERMINISTIC DISAGREEMENTS:\n"
-                    + "\n".join(state.get("confirmation_issues", []))),
+                    + "\n".join(state.get("confirmation_issues", []))
+                    + "\n\nVISIT/ACTIVITY EVIDENCE (the column inventory both "
+                    "schedules were built from; use it to check visit coverage "
+                    "directly instead of relying only on the schedules above):\n"
+                    + state["visit_evidence"].model_dump_json()),
                 ScheduleAudit,
                 system_instruction=_AUDIT_PROMPT,
                 max_tokens=6000,
@@ -1444,7 +1525,9 @@ def build_schedule_extraction_graph(
                     + state["confirmation_candidate"].model_dump_json()
                     + "\n\nDETERMINISTIC DISAGREEMENTS:\n"
                     + "\n".join(state.get("confirmation_issues", []))
-                    + "\n\nAUDIT:\n" + audit),
+                    + "\n\nAUDIT:\n" + audit
+                    + "\n\nVISIT/ACTIVITY EVIDENCE:\n"
+                    + state["visit_evidence"].model_dump_json()),
                 ExtractedSchedule,
                 system_instruction=_REPAIR_PROMPT,
                 max_tokens=MAX_OUTPUT_TOKENS,

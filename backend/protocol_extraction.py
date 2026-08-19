@@ -47,6 +47,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import List, Literal, Optional, Protocol, runtime_checkable
 
+import httpx
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from schedule_schema import (
@@ -1338,6 +1339,16 @@ class GeminiProtocolExtractor:
                 )
             except errors.APIError as exc:
                 raise _classify_api_error(exc) from exc
+            except httpx.TransportError as exc:
+                # A dropped/reset connection while talking to the provider, not an
+                # API-level error response, so errors.APIError never sees it. Wrap
+                # it so run_stage's existing retry-with-backoff covers it instead
+                # of a transient network blip crashing the whole extraction.
+                log.warning(
+                    "network error calling Gemini (%s): %s",
+                    type(exc).__name__, exc)
+                raise ExtractionError(
+                    f"network error calling Gemini: {exc}") from exc
             except ValueError as exc:
                 log.error(
                     "Gemini rejected the %s request schema: %s",
