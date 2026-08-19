@@ -366,13 +366,24 @@ by arm only when timing genuinely differs, and label crossover periods, washouts
 extensions. Include early termination, unscheduled, telephone, and safety follow-up
 events when present.
 
-Every visit_columns fact in the supplied evidence packet must become an event, or be
-covered by a recurrence rule whose expansion reproduces it exactly — never both dropped
-and left out of every recurrence. A wide, plainly-numbered column (e.g. "Week 8", "Week
+Every visit_columns fact in the supplied evidence packet must become an event — never
+dropped and never left uncovered. A wide, plainly-numbered column (e.g. "Week 8", "Week
 12") with no distinct name is still a real, mandatory event; do not compress a long run of
 such columns into only the screening/baseline/early/final visits. Before returning, count
-the distinct visit_columns facts you were given and confirm every one is represented
-either as its own event or inside a recurrence range.
+the distinct visit_columns facts you were given and confirm every one is represented.
+
+RECURRENCE VS INDIVIDUAL EVENTS: use a recurrence rule ONLY when the protocol itself
+collapses the repetition — it prints one column/phrase covering many instances ("Cycle 2 &
+Next Cycles", "every 3 weeks for a maximum of 6 cycles") without ever printing each
+instance's own number. When the table instead prints a SEPARATE, distinctly-numbered
+column for every instance (Week 4, 8, 12, 16, 20...), create a SEPARATE event per column
+with that exact printed number as its name — do not fold them into a recurrence rule. The
+server's recurrence expansion can only substitute a bare 1, 2, 3... occurrence index into a
+name; it cannot reproduce arbitrary printed numbers like 8, 12, 44, 108, so recurrence-
+covering a printed, individually-numbered column always renders wrong (e.g. a stray "Week
+4 (Occurrence 2)" duplicate instead of "Week 8"). If unsure whether a run of columns is
+collapsed or individually printed, prefer individual events — that is always representable
+exactly.
 
 Classify every event's event_type using the protocol's own visit-type codes when present
 (e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone), otherwise using its role in the
@@ -407,12 +418,19 @@ schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
 'end_of_treatment', 'end_of_study', 'early_termination', 'unscheduled', or 'telephonic'.
 Do not leave every event at the generic default 'visit'.
 
-Every visit_columns fact in the supplied evidence packet must become an event, or be
-covered by a recurrence rule whose expansion reproduces it exactly. A wide, plainly-
-numbered column with no distinct name is still a real, mandatory event; do not compress a
-long run of such columns into only the screening/baseline/early/final visits. Before
-returning, count the distinct visit_columns facts you were given and confirm every one is
-represented either as its own event or inside a recurrence range.
+Every visit_columns fact in the supplied evidence packet must become an event — never
+dropped and never left uncovered. A wide, plainly-numbered column with no distinct name is
+still a real, mandatory event; do not compress a long run of such columns into only the
+screening/baseline/early/final visits. Before returning, count the distinct visit_columns
+facts you were given and confirm every one is represented.
+
+RECURRENCE VS INDIVIDUAL EVENTS: use a recurrence rule ONLY when the protocol itself
+collapses the repetition (one column/phrase covering many instances, with no per-instance
+number ever printed). When the table prints a SEPARATE, distinctly-numbered column for
+every instance (Week 4, 8, 12, 16, 20...), create a SEPARATE event per column with that
+exact printed number as its name instead — a recurrence rule can only substitute a bare
+1, 2, 3... index into a name, not arbitrary printed numbers like 8, 12, 44, 108, so using
+one here always renders wrong. Prefer individual events whenever unsure.
 
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
@@ -473,11 +491,18 @@ recurrence, activity windows, conditions, transitions, branches, or unresolved s
 conflicts.
 
 If the audit reports missing visit columns, treat the supplied VISIT/ACTIVITY EVIDENCE
-packet as the checklist: every visit_columns fact there must end up represented as an
-event or inside a recurrence range. A wide, plainly-numbered column with no distinct name
-is still a real, mandatory event — do not leave it out because it looks like a duplicate
-of its neighbors. Count the distinct visit_columns facts and confirm every one is covered
-before returning.
+packet as the checklist: every visit_columns fact there must end up represented as its own
+event. A wide, plainly-numbered column with no distinct name is still a real, mandatory
+event — do not leave it out because it looks like a duplicate of its neighbors. Count the
+distinct visit_columns facts and confirm every one is covered before returning.
+
+If the audit reports a garbled or duplicated name like "X (Occurrence 2)", the cause is a
+recurrence rule wrongly used to cover columns that the protocol prints with their own
+distinct number (Week 4, 8, 12...) — a recurrence can only substitute a bare 1, 2, 3...
+index into a name, not arbitrary printed numbers. Replace that recurrence rule with one
+individual event per printed column, each named with its own printed number, and remove
+the recurrence. Reserve recurrence rules for cycles the protocol itself never prints
+individually (e.g. "Cycle 2 & Next Cycles").
 
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
@@ -1129,6 +1154,29 @@ def _structural_issues(schedule: ExtractedSchedule) -> list[str]:
     dated = [visit.day_offset for visit in expanded.visits if visit.day_offset is not None]
     if len(dated) >= 3 and len(set(dated)) == 1:
         issues.append(f"all {len(dated)} dated visits collapse onto day {dated[0]}")
+    # A recurrence rule wrongly used to cover individually-printed, distinctly-numbered
+    # columns (Week 4, 8, 12...) can only substitute a bare 1, 2, 3... index into the
+    # name, which the projection then disambiguates as "<name> (Occurrence N)" — always
+    # wrong here, since it can never reproduce the protocol's actual printed number.
+    garbled = sorted({
+        visit.name for visit in expanded.visits
+        if " (Occurrence " in visit.name and visit.name.endswith(")")
+    })
+    for name in garbled[:5]:
+        issues.append(
+            f"visit name looks recurrence-generated, not protocol-printed: '{name}' "
+            "— replace the recurrence rule with individual events per printed column")
+    # event_type defaults to the literal string "visit" when the model never classifies
+    # it. The prompt explicitly forbids leaving it there, but that instruction is not
+    # self-enforcing — catch it deterministically instead of trusting compliance.
+    unclassified = sorted({
+        visit.name for visit in expanded.visits
+        if (visit.visit_type or "").strip().lower() == "visit"
+    })
+    for name in unclassified[:5]:
+        issues.append(
+            f"'{name}' was left at the generic default visit_type 'visit' — classify it "
+            "as screening/baseline/treatment/follow_up/etc. per its role in the schedule")
     return list(dict.fromkeys(issues))
 
 

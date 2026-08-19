@@ -16,12 +16,21 @@ from protocol_agent import (  # noqa: E402
     ScheduleTimingEvidence,
     ScheduleVisitEvidence,
     _schedule_disagreements,
+    _structural_issues,
     _visit_coverage_issues,
     run_protocol_extraction_agent,
     run_schedule_extraction_agent,
 )
 from protocol_extraction import ExtractionError, ExtractedSchedule  # noqa: E402
-from schedule_schema import DocumentTaskClassification  # noqa: E402
+from schedule_schema import (  # noqa: E402
+    CanonicalSchedulePlan,
+    DocumentTaskClassification,
+    RecurrenceRule,
+    ScheduleAnchor,
+    ScheduleEvent,
+    TemporalAmount,
+    TimingExpression,
+)
 
 
 def _schedule(name: str, day: int) -> ExtractedSchedule:
@@ -312,6 +321,77 @@ def test_agent_stays_needs_review_when_evidence_outnumbers_visits_even_if_audit_
 
     assert result.verification_status == "needs_review"
     assert any("distinct visit column(s)" in issue for issue in result.verification_issues)
+
+
+def test_structural_issues_flags_recurrence_generated_occurrence_names():
+    """A recurrence rule wrongly used for individually-numbered columns.
+
+    Real-world case: Week 4, 8, 12... are each their own printed column, but
+    the model covered them with one recurrence rule on an event named
+    "Week 4". The projection can only substitute a bare 1, 2, 3... index, so
+    occurrence 2 renders as "Week 4 (Occurrence 2)" instead of "Week 8" — a
+    garbled duplicate-looking name that must be caught deterministically
+    rather than relying on the model following the prompt correctly.
+    """
+    plan = CanonicalSchedulePlan(
+        anchors=[ScheduleAnchor(id="anchor-bl", name="Baseline", anchor_type="first_dose")],
+        events=[ScheduleEvent(
+            id="event-week4",
+            name="Week 4",
+            timing=TimingExpression(
+                kind="offset", anchor_id="anchor-bl",
+                offset=TemporalAmount(value=28, unit="day"),
+                source_label="Week 4"),
+        )],
+        recurrences=[RecurrenceRule(
+            id="rec-1", event_ids=["event-week4"],
+            frequency=TemporalAmount(value=28, unit="day"),
+            start_occurrence=1, end_occurrence=3,
+        )],
+    )
+    schedule = ExtractedSchedule.model_validate({
+        "schedule_kind": "linear", "canonical_plan": plan.model_dump(),
+    })
+
+    issues = _structural_issues(schedule)
+
+    assert any("(Occurrence 2)" in issue for issue in issues)
+    assert any("recurrence" in issue for issue in issues)
+
+
+def test_structural_issues_flags_unclassified_visit_type():
+    """A visit left at the generic default event_type 'visit' is a real miss.
+
+    The prompt says every event's role should be determinable from the
+    protocol text or its position in the schedule, and forbids leaving the
+    generic 'visit' default. Catch it deterministically rather than trusting
+    that instruction was followed.
+    """
+    plan = CanonicalSchedulePlan(
+        anchors=[ScheduleAnchor(id="anchor-bl", name="Baseline", anchor_type="first_dose")],
+        events=[
+            ScheduleEvent(
+                id="event-bl", name="Baseline", event_type="baseline",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-bl",
+                    offset=TemporalAmount(value=0, unit="day"), source_label="Day 1"),
+            ),
+            ScheduleEvent(
+                id="event-wk4", name="Week 4",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-bl",
+                    offset=TemporalAmount(value=28, unit="day"), source_label="Week 4"),
+            ),
+        ],
+    )
+    schedule = ExtractedSchedule.model_validate({
+        "schedule_kind": "linear", "canonical_plan": plan.model_dump(),
+    })
+
+    issues = _structural_issues(schedule)
+
+    assert any("Week 4" in issue and "generic default" in issue for issue in issues)
+    assert not any("Baseline" in issue and "generic default" in issue for issue in issues)
 
 
 def test_agent_cannot_verify_a_deterministically_corrected_day_offset():
