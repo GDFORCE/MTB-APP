@@ -1121,12 +1121,23 @@ def project_canonical_plan(
         for event_id in recurrence.event_ids:
             recurrence_by_event.setdefault(event_id, []).append(recurrence)
     rows: list[dict] = []
+    # A recurrence rule can list several events (e.g. Dosing + IC-1/2/3 sharing one
+    # "Cycle {cycle}" pattern). Expanding those occurrence-by-occurrence rather than
+    # fully finishing one event before starting the next keeps same-day ties across
+    # cycle boundaries (cycle N's last visit vs. cycle N+1's first) in the raw row
+    # order the later stable sort falls back on — otherwise cycle N+1's rows for an
+    # earlier-listed event silently jump ahead of cycle N's rows for a later-listed
+    # one on any tie.
+    processed_recurrence_ids: set[str] = set()
     for event in plan.events:
         recurrences = recurrence_by_event.get(event.id) or []
         if not recurrences:
             rows.append(build_row(event))
             continue
         for recurrence in recurrences:
+            if recurrence.id in processed_recurrence_ids:
+                continue
+            processed_recurrence_ids.add(recurrence.id)
             end = recurrence.end_occurrence
             if end is None:
                 end = recurrence.start_occurrence + max(1, open_ended_preview_count) - 1
@@ -1134,25 +1145,27 @@ def project_canonical_plan(
                     f"'{recurrence.source_label or recurrence.id}' is open-ended; "
                     f"showing {open_ended_preview_count} occurrences for review only.")
             frequency_days = _elapsed_days(recurrence.frequency)
+            group_events = [e for e in plan.events if e.id in recurrence.event_ids]
             for occurrence in range(recurrence.start_occurrence, end + 1):
-                if not condition_applies(event.id, occurrence):
-                    continue
-                delta = None if frequency_days is None else (
-                    occurrence - recurrence.start_occurrence) * frequency_days
-                row = build_row(
-                    event, occurrence=occurrence, recurrence_delta=delta,
-                    recurrence=recurrence)
-                if frequency_days is None and occurrence > recurrence.start_occurrence:
-                    # Calendar-month/year recurrence needs a real patient date.
-                    # Never duplicate the first occurrence's numeric offset.
-                    row["day_offset"] = None
-                    row["hour_offset"] = None
-                    row["hour_offset_basis"] = None
-                    row["extraction_warning"] = True
-                    row["review_status"] = "pending"
-                    cadence = recurrence.source_label or (
-                        "Every " + format_temporal_amount(recurrence.frequency))
-                    row["source_day_label"] = "; ".join(
-                        item for item in (row["source_day_label"], cadence) if item)
-                rows.append(row)
+                for group_event in group_events:
+                    if not condition_applies(group_event.id, occurrence):
+                        continue
+                    delta = None if frequency_days is None else (
+                        occurrence - recurrence.start_occurrence) * frequency_days
+                    row = build_row(
+                        group_event, occurrence=occurrence, recurrence_delta=delta,
+                        recurrence=recurrence)
+                    if frequency_days is None and occurrence > recurrence.start_occurrence:
+                        # Calendar-month/year recurrence needs a real patient date.
+                        # Never duplicate the first occurrence's numeric offset.
+                        row["day_offset"] = None
+                        row["hour_offset"] = None
+                        row["hour_offset_basis"] = None
+                        row["extraction_warning"] = True
+                        row["review_status"] = "pending"
+                        cadence = recurrence.source_label or (
+                            "Every " + format_temporal_amount(recurrence.frequency))
+                        row["source_day_label"] = "; ".join(
+                            item for item in (row["source_day_label"], cadence) if item)
+                    rows.append(row)
     return rows, list(dict.fromkeys(warnings))
