@@ -173,7 +173,7 @@ class ScheduleDocumentMap(BaseModel):
     has_schedule: bool = Field(
         description="Whether the document contains a real visit schedule.")
     schedule_kind: str = Field(
-        description="Likely structure: linear, cyclic, crossover, multi_arm, "
+        description="Likely structure: linear, cyclic, crossover, factorial, multi_arm, "
                     "multi_phase, intra_day, or none.")
     schedule_locations: list[str] = Field(
         default_factory=list,
@@ -252,8 +252,13 @@ _CLASSIFICATION_PROMPT = """You are the classification stage of a clinical-proto
 analysis pipeline. Read the whole attached PDF before extraction. Classify the document
 as a protocol, amendment, synopsis, schedule-only document, reference, mixed bundle, or
 unrelated document. Select the actual task and every applicable schedule archetype:
-linear, cyclic, crossover, multi-arm, multi-phase, event-driven, intra-day, long-term
-extension, or mixed. Detect appended/reference protocols and whether version comparison
+linear, cyclic, crossover, factorial, multi-arm, multi-phase, event-driven, intra-day,
+long-term extension, or mixed. A crossover has subjects rotate through PERIODS in a
+randomized SEQUENCE (2-way, 3-way, or more); a factorial has subjects randomized
+independently on two or more separate factors at once (e.g. a 2x2 crossing drug A
+present/absent with drug B present/absent) with everyone sharing one visit timeline — do
+not tag a factorial design as crossover, they require different structures. Detect
+appended/reference protocols and whether version comparison
 is required. Capture protocol ID, version, amendment ID, and jurisdiction only when
 stated. Cite page/section evidence for the classification. Never infer that a document
 is simple merely because its first schedule table is simple.
@@ -397,6 +402,46 @@ that stopping event instead of borrowing a cycle maximum from historical-study p
 activities limited to named cycles (for example imaging at cycles 2, 4, and 6), attach a
 ScheduleCondition to the activity with occurrence_numbers [2, 4, 6].
 
+CROSSOVER / BIOEQUIVALENCE (BA/BE) DESIGNS, ANY NUMBER OF PERIODS: when subjects are
+randomized to a treatment SEQUENCE (e.g. a 2-way "Sequence AB" doses Test in Period 1 then
+Reference in Period 2, "Sequence BA" is the reverse; a 3-way Williams design has sequences
+ABC, BCA, CAB across three periods; N periods and N (or more) sequences work identically —
+nothing about this structure is specific to exactly two), create one branch of branch_type
+"sequence" per randomized sequence and one branch of branch_type "period" per period WITHIN
+each sequence, and set each period branch's parent_branch_id to its sequence branch. This
+is what keeps "Period 1" under Sequence AB distinguishable from "Period 1" under Sequence
+BA even though both print the identical printed label — the same holds for every period,
+however many there are. Attach each period's events (dosing, PK draws, safety checks) to
+that period's own branch via period_id, never to one shared unscoped branch.
+
+Give every dosing event its own timing resolvable to a real day: an offset from baseline
+for Period 1, a relative/minimum-gap offset from the IMMEDIATELY PRIOR period's dosing for
+every period after it (Period 3 anchors to Period 2's dosing, Period 4 to Period 3's, and
+so on — never straight back to Period 1 or to baseline) — this is also how washout is
+expressed, as a TransitionRule with relation "minimum_gap" between each consecutive pair of
+period dosing events, never as a fabricated "Washout" visit. Anchor EVERY intra-day PK
+timepoint in a period to THAT period's OWN dosing event via anchor_id — never to the study
+baseline and never to another period's dosing event. A dense PK table repeats the identical
+hour set (Hour 0, 0.5, 1, 2, 4, 8, 12, 24...) once per period; each period's own "Hour 4"
+event must point its anchor_id at that period's own dosing event so it is dated against
+that period's day, not another period's. Reusing one shared "Hour 4" event across periods,
+or anchoring every period's PK draws to the baseline instead of that period's own dosing,
+makes every period's PK samples collapse onto the same elapsed time and is always wrong.
+
+FACTORIAL DESIGNS: when subjects are randomized independently on TWO OR MORE separate
+factors at once (e.g. a 2x2 factorial crossing Drug A present/absent with Drug B
+present/absent gives 4 combination arms: A+B+, A+B-, A-B+, A-B-), this is NOT a crossover —
+there are no periods or sequences, just one shared visit-day timeline that every arm
+follows identically. Create one branch of branch_type "arm" per factor COMBINATION (4
+arms for a 2x2, 8 for a 2x2x2, and so on) as flat siblings, not nested under each other.
+Do NOT duplicate the whole event graph once per arm combination just to vary which drug is
+given — author the shared visit schedule ONCE, and for any activity or event that only
+applies to some combinations (e.g. "Drug A dispensing" only in the A+ arms), attach a
+ScheduleCondition to it with applies_to_branch_ids set to exactly the arm branch ids that
+include that factor. An activity with no such condition applies to every arm, same as
+today. This keeps one visit list shared across all combinations instead of the same visit
+timeline repeated verbatim per arm with only the drug names changed.
+
 Classify every event's event_type using the protocol's own visit-type codes when present
 (e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone), otherwise using its role in the
 schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
@@ -452,6 +497,23 @@ the stated cadence. Keep an evidence-backed progression/toxicity tail open-ended
 cycle-specific activities through ScheduleCondition.occurrence_numbers rather than copying
 them into every cycle.
 
+For a crossover/BA-BE design (any number of periods, not just two), create one "sequence"
+branch per randomized treatment order and one "period" branch per period nested under it
+via parent_branch_id, so "Period 1" under one sequence stays distinguishable from "Period
+1" under another even though both print the same label. Anchor every intra-day PK
+timepoint in a period to THAT period's own dosing event via anchor_id, never to the
+baseline or to another period's dosing event — a repeated "Hour 4" draw must date against
+its own period's day, not collapse onto every other period's identical raw hour value.
+Express washout as a TransitionRule (relation "minimum_gap") between each consecutive pair
+of periods' dosing events, never as a fabricated visit.
+
+For a factorial design (two or more independently randomized factors, e.g. a 2x2 crossing
+Drug A present/absent with Drug B present/absent), the arms are flat factor-combination
+siblings sharing ONE common visit timeline — not periods, not a crossover. A factor-specific
+activity or event should carry a ScheduleCondition with applies_to_branch_ids naming the
+arms that include that factor, instead of the whole visit schedule being duplicated once
+per arm combination.
+
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
 
@@ -465,12 +527,20 @@ Score these dimensions INDEPENDENTLY:
 1. VISIT COVERAGE — is every Schedule of Assessments/Activities/Events column represented,
    including screening, baseline, early termination, unscheduled and safety follow-up?
 2. TIMING — are all days, weeks, months, hours, relative offsets, cycle lengths/counts,
-   repeating blocks, arms, periods and crossover/washout timing correct?
+   repeating blocks, arms, periods and crossover/washout timing correct? For a crossover/
+   BA-BE design specifically: does each period's own "sequence" branch keep it
+   distinguishable from the same-numbered period in another sequence, and does every
+   intra-day PK timepoint anchor to ITS OWN period's dosing event rather than the baseline
+   or another period's dosing (a shared/misanchored hour value silently collapses that
+   period's whole PK profile onto another period's)?
 3. WINDOWS — is every symmetric or asymmetric +/- visit window preserved correctly?
 4. VISIT TYPE — is each site, virtual, telephone, home, unscheduled, and other visit type
    classified correctly from the protocol?
 5. PROCEDURE MAPPING — is each assessment/procedure attached to the correct visit column,
-   including conditional-cycle activities and table footnotes?
+   including conditional-cycle activities and table footnotes? For a factorial design, is
+   each factor-specific activity (e.g. a drug given only to arms containing that factor)
+   scoped via ScheduleCondition.applies_to_branch_ids rather than either missing from arms
+   that need it or leaking into arms that should not have it?
 6. OVERALL SCHEDULE — is the entire generated schedule structurally correct end to end,
    with no invented, omitted, or duplicated visits, activities, or timing values?
 
@@ -666,9 +736,19 @@ _ARCHETYPE_GUIDANCE: dict[str, str] = {
         "open-ended tail as an open recurrence rather than an invented final cycle."
     ),
     "crossover": (
-        "Crossover: model each period, its treatment sequence, and every washout. "
-        "Attach visits to their period branch, keep sequence-specific timing distinct, "
-        "and express washout duration as a transition/constraint, not as a visit."
+        "Crossover: one 'sequence' branch per randomized treatment order, one 'period' "
+        "branch per period nested under it via parent_branch_id (so same-numbered periods "
+        "in different sequences stay distinguishable), events attached via period_id, and "
+        "washout expressed as a minimum_gap transition between each consecutive pair of "
+        "dosing events, never as a fabricated visit. Works identically for 2-way, 3-way, "
+        "or more periods/sequences — nothing here is specific to exactly two."
+    ),
+    "factorial": (
+        "Factorial: one flat 'arm' branch per factor COMBINATION (4 for a 2x2, 8 for a "
+        "2x2x2), all siblings — not nested periods, not a crossover. Author the shared "
+        "visit timeline once; scope any factor-specific activity or event to the arms "
+        "that include that factor via ScheduleCondition.applies_to_branch_ids instead of "
+        "duplicating the event graph once per combination."
     ),
     "multi_arm": (
         "Multi-arm: define arms as branches. Duplicate an event per arm only when the "
@@ -682,8 +762,10 @@ _ARCHETYPE_GUIDANCE: dict[str, str] = {
     ),
     "intra_day": (
         "Intra-day: preserve hour and minute timepoints exactly. Hour N means N elapsed "
-        "hours from the anchor and must not gain an extra day. Keep procedure-level "
-        "tolerances on the activity, never on the visit window."
+        "hours from the anchor and must not gain an extra day. If the same hour set "
+        "repeats once per crossover period, anchor each period's timepoints to THAT "
+        "period's own dosing event, never a shared or baseline anchor. Keep "
+        "procedure-level tolerances on the activity, never on the visit window."
     ),
     "event_driven": (
         "Event-driven: represent last dose, discharge, disease progression, surgery, "

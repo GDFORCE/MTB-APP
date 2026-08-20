@@ -6,6 +6,7 @@ recurrences, activities, and conflicts are not destroyed during extraction.
 """
 from __future__ import annotations
 
+import math
 import re
 import calendar
 from datetime import date, datetime, timedelta
@@ -80,7 +81,7 @@ class DocumentTaskClassification(BaseModel):
         "no_schedule",
     ]
     schedule_archetypes: list[Literal[
-        "linear", "cyclic", "crossover", "multi_arm", "multi_phase",
+        "linear", "cyclic", "crossover", "factorial", "multi_arm", "multi_phase",
         "event_driven", "intra_day", "long_term_extension", "mixed",
     ]] = Field(default_factory=list)
     complexity: Literal["simple", "moderate", "complex"]
@@ -274,6 +275,14 @@ class ScheduleCondition(BaseModel):
         default_factory=list,
         description="Optional recurrence occurrences to which this condition applies, "
         "for example cycles 2, 4, and 6. Empty means every occurrence.",
+    )
+    applies_to_branch_ids: list[str] = Field(
+        default_factory=list,
+        description="Optional arm/cohort branch ids this condition is scoped to. Use "
+        "this for a FACTORIAL design's factor-specific activity or event — e.g. "
+        "'Drug A dispensing' applies only to the arms that include factor A — instead "
+        "of duplicating the activity or event once per arm combination. Empty means "
+        "every arm.",
     )
     evidence_ids: list[str] = Field(default_factory=list)
 
@@ -510,6 +519,11 @@ def validate_canonical_plan(
         missing = sorted(set(condition.applies_to_ids) - target_ids)
         if missing:
             issues.append(f"{condition.id} references unknown targets: {', '.join(missing)}")
+        missing_branches = sorted(set(condition.applies_to_branch_ids) - target_ids)
+        if missing_branches:
+            issues.append(
+                f"{condition.id} references unknown branches: "
+                + ", ".join(missing_branches))
         invalid_occurrences = sorted({
             item for item in condition.occurrence_numbers if item < 1
         })
@@ -728,16 +742,44 @@ def project_canonical_plan(
         for target_id in condition.applies_to_ids:
             conditions_by_target.setdefault(target_id, []).append(condition)
 
-    def condition_applies(target_id: str, occurrence: int | None) -> bool:
-        """Apply an occurrence filter only when the source supplied one."""
-        filtered = [
-            condition for condition in conditions_by_target.get(target_id, [])
-            if condition.occurrence_numbers
-        ]
-        if not filtered:
-            return True
-        return occurrence is not None and any(
-            occurrence in condition.occurrence_numbers for condition in filtered)
+    def event_branch_ids(event: ScheduleEvent) -> frozenset[str]:
+        """This event's own arm/period plus the period's sequence, if nested.
+
+        Used to test a FACTORIAL condition's ``applies_to_branch_ids`` against
+        the event without requiring the model to duplicate the activity or
+        event once per arm combination.
+        """
+        ids = {branch_id for branch_id in (event.arm_id, event.period_id) if branch_id}
+        period_branch = branch_by_id.get(event.period_id) if event.period_id else None
+        if period_branch is not None and period_branch.parent_branch_id:
+            ids.add(period_branch.parent_branch_id)
+        return frozenset(ids)
+
+    def condition_applies(
+        target_id: str, occurrence: int | None,
+        branch_ids: frozenset[str] = frozenset(),
+    ) -> bool:
+        """Apply an occurrence and/or arm/branch filter, only when supplied.
+
+        Each filter is independent and only constrains when at least one
+        condition on this target actually states it — a target with no
+        occurrence-scoped condition is unconstrained by occurrence, and
+        likewise for branch scoping, so a plain (non-factorial, non-cyclic)
+        condition keeps working exactly as before either extension existed.
+        """
+        relevant = conditions_by_target.get(target_id, [])
+        occurrence_scoped = [c for c in relevant if c.occurrence_numbers]
+        if occurrence_scoped and not (
+            occurrence is not None
+            and any(occurrence in c.occurrence_numbers for c in occurrence_scoped)
+        ):
+            return False
+        branch_scoped = [c for c in relevant if c.applies_to_branch_ids]
+        if branch_scoped and not any(
+            set(c.applies_to_branch_ids) & branch_ids for c in branch_scoped
+        ):
+            return False
+        return True
 
     def occurrence_label(
         label: str,
@@ -940,7 +982,6 @@ def project_canonical_plan(
         day = resolve_event_day(event.id)
         if day is not None and recurrence_delta is not None:
             day += recurrence_delta
-        day_offset = int(day) if day is not None and float(day).is_integer() else None
 
         # day_offset above is a 30-day/365-day approximation for a Month/Year
         # label. Once a real patient anchor date exists, exact calendar math
@@ -963,10 +1004,34 @@ def project_canonical_plan(
                 calendar_offset_value = -calendar_offset_value
             calendar_offset_unit = timing.offset.unit
         hour_offset = None
+        hour_offset_basis = None
         if timing.offset and timing.offset.unit in ("minute", "hour") \
                 and timing.kind == "offset":
-            hour_offset = timing.offset.value / 60 if timing.offset.unit == "minute" \
+            raw_hours = timing.offset.value / 60 if timing.offset.unit == "minute" \
                 else timing.offset.value
+            if day is not None:
+                # `day` already has this offset's fractional contribution
+                # folded in via resolve_event_day (an hour/minute offset is a
+                # fraction of a day). Split it into a whole calendar day plus
+                # the intra-day remainder instead of keeping the raw hour
+                # value alone: a PK timepoint chained onto a non-baseline
+                # anchor — a later crossover period's own dosing day, any
+                # mid-study anchor — needs its anchor's day position folded
+                # into the comparable elapsed time. Discarding it here (the
+                # historical behavior) made every period's "Hour 4" collide
+                # with every other period's "Hour 4" when sorted/compared,
+                # since only the bare hour count survived.
+                whole_day = math.floor(day)
+                hour_offset = round((day - whole_day) * 24, 6)
+                day = whole_day
+                hour_offset_basis = "within_day"
+            else:
+                # No resolvable day at all (the anchor itself never dated) —
+                # keep the legacy behavior of a bare, self-contained elapsed
+                # hour count so the timepoint is still orderable/displayable.
+                hour_offset = raw_hours
+                hour_offset_basis = "absolute"
+        day_offset = int(day) if day is not None and float(day).is_integer() else None
         day_end = None
         if timing.kind == "range":
             start, end = _elapsed_days(timing.range_start), _elapsed_days(timing.range_end)
@@ -987,9 +1052,10 @@ def project_canonical_plan(
             window_days = window_before
             window_before = window_after = None
 
+        branch_ids = event_branch_ids(event)
         activities = [
             activity_by_id[item] for item in event.activity_ids
-            if item in activity_by_id and condition_applies(item, occurrence)
+            if item in activity_by_id and condition_applies(item, occurrence, branch_ids)
         ]
         procedures = []
         operational_constraints: list[str] = list(event.operational_constraints)
@@ -998,7 +1064,7 @@ def project_canonical_plan(
         operational_constraints.extend(
             condition.expression for target_id in (event.id, *(item.id for item in activities))
             for condition in conditions_by_target.get(target_id, [])
-            if condition_applies(target_id, occurrence) and condition.expression.strip()
+            if condition_applies(target_id, occurrence, branch_ids) and condition.expression.strip()
         )
         operational_constraints.extend(
             item for item in (
@@ -1066,8 +1132,21 @@ def project_canonical_plan(
                 ) if part))
         name = occurrence_label(event.name, recurrence, occurrence)
         arm = branch_by_id.get(event.arm_id).name if event.arm_id in branch_by_id else None
-        period = branch_by_id.get(event.period_id).name \
-            if event.period_id in branch_by_id else None
+        period_branch = branch_by_id.get(event.period_id)
+        period = period_branch.name if period_branch is not None else None
+        # A period nested under a sequence branch (a crossover design's
+        # randomized treatment order, e.g. "Sequence AB" gets Period 1 =
+        # Treatment A vs "Sequence BA" gets Period 1 = Treatment B) has no
+        # dedicated row field of its own — the flat visit contract only
+        # carries arm/period. Fold the sequence name into `arm` so two
+        # periods sharing the same label ("Period 1") under different
+        # sequences stay distinguishable in the visit list instead of
+        # reading identically; an explicit arm is extended, not overwritten,
+        # so a genuine dose-arm x sequence combination keeps both.
+        sequence_branch = branch_by_id.get(period_branch.parent_branch_id) \
+            if period_branch is not None and period_branch.parent_branch_id else None
+        if sequence_branch is not None:
+            arm = f"{arm} / {sequence_branch.name}" if arm else sequence_branch.name
         unresolved = day_offset is None and hour_offset is None
         # A resolved range keeps both of its ends, so it is represented
         # faithfully. A qualified single day ("within 28 days before", "at least
@@ -1091,7 +1170,7 @@ def project_canonical_plan(
             "calendar_offset_unit": calendar_offset_unit,
             "source_day_label": source_label or "-",
             "hour_offset": hour_offset,
-            "hour_offset_basis": "absolute" if hour_offset is not None else None,
+            "hour_offset_basis": hour_offset_basis,
             "hour_end": None,
             "window_days": window_days,
             "window_before": window_before,
@@ -1148,7 +1227,8 @@ def project_canonical_plan(
             group_events = [e for e in plan.events if e.id in recurrence.event_ids]
             for occurrence in range(recurrence.start_occurrence, end + 1):
                 for group_event in group_events:
-                    if not condition_applies(group_event.id, occurrence):
+                    if not condition_applies(
+                            group_event.id, occurrence, event_branch_ids(group_event)):
                         continue
                     delta = None if frequency_days is None else (
                         occurrence - recurrence.start_occurrence) * frequency_days

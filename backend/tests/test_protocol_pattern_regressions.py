@@ -111,6 +111,259 @@ def test_crossover_washout_is_a_transition_constraint_not_a_fake_visit():
     assert "minimum gap 21 days Period I Dosing" in rows[1]["operational_constraints"]
 
 
+def test_babe_2x2_crossover_sequences_keep_treatment_mapping_and_pk_timing_distinct():
+    """BA/BE 2x2 crossover: two randomized sequences, each with its own dosing
+    day per period and a dense intra-day PK draw repeating in both periods.
+
+    Two things a period/arm-only row schema cannot express on its own:
+    1. Which treatment a given period actually dosed differs BY SEQUENCE
+       (Sequence AB: Period 1 = Test, Period 2 = Reference; Sequence BA is the
+       reverse) — a period branch nested under a sequence branch via
+       parent_branch_id must resolve to a distinguishable row, not silently
+       read as the same "Period 1"/"Period 2" for every sequence.
+    2. An identical intra-day PK offset ("Hour 4 post-dose") recurs once per
+       period, each anchored to THAT period's own dosing day, not to the
+       study's absolute baseline — Period 2's Hour 4 must not collapse onto
+       Period 1's Hour 4 just because they share the same raw hour value.
+    """
+    plan = CanonicalSchedulePlan(
+        protocol_id="BABE-2x2",
+        anchors=[baseline_anchor("randomization")],
+        branches=[
+            ScheduleBranch(id="seq-ab", name="Sequence AB", branch_type="sequence"),
+            ScheduleBranch(id="seq-ba", name="Sequence BA", branch_type="sequence"),
+            ScheduleBranch(id="per1-ab", name="Period 1", branch_type="period",
+                           parent_branch_id="seq-ab"),
+            ScheduleBranch(id="per2-ab", name="Period 2", branch_type="period",
+                           parent_branch_id="seq-ab"),
+            ScheduleBranch(id="per1-ba", name="Period 1", branch_type="period",
+                           parent_branch_id="seq-ba"),
+            ScheduleBranch(id="per2-ba", name="Period 2", branch_type="period",
+                           parent_branch_id="seq-ba"),
+        ],
+        events=[
+            # Sequence AB: Period 1 = Test, Period 2 = Reference.
+            ScheduleEvent(
+                id="dose-ab-1", name="Test Dosing", period_id="per1-ab",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-baseline", offset=amount(0),
+                    source_label="Period 1 Day 1")),
+            ScheduleEvent(
+                id="pk-ab-1-4h", name="PK Hour 4", period_id="per1-ab",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="dose-ab-1", offset=amount(4, "hour"),
+                    source_label="Hour 4 post-dose")),
+            ScheduleEvent(
+                id="dose-ab-2", name="Reference Dosing", period_id="per2-ab",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="dose-ab-1", offset=amount(14),
+                    relation="after", qualifier="minimum",
+                    source_label="At least 14 days after Period 1 dosing")),
+            ScheduleEvent(
+                id="pk-ab-2-4h", name="PK Hour 4", period_id="per2-ab",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="dose-ab-2", offset=amount(4, "hour"),
+                    source_label="Hour 4 post-dose")),
+            # Sequence BA: Period 1 = Reference, Period 2 = Test (reversed).
+            ScheduleEvent(
+                id="dose-ba-1", name="Reference Dosing", period_id="per1-ba",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-baseline", offset=amount(0),
+                    source_label="Period 1 Day 1")),
+            ScheduleEvent(
+                id="pk-ba-1-4h", name="PK Hour 4", period_id="per1-ba",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="dose-ba-1", offset=amount(4, "hour"),
+                    source_label="Hour 4 post-dose")),
+            ScheduleEvent(
+                id="dose-ba-2", name="Test Dosing", period_id="per2-ba",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="dose-ba-1", offset=amount(14),
+                    relation="after", qualifier="minimum",
+                    source_label="At least 14 days after Period 1 dosing")),
+            ScheduleEvent(
+                id="pk-ba-2-4h", name="PK Hour 4", period_id="per2-ba",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="dose-ba-2", offset=amount(4, "hour"),
+                    source_label="Hour 4 post-dose")),
+        ],
+        transitions=[
+            TransitionRule(id="washout-ab", from_event_id="dose-ab-1",
+                            to_event_id="dose-ab-2", relation="minimum_gap",
+                            amount=amount(14)),
+            TransitionRule(id="washout-ba", from_event_id="dose-ba-1",
+                            to_event_id="dose-ba-2", relation="minimum_gap",
+                            amount=amount(14)),
+        ],
+    )
+
+    rows, warnings = project_canonical_plan(plan)
+    assert validate_canonical_plan(plan) == []
+    by_key = {(row["arm"], row["period"], row["name"]): row for row in rows}
+
+    # Sequence-scoped treatment mapping survives — the same "Period 1"/
+    # "Period 2" labels resolve to opposite treatments per sequence, and each
+    # row is tagged with which sequence it belongs to.
+    assert by_key[("Sequence AB", "Period 1", "Test Dosing")]["day_offset"] == 0
+    assert by_key[("Sequence AB", "Period 2", "Reference Dosing")]["day_offset"] == 14
+    assert by_key[("Sequence BA", "Period 1", "Reference Dosing")]["day_offset"] == 0
+    assert by_key[("Sequence BA", "Period 2", "Test Dosing")]["day_offset"] == 14
+
+    # Each period's "Hour 4" PK draw resets against ITS OWN dosing day instead
+    # of colliding with the other period's identical raw hour value.
+    p1_pk = by_key[("Sequence AB", "Period 1", "PK Hour 4")]
+    p2_pk = by_key[("Sequence AB", "Period 2", "PK Hour 4")]
+    assert (p1_pk["day_offset"], p1_pk["hour_offset"], p1_pk["hour_offset_basis"]) == (
+        0, 4.0, "within_day")
+    assert (p2_pk["day_offset"], p2_pk["hour_offset"], p2_pk["hour_offset_basis"]) == (
+        14, 4.0, "within_day")
+    total_elapsed_hours = lambda row: row["day_offset"] * 24 + row["hour_offset"]
+    assert total_elapsed_hours(p1_pk) == 4
+    assert total_elapsed_hours(p2_pk) == 340
+    assert total_elapsed_hours(p1_pk) < total_elapsed_hours(p2_pk)
+
+
+def test_3way_crossover_generalizes_beyond_the_2x2_case():
+    """A 3-way Williams design (sequences ABC, BCA; three periods each) proves
+    the BA/BE machinery is not secretly hardcoded to exactly two periods:
+
+    1. Period 3 must anchor to Period 2's dosing (chained, consecutive), never
+       straight back to Period 1 or the study baseline — day offsets should
+       accumulate 0 -> 14 -> 28, not collapse or double-count.
+    2. The same period NUMBER under two different sequences must still stay
+       distinguishable at three periods deep, not just at two.
+    """
+    plan = CanonicalSchedulePlan(
+        protocol_id="3WAY-WILLIAMS",
+        anchors=[baseline_anchor("randomization")],
+        branches=[
+            ScheduleBranch(id="seq-abc", name="Sequence ABC", branch_type="sequence"),
+            ScheduleBranch(id="seq-bca", name="Sequence BCA", branch_type="sequence"),
+            ScheduleBranch(id="per1-abc", name="Period 1", branch_type="period",
+                           parent_branch_id="seq-abc"),
+            ScheduleBranch(id="per2-abc", name="Period 2", branch_type="period",
+                           parent_branch_id="seq-abc"),
+            ScheduleBranch(id="per3-abc", name="Period 3", branch_type="period",
+                           parent_branch_id="seq-abc"),
+            ScheduleBranch(id="per1-bca", name="Period 1", branch_type="period",
+                           parent_branch_id="seq-bca"),
+            ScheduleBranch(id="per2-bca", name="Period 2", branch_type="period",
+                           parent_branch_id="seq-bca"),
+            ScheduleBranch(id="per3-bca", name="Period 3", branch_type="period",
+                           parent_branch_id="seq-bca"),
+        ],
+        events=[
+            # Sequence ABC: Period 1=A, Period 2=B, Period 3=C.
+            ScheduleEvent(id="dose-abc-1", name="Treatment A Dosing", period_id="per1-abc",
+                timing=TimingExpression(kind="offset", anchor_id="anchor-baseline",
+                                         offset=amount(0), source_label="Period 1 Day 1")),
+            ScheduleEvent(id="dose-abc-2", name="Treatment B Dosing", period_id="per2-abc",
+                timing=TimingExpression(kind="relative", anchor_id="dose-abc-1",
+                                         offset=amount(14), relation="after",
+                                         qualifier="minimum",
+                                         source_label="At least 14 days after Period 1")),
+            ScheduleEvent(id="dose-abc-3", name="Treatment C Dosing", period_id="per3-abc",
+                timing=TimingExpression(kind="relative", anchor_id="dose-abc-2",
+                                         offset=amount(14), relation="after",
+                                         qualifier="minimum",
+                                         source_label="At least 14 days after Period 2")),
+            # Sequence BCA: Period 1=B, Period 2=C, Period 3=A (rotated).
+            ScheduleEvent(id="dose-bca-1", name="Treatment B Dosing", period_id="per1-bca",
+                timing=TimingExpression(kind="offset", anchor_id="anchor-baseline",
+                                         offset=amount(0), source_label="Period 1 Day 1")),
+            ScheduleEvent(id="dose-bca-2", name="Treatment C Dosing", period_id="per2-bca",
+                timing=TimingExpression(kind="relative", anchor_id="dose-bca-1",
+                                         offset=amount(14), relation="after",
+                                         qualifier="minimum",
+                                         source_label="At least 14 days after Period 1")),
+            ScheduleEvent(id="dose-bca-3", name="Treatment A Dosing", period_id="per3-bca",
+                timing=TimingExpression(kind="relative", anchor_id="dose-bca-2",
+                                         offset=amount(14), relation="after",
+                                         qualifier="minimum",
+                                         source_label="At least 14 days after Period 2")),
+        ],
+        transitions=[
+            TransitionRule(id="washout-abc-12", from_event_id="dose-abc-1",
+                            to_event_id="dose-abc-2", relation="minimum_gap", amount=amount(14)),
+            TransitionRule(id="washout-abc-23", from_event_id="dose-abc-2",
+                            to_event_id="dose-abc-3", relation="minimum_gap", amount=amount(14)),
+            TransitionRule(id="washout-bca-12", from_event_id="dose-bca-1",
+                            to_event_id="dose-bca-2", relation="minimum_gap", amount=amount(14)),
+            TransitionRule(id="washout-bca-23", from_event_id="dose-bca-2",
+                            to_event_id="dose-bca-3", relation="minimum_gap", amount=amount(14)),
+        ],
+    )
+
+    rows, warnings = project_canonical_plan(plan)
+    assert validate_canonical_plan(plan) == []
+    by_key = {(row["arm"], row["period"], row["name"]): row for row in rows}
+
+    # Day offsets accumulate consecutively (0, 14, 28), not collapsed onto
+    # Period 1 or doubled by anchoring straight back to baseline.
+    assert by_key[("Sequence ABC", "Period 1", "Treatment A Dosing")]["day_offset"] == 0
+    assert by_key[("Sequence ABC", "Period 2", "Treatment B Dosing")]["day_offset"] == 14
+    assert by_key[("Sequence ABC", "Period 3", "Treatment C Dosing")]["day_offset"] == 28
+
+    # The rotated sequence keeps its own, different treatment-to-period
+    # mapping, still distinguishable three periods deep.
+    assert by_key[("Sequence BCA", "Period 1", "Treatment B Dosing")]["day_offset"] == 0
+    assert by_key[("Sequence BCA", "Period 2", "Treatment C Dosing")]["day_offset"] == 14
+    assert by_key[("Sequence BCA", "Period 3", "Treatment A Dosing")]["day_offset"] == 28
+
+
+def test_2x2_factorial_shares_one_visit_timeline_with_arm_scoped_activities():
+    """A 2x2 factorial (Drug A present/absent x Drug B present/absent) is
+    NOT a crossover: one shared visit timeline, four flat combination arms,
+    and a factor-specific activity gated by ScheduleCondition.applies_to_branch_ids
+    instead of the whole event graph being duplicated once per arm.
+    """
+    plan = CanonicalSchedulePlan(
+        protocol_id="FACTORIAL-2x2",
+        anchors=[baseline_anchor("randomization")],
+        branches=[
+            ScheduleBranch(id="arm-apbp", name="A+B+", branch_type="arm"),
+            ScheduleBranch(id="arm-apbn", name="A+B-", branch_type="arm"),
+            ScheduleBranch(id="arm-anbp", name="A-B+", branch_type="arm"),
+            ScheduleBranch(id="arm-anbn", name="A-B-", branch_type="arm"),
+        ],
+        activities=[
+            ActivityTemplate(id="act-drug-a", name="Drug A dispensing"),
+            ActivityTemplate(id="act-drug-b", name="Drug B dispensing"),
+            ActivityTemplate(id="act-vitals", name="Vital signs"),
+        ],
+        events=[
+            ScheduleEvent(
+                id=f"visit1-{arm}", name="Visit 1", arm_id=f"arm-{arm}",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-baseline", offset=amount(0),
+                    source_label="Day 1"),
+                activity_ids=["act-drug-a", "act-drug-b", "act-vitals"],
+            )
+            for arm in ("apbp", "apbn", "anbp", "anbn")
+        ],
+        conditions=[
+            ScheduleCondition(
+                id="cond-drug-a", expression="Drug A dispensed only in factor-A-positive arms",
+                applies_to_ids=["act-drug-a"],
+                applies_to_branch_ids=["arm-apbp", "arm-apbn"]),
+            ScheduleCondition(
+                id="cond-drug-b", expression="Drug B dispensed only in factor-B-positive arms",
+                applies_to_ids=["act-drug-b"],
+                applies_to_branch_ids=["arm-apbp", "arm-anbp"]),
+        ],
+    )
+
+    rows, warnings = project_canonical_plan(plan)
+    assert validate_canonical_plan(plan) == []
+    assert len(rows) == 4  # one shared visit per arm, not a duplicated schedule
+    by_arm = {row["arm"]: set(row["activities"]) for row in rows}
+
+    assert by_arm["A+B+"] == {"Drug A dispensing", "Drug B dispensing", "Vital signs"}
+    assert by_arm["A+B-"] == {"Drug A dispensing", "Vital signs"}
+    assert by_arm["A-B+"] == {"Drug B dispensing", "Vital signs"}
+    assert by_arm["A-B-"] == {"Vital signs"}
+
+
 def test_open_ended_oncology_cycle_is_previewed_but_never_made_finite():
     """CG03/PICN: repeat every 21 days until a clinical stopping event."""
     plan = CanonicalSchedulePlan(
