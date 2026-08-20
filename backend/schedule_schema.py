@@ -270,6 +270,11 @@ class ScheduleCondition(BaseModel):
     id: str
     expression: str
     applies_to_ids: list[str] = Field(default_factory=list)
+    occurrence_numbers: list[int] = Field(
+        default_factory=list,
+        description="Optional recurrence occurrences to which this condition applies, "
+        "for example cycles 2, 4, and 6. Empty means every occurrence.",
+    )
     evidence_ids: list[str] = Field(default_factory=list)
 
 
@@ -505,6 +510,13 @@ def validate_canonical_plan(
         missing = sorted(set(condition.applies_to_ids) - target_ids)
         if missing:
             issues.append(f"{condition.id} references unknown targets: {', '.join(missing)}")
+        invalid_occurrences = sorted({
+            item for item in condition.occurrence_numbers if item < 1
+        })
+        if invalid_occurrences:
+            issues.append(
+                f"{condition.id} has invalid occurrence numbers: "
+                + ", ".join(str(item) for item in invalid_occurrences))
     for conflict in plan.conflicts:
         if conflict.status == "unresolved":
             issues.append(f"Unresolved source conflict at {conflict.field_path}: {conflict.description}")
@@ -711,6 +723,60 @@ def project_canonical_plan(
     baseline_anchor_id = preferred.id if preferred else (
         plan.anchors[0].id if plan.anchors else None)
     anchor_by_id = {item.id: item for item in plan.anchors}
+    conditions_by_target: dict[str, list[ScheduleCondition]] = {}
+    for condition in plan.conditions:
+        for target_id in condition.applies_to_ids:
+            conditions_by_target.setdefault(target_id, []).append(condition)
+
+    def condition_applies(target_id: str, occurrence: int | None) -> bool:
+        """Apply an occurrence filter only when the source supplied one."""
+        filtered = [
+            condition for condition in conditions_by_target.get(target_id, [])
+            if condition.occurrence_numbers
+        ]
+        if not filtered:
+            return True
+        return occurrence is not None and any(
+            occurrence in condition.occurrence_numbers for condition in filtered)
+
+    def occurrence_label(
+        label: str,
+        recurrence: RecurrenceRule | None,
+        occurrence: int | None,
+    ) -> str:
+        """Render a recurrence label without leaking internal occurrence jargon.
+
+        Models should author ``{cycle}``/``{occurrence}`` templates.  The
+        cycle-specific fallback is intentionally narrow: it only normalizes a
+        label whose recurrence evidence explicitly says it is a cycle.  Other
+        recurrence types retain the historical ``(Occurrence N)`` fallback so
+        their existing behavior is unchanged and reviewable.
+        """
+        if occurrence is None:
+            return label
+        rendered = label.replace("{occurrence}", str(occurrence)).replace(
+            "{cycle}", str(occurrence))
+        if rendered != label:
+            return rendered
+        recurrence_text = " ".join((
+            recurrence.source_label if recurrence else "",
+            label,
+        ))
+        if re.search(r"\bcycles?\b", recurrence_text, re.IGNORECASE):
+            collapsed = re.compile(
+                r"\bCycle\s*\d+\s*(?:&|and)\s*"
+                r"(?:Next|Subsequent|Further)\s*Cycles?\b",
+                re.IGNORECASE,
+            )
+            if collapsed.search(label):
+                return collapsed.sub(f"Cycle {occurrence}", label, count=1)
+            numbered = re.compile(r"\bCycle\s*\d+\b", re.IGNORECASE)
+            if numbered.search(label):
+                return numbered.sub(f"Cycle {occurrence}", label, count=1)
+            return f"Cycle {occurrence} {label}".strip()
+        if occurrence > 1:
+            return f"{label} (Occurrence {occurrence})"
+        return label
 
     # A protocol declares several anchors (first dose, Period II dose, last
     # dose). Only the baseline sits at day zero; the others must be derived or
@@ -862,9 +928,13 @@ def project_canonical_plan(
         ]
 
     def build_row(event: ScheduleEvent, *, occurrence: int | None = None,
-                  recurrence_delta: float | None = None) -> dict:
+                  recurrence_delta: float | None = None,
+                  recurrence: RecurrenceRule | None = None) -> dict:
         timing = event.timing
         source_label = timing.source_label.strip()
+        if occurrence is not None:
+            source_label = source_label.replace(
+                "{occurrence}", str(occurrence)).replace("{cycle}", str(occurrence))
         if not source_label:
             source_label = format_temporal_amount(timing.offset)
         day = resolve_event_day(event.id)
@@ -917,12 +987,19 @@ def project_canonical_plan(
             window_days = window_before
             window_before = window_after = None
 
-        activities = [activity_by_id[item] for item in event.activity_ids
-                      if item in activity_by_id]
+        activities = [
+            activity_by_id[item] for item in event.activity_ids
+            if item in activity_by_id and condition_applies(item, occurrence)
+        ]
         procedures = []
         operational_constraints: list[str] = list(event.operational_constraints)
         if event.conditional_text.strip():
             operational_constraints.append(event.conditional_text.strip())
+        operational_constraints.extend(
+            condition.expression for target_id in (event.id, *(item.id for item in activities))
+            for condition in conditions_by_target.get(target_id, [])
+            if condition_applies(target_id, occurrence) and condition.expression.strip()
+        )
         operational_constraints.extend(
             item for item in (
                 timing.weekday_rule.strip(), timing.notes.strip(),
@@ -987,12 +1064,7 @@ def project_canonical_plan(
                     transition.relation.replace("_", " "), amount,
                     other.name if other else other_id,
                 ) if part))
-        name = event.name
-        if occurrence is not None:
-            name = name.replace("{occurrence}", str(occurrence)).replace(
-                "{cycle}", str(occurrence))
-            if name == event.name and occurrence > 1:
-                name = f"{name} (Occurrence {occurrence})"
+        name = occurrence_label(event.name, recurrence, occurrence)
         arm = branch_by_id.get(event.arm_id).name if event.arm_id in branch_by_id else None
         period = branch_by_id.get(event.period_id).name \
             if event.period_id in branch_by_id else None
@@ -1008,6 +1080,8 @@ def project_canonical_plan(
             or event.window.state in ("unclear", "conflicting")
         )
         return {
+            # Keep the canonical template ID stable for API/backward compatibility;
+            # each persisted compatibility row receives its own ordinary visit ID.
             "canonical_event_id": event.id,
             "name": name,
             "visit_type": event.event_type,
@@ -1022,7 +1096,8 @@ def project_canonical_plan(
             "window_days": window_days,
             "window_before": window_before,
             "window_after": window_after,
-            "relative_to": event_by_id[timing.anchor_id].name
+            "relative_to": occurrence_label(
+                event_by_id[timing.anchor_id].name, recurrence, occurrence)
                 if timing.kind == "relative" and timing.anchor_id in event_by_id else None,
             "relative_offset_days": (
                 -int(abs(_elapsed_days(timing.offset)))
@@ -1060,10 +1135,13 @@ def project_canonical_plan(
                     f"showing {open_ended_preview_count} occurrences for review only.")
             frequency_days = _elapsed_days(recurrence.frequency)
             for occurrence in range(recurrence.start_occurrence, end + 1):
+                if not condition_applies(event.id, occurrence):
+                    continue
                 delta = None if frequency_days is None else (
                     occurrence - recurrence.start_occurrence) * frequency_days
                 row = build_row(
-                    event, occurrence=occurrence, recurrence_delta=delta)
+                    event, occurrence=occurrence, recurrence_delta=delta,
+                    recurrence=recurrence)
                 if frequency_days is None and occurrence > recurrence.start_occurrence:
                     # Calendar-month/year recurrence needs a real patient date.
                     # Never duplicate the first occurrence's numeric offset.

@@ -385,6 +385,18 @@ covering a printed, individually-numbered column always renders wrong (e.g. a st
 collapsed or individually printed, prefer individual events — that is always representable
 exactly.
 
+COLLAPSED CYCLE BLOCKS: when one source column means "Cycle 2 & Next Cycles", keep one
+shared recurrence rule whose event_ids contain every member of that cycle block. Give each
+member an occurrence-aware name containing the literal placeholder {cycle}, for example
+"Cycle {cycle} Dosing Visit" and "Cycle {cycle} Intra-Cycle Visit IC-1". Set
+start_occurrence to the first represented cycle. Give the first occurrence of every member
+an evidence-backed, resolvable timing; later occurrences are shifted by the recurrence
+frequency. Same-cycle relative events must anchor to another event in the shared block.
+Leave end_occurrence null when treatment continues until progression/toxicity, and record
+that stopping event instead of borrowing a cycle maximum from historical-study prose. For
+activities limited to named cycles (for example imaging at cycles 2, 4, and 6), attach a
+ScheduleCondition to the activity with occurrence_numbers [2, 4, 6].
+
 Classify every event's event_type using the protocol's own visit-type codes when present
 (e.g. 'SS' study-site, 'V' virtual, 'T/C' telephone), otherwise using its role in the
 schedule: 'screening', 'baseline', 'randomization', 'treatment', 'follow_up',
@@ -431,6 +443,14 @@ every instance (Week 4, 8, 12, 16, 20...), create a SEPARATE event per column wi
 exact printed number as its name instead — a recurrence rule can only substitute a bare
 1, 2, 3... index into a name, not arbitrary printed numbers like 8, 12, 44, 108, so using
 one here always renders wrong. Prefer individual events whenever unsure.
+
+For a genuinely collapsed cycle block such as "Cycle 2 & Next Cycles", use one shared
+recurrence containing all block event_ids. Name every member with the literal {cycle}
+placeholder, set start_occurrence to the first cycle represented, and make each first-
+occurrence timing resolvable so the deterministic projector can shift the entire block by
+the stated cadence. Keep an evidence-backed progression/toxicity tail open-ended. Express
+cycle-specific activities through ScheduleCondition.occurrence_numbers rather than copying
+them into every cycle.
 
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
@@ -496,13 +516,14 @@ event. A wide, plainly-numbered column with no distinct name is still a real, ma
 event — do not leave it out because it looks like a duplicate of its neighbors. Count the
 distinct visit_columns facts and confirm every one is covered before returning.
 
-If the audit reports a garbled or duplicated name like "X (Occurrence 2)", the cause is a
-recurrence rule wrongly used to cover columns that the protocol prints with their own
-distinct number (Week 4, 8, 12...) — a recurrence can only substitute a bare 1, 2, 3...
-index into a name, not arbitrary printed numbers. Replace that recurrence rule with one
-individual event per printed column, each named with its own printed number, and remove
-the recurrence. Reserve recurrence rules for cycles the protocol itself never prints
-individually (e.g. "Cycle 2 & Next Cycles").
+If the audit reports a garbled or duplicated name like "X (Occurrence 2)", first determine
+which source shape applies. For separately printed columns (Week 4, 8, 12...), remove the
+recurrence and create one event per printed column. For a genuinely collapsed source block
+("Cycle 2 & Next Cycles"), KEEP recurrence: put all block event IDs in one shared rule,
+change every member name to an occurrence-aware {cycle} template, and ensure the first
+occurrence of each member has resolvable timing. Use occurrence_numbers on a condition for
+activities limited to particular cycles. Never replace a collapsed, open-ended cycle block
+with invented individually sourced columns or a fixed final cycle.
 
 TIMING SHAPE RULE (applies to every timing object, including activity and procedure timing): choose the kind from what the source actually supplies. Use offset/calendar_offset only with a numeric offset amount. Use range only with both range_start and range_end. Use relative or event_driven only with an anchor_id naming a real anchor or event. Procedure prose with no number and no anchor -- "pre-dose", "at each visit", "as clinically indicated", "prior to discharge" -- must use kind unresolved with the exact wording in source_label. Never label such a value offset or relative and leave its companion field empty."""
 
@@ -1154,6 +1175,28 @@ def _structural_issues(schedule: ExtractedSchedule) -> list[str]:
     dated = [visit.day_offset for visit in expanded.visits if visit.day_offset is not None]
     if len(dated) >= 3 and len(set(dated)) == 1:
         issues.append(f"all {len(dated)} dated visits collapse onto day {dated[0]}")
+    plan = schedule.canonical_plan
+    if plan is not None:
+        for recurrence in plan.recurrences:
+            if recurrence.frequency.unit not in ("day", "week"):
+                continue
+            for event_id in recurrence.event_ids:
+                projected = [
+                    visit for visit in expanded.visits
+                    if (visit.canonical_event_id or "").split("@", 1)[0] == event_id
+                ]
+                if projected and all(
+                    visit.day_offset is None and visit.hour_offset is None
+                    for visit in projected
+                ):
+                    event = next(
+                        (item for item in plan.events if item.id == event_id), None)
+                    issues.append(
+                        f"recurring event '{event.name if event else event_id}' has a "
+                        f"numeric {recurrence.frequency.value:g}-"
+                        f"{recurrence.frequency.unit} cadence but no resolvable first "
+                        "occurrence timing — anchor the first occurrence so later cycle "
+                        "dates can be projected")
     # A recurrence rule wrongly used to cover individually-printed, distinctly-numbered
     # columns (Week 4, 8, 12...) can only substitute a bare 1, 2, 3... index into the
     # name, which the projection then disambiguates as "<name> (Occurrence N)" — always

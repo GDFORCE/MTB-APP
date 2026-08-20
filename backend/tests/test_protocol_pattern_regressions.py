@@ -169,6 +169,163 @@ def test_open_ended_oncology_cycle_is_previewed_but_never_made_finite():
     assert rows[-1]["review_status"] == "pending"
 
 
+def test_picn_collapsed_open_cycle_projects_as_cycle_specific_visit_block():
+    """CLR_10_13: canonical production path expands Cycle 2 & Next Cycles.
+
+    This deliberately uses the generic label observed in the failed live run,
+    not an already-perfect ``{cycle}`` template.  Projection must still render
+    real cycle names, retain same-cycle relative anchors, and limit conditional
+    assessments to their source-stated cycles.
+    """
+    plan = CanonicalSchedulePlan(
+        protocol_id="CLR_10_13",
+        anchors=[baseline_anchor("randomization")],
+        activities=[
+            ActivityTemplate(id="activity-imaging", name="Imaging / RECIST assessment"),
+            ActivityTemplate(id="activity-interim", name="Interim efficacy/safety analysis"),
+        ],
+        events=[
+            ScheduleEvent(
+                id="event-screening", name="Screening", event_type="screening",
+                timing=TimingExpression(
+                    kind="range", anchor_id="anchor-baseline",
+                    range_start=amount(-7), range_end=amount(-1),
+                    source_label="Day -7 to -1"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-1-dose", name="Cycle 1 (Randomization + Dosing)",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-baseline", offset=amount(0),
+                    source_label="Cycle 1"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-1-ic1", name="Cycle 1 Post Cycle Intra-Cycle Visit IC-1",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-1-dose", offset=amount(7),
+                    relation="after", source_label="7 days after Cycle 1 dosing"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-1-ic2", name="Cycle 1 Post Cycle Intra-Cycle Visit IC-2",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-1-dose", offset=amount(14),
+                    relation="after", source_label="14 days after Cycle 1 dosing"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-1-ic3", name="Cycle 1 Post Cycle Intra-Cycle Visit IC-3",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-1-dose", offset=amount(21),
+                    relation="after", source_label="21 days after Cycle 1 dosing"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-dose", name="Cycle 2 & Next Cycles Dosing Visit",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-1-ic3", offset=amount(0),
+                    relation="after", source_label="Within 3 days after prior cycle IC-3"),
+                window=WindowSpec(
+                    state="stated", early=amount(0), late=amount(3),
+                    source_label="within 3 days after intra-cycle visit 3"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-ic1",
+                name="Cycle 2 & Next Cycles Post Cycle Intra-Cycle Visit IC-1",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-dose", offset=amount(7),
+                    relation="after", source_label="7 days after cycle dosing"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-ic2",
+                name="Cycle 2 & Next Cycles Post Cycle Intra-Cycle Visit IC-2",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-dose", offset=amount(14),
+                    relation="after", source_label="14 days after cycle dosing"),
+            ),
+            ScheduleEvent(
+                id="event-cycle-ic3",
+                name="Cycle 2 & Next Cycles Post Cycle Intra-Cycle Visit IC-3",
+                event_type="treatment",
+                timing=TimingExpression(
+                    kind="relative", anchor_id="event-cycle-dose", offset=amount(21),
+                    relation="after", source_label="21 days after cycle dosing"),
+                activity_ids=["activity-imaging", "activity-interim"],
+            ),
+            ScheduleEvent(
+                id="event-progression", name="Confirmed disease progression",
+                event_type="unscheduled", required=False,
+                timing=TimingExpression(
+                    kind="event_driven", anchor_id="anchor-baseline",
+                    source_label="Confirmed disease progression"),
+            ),
+        ],
+        recurrences=[RecurrenceRule(
+            id="recurrence-cycle-2-onward",
+            event_ids=[
+                "event-cycle-dose", "event-cycle-ic1", "event-cycle-ic2",
+                "event-cycle-ic3",
+            ],
+            frequency=amount(21), start_occurrence=2, end_occurrence=None,
+            until_event_id="event-progression",
+            source_label=(
+                "Cycle 2 & Next Cycles every 3 weeks until disease progression "
+                "or unacceptable toxicity"),
+        )],
+        conditions=[
+            ScheduleCondition(
+                id="condition-imaging-cycles", expression="Imaging at cycles 2, 4, and 6",
+                applies_to_ids=["activity-imaging"], occurrence_numbers=[2, 4, 6]),
+            ScheduleCondition(
+                id="condition-cycle-6-interim",
+                expression="Interim efficacy/safety analysis at the end of Cycle 6",
+                applies_to_ids=["activity-interim"], occurrence_numbers=[6]),
+        ],
+    )
+
+    rows, warnings = project_canonical_plan(plan, open_ended_preview_count=5)
+    scheduled = [row for row in rows if row["day_offset"] is not None]
+    by_name = {row["name"]: row for row in rows}
+
+    assert validate_canonical_plan(plan) == []
+    assert len(scheduled) == 25
+    assert not any("Occurrence" in row["name"] for row in rows)
+    assert [by_name[name]["day_offset"] for name in (
+        "Cycle 1 (Randomization + Dosing)",
+        "Cycle 1 Post Cycle Intra-Cycle Visit IC-1",
+        "Cycle 1 Post Cycle Intra-Cycle Visit IC-2",
+        "Cycle 1 Post Cycle Intra-Cycle Visit IC-3",
+        "Cycle 2 Dosing Visit",
+        "Cycle 2 Post Cycle Intra-Cycle Visit IC-1",
+        "Cycle 2 Post Cycle Intra-Cycle Visit IC-2",
+        "Cycle 2 Post Cycle Intra-Cycle Visit IC-3",
+        "Cycle 3 Dosing Visit",
+    )] == [0, 7, 14, 21, 21, 28, 35, 42, 42]
+    assert by_name["Cycle 3 Post Cycle Intra-Cycle Visit IC-1"]["relative_to"] == (
+        "Cycle 3 Dosing Visit")
+    for cycle in range(2, 7):
+        dose = by_name[f"Cycle {cycle} Dosing Visit"]
+        assert dose["window_before"] == 0
+        assert dose["window_after"] == 3
+    imaging_cycles = {
+        cycle for cycle in range(2, 7)
+        if "Imaging / RECIST assessment" in by_name[
+            f"Cycle {cycle} Post Cycle Intra-Cycle Visit IC-3"]["activities"]
+    }
+    interim_cycles = {
+        cycle for cycle in range(2, 7)
+        if "Interim efficacy/safety analysis" in by_name[
+            f"Cycle {cycle} Post Cycle Intra-Cycle Visit IC-3"]["activities"]
+    }
+    assert imaging_cycles == {2, 4, 6}
+    assert interim_cycles == {6}
+    assert plan.recurrences[0].end_occurrence is None
+    assert len(warnings) == 1 and "open-ended" in warnings[0]
+
+
 def test_multi_arm_schedule_keeps_assignment_without_duplicating_shared_meaning():
     """Parallel studies need arm membership retained on otherwise same-day visits."""
     plan = CanonicalSchedulePlan(
