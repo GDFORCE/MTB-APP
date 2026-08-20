@@ -23,7 +23,16 @@ type ScheduleVisit = { visit_template_id?: string; visit_number?: number; name: 
 function parseDate(s: string): Date | null {
   const t = s.trim();
   const dmy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (dmy) { const d = new Date(+dmy[3], +dmy[2] - 1, +dmy[1]); return isNaN(d.getTime()) ? null : d; }
+  if (dmy) {
+    const day = +dmy[1], month = +dmy[2], year = +dmy[3];
+    const d = new Date(year, month - 1, day);
+    // Date() silently rolls an out-of-range month/day into a later date
+    // instead of rejecting it (month 82 -> +6 years) — confirm the
+    // constructed date actually reflects what was typed rather than
+    // trusting isNaN alone, which a rolled-over date always passes.
+    return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day
+      ? d : null;
+  }
   const named = t.match(/^(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})$/);
   if (named) {
     const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
