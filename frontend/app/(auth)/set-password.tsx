@@ -20,14 +20,18 @@ const RULES: { label: string; test: (p: string) => boolean }[] = [
 
 export default function SetPassword() {
   const router = useRouter();
-  const { registration_id, role, email, phone } = useLocalSearchParams<{
+  const { registration_id, role, email, phone, channels } = useLocalSearchParams<{
     registration_id: string;
     role: string;
     invited?: string;
     email?: string;
     phone?: string;
+    channels?: string;
   }>();
   const loginIdentifier = String(email || phone || "");
+  const channelCount = (() => { try { return (JSON.parse(channels || "[]") as string[]).length || 1; } catch { return 1; } })();
+  const totalSteps = channelCount + 4;
+  const stepNumber = channelCount + 4;
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -80,7 +84,7 @@ export default function SetPassword() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <AuthHeader eyebrow="Step 5 of 5" title="Set your password" subtitle="This is the last step — your account is created right after." onBack={() => router.back()} step={5} />
+        <AuthHeader eyebrow={`Step ${stepNumber} of ${totalSteps}`} title="Set your password" subtitle="This is the last step — your account is created right after." onBack={() => router.back()} step={stepNumber} totalSteps={totalSteps} />
 
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {!!loginIdentifier && (

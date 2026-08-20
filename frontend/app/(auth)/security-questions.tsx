@@ -31,8 +31,6 @@ const QUESTION_POOLS: string[][] = [
   ],
 ];
 
-const CORE = new Set(["fullName", "email", "phone", "phoneCountry", "orgName", "inviteToken"]);
-
 function QuestionSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   return (
@@ -64,24 +62,27 @@ function QuestionSelect({ value, options, onChange }: { value: string; options: 
 
 export default function SecurityQuestions() {
   const router = useRouter();
-  const { role, payload, registration_id, invited, email, phone } = useLocalSearchParams<{
+  // Phone/email are always verified before this screen (register.tsx starts
+  // the registration and sends the OTP; verify-phone.tsx / verify-email.tsx
+  // only forward here on success), so registration_id always identifies an
+  // already-verified pending registration.
+  const { role, registration_id, invited, email, phone, channels } = useLocalSearchParams<{
     role: string;
-    variant?: string;
-    payload?: string;
     registration_id?: string;
     invited?: string;
     email?: string;
     phone?: string;
+    channels?: string;
   }>();
-  const fld = (() => { try { return JSON.parse(payload || "{}"); } catch { return {}; } })();
-  const isVerifiedInvite = invited === "1" && !!registration_id;
+  const channelCount = (() => { try { return (JSON.parse(channels || "[]") as string[]).length || 1; } catch { return 1; } })();
+  const totalSteps = channelCount + 4;
+  const stepNumber = channelCount + 3;
 
   const [questions, setQuestions] = useState<string[]>(["", "", ""]);
   const [answers, setAnswers] = useState<string[]>(["", "", ""]);
   const [revealed, setRevealed] = useState<boolean[]>([false, false, false]);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-  // Avoid creating two competing OTP sessions when Continue is tapped quickly.
   const startingRef = useRef(false);
 
   const setQ = (i: number, v: string) => setQuestions((p) => p.map((x, idx) => (idx === i ? v : x)));
@@ -90,61 +91,29 @@ export default function SecurityQuestions() {
 
   const allComplete = questions.every((q) => q) && answers.every((a) => a.trim().length > 0) && !loading;
 
-  // Leaving this step sends the OTP: we start the pending registration (no password yet —
-  // the password is set at step 5 via /register/complete after OTP is verified).
   const submit = async () => {
     if (!allComplete || startingRef.current) return;
     startingRef.current = true;
     setLoading(true); setErr("");
     try {
       const security_questions = questions.map((q, i) => ({ question: q, answer: answers[i] }));
-      if (isVerifiedInvite) {
-        await api.post("/auth/register/security-questions", {
-          registration_id,
-          security_questions,
-        });
-        router.push({
-          pathname: "/(auth)/set-password",
-          params: {
-            registration_id,
-            role: role || "patient",
-            invited: "1",
-            email: email || "",
-            phone: phone || "",
-          },
-        });
-        return;
-      }
-      const profile: Record<string, any> = {};
-      Object.keys(fld).forEach((k) => { if (!CORE.has(k) && fld[k]) profile[k] = fld[k]; });
-      // Step 2 already normalized the number to E.164 against the chosen country,
-      // so pass it through untouched rather than re-guessing a calling code.
-      const normalizedPhone = fld.phone ? String(fld.phone).trim() : undefined;
-      const body: any = {
-        full_name: fld.fullName,
-        role: role || "patient",
-        phone: normalizedPhone,
-        organization: fld.orgName || undefined,
-        profile,
+      await api.post("/auth/register/security-questions", {
+        registration_id,
         security_questions,
-      };
-      if (fld.email) body.email = String(fld.email).trim().toLowerCase();
-      if (fld.inviteToken) body.invite_token = String(fld.inviteToken);
-
-      const { data } = await api.post("/auth/register/start", body);
+      });
       router.push({
-        pathname: "/(auth)/verify-otp",
+        pathname: "/(auth)/set-password",
         params: {
-          registration_id: data.registration_id,
-          channels: JSON.stringify(data.channels),
-          email: data.email || "",
-          phone: data.phone || "",
+          registration_id,
           role: role || "patient",
-          invited: fld.inviteToken ? "1" : "",
+          invited: invited || "",
+          email: email || "",
+          phone: phone || "",
+          channels: channels || "",
         },
       });
     } catch (e: any) {
-      setErr(e?.response?.data?.detail || "Could not start verification. Please try again.");
+      setErr(e?.response?.data?.detail || "Could not save your security questions. Please try again.");
     } finally {
       startingRef.current = false;
       setLoading(false);
@@ -154,7 +123,7 @@ export default function SecurityQuestions() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <AuthHeader eyebrow={`Step ${isVerifiedInvite ? 4 : 3} of 5`} title="Only you would know" subtitle="Three security questions help us verify it's you and recover your account if it's ever locked." onBack={() => router.back()} step={isVerifiedInvite ? 4 : 3} />
+        <AuthHeader eyebrow={`Step ${stepNumber} of ${totalSteps}`} title="Only you would know" subtitle="Three security questions help us verify it's you and recover your account if it's ever locked." onBack={() => router.back()} step={stepNumber} totalSteps={totalSteps} />
 
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {questions.map((selected, i) => (
@@ -191,7 +160,7 @@ export default function SecurityQuestions() {
 
         <View style={s.footer}>
           <Springy onPress={submit} disabled={!allComplete} style={[s.cta, allComplete ? { backgroundColor: colors.primary } : { backgroundColor: colors.surface }]}>
-            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: allComplete ? colors.primaryFg : colors.mutedFg }}>{loading ? (isVerifiedInvite ? "Saving…" : "Sending codes…") : "Continue"}</Text>
+            <Text style={{ fontFamily: fonts.bold, fontSize: 15, color: allComplete ? colors.primaryFg : colors.mutedFg }}>{loading ? "Saving…" : "Continue"}</Text>
           </Springy>
         </View>
       </KeyboardAvoidingView>

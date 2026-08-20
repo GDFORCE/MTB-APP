@@ -298,6 +298,10 @@ export default function Register() {
   const variant = variantFor(role);
   const isPatient = variant === "patient";
   const isInvite = !!inviteToken;
+  // Matches backend required_channels(): patients and invited users verify
+  // phone only (one verify screen); everyone else verifies email AND phone
+  // (two verify screens), which adds one extra step to the whole flow.
+  const registerTotalSteps = (isPatient || isInvite) ? 5 : 6;
   const isSmoAdminRegistration = !isInvite && role === "smo";
   const isOrganizationAdminRegistration = !isInvite && ["sponsor", "cro", "smo", "site"].includes(String(role));
   const activeRegistrationInstructions = isSmoAdminRegistration
@@ -367,7 +371,9 @@ export default function Register() {
   const [declarationAccepted, setDeclarationAccepted] = useState(() => isInvite);
   const [showInstructions, setShowInstructions] = useState(() => isOrganizationAdminRegistration);
   const [showDeclaration, setShowDeclaration] = useState(() => !isInvite && !isOrganizationAdminRegistration);
-  const [orgCheck, setOrgCheck] = useState<"exists" | "new" | null>(null);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [orgCheck, setOrgCheck] = useState<"exists" | null>(null);
   const [orgContactError, setOrgContactError] = useState("");
   // True while Continue performs the authoritative org/contact lookup.
   const [checkingOrg, setCheckingOrg] = useState(false);
@@ -422,7 +428,18 @@ export default function Register() {
     return () => { ignore = true; clearTimeout(t); };
   }, [fld.orgName, role, isInvite, isPatient, variant]);
 
-  // ── Terms & Conditions content (fetched when the modal opens) ─────────────
+  // ── Terms & Conditions content (static — no network call, so this popup can
+  // never be affected by backend load, slow endpoints like protocol
+  // extraction, or connectivity issues) ─────────────────────────────────────
+  const TERMS_BLOCKS: { heading: string; body: string }[] = [
+    { heading: "1. Use of Application", body: "This platform helps research teams manage clinical-trial visit schedules, patient records, and communication." },
+    { heading: "2. Data Privacy & Compliance", body: "All personal and clinical data is handled per applicable data-protection laws and used solely for clinical-trial management." },
+    { heading: "3. Data Security", body: "We use encryption at rest and in transit. You are responsible for keeping your credentials confidential." },
+    { heading: "4. Audit & Compliance", body: "All actions are logged for audit and may be shared with authorized regulators upon request." },
+  ];
+  const TERMS_VERSION = "2.1";
+  const TERMS_EFFECTIVE = "01 Jan 2025";
+
   const validation = useMemo(() => {
     const result = validateRegistration(variant, { ...fld, phoneCountry });
     if (!isInvite) return result;
@@ -477,7 +494,7 @@ export default function Register() {
     && fld.role === "PI"
     && fld.department === OTHER_DEPARTMENT
     && !fld.departmentOther?.trim();
-  const canContinue = declarationAccepted && validation.valid && smoHospitalsValid && !customDepartmentMissing && !checkingAvailability && !availabilityErrors.email && !availabilityErrors.phone;
+  const canContinue = declarationAccepted && termsAccepted && validation.valid && smoHospitalsValid && !customDepartmentMissing && !checkingAvailability && !availabilityErrors.email && !availabilityErrors.phone;
   const fieldError = (key: keyof RegistrationErrors) =>
     availabilityErrors[key] || (submitted || touched[key] ? validation.errors[key] : undefined);
   const normalizeOrgName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
@@ -520,51 +537,44 @@ export default function Register() {
       ...registrationPayload,
       inviteToken: inviteToken || "",
     };
-    if (isInvite) {
-      setStartingVerification(true);
-      setErr("");
-      try {
-        const profile: Record<string, string> = {};
-        const coreFields = new Set(["fullName", "email", "phone", "phoneCountry", "orgName", "inviteToken"]);
-        Object.keys(payload).forEach((key) => {
-          if (!coreFields.has(key) && payload[key]) profile[key] = payload[key];
-        });
-        const { data } = await api.post("/auth/register/start", {
-          full_name: payload.fullName,
-          role: effectiveRole,
-          email: payload.email || undefined,
-          phone: payload.phone,
-          organization: payload.orgName || undefined,
-          profile,
-          invite_token: payload.inviteToken,
-          security_questions: [],
-        });
-        router.push({
-          pathname: "/(auth)/verify-otp",
-          params: {
-            registration_id: data.registration_id,
-            channels: JSON.stringify(data.channels),
-            email: data.email || "",
-            phone: data.phone || "",
-            role: effectiveRole,
-            invited: "1",
-          },
-        });
-      } catch (error: any) {
-        setErr(error?.response?.data?.detail || "Could not start verification. Please try again.");
-      } finally {
-        setStartingVerification(false);
-      }
-      return;
-    }
-    router.push({
-      pathname: "/(auth)/security-questions",
-      params: {
+    // Every path — invited or not — verifies phone/email first, then answers
+    // security questions, then sets a password. Start the pending
+    // registration and send the OTP now; security questions are collected
+    // afterward once verification succeeds (see verify-phone.tsx / verify-email.tsx).
+    setStartingVerification(true);
+    setErr("");
+    try {
+      const profile: Record<string, string> = {};
+      const coreFields = new Set(["fullName", "email", "phone", "phoneCountry", "orgName", "inviteToken"]);
+      Object.keys(payload).forEach((key) => {
+        if (!coreFields.has(key) && payload[key]) profile[key] = payload[key];
+      });
+      const { data } = await api.post("/auth/register/start", {
+        full_name: payload.fullName,
         role: effectiveRole,
-        variant,
-        payload: JSON.stringify(payload),
-      },
-    });
+        email: payload.email || undefined,
+        phone: payload.phone,
+        organization: payload.orgName || undefined,
+        profile,
+        invite_token: payload.inviteToken,
+        security_questions: [],
+      });
+      router.push({
+        pathname: "/(auth)/verify-phone",
+        params: {
+          registration_id: data.registration_id,
+          channels: JSON.stringify(data.channels),
+          email: data.email || "",
+          phone: data.phone || "",
+          role: effectiveRole,
+          invited: isInvite ? "1" : "",
+        },
+      });
+    } catch (error: any) {
+      setErr(error?.response?.data?.detail || "Could not start verification. Please try again.");
+    } finally {
+      setStartingVerification(false);
+    }
   };
 
   const existingOrganizationFromCheck = async (data: any): Promise<Org | null> => {
@@ -619,7 +629,10 @@ export default function Register() {
         }
         setOrgCheck("exists");
       } else {
-        setOrgCheck("new");
+        // No match — this is a genuinely new organization. Confirming that
+        // intent with a popup added a step to every first-time registration
+        // for no benefit; only an existing-organization match needs a stop.
+        proceed();
       }
     } catch {
       setErr("We couldn't check this organization right now. Please try again.");
@@ -712,7 +725,7 @@ export default function Register() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <AuthHeader eyebrow="Step 2 of 5" title="Tell us about you" onBack={() => router.back()} step={2} />
+        <AuthHeader eyebrow={`Step 2 of ${registerTotalSteps}`} title="Tell us about you" onBack={() => router.back()} step={2} totalSteps={registerTotalSteps} />
 
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <Rise delay={150}>
@@ -960,6 +973,25 @@ export default function Register() {
               </>
             )}
 
+            <Pressable
+              testID="terms-checkbox-row"
+              onPress={() => (termsAccepted ? setTermsAccepted(false) : setShowTerms(true))}
+              style={f.checkRow}
+            >
+              <View style={[f.checkbox, termsAccepted && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                {termsAccepted ? <Check size={13} color={colors.primaryFg} /> : null}
+              </View>
+              <Text style={{ flex: 1, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, color: colors.mutedFg }}>
+                I have read and agree to the{" "}
+                <Text style={{ color: colors.primary, fontFamily: fonts.semibold }} onPress={() => setShowTerms(true)}>
+                  Terms &amp; Conditions
+                </Text>
+              </Text>
+            </Pressable>
+            {submitted && !termsAccepted ? (
+              <Small color={colors.destructive} style={f.fieldError}>Please accept the Terms &amp; Conditions to continue.</Small>
+            ) : null}
+
             {err ? <Small color={colors.destructive} style={{ marginTop: 8 }}>{err}</Small> : null}
           </Rise>
         </ScrollView>
@@ -1028,34 +1060,42 @@ export default function Register() {
         </View>
       </ModalCard>
 
-      {/* Org-existence prompt */}
-      <ModalCard visible={orgCheck !== null} onClose={() => setOrgCheck(null)}>
-        {orgCheck === "new" ? (
-          <>
-            <ModalHead
-              icon={<Building2 size={24} color={colors.primary} />}
-              eyebrow="New organization"
-              title="Create a New Organization?"
-              subtitle={`Are you sure you want to create ${(fld.orgName || "this organization").trim()} as a new organization on the platform?`}
-            />
-            <View style={f.orgExistsActions}>
-              <Pressable
-                testID="cancel-create-organization"
-                onPress={() => setOrgCheck(null)}
-                style={[f.cta, f.orgExistsClose]}
-              >
-                <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.foreground }}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                testID="confirm-create-organization"
-                onPress={() => { setOrgCheck(null); proceed(); }}
-                style={[f.cta, f.orgExistsContact]}
-              >
-                <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg, textAlign: "center" }}>Create Organization</Text>
-              </Pressable>
+      {/* Terms & Conditions */}
+      <ModalCard visible={showTerms} onClose={() => setShowTerms(false)}>
+        <ModalHead icon={<ShieldCheck size={24} color={colors.primary} />} eyebrow="Legal" title="Terms & Conditions" subtitle="Please read before accepting." />
+        <ScrollView
+          style={f.organizationNoticeScroll}
+          contentContainerStyle={f.organizationNoticeContent}
+          showsVerticalScrollIndicator
+          persistentScrollbar
+          nestedScrollEnabled
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.md }}>
+            <Eyebrow color={colors.mutedFg}>Version {TERMS_VERSION}</Eyebrow>
+            <Small style={{ fontFamily: fonts.mono }}>Effective {TERMS_EFFECTIVE}</Small>
+          </View>
+          {TERMS_BLOCKS.map((block, i) => (
+            <View key={block.heading || i} style={{ marginBottom: 12 }}>
+              <Text style={{ fontFamily: fonts.heading, fontSize: 14, color: colors.foreground, marginBottom: 4 }}>{block.heading}</Text>
+              <Small style={{ lineHeight: 20 }}>{block.body}</Small>
             </View>
-          </>
-        ) : orgCheck === "exists" && matchedOrg ? (
+          ))}
+        </ScrollView>
+        <View style={f.organizationNoticeFooter}>
+          <Pressable
+            testID="terms-accept-button"
+            onPress={() => { setTermsAccepted(true); setShowTerms(false); }}
+            style={[f.cta, { backgroundColor: colors.primary }]}
+          >
+            <Text style={{ fontFamily: fonts.bold, fontSize: 14, color: colors.primaryFg }}>I Accept</Text>
+          </Pressable>
+        </View>
+      </ModalCard>
+
+      {/* Org-existence prompt — only shown when the org already exists; a
+          brand-new organization proceeds straight through with no popup. */}
+      <ModalCard visible={orgCheck !== null} onClose={() => setOrgCheck(null)}>
+        {orgCheck === "exists" && matchedOrg ? (
           <>
             <ModalHead
               icon={<Building2 size={24} color={colors.primary} />}

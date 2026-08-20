@@ -500,6 +500,165 @@ def test_email_invitee_verifies_phone_only(monkeypatch):
     run(flow())
 
 
+def test_self_registration_also_requires_security_questions_before_password(monkeypatch):
+    """Every registration path — not just invited ones — verifies contact
+    details, then answers security questions, then sets a password.
+
+    /auth/register/security-questions used to hard-require an invitation_id,
+    and /auth/register/complete only enforced security_questions_completed
+    for invited registrations. Both gates now apply uniformly."""
+    org_name = f'SelfReg Order {RUN_ID} {uuid.uuid4().hex[:6]}'
+    delivered = []
+
+    async def capture_delivery(channel, target, code, **_kwargs):
+        delivered.append((channel, target, code))
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', capture_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        registration_id = None
+        organization = None
+        try:
+            phone = f"+919{int(uuid.uuid4().hex[:8], 16) % 1_000_000_000:09d}"
+            async with make_client() as cli:
+                response = await cli.post('/api/auth/register/start', json={
+                    'full_name': 'Self Registering Sponsor',
+                    'role': 'sponsor',
+                    'email': f'self-reg-{uuid.uuid4().hex[:8]}@example.com',
+                    'phone': phone,
+                    'organization': org_name,
+                    'profile': {'designation': 'Manager'},
+                    'security_questions': [],
+                })
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            registration_id = payload['registration_id']
+            phone_code = next(code for channel, _target, code in delivered if channel == 'phone')
+            email_code = next(code for channel, _target, code in delivered if channel == 'email')
+
+            async with make_client() as cli:
+                verified = await cli.post('/api/auth/register/verify', json={
+                    'registration_id': registration_id,
+                    'phone_otp': phone_code,
+                    'email_otp': email_code,
+                })
+                password_too_early = await cli.post('/api/auth/register/complete', json={
+                    'registration_id': registration_id,
+                    'password': 'Password1!',
+                })
+                saved = await cli.post('/api/auth/register/security-questions', json={
+                    'registration_id': registration_id,
+                    'security_questions': [
+                        {'question': 'Question one?', 'answer': 'First answer'},
+                        {'question': 'Question two?', 'answer': 'Second answer'},
+                        {'question': 'Question three?', 'answer': 'Third answer'},
+                    ],
+                })
+            assert verified.status_code == 200, verified.text
+            assert verified.json()['verified'] is True
+            # Before this fix, a self-registration was never blocked here (the
+            # invitation_id-only check let it straight through); now it is.
+            assert password_too_early.status_code == 400
+            assert 'security questions' in password_too_early.json()['detail'].lower()
+            # Before this fix, this call was rejected outright for any
+            # non-invited registration ("must be submitted during registration").
+            assert saved.status_code == 200, saved.text
+            pending_after_questions = await server.db.pending_registrations.find_one(
+                {'id': registration_id},
+                {'_id': 0, 'security_questions_completed': 1, 'invitation_id': 1},
+            )
+            assert pending_after_questions['security_questions_completed'] is True
+            assert 'invitation_id' not in pending_after_questions
+        finally:
+            if registration_id:
+                await server.db.pending_registrations.delete_one({'id': registration_id})
+            organization = await server.db.organizations.find_one({'name': org_name})
+            if organization:
+                await server.db.organizations.delete_one({'id': organization['id']})
+                await server.db.users.delete_many({'organization_id': organization['id']})
+
+    run(flow())
+
+
+def test_verify_accepts_one_channel_per_call(monkeypatch):
+    """The phone-verify and email-verify screens each submit only their own
+    channel's code in separate calls, not both codes together in one call.
+
+    /auth/register/verify used to require every still-unverified required
+    channel's code in the SAME request ("Email verification code is
+    required" even when the caller only meant to verify phone right now).
+    It now accepts one channel at a time and remembers what's already
+    verified across calls."""
+    org_name = f'IncrementalVerify {RUN_ID} {uuid.uuid4().hex[:6]}'
+    delivered = []
+
+    async def capture_delivery(channel, target, code, **_kwargs):
+        delivered.append((channel, target, code))
+
+    async def no_throttle(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, '_deliver_otp', capture_delivery)
+    monkeypatch.setattr(server, '_enforce_rate_limit', no_throttle)
+
+    async def flow():
+        registration_id = None
+        organization = None
+        try:
+            phone = f"+919{int(uuid.uuid4().hex[:8], 16) % 1_000_000_000:09d}"
+            async with make_client() as cli:
+                response = await cli.post('/api/auth/register/start', json={
+                    'full_name': 'Incremental Verify Sponsor',
+                    'role': 'sponsor',
+                    'email': f'incremental-verify-{uuid.uuid4().hex[:8]}@example.com',
+                    'phone': phone,
+                    'organization': org_name,
+                    'profile': {'designation': 'Manager'},
+                    'security_questions': [],
+                })
+            assert response.status_code == 200, response.text
+            registration_id = response.json()['registration_id']
+            phone_code = next(code for channel, _target, code in delivered if channel == 'phone')
+            email_code = next(code for channel, _target, code in delivered if channel == 'email')
+
+            async with make_client() as cli:
+                neither_supplied = await cli.post('/api/auth/register/verify', json={
+                    'registration_id': registration_id,
+                })
+                phone_only = await cli.post('/api/auth/register/verify', json={
+                    'registration_id': registration_id,
+                    'phone_otp': phone_code,
+                })
+                email_only = await cli.post('/api/auth/register/verify', json={
+                    'registration_id': registration_id,
+                    'email_otp': email_code,
+                })
+            assert neither_supplied.status_code == 400, neither_supplied.text
+            assert 'verification code is required' in neither_supplied.json()['detail'].lower()
+            # Before this fix, this call failed with "Email verification code
+            # is required" instead of accepting the phone code on its own.
+            assert phone_only.status_code == 200, phone_only.text
+            phone_only_body = phone_only.json()
+            assert phone_only_body['verified'] is False
+            assert phone_only_body['phone_verified'] is True
+            assert phone_only_body['email_verified'] is False
+            assert email_only.status_code == 200, email_only.text
+            assert email_only.json()['verified'] is True
+        finally:
+            if registration_id:
+                await server.db.pending_registrations.delete_one({'id': registration_id})
+            organization = await server.db.organizations.find_one({'name': org_name})
+            if organization:
+                await server.db.organizations.delete_one({'id': organization['id']})
+                await server.db.users.delete_many({'organization_id': organization['id']})
+
+    run(flow())
+
+
 def test_custom_department_is_queued_when_site_registration_completes():
     suffix = uuid.uuid4().hex[:8]
     org_name = f'Custom Department Site {RUN_ID} {suffix}'

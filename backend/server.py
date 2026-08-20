@@ -1850,15 +1850,22 @@ async def register_verify(body: RegisterVerifyIn):
         await db.pending_registrations.delete_one({'id': pending['id']})
         raise HTTPException(429, 'Too many incorrect attempts. Please restart registration.')
 
+    if not body.email_otp and not body.phone_otp:
+        raise HTTPException(400, 'A verification code is required')
+
+    # Channels are verified independently, one call per channel or both
+    # together — a code supplied for a channel that's already verified or
+    # not required is simply ignored rather than treated as an error, so the
+    # phone-verify and email-verify screens can each call this with only
+    # their own channel's code.
     updates = {}
     for ch, supplied in (('email', body.email_otp), ('phone', body.phone_otp)):
-        if ch in pending['channels'] and not pending.get(f'{ch}_verified'):
-            if not supplied:
-                raise HTTPException(400, f'{ch.capitalize()} verification code is required')
-            if not _otp_matches(supplied, pending.get(f'{ch}_otp_hash')):
-                await db.pending_registrations.update_one({'id': pending['id']}, {'$inc': {'attempts': 1}})
-                raise HTTPException(400, f'Incorrect {ch} verification code')
-            updates[f'{ch}_verified'] = True
+        if not supplied or ch not in pending['channels'] or pending.get(f'{ch}_verified'):
+            continue
+        if not _otp_matches(supplied, pending.get(f'{ch}_otp_hash')):
+            await db.pending_registrations.update_one({'id': pending['id']}, {'$inc': {'attempts': 1}})
+            raise HTTPException(400, f'Incorrect {ch} verification code')
+        updates[f'{ch}_verified'] = True
 
     if updates:
         await db.pending_registrations.update_one({'id': pending['id']}, {'$set': updates})
@@ -1897,7 +1904,7 @@ async def register_complete(body: RegisterCompleteIn):
         raise HTTPException(400, 'Your password setup session expired. Please restart registration.')
     if not all(pending.get(f'{ch}_verified') for ch in pending['channels']):
         raise HTTPException(400, 'Please verify your contact details before setting a password.')
-    if pending.get('invitation_id') and not pending.get('security_questions_completed'):
+    if not pending.get('security_questions_completed'):
         raise HTTPException(400, 'Please complete your security questions before setting a password.')
     pending['hashed_password'] = pwd_ctx.hash(body.password)
     session = await _complete_registration(pending)
@@ -1906,15 +1913,14 @@ async def register_complete(body: RegisterCompleteIn):
 
 @api.post('/auth/register/security-questions')
 async def register_security_questions(body: RegisterSecurityQuestionsIn):
-    """Save invited-user recovery questions after phone verification."""
+    """Save recovery questions after phone/email verification, for every
+    registration path (invited or self-registered)."""
     pending = await db.pending_registrations.find_one({'id': body.registration_id})
     if not pending:
         raise HTTPException(404, 'Registration not found or already completed')
     if pending['expires_at'] < now():
         await db.pending_registrations.delete_one({'id': pending['id']})
         raise HTTPException(400, 'Your registration session expired. Please restart registration.')
-    if not pending.get('invitation_id'):
-        raise HTTPException(400, 'Security questions must be submitted during registration')
     if not pending.get('fully_verified'):
         raise HTTPException(400, 'Please verify your phone number before setting security questions.')
     if len(body.security_questions) != 3:

@@ -100,8 +100,9 @@ export async function downloadFile(file: { id: string; name: string; content_typ
 }
 
 // ── Deferred registration verification-doc holder ──────────────────────────
-// Registration is fully pre-auth (register → security-questions → verify-otp →
-// set-password), but POST /files needs a token. So the doc is SELECTED during
+// Registration is fully pre-auth (register → verify-phone → [verify-email] →
+// security-questions → set-password), but POST /files needs a token. So the
+// doc is SELECTED during
 // registration and stashed here (module-scope survives the multi-screen flow),
 // then uploaded from set-password right after /auth/register/complete returns a
 // token. Cleared once consumed.

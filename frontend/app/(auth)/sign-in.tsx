@@ -91,13 +91,6 @@ export default function SignIn() {
               <Small color={colors.mutedFg} style={{ textAlign: "center" }}>Don’t have an account? <Small color={colors.primary} style={{ fontWeight: "700" as any }}>Sign Up</Small></Small>
             </Pressable>
           </View>
-
-          {__DEV__ && (
-            <View style={s.demoBox}>
-              <Eyebrow color={colors.mutedFg}>Development accounts</Eyebrow>
-              <Small color={colors.mutedFg} style={{ marginTop: 4 }}>Use the local seed documentation for test credentials.</Small>
-            </View>
-          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -110,5 +103,4 @@ const s = StyleSheet.create({
   input: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.foreground },
   eye: { position: "absolute", right: 12, top: 12 },
   loginOptions: { marginTop: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "flex-end" },
-  demoBox: { marginTop: spacing.xl, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
 });
