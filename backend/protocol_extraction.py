@@ -43,6 +43,7 @@ import logging
 import math
 import os
 import re
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import List, Literal, Optional, Protocol, runtime_checkable
@@ -1246,6 +1247,24 @@ def _structured_failure_detail(response, exc: Exception) -> str:
     return "; ".join(parts)
 
 
+class _PdfCacheHandle:
+    """A live Gemini context cache holding one protocol PDF's bytes.
+
+    Tracked client-side so a stage call can tell *before* spending a request
+    that the cache is past (or close to) its TTL, instead of only finding out
+    from a failed response.
+    """
+    __slots__ = ("name", "created_at", "ttl_seconds")
+
+    def __init__(self, name: str, ttl_seconds: int):
+        self.name = name
+        self.created_at = time.monotonic()
+        self.ttl_seconds = ttl_seconds
+
+    def usable(self, safety_margin: float = 30.0) -> bool:
+        return (time.monotonic() - self.created_at) < (self.ttl_seconds - safety_margin)
+
+
 class GeminiProtocolExtractor:
     """Google Gemini backend with native PDF input and structured output."""
 
@@ -1278,6 +1297,7 @@ class GeminiProtocolExtractor:
         system_instruction: str | None,
         max_tokens: int,
         model_override: str | None = None,
+        cached_content: str | None = None,
     ):
         if system_instruction is None:
             system_instruction = _SYSTEM_PROMPT
@@ -1308,34 +1328,40 @@ class GeminiProtocolExtractor:
             )
             try:
                 contents = []
-                if pdf_bytes:
+                # A cache already holds the PDF server-side — attaching it again
+                # would both re-pay the input tokens the cache exists to avoid
+                # and (per the Gemini API) is unnecessary alongside cached_content.
+                if pdf_bytes and not cached_content:
                     contents.append(types.Part.from_bytes(
                         data=pdf_bytes,
                         mime_type="application/pdf",
                     ))
                 contents.append(prompt + retry_instruction)
+                config_kwargs = dict(
+                    system_instruction=system_instruction,
+                    max_output_tokens=max_tokens,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=provider_schema,
+                    # Without this, a thinking-capable model defaults to an
+                    # automatic thinking budget that shares max_output_tokens
+                    # with the actual answer — invisible reasoning tokens can
+                    # consume most of the budget and truncate the JSON before
+                    # it's written (finish_reason=MAX_TOKENS with no field-level
+                    # error). This task is schema-conformant extraction, not
+                    # open-ended reasoning, so thinking buys nothing here.
+                    # thinking_budget=0 (fully disabled) is rejected outright
+                    # by newer models (400 INVALID_ARGUMENT) — 1 is the
+                    # smallest budget every generation observed so far
+                    # accepts, so it keeps this protection everywhere.
+                    thinking_config=types.ThinkingConfig(thinking_budget=1),
+                )
+                if cached_content:
+                    config_kwargs["cached_content"] = cached_content
                 response = await async_client.models.generate_content(
                     model=model_override or self._model,
                     contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        max_output_tokens=max_tokens,
-                        temperature=0.1,
-                        response_mime_type="application/json",
-                        response_schema=provider_schema,
-                        # Without this, a thinking-capable model defaults to an
-                        # automatic thinking budget that shares max_output_tokens
-                        # with the actual answer — invisible reasoning tokens can
-                        # consume most of the budget and truncate the JSON before
-                        # it's written (finish_reason=MAX_TOKENS with no field-level
-                        # error). This task is schema-conformant extraction, not
-                        # open-ended reasoning, so thinking buys nothing here.
-                        # thinking_budget=0 (fully disabled) is rejected outright
-                        # by newer models (400 INVALID_ARGUMENT) — 1 is the
-                        # smallest budget every generation observed so far
-                        # accepts, so it keeps this protection everywhere.
-                        thinking_config=types.ThinkingConfig(thinking_budget=1),
-                    ),
+                    config=types.GenerateContentConfig(**config_kwargs),
                 )
             except errors.APIError as exc:
                 raise _classify_api_error(exc) from exc
@@ -1383,6 +1409,94 @@ class GeminiProtocolExtractor:
             f"Gemini could not return valid {schema.__name__} structured JSON "
             "after one retry") from last_parse_error
 
+    # A protocol extraction is 7-13 sequential model calls (classify, discover,
+    # timing, visit_evidence, synthesize, confirm, audit, and up to 2 more
+    # refine/confirm/audit rounds). Every one of them used to re-attach the
+    # full PDF, so a 100-page protocol paid for its own document tokens 7-13
+    # times over. A Gemini context cache uploads the PDF once per extraction
+    # and every stage call references it instead — caching is purely a cost
+    # optimization, so any failure to create/use it (too small, quota, expiry
+    # mid-pipeline) must fall back to the old per-call attachment, never fail
+    # the extraction itself.
+    _CACHE_MIN_BYTES = 100_000
+
+    async def _create_pdf_cache(self, pdf_bytes: bytes) -> "_PdfCacheHandle | None":
+        if not pdf_bytes or len(pdf_bytes) < self._CACHE_MIN_BYTES:
+            return None
+        if os.getenv("PROTOCOL_EXTRACTION_PDF_CACHE", "1").strip().lower() in (
+                "0", "false", "no"):
+            return None
+        ttl_seconds = int(os.getenv("PROTOCOL_EXTRACTION_CACHE_TTL_SECONDS", "1800"))
+        try:
+            errors, types, client = self._client()
+            async_client = client.aio
+            try:
+                cache = await async_client.caches.create(
+                    model=self._model,
+                    config=types.CreateCachedContentConfig(
+                        contents=[types.Part.from_bytes(
+                            data=pdf_bytes, mime_type="application/pdf")],
+                        ttl=f"{ttl_seconds}s",
+                    ),
+                )
+            finally:
+                await async_client.aclose()
+                client.close()
+        except Exception as exc:  # noqa: BLE001 — never let caching block extraction
+            log.info(
+                "Gemini PDF context cache unavailable; every stage call will "
+                "attach the PDF directly instead: %s", exc)
+            return None
+        if not cache.name:
+            log.info("Gemini PDF context cache created with no name; skipping cache reuse")
+            return None
+        log.info(
+            "created Gemini PDF context cache %s (ttl=%ds) for this extraction",
+            cache.name, ttl_seconds)
+        return _PdfCacheHandle(cache.name, ttl_seconds)
+
+    async def _delete_pdf_cache(self, name: str) -> None:
+        try:
+            errors, types, client = self._client()
+            async_client = client.aio
+            try:
+                await async_client.caches.delete(name=name)
+            finally:
+                await async_client.aclose()
+                client.close()
+        except Exception as exc:  # noqa: BLE001 — best-effort cleanup only
+            log.info("could not delete Gemini PDF context cache %s: %s", name, exc)
+
+    def _cached_generate(self, pdf_bytes: bytes, handle_box: list):
+        """Wrap ``self._generate`` so every stage call reuses one PDF cache.
+
+        ``handle_box`` is a 1-element list (a mutable cell) rather than a
+        plain variable so a cache-call failure can turn caching off for every
+        later stage in *this* extraction without needing nonlocal plumbing.
+        Every stage call site passes (pdf_bytes, prompt, schema) positionally
+        plus keyword-only options, same as ``self._generate`` itself.
+        """
+        async def _generate_with_cache(*args, **kwargs):
+            handle = handle_box[0]
+            if handle is not None and handle.usable():
+                try:
+                    _pdf_bytes, prompt, schema = args[:3]
+                    return await self._generate(
+                        b"", prompt, schema,
+                        cached_content=handle.name, **kwargs)
+                except ExtractionError as exc:
+                    # Expired/evicted mid-pipeline, or some other provider
+                    # hiccup specific to the cached call. Fall back for this
+                    # stage and stop trying the cache for the rest of the
+                    # extraction rather than fail it.
+                    log.info(
+                        "Gemini PDF cache call failed (%s); falling back to "
+                        "full PDF attachment for the rest of this "
+                        "extraction: %s", handle.name, exc)
+                    handle_box[0] = None
+            return await self._generate(*args, **kwargs)
+        return _generate_with_cache
+
     async def extract(
         self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
     ) -> ExtractedSchedule:
@@ -1395,17 +1509,29 @@ class GeminiProtocolExtractor:
             os.getenv("PROTOCOL_CONFIRMATION_MODEL", self._model),
         )
 
+        handle_box = [await self._create_pdf_cache(pdf_bytes)]
+        generate = self._cached_generate(pdf_bytes, handle_box)
+        # A cache is created for self._model specifically; a confirmation call
+        # to a *different* model can never use it, so route those straight to
+        # the uncached path instead of paying for a cached call that would
+        # always fail over.
+        confirm_base = generate if confirmation_model == self._model else self._generate
+
         async def confirm_generate(*args, **kwargs):
-            return await self._generate(
+            return await confirm_base(
                 *args, **kwargs, model_override=confirmation_model)
 
-        expanded = await run_schedule_extraction_agent(
-            pdf_bytes,
-            self._generate,
-            max_refinements=max_refinements,
-            confirmation_generate=confirm_generate,
-            selected_schedule_option_id=selected_schedule_option_id,
-        )
+        try:
+            expanded = await run_schedule_extraction_agent(
+                pdf_bytes,
+                generate,
+                max_refinements=max_refinements,
+                confirmation_generate=confirm_generate,
+                selected_schedule_option_id=selected_schedule_option_id,
+            )
+        finally:
+            if handle_box[0] is not None:
+                await self._delete_pdf_cache(handle_box[0].name)
         log.info(
             "Gemini agent extraction: kind=%s expanded=%d assumptions=%d "
             "verification=%s confidence=%s refinements=%d",
@@ -1431,17 +1557,25 @@ class GeminiProtocolExtractor:
             os.getenv("PROTOCOL_CONFIRMATION_MODEL", self._model),
         )
 
+        handle_box = [await self._create_pdf_cache(pdf_bytes)]
+        generate = self._cached_generate(pdf_bytes, handle_box)
+        confirm_base = generate if confirmation_model == self._model else self._generate
+
         async def confirm_generate(*args, **kwargs):
-            return await self._generate(
+            return await confirm_base(
                 *args, **kwargs, model_override=confirmation_model)
 
-        return await run_protocol_extraction_agent(
-            pdf_bytes,
-            self._generate,
-            max_refinements=max_refinements,
-            confirmation_generate=confirm_generate,
-            selected_schedule_option_id=selected_schedule_option_id,
-        )
+        try:
+            return await run_protocol_extraction_agent(
+                pdf_bytes,
+                generate,
+                max_refinements=max_refinements,
+                confirmation_generate=confirm_generate,
+                selected_schedule_option_id=selected_schedule_option_id,
+            )
+        finally:
+            if handle_box[0] is not None:
+                await self._delete_pdf_cache(handle_box[0].name)
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         return await self._generate(

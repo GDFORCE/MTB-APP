@@ -13,10 +13,12 @@ from protocol_extraction import (  # noqa: E402
     ClaudeProtocolExtractor,
     CanonicalScheduleResponse,
     ExtractedSchedule,
+    ExtractionError,
     GeminiProtocolExtractor,
     OllamaProtocolExtractor,
     OpenRouterProtocolExtractor,
     ScheduleDraft,
+    _PdfCacheHandle,
     get_details_extractor,
     get_extractor,
 )
@@ -350,6 +352,217 @@ def test_gemini_retries_only_the_malformed_structured_stage():
     assert result.canonical_plan.events[0].name == "Baseline"
     assert len(async_client.models.calls) == 2
     assert "STRUCTURED OUTPUT RETRY" in async_client.models.calls[1]["contents"][1]
+
+
+def test_gemini_extractor_reuses_one_pdf_cache_across_all_stage_calls():
+    """A 100+KB protocol should upload its PDF once, not on every stage call.
+
+    Regression coverage for the fix to the extraction pipeline re-attaching
+    the full PDF on all 7-13 model calls per protocol (the dominant per-
+    protocol API cost). Every stage call must reference the cache instead of
+    carrying its own PDF bytes, and the cache must be cleaned up afterward.
+    """
+    valid_payload = {
+        "schedule_kind": "linear",
+        "anchor_study_day": 1,
+        "includes_day_zero": False,
+        "canonical_plan": {
+            "anchors": [{
+                "id": "anchor-baseline", "name": "Baseline",
+                "anchor_type": "first_dose",
+                "evidence_ids": ["timing-p12-01"],
+            }],
+            "activities": [{
+                "id": "activity-consent", "name": "Informed consent",
+                "evidence_ids": ["activity-p12-01"],
+            }],
+            "events": [{
+                "id": "event-screening", "name": "Screening",
+                "event_type": "Screening",
+                "timing": {
+                    "kind": "offset", "anchor_id": "anchor-baseline",
+                    "offset": {"value": -14, "unit": "day"},
+                    "source_label": "Day -14",
+                    "evidence_ids": ["timing-p12-01"],
+                },
+                "window": {
+                    "state": "stated",
+                    "early": {"value": 3, "unit": "day"},
+                    "late": {"value": 3, "unit": "day"},
+                    "source_label": "±3 days",
+                    "evidence_ids": ["window-p12-01"],
+                },
+                "activity_ids": ["activity-consent"],
+                "evidence_ids": ["visit-p12-01"],
+            }],
+        },
+        "assumptions": [],
+        "source_notes": "Schedule of Assessments",
+    }
+    audit_dimension = {
+        "applicable": True,
+        "accuracy": 0.98,
+        "passed": True,
+        "checked_items": [],
+        "summary": "matches",
+    }
+    audit_payload = {
+        "approved": True,
+        "confidence": 0.98,
+        "visit_coverage": audit_dimension,
+        "timing": audit_dimension,
+        "windows": audit_dimension,
+        "visit_types": audit_dimension,
+        "procedure_mapping": audit_dimension,
+        "overall_schedule": audit_dimension,
+        "verified_items": [],
+        "issues": [],
+        "summary": "Candidate matches the protocol.",
+    }
+    classification_payload = {
+        "document_type": "protocol",
+        "analysis_task": "full_protocol_schedule",
+        "schedule_archetypes": ["linear"],
+        "complexity": "simple",
+        "has_schedule": True,
+        "confidence": 0.99,
+        "evidence": [],
+    }
+    document_map_payload = {
+        "has_schedule": True, "schedule_kind": "linear",
+        "schedule_locations": [], "supporting_locations": [],
+        "arms_and_periods": [], "baseline_anchor": "Day 1", "notes": [],
+    }
+    timing_evidence_payload = {
+        "visit_timing": [{
+            "evidence_id": "timing-p12-01",
+            "claim": "Screening Day -14",
+            "source_location": "Schedule table, page 12",
+            "source_quote": "Day -14",
+            "confidence": 0.99,
+        }],
+        "visit_windows": [{
+            "evidence_id": "window-p12-01",
+            "claim": "Screening window is +/-3 days",
+            "source_location": "Schedule table, page 12",
+            "source_quote": "+/-3 days",
+            "confidence": 0.99,
+        }],
+        "cycle_rules": [], "relative_timing": [], "open_ended_rules": [],
+        "conflicts_or_unknowns": [],
+    }
+    visit_evidence_payload = {
+        "visit_columns": [{
+            "evidence_id": "visit-p12-01",
+            "claim": "Screening visit",
+            "source_location": "Schedule table, page 12",
+            "source_quote": "Screening",
+            "confidence": 0.99,
+        }],
+        "special_visits": [],
+        "activity_assignments": [{
+            "evidence_id": "activity-p12-01",
+            "claim": "Informed consent at Screening",
+            "source_location": "Schedule table, page 12",
+            "source_quote": "Informed consent X",
+            "confidence": 0.99,
+        }],
+        "table_footnotes": [], "arm_period_differences": [], "conflicts_or_unknowns": [],
+    }
+
+    class Models:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_content(self, **kwargs):
+            self.calls.append(kwargs)
+            schema_name = kwargs["config"]["response_schema"].__name__
+            payload = {
+                "DocumentTaskClassification": classification_payload,
+                "ScheduleDocumentMap": document_map_payload,
+                "ScheduleTimingEvidence": timing_evidence_payload,
+                "ScheduleVisitEvidence": visit_evidence_payload,
+                "CanonicalScheduleResponse": valid_payload,
+                "ScheduleAudit": audit_payload,
+            }[schema_name]
+            return SimpleNamespace(parsed=payload, text=json.dumps(payload))
+
+    class Caches:
+        def __init__(self):
+            self.created = []
+            self.deleted = []
+
+        async def create(self, **kwargs):
+            self.created.append(kwargs)
+            return SimpleNamespace(name="cachedContents/fake-cache-1")
+
+        async def delete(self, **kwargs):
+            self.deleted.append(kwargs)
+
+    class AsyncClient:
+        def __init__(self):
+            self.models = Models()
+            self.caches = Caches()
+
+        async def aclose(self):
+            return None
+
+    async_client = AsyncClient()
+    client = SimpleNamespace(aio=async_client, close=lambda: None)
+    fake_types = SimpleNamespace(
+        Part=SimpleNamespace(from_bytes=lambda **kwargs: kwargs),
+        GenerateContentConfig=lambda **kwargs: kwargs,
+        CreateCachedContentConfig=lambda **kwargs: kwargs,
+        ThinkingConfig=lambda **kwargs: kwargs,
+    )
+    extractor = GeminiProtocolExtractor(api_key="test")
+    extractor._client = lambda: (
+        SimpleNamespace(APIError=RuntimeError), fake_types, client)
+
+    big_pdf = b"%PDF-test" + b"0" * 150_000
+    schedule = asyncio.run(extractor.extract(big_pdf))
+
+    assert schedule.visits[0].name == "Screening"
+    # Exactly one cache created for the whole extraction, not one per stage.
+    assert len(async_client.caches.created) == 1
+    assert async_client.caches.created[0]["config"]["contents"][0]["data"] == big_pdf
+    # Every stage call referenced the cache instead of attaching the PDF.
+    assert len(async_client.models.calls) == 7
+    for call in async_client.models.calls:
+        assert call["config"].get("cached_content") == "cachedContents/fake-cache-1"
+        assert not any(
+            isinstance(part, dict) and part.get("mime_type") == "application/pdf"
+            for part in call["contents"])
+    # Cleaned up after the extraction finished.
+    assert async_client.caches.deleted == [{"name": "cachedContents/fake-cache-1"}]
+
+
+def test_cached_generate_falls_back_when_the_cache_call_fails():
+    """A cache that expires mid-pipeline must degrade, never fail, extraction."""
+    extractor = GeminiProtocolExtractor(api_key="test")
+    calls = []
+
+    async def fake_generate(pdf_bytes, prompt, schema, *, cached_content=None, **kwargs):
+        calls.append({"pdf_bytes": pdf_bytes, "cached_content": cached_content})
+        if cached_content:
+            raise ExtractionError("model request failed: CachedContent not found")
+        return "ok"
+
+    extractor._generate = fake_generate
+    handle_box = [_PdfCacheHandle("cachedContents/expired", ttl_seconds=1800)]
+    wrapped = extractor._cached_generate(b"full-pdf-bytes", handle_box)
+
+    result = asyncio.run(wrapped(
+        b"full-pdf-bytes", "prompt", object,
+        system_instruction="x", max_tokens=10))
+
+    assert result == "ok"
+    assert len(calls) == 2
+    assert calls[0]["cached_content"] == "cachedContents/expired"
+    assert calls[1]["cached_content"] is None
+    assert calls[1]["pdf_bytes"] == b"full-pdf-bytes"
+    # Caching stays off for the rest of this extraction after the failure.
+    assert handle_box[0] is None
 
 
 def test_provider_switch_selects_gemini(monkeypatch):
