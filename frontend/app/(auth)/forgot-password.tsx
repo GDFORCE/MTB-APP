@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ArrowLeft, CheckCircle2, Clock3, Eye, EyeOff, HelpCircle, Mail, Phone, RotateCw } from "lucide-react-native";
+import { ArrowLeft, CheckCircle2, Eye, EyeOff, HelpCircle, Mail, Phone, RotateCw } from "lucide-react-native";
 import { colors, fonts, spacing, radii } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Button, Card } from "@/src/components/ui";
 import { api } from "@/src/api/client";
@@ -12,6 +12,9 @@ import { normalizePhone } from "@/src/features/auth/registration-validation";
 type Step = "contact" | "otp" | "password" | "success";
 const OTP_SECONDS = 120;
 const MAX_RESENDS = 3;
+// Independent of the OTP's own validity — just a per-channel cooldown that
+// stops the Resend button from being spammed against the API.
+const RESEND_COOLDOWN_SEC = { phone: 60, email: 120 } as const;
 
 export default function ForgotPassword() {
   const router = useRouter();
@@ -24,6 +27,8 @@ export default function ForgotPassword() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [seconds, setSeconds] = useState(OTP_SECONDS);
   const [resends, setResends] = useState(0);
+  const [resendSeconds, setResendSeconds] = useState<number>(RESEND_COOLDOWN_SEC.email);
+  const [showResendCount, setShowResendCount] = useState(false);
   const [recoveryId, setRecoveryId] = useState("");
   const [recoveryChannel, setRecoveryChannel] = useState<"email" | "phone">("email");
   const [err, setErr] = useState("");
@@ -35,6 +40,22 @@ export default function ForgotPassword() {
     const timer = setInterval(() => setSeconds(current => Math.max(0, current - 1)), 1000);
     return () => clearInterval(timer);
   }, [seconds, step]);
+
+  useEffect(() => {
+    if (step !== "otp" || resendSeconds <= 0) return;
+    const timer = setInterval(() => setResendSeconds(current => Math.max(0, current - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [resendSeconds, step]);
+
+  // Flash the attempt count for 5s on entry and whenever it changes or the
+  // resend cooldown just opened up, instead of leaving it on screen always.
+  const resendReady = resendSeconds === 0;
+  useEffect(() => {
+    if (step !== "otp") return;
+    setShowResendCount(true);
+    const timer = setTimeout(() => setShowResendCount(false), 5000);
+    return () => clearTimeout(timer);
+  }, [resends, resendReady, step]);
 
   const normalizedEmail = email.trim().toLowerCase();
   // Accept any country: a typed "+<code>" picks the country, a bare number is Indian.
@@ -61,10 +82,12 @@ export default function ForgotPassword() {
       const response = await api.post("/auth/forgot", email.includes("@")
         ? { email: normalizedEmail }
         : { phone: normalizedPhone });
+      const channel = response.data?.channel === "phone" ? "phone" : "email";
       setRecoveryId(response.data?.recovery_id || "");
-      setRecoveryChannel(response.data?.channel === "phone" ? "phone" : "email");
+      setRecoveryChannel(channel);
       setOtp("");
       setSeconds(response.data?.expires_in || OTP_SECONDS);
+      setResendSeconds(RESEND_COOLDOWN_SEC[channel]);
       if (typeof response.data?.resend_count === "number") setResends(response.data.resend_count);
       else if (isResend) setResends(count => count + 1);
       setStep("otp");
@@ -126,8 +149,8 @@ export default function ForgotPassword() {
     else router.back();
   };
 
-  const mm = String(Math.floor(seconds / 60));
-  const ss = String(seconds % 60).padStart(2, "0");
+  const resendMm = String(Math.floor(resendSeconds / 60));
+  const resendSs = String(resendSeconds % 60).padStart(2, "0");
 
   return (
     <SafeAreaView style={s.page} edges={["top", "bottom"]}>
@@ -190,22 +213,20 @@ export default function ForgotPassword() {
               />
             </Pressable>
 
-            <View style={s.timerRow}>
-              <Clock3 size={14} color={seconds ? colors.mutedFg : colors.destructive} />
-              <Small color={seconds ? colors.mutedFg : colors.destructive}>
-                {seconds ? `Expires in ${mm}:${ss}` : "OTP expired"}
-              </Small>
-            </View>
             <Pressable
               testID="forgot-resend"
               onPress={() => requestCode(true)}
-              disabled={seconds > 0 || resends >= MAX_RESENDS || loading}
-              style={[s.resend, (seconds > 0 || resends >= MAX_RESENDS) && { opacity: 0.45 }]}
+              disabled={resendSeconds > 0 || resends >= MAX_RESENDS || loading}
+              style={[s.resend, (resendSeconds > 0 || resends >= MAX_RESENDS) && { opacity: 0.45 }]}
             >
               <RotateCw size={14} color={colors.primary} />
-              <Small color={colors.primary} weight="700">Resend OTP</Small>
+              <Small color={colors.primary} weight="700">
+                {resendSeconds > 0 ? `Resend code in ${resendMm}:${resendSs}` : "Resend OTP"}
+              </Small>
             </Pressable>
-            <Small style={s.resendCount}>{resends}/{MAX_RESENDS} resend attempts used</Small>
+            {showResendCount && (
+              <Small style={s.resendCount}>{resends}/{MAX_RESENDS} resend attempts used</Small>
+            )}
             {!!err && <Text style={s.otpError}>{err}</Text>}
             <View style={s.bottom}>
               <Button
@@ -343,8 +364,7 @@ const s = StyleSheet.create({
   otpCellExpired: { borderColor: colors.destructive + "55" },
   otpDigit: { fontSize: 20, color: colors.primary },
   hiddenOtp: { position: "absolute", opacity: 0, width: 1, height: 1 },
-  timerRow: { marginTop: spacing.lg, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6 },
-  resend: { marginTop: spacing.md, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, paddingVertical: 6 },
+  resend: { marginTop: spacing.xl, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, paddingVertical: 6 },
   resendCount: { textAlign: "center", fontSize: 10 },
   passwordWrap: { minHeight: 48, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingHorizontal: 13, flexDirection: "row", alignItems: "center" },
   passwordInput: { flex: 1, color: colors.foreground, fontFamily: fonts.regular, fontSize: 14 },

@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ArrowLeft, CheckCircle2, Clock3, LifeBuoy, RotateCw } from "lucide-react-native";
+import { ArrowLeft, CheckCircle2, LifeBuoy, RotateCw } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { Body, Button, Eyebrow, H1, Small } from "@/src/components/ui";
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
@@ -19,6 +19,9 @@ import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 type Step = "details" | "verify" | "success";
 const OTP_SECONDS = 10 * 60;
 const MAX_RESENDS = 3;
+// Independent of the OTP's own validity — just a cooldown that stops the
+// Resend button from being spammed against the API. This flow is email-only.
+const RESEND_COOLDOWN_SEC = 120;
 
 function errorMessage(error: any, fallback: string) {
   const detail = error?.response?.data?.detail;
@@ -44,6 +47,8 @@ export default function LoginSupport() {
   const [loading, setLoading] = useState(false);
   const [seconds, setSeconds] = useState(OTP_SECONDS);
   const [resends, setResends] = useState(0);
+  const [resendSeconds, setResendSeconds] = useState(RESEND_COOLDOWN_SEC);
+  const [showResendCount, setShowResendCount] = useState(false);
   const otpRef = useRef<TextInput>(null);
 
   useEffect(() => {
@@ -51,6 +56,22 @@ export default function LoginSupport() {
     const timer = setInterval(() => setSeconds((current) => Math.max(0, current - 1)), 1000);
     return () => clearInterval(timer);
   }, [step, seconds]);
+
+  useEffect(() => {
+    if (step !== "verify" || resendSeconds <= 0) return;
+    const timer = setInterval(() => setResendSeconds((current) => Math.max(0, current - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [step, resendSeconds]);
+
+  // Flash the attempt count for 5s on entry and whenever it changes or the
+  // resend cooldown just opened up, instead of leaving it on screen always.
+  const resendReady = resendSeconds === 0;
+  useEffect(() => {
+    if (step !== "verify") return;
+    setShowResendCount(true);
+    const timer = setTimeout(() => setShowResendCount(false), 5000);
+    return () => clearTimeout(timer);
+  }, [resends, resendReady, step]);
 
   const detailsValid = /^\S+@\S+\.\S+$/.test(email.trim())
     && subject.trim().length >= 3
@@ -69,6 +90,7 @@ export default function LoginSupport() {
       setRequestId(response.data.request_id);
       setOtp("");
       setSeconds(Number(response.data.expires_in) || OTP_SECONDS);
+      setResendSeconds(RESEND_COOLDOWN_SEC);
       if (isResend) setResends((current) => current + 1);
       setStep("verify");
     } catch (e: any) {
@@ -105,8 +127,8 @@ export default function LoginSupport() {
     router.back();
   };
 
-  const mm = String(Math.floor(seconds / 60));
-  const ss = String(seconds % 60).padStart(2, "0");
+  const resendMm = String(Math.floor(resendSeconds / 60));
+  const resendSs = String(resendSeconds % 60).padStart(2, "0");
 
   return (
     <SafeAreaView style={s.page} edges={["top", "bottom"]}>
@@ -203,22 +225,20 @@ export default function LoginSupport() {
                 />
               </Pressable>
 
-              <View style={s.timerRow}>
-                <Clock3 size={14} color={seconds ? colors.mutedFg : colors.destructive} />
-                <Small color={seconds ? colors.mutedFg : colors.destructive}>
-                  {seconds ? `Expires in ${mm}:${ss}` : "OTP expired"}
-                </Small>
-              </View>
               <Pressable
                 testID="login-support-resend"
                 onPress={() => startRequest(true)}
-                disabled={seconds > 0 || resends >= MAX_RESENDS || loading}
-                style={[s.resend, (seconds > 0 || resends >= MAX_RESENDS) && { opacity: 0.45 }]}
+                disabled={resendSeconds > 0 || resends >= MAX_RESENDS || loading}
+                style={[s.resend, (resendSeconds > 0 || resends >= MAX_RESENDS) && { opacity: 0.45 }]}
               >
                 <RotateCw size={14} color={colors.primary} />
-                <Small color={colors.primary} style={s.linkText}>Resend OTP</Small>
+                <Small color={colors.primary} style={s.linkText}>
+                  {resendSeconds > 0 ? `Resend code in ${resendMm}:${resendSs}` : "Resend OTP"}
+                </Small>
               </Pressable>
-              <Small style={s.resendCount}>{resends}/{MAX_RESENDS} resend attempts used</Small>
+              {showResendCount && (
+                <Small style={s.resendCount}>{resends}/{MAX_RESENDS} resend attempts used</Small>
+              )}
               {!!error && <Text style={s.error}>{error}</Text>}
               <View style={s.verifyBottom}>
                 <Button
@@ -276,8 +296,7 @@ const s = StyleSheet.create({
   otpCellExpired: { borderColor: colors.destructive + "55" },
   otpDigit: { fontSize: 20, color: colors.primary },
   hiddenOtp: { position: "absolute", opacity: 0, width: 1, height: 1 },
-  timerRow: { marginTop: spacing.lg, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6 },
-  resend: { marginTop: spacing.md, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, paddingVertical: 6 },
+  resend: { marginTop: spacing.xl, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, paddingVertical: 6 },
   resendCount: { textAlign: "center", fontSize: 10 },
   verifyBottom: { marginTop: "auto", paddingTop: spacing.lg },
   fullWidth: { width: "100%", marginTop: spacing.xl },

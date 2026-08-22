@@ -38,6 +38,10 @@ type Me = {
 };
 
 const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
+// Independent of the OTP's own validity — just a per-channel cooldown that
+// stops the Resend button from being spammed against the API.
+const RESEND_COOLDOWN_SEC = { phone: 60, email: 120 } as const;
+const MAX_CONTACT_RESENDS = 3;
 function fmtDateTime(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -316,17 +320,49 @@ function ContactSheet({ field, me, onClose, onDone }: { field: "email" | "phone"
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [resendSeconds, setResendSeconds] = useState(0);
+  const [resendCount, setResendCount] = useState(0);
+  const [showResendCount, setShowResendCount] = useState(false);
 
-  useEffect(() => { if (field) { setStage("enter"); setValue(""); setCode(""); setErr(null); } }, [field]);
+  useEffect(() => { if (field) { setStage("enter"); setValue(""); setCode(""); setErr(null); setResendSeconds(0); setResendCount(0); } }, [field]);
+
+  useEffect(() => {
+    if (stage !== "verify" || resendSeconds <= 0) return;
+    const timer = setInterval(() => setResendSeconds(current => Math.max(0, current - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [stage, resendSeconds]);
+
+  // Flash the attempt count for 5s on entry and whenever it changes or the
+  // resend cooldown just opened up, instead of leaving it on screen always.
+  const resendReady = resendSeconds === 0;
+  useEffect(() => {
+    if (stage !== "verify") return;
+    setShowResendCount(true);
+    const timer = setTimeout(() => setShowResendCount(false), 5000);
+    return () => clearTimeout(timer);
+  }, [stage, resendCount, resendReady]);
 
   const start = async () => {
     if (!field || !value.trim()) return;
     setBusy(true); setErr(null);
     try {
       await api.post("/auth/change-contact/start", { field, value: value.trim() });
+      setResendCount(0);
+      setResendSeconds(RESEND_COOLDOWN_SEC[field]);
       setStage("verify");
     } catch (e) {
       setErr(errMsg(e, "Couldn't send verification code"));
+    } finally { setBusy(false); }
+  };
+  const resend = async () => {
+    if (!field || resendSeconds > 0 || resendCount >= MAX_CONTACT_RESENDS || busy) return;
+    setBusy(true); setErr(null); setCode("");
+    try {
+      await api.post("/auth/change-contact/start", { field, value: value.trim() });
+      setResendCount(c => c + 1);
+      setResendSeconds(RESEND_COOLDOWN_SEC[field]);
+    } catch (e) {
+      setErr(errMsg(e, "Couldn't resend the verification code"));
     } finally { setBusy(false); }
   };
   const verify = async () => {
@@ -364,6 +400,20 @@ function ContactSheet({ field, me, onClose, onDone }: { field: "email" | "phone"
                 <Input value={code} onChangeText={setCode} keyboardType="number-pad" placeholder="6-digit code" />
               </View>
               {err && <RNText style={pf.errTxt}>{err}</RNText>}
+              <Pressable
+                onPress={resend}
+                disabled={resendSeconds > 0 || resendCount >= MAX_CONTACT_RESENDS || busy}
+                style={[pf.resend, (resendSeconds > 0 || resendCount >= MAX_CONTACT_RESENDS) && { opacity: 0.45 }]}
+              >
+                <RNText style={pf.resendTxt}>
+                  {resendSeconds > 0
+                    ? `Resend code in ${Math.floor(resendSeconds / 60)}:${String(resendSeconds % 60).padStart(2, "0")}`
+                    : "Resend code"}
+                </RNText>
+              </Pressable>
+              {showResendCount && (
+                <RNText style={pf.resendCount}>{resendCount}/{MAX_CONTACT_RESENDS} resend attempts used</RNText>
+              )}
               <SheetActions cancelLabel="Back" onCancel={() => setStage("enter")} confirmLabel="Verify & save" onConfirm={verify} disabled={!code.trim()} loading={busy} tone="success" />
             </>
           )}
@@ -401,4 +451,7 @@ const pf = StyleSheet.create({
   logoutTxt: { fontFamily: fonts.bold, fontSize: 15, color: C.white },
 
   sheetHint: { fontFamily: fonts.regular, fontSize: 13, color: C.mutedFg, lineHeight: 18 },
+  resend: { alignItems: "center", paddingVertical: 4 },
+  resendTxt: { fontFamily: fonts.bold, fontSize: 13, color: C.primary },
+  resendCount: { textAlign: "center", fontFamily: fonts.regular, fontSize: 10, color: C.mutedFg },
 });

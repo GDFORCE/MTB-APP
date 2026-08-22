@@ -89,7 +89,7 @@ export default function SetPassword() {
         <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {!!loginIdentifier && (
             <Rise delay={150}>
-              <Text style={s.label}>Login ID</Text>
+              <Text style={s.label}>{email ? "Email ID" : "Phone Number"}</Text>
               <TextInput
                 value={loginIdentifier}
                 editable={false}

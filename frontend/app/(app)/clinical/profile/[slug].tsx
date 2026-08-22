@@ -31,6 +31,11 @@ const passwordRules = [
 
 const ENTITY_TYPES = ["Sponsor", "CRO", "SMO", "Site / Hospital"];
 
+// Independent of the OTP's own validity — just a per-channel cooldown that
+// stops the Resend button from being spammed against the API.
+const RESEND_COOLDOWN_SEC = { phone: 60, email: 120 } as const;
+const MAX_CONTACT_RESENDS = 3;
+
 // ── Shared header (plum dawn bar) ─────────────────────────────────────────────
 function SubHeader({ eyebrow, title, onBack, rightLabel, onRight }: {
   eyebrow: string; title: string; onBack?: () => void; rightLabel?: string; onRight?: () => void;
@@ -89,6 +94,25 @@ function EditProfile() {
   const [otp, setOtp] = useState<{ open: boolean; field: "email" | "phone"; value: string; code: string; step: "sending" | "code"; error: string; busy: boolean }>(
     { open: false, field: "email", value: "", code: "", step: "sending", error: "", busy: false });
   const [otpQueue, setOtpQueue] = useState<OtpItem[]>([]);
+  const [resendSeconds, setResendSeconds] = useState(0);
+  const [resendCount, setResendCount] = useState(0);
+  const [showResendCount, setShowResendCount] = useState(false);
+
+  useEffect(() => {
+    if (!otp.open || resendSeconds <= 0) return;
+    const timer = setInterval(() => setResendSeconds(current => Math.max(0, current - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [otp.open, resendSeconds]);
+
+  // Flash the attempt count for 5s on entry and whenever it changes or the
+  // resend cooldown just opened up, instead of leaving it on screen always.
+  const resendReady = resendSeconds === 0;
+  useEffect(() => {
+    if (!otp.open) return;
+    setShowResendCount(true);
+    const timer = setTimeout(() => setShowResendCount(false), 5000);
+    return () => clearTimeout(timer);
+  }, [otp.open, resendCount, resendReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,11 +152,25 @@ function EditProfile() {
   };
   const startContact = async (item: OtpItem) => {
     setOtp({ open: true, field: item.field, value: item.value, code: "", step: "sending", error: "", busy: true });
+    setResendCount(0);
+    setResendSeconds(RESEND_COOLDOWN_SEC[item.field]);
     try {
       await api.post("/auth/change-contact/start", { field: item.field, value: item.value });
       setOtp(o => ({ ...o, step: "code", busy: false }));
     } catch (e: any) {
       setOtp(o => ({ ...o, step: "code", busy: false, error: e?.response?.data?.detail || "Could not send the verification code." }));
+    }
+  };
+  const resendContact = async () => {
+    if (resendSeconds > 0 || resendCount >= MAX_CONTACT_RESENDS || otp.busy) return;
+    setOtp(o => ({ ...o, code: "", error: "", busy: true }));
+    try {
+      await api.post("/auth/change-contact/start", { field: otp.field, value: otp.value });
+      setResendCount(c => c + 1);
+      setResendSeconds(RESEND_COOLDOWN_SEC[otp.field]);
+      setOtp(o => ({ ...o, busy: false }));
+    } catch (e: any) {
+      setOtp(o => ({ ...o, busy: false, error: e?.response?.data?.detail || "Could not resend the verification code." }));
     }
   };
   const verifyContact = async () => {
@@ -152,7 +190,7 @@ function EditProfile() {
       setOtp(o => ({ ...o, busy: false, error: e?.response?.data?.detail || "Incorrect code. Please try again." }));
     }
   };
-  const cancelOtp = () => { setOtp(o => ({ ...o, open: false })); setOtpQueue([]); };
+  const cancelOtp = () => { setOtp(o => ({ ...o, open: false })); setOtpQueue([]); setResendSeconds(0); setResendCount(0); };
 
   const save = async () => {
     setSaving(true); setSaveError("");
@@ -285,6 +323,24 @@ function EditProfile() {
                 style={[p.input, { textAlign: "center", letterSpacing: 8, fontSize: 20, marginBottom: 10 }]}
               />
               {otp.error ? <Small color={colors.destructive} style={{ marginBottom: 10 }}>{otp.error}</Small> : null}
+              {otp.step === "code" && (
+                <>
+                  <Pressable
+                    onPress={resendContact}
+                    disabled={resendSeconds > 0 || resendCount >= MAX_CONTACT_RESENDS || otp.busy}
+                    style={[p.resend, (resendSeconds > 0 || resendCount >= MAX_CONTACT_RESENDS) && { opacity: 0.45 }]}
+                  >
+                    <Small color={colors.primary} weight="700">
+                      {resendSeconds > 0
+                        ? `Resend code in ${Math.floor(resendSeconds / 60)}:${String(resendSeconds % 60).padStart(2, "0")}`
+                        : "Resend code"}
+                    </Small>
+                  </Pressable>
+                  {showResendCount && (
+                    <Small style={p.resendCount}>{resendCount}/{MAX_CONTACT_RESENDS} resend attempts used</Small>
+                  )}
+                </>
+              )}
               <View style={{ flexDirection: "row", gap: 12 }}>
                 <Springy onPress={cancelOtp} style={[p.dialogBtn, { borderWidth: 1, borderColor: colors.border }]}><Small weight="700" color={colors.foreground}>Cancel</Small></Springy>
                 <Springy onPress={verifyContact} disabled={otp.busy || otp.code.length < 6} style={[p.dialogBtn, { backgroundColor: (otp.busy || otp.code.length < 6) ? colors.surface : colors.primaryDeep }]}>
@@ -1233,4 +1289,6 @@ const p = StyleSheet.create({
   dialogOverlay: { flex: 1, backgroundColor: colors.black + "80", alignItems: "center", justifyContent: "center", padding: spacing.xl },
   dialog: { backgroundColor: colors.card, borderRadius: 28, padding: spacing.lg, width: "100%", maxWidth: 320 },
   dialogBtn: { flex: 1, paddingVertical: 12, borderRadius: radii.md, alignItems: "center" },
+  resend: { alignItems: "center", paddingVertical: 6, marginBottom: 4 },
+  resendCount: { textAlign: "center", fontSize: 10, marginBottom: 10 },
 });
