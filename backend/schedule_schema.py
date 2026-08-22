@@ -855,6 +855,26 @@ def project_canonical_plan(
         if not event:
             return None
         timing = event.timing
+        # A visit that IS a period/cycle/dosing anchor is often authored with
+        # no numeric offset at all — "Day 1" needs no delta from itself. That
+        # timing downgrades to "unresolved" (no offset, no range) rather than
+        # inventing a fake zero amount. Back it to the anchor's own day only
+        # when it points straight at a day-numbering-origin anchor — never a
+        # patient-specific trigger like discharge/progression, which keeps
+        # its own "event_driven" kind and is untouched here — and only when
+        # no partial range was actually stated for it.
+        if (
+            timing.kind == "unresolved"
+            and timing.offset is None
+            and timing.range_start is None
+            and timing.range_end is None
+            and timing.anchor_id in anchor_ids
+        ):
+            anchor = anchor_by_id.get(timing.anchor_id)
+            if anchor is not None and anchor.anchor_type in (
+                "randomization", "first_dose", "cycle_start", "period_start",
+            ):
+                return anchor_days.get(timing.anchor_id)
         if timing.kind not in ("offset", "relative", "calendar_offset"):
             return None
         delta = _calendar_elapsed_days(timing.offset)
