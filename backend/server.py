@@ -373,6 +373,11 @@ class VisitIn(BaseModel):
     relative_to: Optional[str] = None
     relative_offset_days: Optional[int] = None
     period: Optional[str] = None
+    # Which independent Schedule of Assessments (substudy) this visit belongs
+    # to, for a protocol that prints more than one (see extract-schedule's
+    # schedule_variants). Blank/None for every ordinary, single-schedule
+    # trial — matches everyone, exactly like a blank arm_label.
+    substudy_label: Optional[str] = None
     activities: List[str] = []
     procedures: List[Dict] = Field(default_factory=list)
     operational_constraints: List[str] = Field(default_factory=list)
@@ -413,6 +418,7 @@ class VisitUpdate(BaseModel):
     relative_to: Optional[str] = None
     relative_offset_days: Optional[int] = None
     period: Optional[str] = None
+    substudy_label: Optional[str] = None
     activities: Optional[List[str]] = None
     procedures: Optional[List[Dict]] = None
     operational_constraints: Optional[List[str]] = None
@@ -441,6 +447,12 @@ class PatientIn(BaseModel):
     language: Optional[str] = None
     avatar_initials: Optional[str] = None
     baseline_date: Optional[str] = None   # anchors visit-instance scheduling
+    # Which substudy (independent Schedule of Assessments) this patient is
+    # enrolled under, for a trial with more than one — see
+    # GET /trials/{trial_id}/substudies. None for every ordinary trial;
+    # materialize_visit_instances then materializes every template, exactly
+    # as it always has.
+    substudy_label: Optional[str] = None
 
 
 class PatientInvitationIn(PatientIn):
@@ -464,6 +476,7 @@ def patient_initials(value: Optional[str], full_name: str) -> str:
 class SchedulePreviewIn(BaseModel):
     baseline_date: str
     arm_label: Optional[str] = ''
+    substudy_label: Optional[str] = ''
 
 class MessageIn(BaseModel):
     conversation_id: str
@@ -2166,19 +2179,6 @@ async def extract_protocol_details(file: UploadFile = File(...),
     return {'details': details}
 
 
-def _schedule_options_payload(schedule: pe.ExtractedSchedule) -> dict:
-    """The picker payload for a document with more than one independent
-    Schedule of Assessments (e.g. separate substudies), before any schedule
-    is actually built. The caller re-submits the same PDF with the chosen
-    schedule_options[].id to get a real schedule."""
-    options = (
-        schedule.classification.schedule_options if schedule.classification else [])
-    return {
-        'needs_schedule_selection': True,
-        'schedule_options': [option.model_dump() for option in options],
-    }
-
-
 @api.post('/protocols/extract',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_protocol_alias(file: UploadFile = File(...),
@@ -2186,14 +2186,15 @@ async def extract_protocol_alias(file: UploadFile = File(...),
                                  user=Depends(current_user)):
     """Extract trial details and an audited schedule from one protocol analysis.
 
-    The schedule is cached briefly and consumed after the trial is created, so
-    the Visit Schedule screen does not upload/analyse the same PDF again.
+    Every schedule is cached briefly and consumed after the trial is
+    created, so the Visit Schedule screen does not upload/analyse the same
+    PDF again.
 
     When the protocol prints more than one independent Schedule of
-    Assessments (e.g. separate substudies), the first call returns
-    ``needs_schedule_selection`` with the available ``schedule_options``
-    instead of a schedule. Re-POST the same file with ``schedule_option_id``
-    set to build the schedule for that choice.
+    Assessments (e.g. separate substudies), every one of them is now
+    extracted automatically and returned together as ``extractions`` — no
+    reviewer pick-then-re-upload round trip. ``schedule_option_id`` is
+    still accepted for backward compatibility but is no longer needed.
     """
     content_type = (file.content_type or '').lower()
     filename = (file.filename or '').lower()
@@ -2205,8 +2206,7 @@ async def extract_protocol_alias(file: UploadFile = File(...),
     if len(data) > pe.MAX_PDF_BYTES:
         raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
     try:
-        extracted_details, schedule = await pe.extract_protocol_bundle(
-            data, selected_schedule_option_id=schedule_option_id)
+        extracted_details, results = await pe.extract_protocol_bundle_all(data)
     except pe.ExtractionNotConfigured as exc:
         raise HTTPException(
             503, f'Protocol extraction is not configured on the server: {exc}')
@@ -2215,45 +2215,63 @@ async def extract_protocol_alias(file: UploadFile = File(...),
     except pe.ExtractionError as exc:
         raise HTTPException(502, f'Could not analyse protocol: {exc}')
 
-    if schedule.requires_schedule_selection:
-        await write_audit(
-            user, 'trial.extract_protocol_needs_selection',
-            f'{file.filename or "protocol PDF"} contains more than one '
-            'Schedule of Assessments; awaiting sponsor selection')
-        return _schedule_options_payload(schedule)
-
     details = extracted_details.model_dump()
     details['status'] = (
         details.get('status') if details.get('status') in
         ('active', 'completed', 'terminated') else 'active')
-    extraction_id = str(uuid.uuid4())
     created_at = now()
     await db.protocol_extractions.delete_many({'expires_at': {'$lte': created_at}})
-    await db.protocol_extractions.insert_one({
-        'id': extraction_id,
-        'user_id': user['id'],
-        'file_name': file.filename or 'protocol.pdf',
-        'details': details,
-        'schedule': schedule.model_dump(mode='json'),
-        'created_at': created_at,
-        'expires_at': created_at + timedelta(hours=2),
-    })
+    extractions = []
+    total_visits = 0
+    for option, schedule in results:
+        extraction_id = str(uuid.uuid4())
+        await db.protocol_extractions.insert_one({
+            'id': extraction_id,
+            'user_id': user['id'],
+            'file_name': file.filename or 'protocol.pdf',
+            'details': details,
+            'schedule': schedule.model_dump(mode='json'),
+            'option_id': option.id if option else '',
+            'option_label': option.label if option else '',
+            'option_description': option.description if option else '',
+            'created_at': created_at,
+            'expires_at': created_at + timedelta(hours=2),
+        })
+        total_visits += len(schedule.visits)
+        extractions.append({
+            'extraction_id': extraction_id,
+            'option_id': option.id if option else '',
+            'option_label': option.label if option else '',
+            'option_description': option.description if option else '',
+            'schedule_visit_count': len(schedule.visits),
+            'verification': {
+                'status': schedule.verification_status,
+                'confidence': schedule.verification_confidence,
+                'refinement_count': schedule.verification_iterations,
+                'issues': schedule.verification_issues,
+                'accuracy': schedule.verification_scores,
+            },
+        })
     await write_audit(
         user, 'trial.extract_protocol',
-        f'Extracted trial details and {len(schedule.visits)} schedule visit(s) '
-        f'from {file.filename or "protocol PDF"}')
+        f'Extracted trial details and {total_visits} schedule visit(s) across '
+        f'{len(extractions)} schedule(s) from {file.filename or "protocol PDF"}')
+
+    if len(extractions) == 1 and results[0][0] is None:
+        # Backward-compatible shape for the overwhelming majority of
+        # single-schedule uploads.
+        only = extractions[0]
+        return {
+            'details': details,
+            'extraction_id': only['extraction_id'],
+            'schedule_visit_count': only['schedule_visit_count'],
+            'needs_schedule_selection': False,
+            'verification': only['verification'],
+        }
     return {
         'details': details,
-        'extraction_id': extraction_id,
-        'schedule_visit_count': len(schedule.visits),
+        'extractions': extractions,
         'needs_schedule_selection': False,
-        'verification': {
-            'status': schedule.verification_status,
-            'confidence': schedule.verification_confidence,
-            'refinement_count': schedule.verification_iterations,
-            'issues': schedule.verification_issues,
-            'accuracy': schedule.verification_scores,
-        },
     }
 
 
@@ -3827,16 +3845,16 @@ def _schedule_extraction_payload(
 async def extract_schedule(trial_id: str, file: UploadFile = File(...),
                            schedule_option_id: Optional[str] = Form(None),
                            user=Depends(current_user)):
-    """AI-assisted: read an uploaded protocol PDF and return its Schedule of
+    """AI-assisted: read an uploaded protocol PDF and return its Schedule(s) of
     Assessments as visit templates for the caller to REVIEW and edit before
     saving. Never writes visits — the sponsor confirms via the normal save flow.
-    Trial-ownership scoped (same rule as the schedule endpoints). The PDF is
-    streamed to the extractor and discarded; nothing is persisted here.
+    Trial-ownership scoped (same rule as the schedule endpoints).
 
     When the protocol prints more than one independent Schedule of
-    Assessments (e.g. separate substudies), this returns
-    ``needs_schedule_selection`` with ``schedule_options`` instead of visits.
-    Re-POST the same file with ``schedule_option_id`` to build that schedule."""
+    Assessments (e.g. separate substudies), every one of them is now
+    extracted automatically and returned together as ``schedule_variants``
+    — no reviewer pick-then-re-upload round trip. ``schedule_option_id`` is
+    still accepted for backward compatibility but is no longer needed."""
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -3857,8 +3875,7 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         raise HTTPException(400, 'The uploaded file does not look like a PDF')
 
     try:
-        schedule = await pe.get_extractor().extract(
-            data, selected_schedule_option_id=schedule_option_id)
+        results = await pe.get_extractor().extract_all(data)
     except pe.ExtractionNotConfigured as exc:
         raise HTTPException(503, 'Protocol extraction is not configured on the '
                             f'server: {exc}. Set the selected provider API key and restart.')
@@ -3872,26 +3889,52 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     except pe.ExtractionError as e:
         raise HTTPException(502, f'Could not extract the schedule: {e}')
 
-    if schedule.requires_schedule_selection:
+    if len(results) == 1 and results[0][0] is None:
+        # The ordinary, single-schedule case — unchanged response shape.
+        _, schedule = results[0]
         await write_audit(
-            user, 'trial.extract_schedule_needs_selection',
-            f'Protocol PDF for {trial.get("protocol_id") or trial_id} contains '
-            'more than one Schedule of Assessments; awaiting sponsor selection',
-            trial_id=trial_id)
-        return _schedule_options_payload(schedule)
+            user, 'trial.extract_schedule',
+            f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
+            f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
+        definition_id = await _persist_schedule_definition(
+            trial_id, schedule, user,
+            source_extraction_id=f'direct:{uuid.uuid4()}',
+        )
+        return {
+            **_schedule_extraction_payload(schedule, schedule_definition_id=definition_id),
+            'needs_schedule_selection': False,
+        }
 
+    # Multiple independent Schedules of Assessments (e.g. substudies) — every
+    # one was extracted already; persist each as its own draft and return
+    # them all together for the reviewer to compare/edit/save side by side.
+    variants = []
+    for option, schedule in results:
+        definition_id = await _persist_schedule_definition(
+            trial_id, schedule, user,
+            source_extraction_id=f'direct:{uuid.uuid4()}:{option.id if option else "0"}',
+        )
+        variant = {
+            **_schedule_extraction_payload(schedule, schedule_definition_id=definition_id),
+            'option_id': option.id if option else '',
+            'option_label': option.label if option else '',
+            'option_description': option.description if option else '',
+        }
+        variants.append(variant)
+    if variants:
+        # The trial's canonical schedule pointer must be a deliberate choice,
+        # not whichever variant _persist_schedule_definition happened to
+        # persist last.
+        await db.trials.update_one(
+            {'id': trial_id},
+            {'$set': {'current_schedule_definition_id': variants[0]['schedule_definition_id']}})
     await write_audit(
-        user, 'trial.extract_schedule',
-        f'Extracted {len(schedule.visits)} visit(s) from protocol PDF for '
-        f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
-    definition_id = await _persist_schedule_definition(
-        trial_id, schedule, user,
-        source_extraction_id=f'direct:{uuid.uuid4()}',
-    )
-    return {
-        **_schedule_extraction_payload(schedule, schedule_definition_id=definition_id),
-        'needs_schedule_selection': False,
-    }
+        user, 'trial.extract_schedule_variants',
+        f'Extracted {len(variants)} independent schedule(s) '
+        f'({", ".join(v["option_label"] for v in variants if v["option_label"])}) '
+        f'from protocol PDF for {trial.get("protocol_id") or trial_id}',
+        trial_id=trial_id)
+    return {'needs_schedule_selection': False, 'schedule_variants': variants}
 
 
 @api.post('/trials/{trial_id}/protocol-extractions/{extraction_id}/consume',
@@ -3939,8 +3982,12 @@ async def consume_protocol_extraction(
         f'Reused prepared protocol schedule for '
         f'{trial.get("protocol_id") or trial_id}',
         trial_id=trial_id, target_id=trial_id)
-    return _schedule_extraction_payload(
-        schedule, schedule_definition_id=definition_id)
+    return {
+        **_schedule_extraction_payload(schedule, schedule_definition_id=definition_id),
+        'option_id': draft.get('option_id') or '',
+        'option_label': draft.get('option_label') or '',
+        'option_description': draft.get('option_description') or '',
+    }
 
 
 @api.get('/trials/{trial_id}/schedule-definition',
@@ -4022,10 +4069,15 @@ async def preview_trial_schedule(trial_id: str, body: SchedulePreviewIn,
                                .sort('visit_number', 1).to_list(500)
     if not templates:
         raise HTTPException(409, 'This trial has no published visit schedule yet')
-    preview = _build_schedule_preview(templates, baseline, body.arm_label)
+    preview = _build_schedule_preview(templates, baseline, body.arm_label, body.substudy_label)
     if not preview:
-        raise HTTPException(409, 'No visit templates match the selected trial arm')
-    return {'baseline_date': iso(baseline), 'arm_label': body.arm_label or '', 'visits': preview}
+        raise HTTPException(409, 'No visit templates match the selected trial arm/substudy')
+    return {
+        'baseline_date': iso(baseline),
+        'arm_label': body.arm_label or '',
+        'substudy_label': body.substudy_label or '',
+        'visits': preview,
+    }
 
 
 async def _require_schedule_owner(user: dict, trial: dict):
@@ -4051,6 +4103,22 @@ async def list_trial_visits(trial_id: str,
     await _require_schedule_owner(user, trial)
     return await db.visits.find({'trial_id': trial_id}, {'_id': 0}) \
                           .sort('visit_number', 1).to_list(500)
+
+
+@api.get('/trials/{trial_id}/substudies',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi', 'crc', 'smo', 'site'))])
+async def list_trial_substudies(trial_id: str, user=Depends(current_user)):
+    """The distinct substudy_label values saved on this trial's visits, for
+    the enrollment substudy picker. Empty for every ordinary,
+    single-schedule trial — the picker only ever appears when there's
+    something to actually choose between."""
+    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+    if not trial:
+        raise HTTPException(404, 'Trial not found')
+    if not await _can_access_trial(user, trial):
+        raise HTTPException(403, 'You do not have access to this trial')
+    labels = await db.visits.distinct('substudy_label', {'trial_id': trial_id})
+    return sorted(label for label in labels if label)
 
 
 @api.put('/visits/{visit_id}')
@@ -4486,11 +4554,27 @@ def _template_matches_arm(template: dict, arm_label: Optional[str]) -> bool:
     return not template_arm or template_arm == selected_arm
 
 
-def _build_schedule_preview(templates: List[dict], baseline: datetime, arm_label: Optional[str] = '') -> List[dict]:
+def _template_matches_substudy(template: dict, substudy_label: Optional[str]) -> bool:
+    """Same "blank matches everyone" shape as _template_matches_arm, scoped
+    to which independent Schedule of Assessments (substudy) a template
+    belongs to. A template with no substudy_label (every ordinary,
+    single-schedule trial) matches every patient regardless of their own
+    substudy_label."""
+    template_substudy = str(template.get('substudy_label') or '').strip().lower()
+    selected_substudy = str(substudy_label or '').strip().lower()
+    return not template_substudy or template_substudy == selected_substudy
+
+
+def _build_schedule_preview(
+    templates: List[dict], baseline: datetime,
+    arm_label: Optional[str] = '', substudy_label: Optional[str] = '',
+) -> List[dict]:
     """Deterministically calculate a reviewable schedule without writing data."""
     rows = []
     for template in templates:
         if not _template_matches_arm(template, arm_label):
+            continue
+        if not _template_matches_substudy(template, substudy_label):
             continue
         try:
             scheduled = _calculate_template_datetime(baseline, template)
@@ -4519,6 +4603,7 @@ def _build_schedule_preview(templates: List[dict], baseline: datetime, arm_label
             'relative_offset_days': template.get('relative_offset_days'),
             'period': template.get('period'),
             'arm_label': template.get('arm_label') or template.get('arm') or '',
+            'substudy_label': template.get('substudy_label') or '',
             'scheduled_date': iso(scheduled),
             'scheduled_end': iso(scheduled_end),
             'window_start': iso(window_start),
@@ -4731,6 +4816,13 @@ async def materialize_visit_instances(patient) -> int:
         return 0
     templates = await db.visits.find({'trial_id': patient['trial_id']}, {'_id': 0}) \
                                .sort('visit_number', 1).to_list(500)
+    # A patient enrolled under a specific substudy (a trial with more than
+    # one independent Schedule of Assessments) only ever gets that
+    # substudy's own visits materialized — never the other substudies'.
+    # An untagged template (every ordinary, single-schedule trial) still
+    # matches every patient, so this is a no-op everywhere else.
+    templates = [t for t in templates
+                 if _template_matches_substudy(t, patient.get('substudy_label'))]
     if not templates:
         return 0
     base = _patient_visit_anchor(patient)
@@ -4809,6 +4901,11 @@ async def _materialize_new_template_for_enrolled(template) -> int:
             continue
         if await db.visit_instances.count_documents(
                 {'patient_id': patient['id'], 'visit_template_id': template['id']}, limit=1):
+            continue
+        # A template belonging to a different substudy than this patient is
+        # enrolled under is never materialized for them — same rule as the
+        # initial materialize_visit_instances pass.
+        if not _template_matches_substudy(template, patient.get('substudy_label')):
             continue
         base = _patient_visit_anchor(patient)
         try:

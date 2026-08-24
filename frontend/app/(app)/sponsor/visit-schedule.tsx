@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   PanResponder,
@@ -67,6 +68,10 @@ type Row = {
   relative_offset_days: number | null;
   arm_label: string | null;
   period: string | null;
+  // Which independent Schedule of Assessments (substudy) this visit belongs
+  // to, when a protocol prints more than one. Null for every ordinary,
+  // single-schedule trial.
+  substudy_label: string | null;
   visit_type: string | null;
   anchor_study_day: 0 | 1 | null;
   includes_day_zero: boolean | null;
@@ -129,11 +134,22 @@ type ScheduleNumbering = {
   includes_day_zero?: boolean | null;
 };
 
-type ScheduleOption = {
-  id: string;
+// One independently-extracted Schedule of Assessments (e.g. one substudy of
+// a seamless Phase 2/3 protocol). A single-schedule protocol never produces
+// more than one of these, and the whole screen renders exactly as it did
+// before this concept existed.
+type ScheduleVariant = {
+  optionId: string;
   label: string;
-  description: string;
-  source_location: string;
+  description?: string;
+  scheduleDefinitionId: string | null;
+  rows: Row[];
+  // The rows already confirmed for this substudy, last time the trial's
+  // saved schedule was loaded/saved — i.e. this variant's own "original",
+  // scoped so switching between substudies never confuses one's diff/delete
+  // logic with another's.
+  savedRows: Row[];
+  verification: ExtractionVerification | null;
 };
 
 const hasAbsoluteHourTiming = (timing: {
@@ -159,6 +175,7 @@ const blankRow = (name = "New Visit"): Row => ({
   relative_offset_days: null,
   arm_label: null,
   period: null,
+  substudy_label: null,
   visit_type: null,
   anchor_study_day: null,
   includes_day_zero: null,
@@ -198,6 +215,7 @@ const templateToRow = (template: any): Row => {
     relative_offset_days: template.relative_offset_days ?? null,
     arm_label: template.arm_label ?? template.arm ?? null,
     period: template.period ?? null,
+    substudy_label: template.substudy_label ?? null,
     visit_type: template.visit_type ?? null,
     anchor_study_day: template.anchor_study_day ?? null,
     includes_day_zero: template.includes_day_zero ?? null,
@@ -240,6 +258,9 @@ const extractedVisitsToRows = (
     relative_offset_days: visit.relative_offset_days ?? null,
     arm_label: visit.arm_label ?? visit.arm ?? null,
     period: visit.period ?? null,
+    // Stamped by the caller for a multi-substudy extraction (see
+    // runAutofill); a single-schedule extraction leaves every row untagged.
+    substudy_label: null,
     visit_type: visit.visit_type ?? null,
     anchor_study_day: visit.anchor_study_day ?? numbering.anchor_study_day ?? null,
     includes_day_zero: visit.includes_day_zero ?? numbering.includes_day_zero ?? null,
@@ -257,6 +278,43 @@ const extractedVisitsToRows = (
   };
 });
 
+type RawScheduleVariant = {
+  option_id?: string;
+  option_label?: string;
+  option_description?: string;
+  schedule_definition_id?: string | null;
+  visits?: ExtractedVisit[];
+  anchor_study_day?: 0 | 1 | null;
+  includes_day_zero?: boolean | null;
+  verification?: ExtractionVerification | null;
+};
+
+// Shared by every path that produces a ScheduleVariant from a freshly
+// extracted/consumed schedule — a fan-out extraction (runAutofill) and a
+// prepared-at-Add-Trial consume (load()) return the same payload shape.
+const buildScheduleVariant = (
+  variant: RawScheduleVariant,
+  existingVariants: ScheduleVariant[],
+): ScheduleVariant => {
+  // A re-extraction after edits already exist: keep whatever was already
+  // confirmed/saved for a substudy with the same label, so re-running
+  // autofill doesn't make save() think every row is brand new.
+  const existing = existingVariants.find((item) => item.label === variant.option_label);
+  const extractedRows = extractedVisitsToRows(variant.visits ?? [], {
+    anchor_study_day: variant.anchor_study_day ?? null,
+    includes_day_zero: variant.includes_day_zero ?? null,
+  }).map((row) => ({ ...row, substudy_label: variant.option_label || null }));
+  return {
+    optionId: variant.option_id || "",
+    label: variant.option_label || "",
+    description: variant.option_description,
+    scheduleDefinitionId: variant.schedule_definition_id ?? null,
+    rows: extractedRows,
+    savedRows: existing ? existing.savedRows : [],
+    verification: variant.verification ?? null,
+  };
+};
+
 const sameRow = (left: Row, right: Row) =>
   left.name.trim() === right.name.trim()
   && parseOptionalDayOffset(left.day_offset) === parseOptionalDayOffset(right.day_offset)
@@ -273,6 +331,7 @@ const sameRow = (left: Row, right: Row) =>
   && left.relative_offset_days === right.relative_offset_days
   && left.arm_label === right.arm_label
   && left.period === right.period
+  && left.substudy_label === right.substudy_label
   && left.visit_type === right.visit_type
   && left.anchor_study_day === right.anchor_study_day
   && left.includes_day_zero === right.includes_day_zero
@@ -314,11 +373,11 @@ const csvCell = (value: string | number | boolean) => `"${String(value).replace(
 
 export default function VisitScheduleEditor() {
   const router = useRouter();
-  const { id, extractionId } = useLocalSearchParams<{
+  const { id, extractionId, extractionIds } = useLocalSearchParams<{
     id: string;
     extractionId?: string;
+    extractionIds?: string;
   }>();
-  const pickedAssetRef = useRef<DocumentPicker.DocumentPickerAsset | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [original, setOriginal] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -329,9 +388,14 @@ export default function VisitScheduleEditor() {
   const [extracting, setExtracting] = useState(false);
   const [extractErr, setExtractErr] = useState("");
   const [verification, setVerification] = useState<ExtractionVerification | null>(null);
-  const [scheduleOptions, setScheduleOptions] = useState<ScheduleOption[]>([]);
-  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
-  const [pickingOptionId, setPickingOptionId] = useState("");
+  // Populated only when the protocol prints more than one independent
+  // Schedule of Assessments. `rows`/`original`/`verification` above always
+  // describe whichever one is `activeVariantId` — the one currently loaded
+  // into the interactive editor below.
+  const [variants, setVariants] = useState<ScheduleVariant[]>([]);
+  const [expandedVariantIds, setExpandedVariantIds] = useState<Set<string>>(new Set());
+  const [activeVariantId, setActiveVariantId] = useState<string | null>(null);
+  const [savedVariantIds, setSavedVariantIds] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "ok">("all");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -346,10 +410,48 @@ export default function VisitScheduleEditor() {
       const response = await api.get(`/trials/${id}/visits`);
       const templates: any[] = response.data ?? [];
       let loaded = templates.map(templateToRow);
-      if (!loaded.length && extractionId) {
+      const pendingIds = [
+        ...(extractionIds ? extractionIds.split(",") : []),
+        ...(extractionId ? [extractionId] : []),
+      ].map((item) => item.trim()).filter(Boolean);
+      const uniquePendingIds = [...new Set(pendingIds)];
+      if (!loaded.length && uniquePendingIds.length > 1) {
+        // The protocol printed more than one independent Schedule of
+        // Assessments — Add Trial already extracted every one of them, so
+        // consume each prepared draft and show them as their own cards,
+        // exactly like a fresh multi-substudy autofill would (see
+        // buildScheduleVariant).
+        const consumed = await Promise.allSettled(uniquePendingIds.map((pendingId) =>
+          api.post(`/trials/${id}/protocol-extractions/${pendingId}/consume`)));
+        const built: ScheduleVariant[] = [];
+        let failures = 0;
+        for (const outcome of consumed) {
+          if (outcome.status === "fulfilled") {
+            built.push(buildScheduleVariant(outcome.value.data, []));
+          } else {
+            failures += 1;
+          }
+        }
+        if (built.length) {
+          setVariants(built);
+          setActiveVariantId(built[0].optionId);
+          setExpandedVariantIds(new Set([built[0].optionId]));
+          setRows(built[0].rows);
+          setOriginal(built[0].savedRows);
+          setVerification(built[0].verification);
+          setShowReviewNotes(false);
+          setNotice(`${built.length} independent schedule${built.length === 1 ? "" : "s"} `
+            + "prepared from your protocol upload are ready for review "
+            + "(shown below as separate cards). No second AI extraction was used."
+            + (failures ? ` ${failures} could not be loaded and were skipped.` : ""));
+          setEditing(false);
+          return;
+        }
+        setExtractErr("The prepared schedules could not be loaded. You can upload the PDF again or build it manually.");
+      } else if (!loaded.length && uniquePendingIds.length === 1) {
         try {
           const prepared = await api.post(
-            `/trials/${id}/protocol-extractions/${extractionId}/consume`,
+            `/trials/${id}/protocol-extractions/${uniquePendingIds[0]}/consume`,
           );
           const visits: ExtractedVisit[] = prepared.data?.visits ?? [];
           const preparedVerification: ExtractionVerification | null =
@@ -372,15 +474,45 @@ export default function VisitScheduleEditor() {
           );
         }
       }
-      setRows(loaded);
-      setOriginal(loaded);
+      // A trial with visits saved from more than one substudy (see save())
+      // is re-grouped the same way on reload, so reopening the screen shows
+      // the same collapsible cards as right after extraction.
+      const groups = new Map<string, Row[]>();
+      for (const row of loaded) {
+        const key = row.substudy_label?.trim() || "";
+        const list = groups.get(key) ?? [];
+        list.push(row);
+        groups.set(key, list);
+      }
+      const namedGroups = [...groups.entries()].filter(([key]) => key);
+      if (namedGroups.length > 1) {
+        const built: ScheduleVariant[] = namedGroups.map(([label, groupRows]) => ({
+          optionId: label,
+          label,
+          scheduleDefinitionId: null,
+          rows: groupRows,
+          savedRows: groupRows,
+          verification: null,
+        }));
+        setVariants(built);
+        setActiveVariantId(built[0].optionId);
+        setExpandedVariantIds(new Set([built[0].optionId]));
+        setRows(built[0].rows);
+        setOriginal(built[0].savedRows);
+      } else {
+        setVariants([]);
+        setActiveVariantId(null);
+        setExpandedVariantIds(new Set());
+        setRows(loaded);
+        setOriginal(loaded);
+      }
       setEditing(loaded.length === 0);
     } catch (error: any) {
       setLoadErr(error?.response?.data?.detail || "Couldn't load the existing schedule.");
     } finally {
       setLoading(false);
     }
-  }, [id, extractionId]);
+  }, [id, extractionId, extractionIds]);
 
   useEffect(() => {
     load();
@@ -514,10 +646,63 @@ export default function VisitScheduleEditor() {
     )));
   };
 
-  const runAutofill = async (
-    asset: DocumentPicker.DocumentPickerAsset,
-    scheduleOptionId?: string,
-  ) => {
+  // Has the live editor (rows) diverged from what's actually saved for the
+  // currently active variant (original)? Mirrors save()'s own per-row
+  // comparison, so "nothing to lose" here means save() would issue zero
+  // requests either.
+  const isRowsDirty = () => {
+    if (rows.length !== original.length) return true;
+    return rows.some((row, index) => {
+      const baseline = original[index];
+      if (!baseline) return true;
+      if ((row.id || null) !== (baseline.id || null)) return true;
+      return !sameRow(baseline, row);
+    });
+  };
+
+  const toggleVariant = (optionId: string) => {
+    setExpandedVariantIds((current) => {
+      const next = new Set(current);
+      if (next.has(optionId)) next.delete(optionId); else next.add(optionId);
+      return next;
+    });
+  };
+
+  const switchActiveVariant = (optionId: string) => {
+    if (optionId === activeVariantId) return;
+    const target = variants.find((variant) => variant.optionId === optionId);
+    if (!target) return;
+    const commit = () => {
+      // Carry the outgoing variant's live edits along, so switching back to
+      // it later (without saving first) doesn't lose them.
+      setVariants((current) => current.map((variant) => (
+        variant.optionId === activeVariantId ? { ...variant, rows } : variant
+      )));
+      setRows(target.rows);
+      setOriginal(target.savedRows);
+      setVerification(target.verification);
+      setActiveVariantId(optionId);
+      setSelectedIndex(null);
+      setShowReviewNotes(false);
+      setEditing(false);
+      setErr("");
+      setExpandedVariantIds((current) => new Set(current).add(optionId));
+    };
+    if (isRowsDirty()) {
+      Alert.alert(
+        "Discard unsaved changes?",
+        "Switching to another schedule will discard your unsaved edits to this one. Save first if you want to keep them.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Discard", style: "destructive", onPress: commit },
+        ],
+      );
+      return;
+    }
+    commit();
+  };
+
+  const runAutofill = async (asset: DocumentPicker.DocumentPickerAsset) => {
     const form = new FormData();
     if (Platform.OS === "web") {
       const file = (asset as any).file as File | undefined;
@@ -533,25 +718,42 @@ export default function VisitScheduleEditor() {
         type: asset.mimeType || "application/pdf",
       } as any);
     }
-    if (scheduleOptionId) form.append("schedule_option_id", scheduleOptionId);
-
     setExtracting(true);
-    setShowSchedulePicker(false);
     try {
       const response = await api.post(`/trials/${id}/extract-schedule`, form, {
         // Do not set Content-Type manually: React Native/Axios must add its
         // multipart boundary. Protocol analysis can take longer than a normal
-        // API request, especially for a full multi-page PDF.
-        timeout: 900000,
+        // API request — now potentially several substudies' worth of full
+        // extraction pipelines, bounded to a few running at once server-side.
+        timeout: 1800000,
       });
-      if (response.data?.needs_schedule_selection) {
-        // This protocol has more than one independent Schedule of
-        // Assessments (e.g. separate substudies). Let the sponsor choose
-        // which one to build before running the full analysis on it.
-        setScheduleOptions(response.data.schedule_options || []);
-        setShowSchedulePicker(true);
+      const rawVariants: any[] = Array.isArray(response.data?.schedule_variants)
+        ? response.data.schedule_variants : [];
+      if (rawVariants.length > 1) {
+        // This protocol prints more than one independent Schedule of
+        // Assessments (e.g. separate substudies) — every one of them was
+        // already extracted server-side. Show them all as their own cards
+        // instead of a single merged table.
+        const built: ScheduleVariant[] = rawVariants.map(
+          (variant) => buildScheduleVariant(variant, variants));
+        setVariants(built);
+        setShowReviewNotes(false);
+        if (built.length) {
+          setActiveVariantId(built[0].optionId);
+          setRows(built[0].rows);
+          setOriginal(built[0].savedRows);
+          setVerification(built[0].verification);
+          setExpandedVariantIds(new Set([built[0].optionId]));
+        }
+        setSelectedIndex(null);
+        setEditing(false);
+        setNotice(`Extracted ${built.length} independent schedules from this protocol `
+          + "(shown below as separate cards). Review and save each one you want to keep.");
         return;
       }
+      setVariants([]);
+      setActiveVariantId(null);
+      setExpandedVariantIds(new Set());
       const visits: ExtractedVisit[] = response.data?.visits ?? [];
       const agentVerification: ExtractionVerification | null = response.data?.verification ?? null;
       setVerification(agentVerification);
@@ -600,18 +802,7 @@ export default function VisitScheduleEditor() {
       setExtractErr("Couldn't open the file picker.");
       return;
     }
-    pickedAssetRef.current = asset;
     await runAutofill(asset);
-  };
-
-  const chooseSchedule = async (optionId: string) => {
-    if (!pickedAssetRef.current) return;
-    setPickingOptionId(optionId);
-    try {
-      await runAutofill(pickedAssetRef.current, optionId);
-    } finally {
-      setPickingOptionId("");
-    }
   };
 
   const validate = () => {
@@ -648,12 +839,17 @@ export default function VisitScheduleEditor() {
     setSaving(true);
     setErr("");
     try {
+      // `original` is already scoped to the active variant's own previously
+      // saved rows (see load()/runAutofill()/switchActiveVariant()), so this
+      // delete pass only ever removes rows that belonged to THIS substudy —
+      // other substudies already saved on the same trial are untouched.
       const keptIds = new Set(rows.filter((row) => row.id).map((row) => row.id));
       for (const previous of original) {
         if (previous.id && !keptIds.has(previous.id)) {
           await api.delete(`/visits/${previous.id}`);
         }
       }
+      const nextRows = [...rows];
       for (let index = 0; index < rows.length; index += 1) {
         const row = rows[index];
         const visitNumber = index + 1;
@@ -675,6 +871,7 @@ export default function VisitScheduleEditor() {
           relative_offset_days: row.relative_offset_days,
           arm_label: row.arm_label,
           period: row.period,
+          substudy_label: row.substudy_label || null,
           visit_type: row.visit_type,
           anchor_study_day: row.anchor_study_day,
           includes_day_zero: row.includes_day_zero,
@@ -696,9 +893,27 @@ export default function VisitScheduleEditor() {
           if (!previous || !sameRow(previous, row) || numberChanged) {
             await api.put(`/visits/${row.id}`, payload);
           }
+          nextRows[index] = { ...row, visit_number: visitNumber };
         } else {
-          await api.post("/visits", { trial_id: id, ...payload });
+          const created = await api.post("/visits", { trial_id: id, ...payload });
+          // A freshly-extracted row has no id yet; capture the one Mongo just
+          // assigned so a second Save (possible now that saving a variant no
+          // longer force-navigates away) issues a PUT, not a duplicate POST.
+          const newId = created?.data?.id;
+          nextRows[index] = newId
+            ? { ...row, id: newId, visit_number: visitNumber }
+            : { ...row, visit_number: visitNumber };
         }
+      }
+      setRows(nextRows);
+      setOriginal(nextRows);
+      if (activeVariantId) {
+        setVariants((current) => current.map((variant) => (
+          variant.optionId === activeVariantId
+            ? { ...variant, rows: nextRows, savedRows: nextRows }
+            : variant
+        )));
+        setSavedVariantIds((current) => new Set(current).add(activeVariantId));
       }
       setSaved(true);
     } catch (error: any) {
@@ -723,11 +938,22 @@ export default function VisitScheduleEditor() {
   };
 
   const download = async () => {
-    if (!rows.length) {
+    const hasMultipleSchedules = variants.length > 1;
+    // Each group's rows reflect the live editor for the currently active
+    // variant, and whatever was last committed (extracted/edited/saved) for
+    // every other one \u2014 "what you'd see if you expanded that card."
+    const exportGroups = hasMultipleSchedules
+      ? variants.map((variant) => ({
+          label: variant.label,
+          rows: variant.optionId === activeVariantId ? rows : variant.rows,
+        }))
+      : [{ label: "", rows }];
+    if (!exportGroups.some((group) => group.rows.length)) {
       setErr("Add at least one visit before downloading.");
       return;
     }
     const header = [
+      ...(hasMultipleSchedules ? ["Substudy"] : []),
       "Visit number", "Visit name", "Protocol timing label", "Offset from baseline (days)",
       "Offset end (days)", "Hour offset", "Hour end", "Hour offset basis",
       "Window days", "Window before", "Window after", "Relative to", "Relative offset days",
@@ -735,7 +961,8 @@ export default function VisitScheduleEditor() {
       "Structured procedures", "Operational constraints", "Clinical tasks",
       "Administrative tasks", "Comments", "Review status",
     ];
-    const lines = rows.map((row, index) => [
+    const lines = exportGroups.flatMap((group) => group.rows.map((row, index) => [
+      ...(hasMultipleSchedules ? [group.label] : []),
       index + 1,
       row.name,
       row.source_day_label,
@@ -761,7 +988,7 @@ export default function VisitScheduleEditor() {
       row.admin_tasks,
       row.comments,
       row.extraction_warning || row.review_status === "pending" ? "Needs review" : "OK",
-    ].map(csvCell).join(","));
+    ].map(csvCell).join(",")));
     const csv = `\uFEFF${header.map(csvCell).join(",")}\r\n${lines.join("\r\n")}`;
     const filename = `visit-schedule-${id || "trial"}.csv`;
     try {
@@ -810,6 +1037,196 @@ export default function VisitScheduleEditor() {
   rowLayoutsRef.current.length = visibleRows.length;
   const selectedRow = selectedIndex === null ? null : rows[selectedIndex];
   const isProtocolExtract = rows.some((row) => row.extracted_from_protocol);
+  const activeVariant = variants.find((variant) => variant.optionId === activeVariantId) ?? null;
+
+  // The summary/filters/editable table/add-visit block — identical whether
+  // this trial has one schedule (rendered directly) or several (rendered
+  // inside whichever variant card is currently active). `rows` always
+  // describes the active variant, so nothing here needs to know which case
+  // it's in.
+  const renderEditorBody = () => (
+    <>
+      <View style={styles.summary}>
+        <View style={styles.summaryLeft}>
+          <View style={styles.sourcePill}>
+            <Sparkles size={12} color={colors.primary} />
+            <Small color={colors.primary} weight="700">
+              {isProtocolExtract ? "AI Extracted" : "Visit Template"}
+            </Small>
+          </View>
+          <Small>{rows.length} visits</Small>
+          {verification?.status === "verified" && (
+            <View style={styles.verifiedPill}>
+              <CheckCircle2 size={13} color={colors.success} />
+              <Small color={colors.success} weight="700">Agent verified</Small>
+            </View>
+          )}
+        </View>
+        {pendingCount > 0 && (
+          <View style={styles.pendingPill}>
+            <AlertTriangle size={13} color={colors.warning} />
+            <Small color={colors.warning} weight="700">{pendingCount} need review</Small>
+          </View>
+        )}
+      </View>
+
+      {!!verification?.issues?.length && (
+        <View style={styles.reviewNotesBlock}>
+          <Pressable
+            testID="review-notes-toggle"
+            onPress={() => setShowReviewNotes((value) => !value)}
+            style={styles.reviewNotesToggle}
+          >
+            {showReviewNotes
+              ? <ChevronUp size={14} color={colors.mutedFg} />
+              : <ChevronDown size={14} color={colors.mutedFg} />}
+            <Small color={colors.mutedFg} weight="700">
+              {showReviewNotes ? "Hide" : "Show"} why {verification.issues.length}{" "}
+              field{verification.issues.length === 1 ? "" : "s"} were flagged
+            </Small>
+          </Pressable>
+          {showReviewNotes && (
+            <View style={styles.reviewNotesList}>
+              {verification.issues.map((issue, issueIndex) => (
+                <Small key={issueIndex} color={colors.mutedFg} style={styles.reviewNoteItem}>
+                  {"• "}{issue}
+                </Small>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
+      <View style={styles.filters}>
+        {(["all", "pending", "ok"] as const).map((value) => {
+          const count = value === "all"
+            ? rows.length
+            : value === "pending" ? pendingCount : rows.length - pendingCount;
+          const active = filter === value;
+          return (
+            <Pressable
+              key={value}
+              testID={`schedule-filter-${value}`}
+              onPress={() => setFilter(value)}
+              style={[styles.filterChip, active && styles.filterChipActive]}
+            >
+              {active && <Check size={12} color={colors.primaryFg} />}
+              <Small color={active ? colors.primaryFg : colors.mutedFg} weight="700">
+                {value === "all" ? "All" : value === "pending" ? "Pending" : "OK"}
+              </Small>
+              <View style={[styles.filterCount, active && styles.filterCountActive]}>
+                <Small color={active ? colors.primaryFg : colors.mutedFg} weight="700">{count}</Small>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.table}>
+        <View style={[styles.tableGrid, styles.tableHeader, editing && styles.tableGridEditing]}>
+          {editing && <View style={styles.orderCell} />}
+          <Small weight="700" style={styles.numberCell}>#</Small>
+          <Small weight="700" style={styles.nameCell}>Visit name</Small>
+          <Small weight="700" style={styles.dayCell}>Day</Small>
+          <Small weight="700" style={styles.windowCell}>Window</Small>
+          {editing && <View style={styles.deleteCell} />}
+        </View>
+
+        {visibleRows.map(({ row, index }, position) => {
+          const warning = rowNeedsReview(row);
+          const dragging = dragPosition === position;
+          const isDropTarget = dropPosition === position && dragPosition !== position;
+          return (
+            <Pressable
+              key={row.id ?? `new-${index}`}
+              testID={`visit-row-${index}`}
+              onPress={() => setSelectedIndex(index)}
+              onLayout={(event) => {
+                const { y, height } = event.nativeEvent.layout;
+                rowLayoutsRef.current[position] = { y, height };
+              }}
+              style={[
+                styles.tableGrid,
+                styles.tableRow,
+                editing && styles.tableGridEditing,
+                warning && styles.warningRow,
+                isDropTarget && styles.dropTargetRow,
+                dragging && styles.draggingRow,
+                dragging && { transform: [{ translateY: dragTranslate }] },
+              ]}
+            >
+              {editing && (
+                <View
+                  testID={`drag-visit-${index}`}
+                  style={styles.orderCell}
+                  onTouchStart={() => { dragFromRef.current = position; }}
+                  {...dragResponder.panHandlers}
+                >
+                  <GripVertical
+                    size={16}
+                    color={dragging ? colors.primary : colors.mutedFg}
+                  />
+                </View>
+              )}
+              <View style={styles.numberCell}>
+                {warning
+                  ? <AlertTriangle size={15} color={colors.warning} />
+                  : <Small weight="700">{index + 1}</Small>}
+              </View>
+              <View style={styles.nameCell}>
+                <Body weight="700" numberOfLines={1}>{row.name || "Untitled visit"}</Body>
+                {!!row.comments && <MessageSquareText size={11} color={colors.mutedFg} />}
+              </View>
+              <Small numberOfLines={1} style={styles.dayCell}>{dayForRow(row)}</Small>
+              <Small style={styles.windowCell}>
+                {formatVisitWindow({
+                  window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
+                  window_before: row.window_before,
+                  window_after: row.window_after,
+                }, true)}
+              </Small>
+              {editing && (
+                <View style={styles.deleteCell}>
+                  <Pressable
+                    testID={`remove-visit-${index}`}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      remove(index);
+                    }}
+                    style={styles.deleteButton}
+                  >
+                    <Trash2 size={15} color={colors.destructive} />
+                  </Pressable>
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
+
+        {visibleRows.length === 0 && (
+          <View style={styles.emptyRows}>
+            <Small color={colors.mutedFg}>
+              {rows.length ? "No visits in this filter." : "No visits yet. Add one or extract from a protocol."}
+            </Small>
+          </View>
+        )}
+      </View>
+
+      <Pressable testID="add-visit-row" onPress={add} style={styles.addButton}>
+        <Plus size={17} color={colors.primary} />
+        <Small color={colors.primary} weight="700">Add Visit</Small>
+      </Pressable>
+
+      {!!notice && (
+        <Pressable onPress={() => setNotice("")} style={styles.notice}>
+          <CheckCircle2 size={15} color={colors.success} />
+          <Small color={colors.success} weight="700" style={styles.flex}>{notice}</Small>
+          <X size={13} color={colors.success} />
+        </Pressable>
+      )}
+      {!!err && <Small color={colors.destructive} style={styles.inlineMessage}>{err}</Small>}
+    </>
+  );
 
   if (loading) {
     return (
@@ -876,185 +1293,95 @@ export default function VisitScheduleEditor() {
             <Small color={colors.destructive} style={styles.inlineMessage}>{extractErr}</Small>
           )}
 
-          <View style={styles.summary}>
-            <View style={styles.summaryLeft}>
-              <View style={styles.sourcePill}>
-                <Sparkles size={12} color={colors.primary} />
-                <Small color={colors.primary} weight="700">
-                  {isProtocolExtract ? "AI Extracted" : "Visit Template"}
-                </Small>
-              </View>
-              <Small>{rows.length} visits</Small>
-              {verification?.status === "verified" && (
-                <View style={styles.verifiedPill}>
-                  <CheckCircle2 size={13} color={colors.success} />
-                  <Small color={colors.success} weight="700">Agent verified</Small>
-                </View>
-              )}
-            </View>
-            {pendingCount > 0 && (
-              <View style={styles.pendingPill}>
-                <AlertTriangle size={13} color={colors.warning} />
-                <Small color={colors.warning} weight="700">{pendingCount} need review</Small>
-              </View>
-            )}
-          </View>
-
-          {!!verification?.issues?.length && (
-            <View style={styles.reviewNotesBlock}>
-              <Pressable
-                testID="review-notes-toggle"
-                onPress={() => setShowReviewNotes((value) => !value)}
-                style={styles.reviewNotesToggle}
-              >
-                {showReviewNotes
-                  ? <ChevronUp size={14} color={colors.mutedFg} />
-                  : <ChevronDown size={14} color={colors.mutedFg} />}
-                <Small color={colors.mutedFg} weight="700">
-                  {showReviewNotes ? "Hide" : "Show"} why {verification.issues.length}{" "}
-                  field{verification.issues.length === 1 ? "" : "s"} were flagged
-                </Small>
-              </Pressable>
-              {showReviewNotes && (
-                <View style={styles.reviewNotesList}>
-                  {verification.issues.map((issue, issueIndex) => (
-                    <Small key={issueIndex} color={colors.mutedFg} style={styles.reviewNoteItem}>
-                      {"• "}{issue}
-                    </Small>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
-
-          <View style={styles.filters}>
-            {(["all", "pending", "ok"] as const).map((value) => {
-              const count = value === "all"
-                ? rows.length
-                : value === "pending" ? pendingCount : rows.length - pendingCount;
-              const active = filter === value;
-              return (
-                <Pressable
-                  key={value}
-                  testID={`schedule-filter-${value}`}
-                  onPress={() => setFilter(value)}
-                  style={[styles.filterChip, active && styles.filterChipActive]}
-                >
-                  {active && <Check size={12} color={colors.primaryFg} />}
-                  <Small color={active ? colors.primaryFg : colors.mutedFg} weight="700">
-                    {value === "all" ? "All" : value === "pending" ? "Pending" : "OK"}
-                  </Small>
-                  <View style={[styles.filterCount, active && styles.filterCountActive]}>
-                    <Small color={active ? colors.primaryFg : colors.mutedFg} weight="700">{count}</Small>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={styles.table}>
-            <View style={[styles.tableGrid, styles.tableHeader, editing && styles.tableGridEditing]}>
-              {editing && <View style={styles.orderCell} />}
-              <Small weight="700" style={styles.numberCell}>#</Small>
-              <Small weight="700" style={styles.nameCell}>Visit name</Small>
-              <Small weight="700" style={styles.dayCell}>Day</Small>
-              <Small weight="700" style={styles.windowCell}>Window</Small>
-              {editing && <View style={styles.deleteCell} />}
-            </View>
-
-            {visibleRows.map(({ row, index }, position) => {
-              const warning = rowNeedsReview(row);
-              const dragging = dragPosition === position;
-              const isDropTarget = dropPosition === position && dragPosition !== position;
-              return (
-                <Pressable
-                  key={row.id ?? `new-${index}`}
-                  testID={`visit-row-${index}`}
-                  onPress={() => setSelectedIndex(index)}
-                  onLayout={(event) => {
-                    const { y, height } = event.nativeEvent.layout;
-                    rowLayoutsRef.current[position] = { y, height };
-                  }}
-                  style={[
-                    styles.tableGrid,
-                    styles.tableRow,
-                    editing && styles.tableGridEditing,
-                    warning && styles.warningRow,
-                    isDropTarget && styles.dropTargetRow,
-                    dragging && styles.draggingRow,
-                    dragging && { transform: [{ translateY: dragTranslate }] },
-                  ]}
-                >
-                  {editing && (
-                    <View
-                      testID={`drag-visit-${index}`}
-                      style={styles.orderCell}
-                      onTouchStart={() => { dragFromRef.current = position; }}
-                      {...dragResponder.panHandlers}
+          {variants.length > 1 ? (
+            <View style={styles.variantList}>
+              {variants.map((variant) => {
+                const isActive = variant.optionId === activeVariantId;
+                const isOpen = expandedVariantIds.has(variant.optionId);
+                const displayRows = isActive ? rows : variant.rows;
+                const isSaved = savedVariantIds.has(variant.optionId);
+                return (
+                  <View key={variant.optionId} testID={`variant-card-${variant.optionId}`} style={styles.variantCard}>
+                    <Pressable
+                      testID={`variant-header-${variant.optionId}`}
+                      onPress={() => toggleVariant(variant.optionId)}
+                      style={styles.variantHeader}
                     >
-                      <GripVertical
-                        size={16}
-                        color={dragging ? colors.primary : colors.mutedFg}
-                      />
-                    </View>
-                  )}
-                  <View style={styles.numberCell}>
-                    {warning
-                      ? <AlertTriangle size={15} color={colors.warning} />
-                      : <Small weight="700">{index + 1}</Small>}
+                      <View style={styles.variantHeaderLeft}>
+                        <View style={styles.variantOrb}><FileStack size={16} color={colors.primary} /></View>
+                        <View style={styles.flex}>
+                          <Body weight="700" numberOfLines={1}>{variant.label}</Body>
+                          <Small color={colors.mutedFg}>
+                            {displayRows.length} visit{displayRows.length === 1 ? "" : "s"}
+                            {isActive ? " · editing" : ""}
+                          </Small>
+                        </View>
+                      </View>
+                      <View style={styles.variantHeaderRight}>
+                        {isSaved && (
+                          <View style={styles.verifiedPill}>
+                            <CheckCircle2 size={12} color={colors.success} />
+                            <Small color={colors.success} weight="700">Saved</Small>
+                          </View>
+                        )}
+                        {isOpen
+                          ? <ChevronUp size={16} color={colors.mutedFg} />
+                          : <ChevronDown size={16} color={colors.mutedFg} />}
+                      </View>
+                    </Pressable>
+
+                    {isOpen && isActive && (
+                      <View style={styles.variantBody}>
+                        {renderEditorBody()}
+                      </View>
+                    )}
+
+                    {isOpen && !isActive && (
+                      <View style={styles.variantBody}>
+                        <View style={styles.table}>
+                          <View style={[styles.tableGrid, styles.tableHeader]}>
+                            <Small weight="700" style={styles.numberCell}>#</Small>
+                            <Small weight="700" style={styles.nameCell}>Visit name</Small>
+                            <Small weight="700" style={styles.dayCell}>Day</Small>
+                            <Small weight="700" style={styles.windowCell}>Window</Small>
+                          </View>
+                          {displayRows.map((row, rowIndex) => (
+                            <View key={row.id ?? `preview-${rowIndex}`} style={[styles.tableGrid, styles.tableRow]}>
+                              <View style={styles.numberCell}><Small weight="700">{rowIndex + 1}</Small></View>
+                              <View style={styles.nameCell}>
+                                <Body weight="700" numberOfLines={1}>{row.name || "Untitled visit"}</Body>
+                              </View>
+                              <Small numberOfLines={1} style={styles.dayCell}>{dayForRow(row)}</Small>
+                              <Small style={styles.windowCell}>
+                                {formatVisitWindow({
+                                  window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
+                                  window_before: row.window_before,
+                                  window_after: row.window_after,
+                                }, true)}
+                              </Small>
+                            </View>
+                          ))}
+                          {displayRows.length === 0 && (
+                            <View style={styles.emptyRows}>
+                              <Small color={colors.mutedFg}>No visits extracted for this schedule.</Small>
+                            </View>
+                          )}
+                        </View>
+                        <Pressable
+                          testID={`edit-variant-${variant.optionId}`}
+                          onPress={() => switchActiveVariant(variant.optionId)}
+                          style={styles.variantEditButton}
+                        >
+                          <ArrowRight size={16} color={colors.primary} />
+                          <Small color={colors.primary} weight="700">Edit this schedule</Small>
+                        </Pressable>
+                      </View>
+                    )}
                   </View>
-                  <View style={styles.nameCell}>
-                    <Body weight="700" numberOfLines={1}>{row.name || "Untitled visit"}</Body>
-                    {!!row.comments && <MessageSquareText size={11} color={colors.mutedFg} />}
-                  </View>
-                  <Small numberOfLines={1} style={styles.dayCell}>{dayForRow(row)}</Small>
-                  <Small style={styles.windowCell}>
-                    {formatVisitWindow({
-                      window_days: row.window_days.trim() === "" ? null : Number(row.window_days),
-                      window_before: row.window_before,
-                      window_after: row.window_after,
-                    }, true)}
-                  </Small>
-                  {editing && (
-                    <View style={styles.deleteCell}>
-                      <Pressable
-                        testID={`remove-visit-${index}`}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          remove(index);
-                        }}
-                        style={styles.deleteButton}
-                      >
-                        <Trash2 size={15} color={colors.destructive} />
-                      </Pressable>
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })}
-
-            {visibleRows.length === 0 && (
-              <View style={styles.emptyRows}>
-                <Small color={colors.mutedFg}>
-                  {rows.length ? "No visits in this filter." : "No visits yet. Add one or extract from a protocol."}
-                </Small>
-              </View>
-            )}
-          </View>
-
-          <Pressable testID="add-visit-row" onPress={add} style={styles.addButton}>
-            <Plus size={17} color={colors.primary} />
-            <Small color={colors.primary} weight="700">Add Visit</Small>
-          </Pressable>
-
-          {!!notice && (
-            <Pressable onPress={() => setNotice("")} style={styles.notice}>
-              <CheckCircle2 size={15} color={colors.success} />
-              <Small color={colors.success} weight="700" style={styles.flex}>{notice}</Small>
-              <X size={13} color={colors.success} />
-            </Pressable>
-          )}
-          {!!err && <Small color={colors.destructive} style={styles.inlineMessage}>{err}</Small>}
+                );
+              })}
+            </View>
+          ) : renderEditorBody()}
         </ScrollView>
 
         <View style={styles.saveBar}>
@@ -1106,74 +1433,40 @@ export default function VisitScheduleEditor() {
         </View>
       </Modal>
 
-      <Modal transparent visible={saved} animationType="fade" onRequestClose={goToTrial}>
+      <Modal
+        transparent
+        visible={saved}
+        animationType="fade"
+        onRequestClose={variants.length > 1 ? () => setSaved(false) : goToTrial}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.successCard}>
             <View style={styles.successOrb}><CheckCircle2 size={31} color={colors.success} /></View>
-            <Body weight="700" style={styles.confirmTitle}>Visit template saved</Body>
+            <Body weight="700" style={styles.confirmTitle}>
+              {variants.length > 1
+                ? `"${activeVariant?.label ?? "This"}" schedule saved`
+                : "Visit template saved"}
+            </Body>
             <Small style={styles.confirmCopy}>
-              {rows.length} {rows.length === 1 ? "visit is" : "visits are"} now attached to this trial.
-              The schedule can be reviewed or shared from the trial workspace.
+              {rows.length} {rows.length === 1 ? "visit is" : "visits are"} now attached to this trial.{" "}
+              {variants.length > 1
+                ? "The other schedules below are unaffected — review or save them next."
+                : "The schedule can be reviewed or shared from the trial workspace."}
             </Small>
-            <Pressable testID="return-to-trial" onPress={goToTrial} style={styles.successAction}>
-              <Small color={colors.primaryFg} weight="700">Return to trial</Small>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        transparent
-        visible={showSchedulePicker}
-        animationType="fade"
-        onRequestClose={() => setShowSchedulePicker(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.pickerCard}>
-            <View style={styles.pickerHeader}>
-              <View style={styles.pickerOrb}><FileStack size={22} color={colors.primary} /></View>
-              <Pressable
-                testID="close-schedule-picker"
-                hitSlop={12}
-                onPress={() => setShowSchedulePicker(false)}
-              >
-                <X size={21} color={colors.mutedFg} />
-              </Pressable>
-            </View>
-            <Body weight="700" style={styles.confirmTitle}>Choose a schedule to build</Body>
-            <Small style={styles.confirmCopy}>
-              This protocol contains more than one Schedule of Assessments. Pick the one you
-              want extracted — the others will not be included.
-            </Small>
-            <ScrollView style={styles.pickerScroll} contentContainerStyle={styles.pickerScrollContent}>
-              {scheduleOptions.map((option) => (
-                <Pressable
-                  key={option.id}
-                  testID={`schedule-option-${option.id}`}
-                  disabled={!!pickingOptionId}
-                  onPress={() => chooseSchedule(option.id)}
-                  style={({ pressed }) => [
-                    styles.pickerOption,
-                    pressed && !pickingOptionId && styles.pickerOptionPressed,
-                  ]}
-                >
-                  <View style={styles.pickerOptionText}>
-                    <Body weight="600">{option.label}</Body>
-                    {!!option.description && (
-                      <Small style={styles.pickerOptionDescription}>{option.description}</Small>
-                    )}
-                    {!!option.source_location && (
-                      <Small color={colors.mutedFg} style={styles.pickerOptionLocation}>
-                        {option.source_location}
-                      </Small>
-                    )}
-                  </View>
-                  {pickingOptionId === option.id
-                    ? <ActivityIndicator color={colors.primary} />
-                    : <ArrowRight size={18} color={colors.mutedFg} />}
+            {variants.length > 1 ? (
+              <View style={styles.confirmActions}>
+                <Pressable testID="keep-reviewing-schedules" onPress={() => setSaved(false)} style={styles.secondaryAction}>
+                  <Small color={colors.primary} weight="700">Keep reviewing</Small>
                 </Pressable>
-              ))}
-            </ScrollView>
+                <Pressable testID="return-to-trial" onPress={goToTrial} style={styles.primaryAction}>
+                  <Small color={colors.primaryFg} weight="700">Done — go to trial</Small>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable testID="return-to-trial" onPress={goToTrial} style={styles.successAction}>
+                <Small color={colors.primaryFg} weight="700">Return to trial</Small>
+              </Pressable>
+            )}
           </View>
         </View>
       </Modal>
@@ -1754,16 +2047,16 @@ const styles = StyleSheet.create({
   secondaryAction: { flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.primary + "45", alignItems: "center", justifyContent: "center" },
   primaryAction: { flex: 1, minHeight: 44, borderRadius: radii.md, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
   successAction: { alignSelf: "stretch", marginTop: 20, minHeight: 46, borderRadius: radii.md, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
-  pickerCard: { width: "100%", maxWidth: 440, maxHeight: "82%", padding: 20, borderRadius: radii.xl, backgroundColor: colors.card, ...shadows.md },
-  pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  pickerOrb: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary + "16" },
-  pickerScroll: { flexGrow: 0, marginTop: 15 },
-  pickerScrollContent: { gap: 10, paddingBottom: 4 },
-  pickerOption: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
-  pickerOptionPressed: { borderColor: colors.primary, backgroundColor: colors.secondary },
-  pickerOptionText: { flex: 1 },
-  pickerOptionDescription: { marginTop: 3, lineHeight: 17 },
-  pickerOptionLocation: { marginTop: 3, fontFamily: fonts.mono, fontSize: 11 },
+  // Auto-extracted multi-substudy schedules: one collapsible card per
+  // independent Schedule of Assessments, stacked vertically.
+  variantList: { marginTop: 12, gap: 10 },
+  variantCard: { borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, overflow: "hidden", ...shadows.sm },
+  variantHeader: { minHeight: 58, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  variantHeaderLeft: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
+  variantHeaderRight: { flexDirection: "row", alignItems: "center", gap: 7 },
+  variantOrb: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary + "12" },
+  variantBody: { paddingHorizontal: 13, paddingBottom: 13, borderTopWidth: 1, borderTopColor: colors.border },
+  variantEditButton: { marginTop: 11, minHeight: 42, borderRadius: radii.md, borderWidth: 1, borderColor: colors.primary + "45", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
   sheetBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(46,27,51,0.48)" },
   sheetKeyboard: { maxHeight: "89%" },
   sheet: { maxHeight: "100%", borderTopLeftRadius: 26, borderTopRightRadius: 26, backgroundColor: colors.card, overflow: "hidden", ...shadows.md },

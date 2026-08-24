@@ -29,7 +29,7 @@ from protocol_extraction import (
     ExtractedTrialDetails,
     expand_schedule,
 )
-from schedule_schema import DocumentTaskClassification, SourceEvidence
+from schedule_schema import DocumentTaskClassification, ScheduleOption, SourceEvidence
 
 log = logging.getLogger(__name__)
 
@@ -1411,6 +1411,13 @@ def build_schedule_extraction_graph(
             f"{stage_max_attempts} attempt(s)") from last_error
 
     async def classify_node(state: ExtractionAgentState):
+        # A multi-option batch (run_schedule_extraction_agent_for_all_options)
+        # classifies once and reuses that result for every option's run —
+        # skip the LLM call entirely when it's already been supplied.
+        seeded = state.get("classification")
+        if seeded is not None:
+            state["stage_checkpoint"]["classify"] = seeded.model_dump(mode="json")
+            return {"classification": seeded}
         classification = await run_stage(
             state, "classify",
             _stage_prompt(
@@ -1874,6 +1881,7 @@ async def run_schedule_extraction_agent(
     retry_base_delay_seconds: float = 0.25,
     page_index: ProtocolDocumentIndex | None = None,
     selected_schedule_option_id: str | None = None,
+    classification: DocumentTaskClassification | None = None,
 ) -> ExtractedSchedule:
     final_state = await _run_schedule_extraction_graph(
         pdf_bytes, generate, max_refinements=max_refinements,
@@ -1882,8 +1890,128 @@ async def run_schedule_extraction_agent(
         stage_max_attempts=stage_max_attempts,
         retry_base_delay_seconds=retry_base_delay_seconds,
         page_index=page_index,
-        selected_schedule_option_id=selected_schedule_option_id)
+        selected_schedule_option_id=selected_schedule_option_id,
+        classification=classification)
     return final_state["result"]
+
+
+async def _fan_out_schedule_options(
+    pdf_bytes: bytes,
+    generate: Generate,
+    *,
+    max_refinements: int = 2,
+    confirmation_generate: Generate | None = None,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+    page_index: ProtocolDocumentIndex | None = None,
+    concurrency: int = 3,
+) -> list[tuple[ScheduleOption | None, ExtractionAgentState]]:
+    """Run the schedule-extraction graph once per independent Schedule of
+    Assessments a protocol prints, returning each option's full final
+    state (not just its schedule) so callers can also read byproducts
+    like ``document_map`` (trial-level metadata).
+
+    A document with a single schedule (the overwhelming majority of
+    uploads) returns exactly ``[(None, final_state)]`` — identical in
+    shape and cost to a single ungated run, since only the classify+
+    discover stages that already detect "no selection needed" run once.
+    A document with multiple independent substudy schedules
+    (schedule_options) instead extracts every one of them, each with its
+    own full discover/timing/visit_evidence/synthesize/confirm/audit
+    pass, bounded to ``concurrency`` pipelines in flight at once so one
+    upload doesn't fan out into an unbounded burst of concurrent
+    provider calls.
+    """
+    if page_index is None:
+        page_index = await _build_page_index(pdf_bytes)
+    base_state = await _run_schedule_extraction_graph(
+        pdf_bytes, generate,
+        max_refinements=max_refinements,
+        confirmation_generate=confirmation_generate,
+        stage_checkpoint={},
+        stage_max_attempts=stage_max_attempts,
+        retry_base_delay_seconds=retry_base_delay_seconds,
+        page_index=page_index,
+    )
+    base: ExtractedSchedule = base_state["result"]
+    if not base.requires_schedule_selection:
+        return [(None, base_state)]
+
+    classification = base.classification
+    options = list(classification.schedule_options) if classification else []
+    if not options:
+        # Classification changed its mind between the two reads of its own
+        # output (should not happen, but the selection flag is the only
+        # thing route_after_classification trusts) — fall back to the
+        # single "please pick one" result rather than returning nothing.
+        return [(None, base_state)]
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def run_one(option: ScheduleOption) -> tuple[ScheduleOption, ExtractionAgentState]:
+        async with semaphore:
+            try:
+                state = await _run_schedule_extraction_graph(
+                    pdf_bytes, generate,
+                    max_refinements=max_refinements,
+                    confirmation_generate=confirmation_generate,
+                    # A fresh checkpoint per option: stage keys such as
+                    # "discover"/"synthesize" are not namespaced by
+                    # schedule_option_id, so reusing one dict across two
+                    # options would restore one option's discovery/
+                    # synthesis output while building a different one.
+                    stage_checkpoint={},
+                    stage_max_attempts=stage_max_attempts,
+                    retry_base_delay_seconds=retry_base_delay_seconds,
+                    page_index=page_index,
+                    classification=classification,
+                    selected_schedule_option_id=option.id,
+                )
+            except Exception as exc:  # noqa: BLE001 — one bad substudy must not sink the batch
+                log.warning(
+                    "schedule extraction failed for option %s (%s): %s",
+                    option.id, option.label, exc)
+                state = {
+                    "result": ExtractedSchedule(
+                        schedule_kind=None,
+                        visits=[],
+                        assumptions=[f"Extraction failed for {option.label}: {exc}"],
+                        verification_status="needs_review",
+                        classification=classification,
+                    ),
+                }
+            return option, state
+
+    results = await asyncio.gather(*(run_one(option) for option in options))
+    return list(results)
+
+
+async def run_schedule_extraction_agent_for_all_options(
+    pdf_bytes: bytes,
+    generate: Generate,
+    *,
+    max_refinements: int = 2,
+    confirmation_generate: Generate | None = None,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+    page_index: ProtocolDocumentIndex | None = None,
+    concurrency: int = 3,
+) -> list[tuple[ScheduleOption | None, ExtractedSchedule]]:
+    """Extract every independent Schedule of Assessments a protocol prints.
+
+    See ``_fan_out_schedule_options`` for the fan-out/concurrency
+    behavior this wraps.
+    """
+    results = await _fan_out_schedule_options(
+        pdf_bytes, generate,
+        max_refinements=max_refinements,
+        confirmation_generate=confirmation_generate,
+        stage_max_attempts=stage_max_attempts,
+        retry_base_delay_seconds=retry_base_delay_seconds,
+        page_index=page_index,
+        concurrency=concurrency,
+    )
+    return [(option, state["result"]) for option, state in results]
 
 
 async def run_protocol_extraction_agent(
@@ -1914,10 +2042,16 @@ async def run_protocol_extraction_agent(
     document_map = final_state.get("document_map")
     if document_map is None:
         return ExtractedTrialDetails(), schedule
+    return _details_from_document_map(document_map, schedule), schedule
+
+
+def _details_from_document_map(
+    document_map: "ScheduleDocumentMap", schedule: ExtractedSchedule,
+) -> ExtractedTrialDetails:
     status = document_map.study_status.lower().strip()
     if status not in ("active", "completed", "terminated"):
         status = "active"
-    details = ExtractedTrialDetails(
+    return ExtractedTrialDetails(
         ctri_number=document_map.ctri_number,
         title=document_map.official_title,
         phase=document_map.phase,
@@ -1928,7 +2062,44 @@ async def run_protocol_extraction_agent(
         total_visits=document_map.stated_total_visits or len(schedule.visits),
         status=status,
     )
-    return details, schedule
+
+
+async def run_protocol_extraction_agent_for_all_options(
+    pdf_bytes: bytes,
+    generate: Generate,
+    *,
+    max_refinements: int = 2,
+    confirmation_generate: Generate | None = None,
+    stage_max_attempts: int = 3,
+    retry_base_delay_seconds: float = 0.25,
+    page_index: ProtocolDocumentIndex | None = None,
+    concurrency: int = 3,
+) -> tuple[ExtractedTrialDetails, list[tuple[ScheduleOption | None, ExtractedSchedule]]]:
+    """Extract trial metadata once and every independent Schedule of
+    Assessments a protocol prints, from one shared decomposed workflow.
+
+    Mirrors ``run_schedule_extraction_agent_for_all_options``, but also
+    surfaces the trial-level metadata (title/phase/drug/...) the discover
+    stage produces as a byproduct of the first option's run — those facts
+    describe the protocol as a whole and don't vary by which substudy
+    schedule is being extracted, so one option's document_map is enough.
+    """
+    results = await _fan_out_schedule_options(
+        pdf_bytes, generate,
+        max_refinements=max_refinements,
+        confirmation_generate=confirmation_generate,
+        stage_max_attempts=stage_max_attempts,
+        retry_base_delay_seconds=retry_base_delay_seconds,
+        page_index=page_index,
+        concurrency=concurrency,
+    )
+    schedules = [(option, state["result"]) for option, state in results]
+    document_map = results[0][1].get("document_map")
+    if document_map is None:
+        details = ExtractedTrialDetails()
+    else:
+        details = _details_from_document_map(document_map, schedules[0][1])
+    return details, schedules
 
 
 def _page_index_cache() -> ProtocolDocumentIndexCache | None:
@@ -1979,6 +2150,7 @@ async def _run_schedule_extraction_graph(
     retry_base_delay_seconds: float = 0.25,
     page_index: ProtocolDocumentIndex | None = None,
     selected_schedule_option_id: str | None = None,
+    classification: DocumentTaskClassification | None = None,
 ) -> ExtractionAgentState:
     checkpoint = stage_checkpoint if stage_checkpoint is not None else {}
     pdf_digest = hashlib.sha256(pdf_bytes).hexdigest()
@@ -2003,11 +2175,14 @@ async def _run_schedule_extraction_graph(
         page_index = await _build_page_index(pdf_bytes)
     elif page_index.document_sha256 != pdf_digest:
         raise ValueError("the supplied page index belongs to a different protocol PDF")
-    return await graph.ainvoke({
+    initial_state: ExtractionAgentState = {
         "pdf_bytes": pdf_bytes,
         "page_index": page_index,
         "page_context_cache": {},
         "max_refinements": max(0, min(max_refinements, 3)),
         "stage_checkpoint": checkpoint,
         "selected_schedule_option_id": (selected_schedule_option_id or "").strip() or None,
-    })
+    }
+    if classification is not None:
+        initial_state["classification"] = classification
+    return await graph.ainvoke(initial_state)

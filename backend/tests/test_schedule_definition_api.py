@@ -181,6 +181,9 @@ def extracted(headers, trial_id):
         async def extract(self, data):
             return _extracted_schedule()
 
+        async def extract_all(self, data):
+            return [(None, _extracted_schedule())]
+
     original = pe.get_extractor
     pe.get_extractor = lambda: _Extractor()
     try:

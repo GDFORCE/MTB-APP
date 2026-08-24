@@ -92,6 +92,12 @@ export default function AddPatient() {
   const [piLoading, setPiLoading] = useState(needsPiSelection);
   const [piLoadError, setPiLoadError] = useState<string | null>(null);
   const [piPermissionDenied, setPiPermissionDenied] = useState(false);
+  // Only populated for a trial with more than one independent Schedule of
+  // Assessments (substudy). Empty for every ordinary trial, and the picker
+  // below never renders in that case.
+  const [substudies, setSubstudies] = useState<string[]>([]);
+  const [substudyLabel, setSubstudyLabel] = useState<string | null>(null);
+  const [substudyOpen, setSubstudyOpen] = useState(false);
   const [baseline, setBaseline] = useState("5 May 2025");
   const [scheduleGenerated, setScheduleGenerated] = useState(false);
   const [scheduleVisits, setScheduleVisits] = useState<ScheduleVisit[]>([]);
@@ -157,6 +163,27 @@ export default function AddPatient() {
     void loadPis();
   }, [loadPis]);
 
+  useEffect(() => {
+    let alive = true;
+    setSubstudies([]);
+    setSubstudyLabel(null);
+    if (!trialId) return () => { alive = false; };
+    (async () => {
+      try {
+        const response = await api.get(`/trials/${trialId}/substudies`);
+        const labels: string[] = Array.isArray(response.data) ? response.data : [];
+        if (!alive) return;
+        setSubstudies(labels);
+        if (labels.length === 1) setSubstudyLabel(labels[0]);
+      } catch {
+        // A trial without this endpoint's data (or a permission edge case)
+        // just falls back to no picker — never blocks enrollment.
+        if (alive) setSubstudies([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [trialId]);
+
   const selectedTrial = trials.find(t => t.id === trialId);
   const selectedPi = pis.find(pi => pi.id === piId);
   const suggestedInitials = initialsFromName(fullName);
@@ -173,6 +200,7 @@ export default function AddPatient() {
     && scheduleGenerated
     && scheduleVisits.length > 0
     && (!needsPiSelection || !!piId)
+    && (substudies.length <= 1 || !!substudyLabel)
     && !subjectDuplicate
     && !emailDuplicate
     && !saving;
@@ -184,9 +212,11 @@ export default function AddPatient() {
         ? "Select a trial to continue"
         : needsPiSelection && !piId
           ? "Select the responsible PI"
-          : !scheduleGenerated || !scheduleVisits.length
-            ? "Generate the visit schedule to continue"
-            : "Ready to send the patient invitation";
+          : substudies.length > 1 && !substudyLabel
+            ? "Select which substudy this patient is enrolled in"
+            : !scheduleGenerated || !scheduleVisits.length
+              ? "Generate the visit schedule to continue"
+              : "Ready to send the patient invitation";
 
   const updateFullName = (raw: string) => {
     const value = sanitizeName(raw);
@@ -237,6 +267,7 @@ export default function AddPatient() {
     try {
       const response = await api.post(`/trials/${trialId}/schedule-preview`, {
         baseline_date: toISO(parsedBaseline),
+        substudy_label: substudyLabel || undefined,
       });
       setScheduleVisits(response.data?.visits || []);
       setScheduleGenerated(true);
@@ -264,6 +295,7 @@ export default function AddPatient() {
         phone: `+91${phoneDigits}`,
         trial_id: trialId,                                  // the SELECTED trial
         pi_id: needsPiSelection ? piId : undefined,
+        substudy_label: substudyLabel || undefined,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
         dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
         gender: gender || undefined,
@@ -422,7 +454,7 @@ export default function AddPatient() {
             </Field>
           </FormSection>
 
-          <FormSection icon={<ClipboardList size={18} color={C.primary} />} index="03" title="Study assignment" subtitle="Connect the participant to the right trial and team" active={trialOpen || piOpen}>
+          <FormSection icon={<ClipboardList size={18} color={C.primary} />} index="03" title="Study assignment" subtitle="Connect the participant to the right trial and team" active={trialOpen || piOpen || substudyOpen}>
           <Field label="Assign to Trial *" active={trialOpen}>
             <Pressable testID="trial-toggle" disabled={trialsLoading || !trials.length} onPress={() => setTrialOpen(open => !open)} style={[s.input, s.selectControl]}>
               {trialsLoading ? (
@@ -509,6 +541,39 @@ export default function AddPatient() {
                   </View>
                 </View>
               ) : null}
+            </Field>
+          )}
+
+          {substudies.length > 1 && (
+            <Field label="Substudy *" hint="This protocol has more than one Schedule of Assessments — pick the one this patient is enrolled under." active={substudyOpen}>
+              <Pressable testID="substudy-toggle" onPress={() => setSubstudyOpen(open => !open)} style={[s.input, s.selectControl]}>
+                <Text numberOfLines={1} style={[s.selectText, !substudyLabel && s.placeholderText]}>
+                  {substudyLabel || "Select"}
+                </Text>
+                <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: substudyOpen ? "-90deg" : "90deg" }] }} />
+              </Pressable>
+              {substudyOpen && (
+                <View style={s.dropdown}>
+                  {substudies.map(label => (
+                    <Pressable
+                      key={label}
+                      testID={`substudy-opt-${label}`}
+                      onPress={() => {
+                        setSubstudyLabel(label);
+                        setSubstudyOpen(false);
+                        // A schedule already previewed under a different (or
+                        // no) substudy no longer reflects what will actually
+                        // be sent — make the sponsor regenerate it.
+                        setScheduleGenerated(false);
+                        setScheduleVisits([]);
+                      }}
+                      style={s.dropdownRow}
+                    >
+                      <Text style={s.dropdownText}>{label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
             </Field>
           )}
 

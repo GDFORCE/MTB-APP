@@ -130,7 +130,7 @@ def test_lookup_found_and_not_found(headers):
 def test_precreation_pdf_extraction(headers, monkeypatch):
     calls = []
 
-    async def fake_bundle(data):
+    async def fake_bundle_all(data):
         calls.append(data)
         return (
             pe.ExtractedTrialDetails(
@@ -144,16 +144,16 @@ def test_precreation_pdf_extraction(headers, monkeypatch):
                 total_visits=12,
                 status="active",
             ),
-            pe.ExtractedSchedule.model_validate({
+            [(None, pe.ExtractedSchedule.model_validate({
                 "schedule_kind": "linear",
                 "visits": [{"name": "Baseline", "day_offset": 0}],
                 "verification_status": "verified",
                 "verification_confidence": 0.98,
                 "verification_scores": {"overall_schedule": 0.97},
-            }),
+            }))],
         )
 
-    monkeypatch.setattr(pe, "extract_protocol_bundle", fake_bundle)
+    monkeypatch.setattr(pe, "extract_protocol_bundle_all", fake_bundle_all)
 
     async def exercise():
         async with client() as cli:

@@ -16,7 +16,6 @@ import * as DocumentPicker from "expo-document-picker";
 import {
   ArrowRight,
   CheckCircle2,
-  FileStack,
   FileText,
   LockKeyhole,
   ShieldCheck,
@@ -47,13 +46,6 @@ type Details = {
   total_visits: string;
   status: TrialStatus;
 };
-type ScheduleOption = {
-  id: string;
-  label: string;
-  description: string;
-  source_location: string;
-};
-
 const EMPTY: Details = {
   ctri_number: "",
   title: "",
@@ -145,7 +137,6 @@ function normalized(raw: any): Details {
 export default function AddTrial() {
   const router = useRouter();
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pickedAssetRef = useRef<any>(null);
   const [protocolId, setProtocolId] = useState("");
   const [details, setDetails] = useState<Details>(EMPTY);
   const [source, setSource] = useState<Source | null>(null);
@@ -153,14 +144,11 @@ export default function AddTrial() {
   const [lookingUp, setLookingUp] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [extracting, setExtracting] = useState(false);
-  const [extractionId, setExtractionId] = useState("");
+  const [extractionIds, setExtractionIds] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(true);
-  const [scheduleOptions, setScheduleOptions] = useState<ScheduleOption[]>([]);
-  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
-  const [pickingOptionId, setPickingOptionId] = useState("");
 
   const update = (patch: Partial<Details>) =>
     setDetails((current) => ({ ...current, ...patch }));
@@ -170,10 +158,8 @@ export default function AddTrial() {
     setResolved(false);
     setSource(null);
     setDetails(EMPTY);
-    setExtractionId("");
+    setExtractionIds([]);
     setErr("");
-    setScheduleOptions([]);
-    setShowSchedulePicker(false);
   };
 
   const lookup = async () => {
@@ -186,7 +172,7 @@ export default function AddTrial() {
       if (response.data?.found) {
         setProtocolId(response.data.protocol_id || id);
         setDetails(normalized(response.data.details));
-        setExtractionId("");
+        setExtractionIds([]);
         setSource(response.data.source === "organization" ? "organization" : "registry");
         setResolved(true);
       } else {
@@ -199,9 +185,8 @@ export default function AddTrial() {
     }
   };
 
-  const runExtract = async (asset: any, scheduleOptionId?: string) => {
+  const runExtract = async (asset: any) => {
     setExtracting(true);
-    setShowSchedulePicker(false);
     setProgress(10);
     setErr("");
     progressTimer.current = setInterval(
@@ -220,23 +205,16 @@ export default function AddTrial() {
           type: asset.mimeType || "application/pdf",
         } as any);
       }
-      if (scheduleOptionId) form.append("schedule_option_id", scheduleOptionId);
       const response = await api.post("/protocols/extract", form, {
-        // This one analysis prepares both this form and the next schedule screen.
-        timeout: 900000,
+        // Every independent Schedule of Assessments the protocol prints is
+        // extracted in this one analysis (see backend extract_protocol_alias).
+        timeout: 1800000,
       });
-      if (response.data?.needs_schedule_selection) {
-        // This protocol has more than one independent Schedule of
-        // Assessments (e.g. separate substudies). Let the sponsor choose
-        // which one to build before running the full analysis on it.
-        setProgress(0);
-        setScheduleOptions(response.data.schedule_options || []);
-        setShowSchedulePicker(true);
-        return;
-      }
       setProgress(100);
       setDetails(normalized(response.data?.details));
-      setExtractionId(response.data?.extraction_id || "");
+      const extractions: { extraction_id: string }[] = response.data?.extractions
+        || (response.data?.extraction_id ? [{ extraction_id: response.data.extraction_id }] : []);
+      setExtractionIds(extractions.map((item) => item.extraction_id).filter(Boolean));
       setSource("upload");
       setResolved(true);
       setTimeout(() => setShowUpload(false), 250);
@@ -262,18 +240,7 @@ export default function AddTrial() {
     });
     if (picked.canceled) return;
     const asset = picked.assets[0];
-    pickedAssetRef.current = asset;
     await runExtract(asset);
-  };
-
-  const chooseSchedule = async (optionId: string) => {
-    if (!pickedAssetRef.current) return;
-    setPickingOptionId(optionId);
-    try {
-      await runExtract(pickedAssetRef.current, optionId);
-    } finally {
-      setPickingOptionId("");
-    }
   };
 
   const submit = async () => {
@@ -311,7 +278,7 @@ export default function AddTrial() {
         pathname: "/(app)/sponsor/visit-schedule",
         params: {
           id: response.data.id,
-          extractionId: extractionId || undefined,
+          extractionIds: extractionIds.length ? extractionIds.join(",") : undefined,
         },
       });
     } catch (error: any) {
@@ -509,7 +476,7 @@ export default function AddTrial() {
         onRequestClose={() => !extracting && setShowUpload(false)}
       >
         <View style={s.modalBackdrop}>
-          <Card style={[s.modalCard, showSchedulePicker && s.pickerCard]}>
+          <Card style={s.modalCard}>
             {extracting ? (
               <View style={s.extracting}>
                 <View style={s.uploadIcon}><FileText size={23} color={colors.primary} /></View>
@@ -520,51 +487,6 @@ export default function AddTrial() {
                 </View>
                 <Text style={s.progressText}>Processing…</Text>
               </View>
-            ) : showSchedulePicker ? (
-              <>
-                <View style={s.modalHeader}>
-                  <View style={s.uploadIcon}><FileStack size={23} color={colors.primary} /></View>
-                  <Pressable
-                    testID="close-schedule-picker"
-                    hitSlop={12}
-                    onPress={() => { setShowSchedulePicker(false); setShowUpload(false); }}
-                  >
-                    <X size={21} color={colors.mutedFg} />
-                  </Pressable>
-                </View>
-                <Text style={s.modalTitle}>Choose a schedule to build</Text>
-                <Small style={s.modalCopy}>
-                  This protocol contains more than one Schedule of Assessments. Pick the one you want extracted — the others will not be included.
-                </Small>
-                {!!err && <Text style={s.error}>{err}</Text>}
-                <ScrollView style={s.pickerScroll} contentContainerStyle={s.pickerScrollContent}>
-                  {scheduleOptions.map((option) => (
-                    <Pressable
-                      key={option.id}
-                      testID={`schedule-option-${option.id}`}
-                      disabled={!!pickingOptionId}
-                      onPress={() => chooseSchedule(option.id)}
-                      style={({ pressed }) => [
-                        s.optionCard,
-                        pressed && !pickingOptionId && s.optionCardPressed,
-                      ]}
-                    >
-                      <View style={s.flex}>
-                        <Text style={s.optionLabel}>{option.label}</Text>
-                        {!!option.description && (
-                          <Small style={s.optionDescription}>{option.description}</Small>
-                        )}
-                        {!!option.source_location && (
-                          <Small style={s.optionLocation}>{option.source_location}</Small>
-                        )}
-                      </View>
-                      {pickingOptionId === option.id
-                        ? <ActivityIndicator color={colors.primary} />
-                        : <ArrowRight size={18} color={colors.mutedFg} />}
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </>
             ) : (
               <>
                 <View style={s.modalHeader}>
@@ -692,14 +614,6 @@ const s = StyleSheet.create({
   submit: { marginTop: 4 },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(46,27,51,0.48)", justifyContent: "center", padding: 24 },
   modalCard: { width: "100%", maxWidth: 390, alignSelf: "center", padding: 20 },
-  pickerCard: { maxWidth: 440, maxHeight: "80%" },
-  pickerScroll: { flexGrow: 0 },
-  pickerScrollContent: { gap: 10, paddingBottom: 4 },
-  optionCard: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, backgroundColor: colors.card, padding: 14 },
-  optionCardPressed: { borderColor: colors.primary, backgroundColor: colors.secondary },
-  optionLabel: { color: colors.foreground, fontFamily: fonts.semibold, fontSize: 14, marginBottom: 3 },
-  optionDescription: { lineHeight: 17, marginBottom: 2 },
-  optionLocation: { color: colors.mutedFg, fontFamily: fonts.mono, fontSize: 11 },
   confirmCard: { width: "100%", maxWidth: 430, maxHeight: "94%", alignSelf: "center", padding: 20 },
   confirmIcon: { width: 50, height: 50, borderRadius: 17, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", alignSelf: "center", marginBottom: 12 },
   confirmTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 22, textAlign: "center" },

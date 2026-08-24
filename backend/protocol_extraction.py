@@ -54,6 +54,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from schedule_schema import (
     CanonicalSchedulePlan,
     DocumentTaskClassification,
+    ScheduleOption,
     SourceEvidence,
     canonical_from_flat,
     project_canonical_plan,
@@ -986,6 +987,17 @@ class ProtocolExtractor(Protocol):
     ) -> ExtractedSchedule:
         ...
 
+    async def extract_all(
+        self, pdf_bytes: bytes,
+    ) -> list[tuple[ScheduleOption | None, ExtractedSchedule]]:
+        """Extract every independent Schedule of Assessments in the PDF.
+
+        A single-schedule protocol (the overwhelming majority) returns
+        exactly ``[(None, schedule)]``. A protocol printing more than one
+        independent substudy schedule returns one entry per substudy,
+        paired with the ``ScheduleOption`` it was built from."""
+        ...
+
 
 def _classify_api_error(exc: Exception) -> ExtractionError:
     """Map provider failures to the right error class.
@@ -1186,6 +1198,14 @@ class ClaudeProtocolExtractor:
             len(expanded.visits), len(expanded.assumptions),
         )
         return expanded
+
+    async def extract_all(
+        self, pdf_bytes: bytes,
+    ) -> list[tuple[ScheduleOption | None, ExtractedSchedule]]:
+        """This single-shot backend never detects multiple independent
+        Schedules of Assessments (no classification stage), so there is
+        only ever one schedule to return."""
+        return [(None, await self.extract(pdf_bytes))]
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         """Extract the trial-level metadata needed by the pre-creation form."""
@@ -1544,6 +1564,60 @@ class GeminiProtocolExtractor:
         )
         return expanded
 
+    async def extract_all(
+        self, pdf_bytes: bytes,
+    ) -> list[tuple[ScheduleOption | None, ExtractedSchedule]]:
+        """Extract every independent Schedule of Assessments the PDF prints.
+
+        Mirrors extract()'s setup exactly (one page index, one Gemini PDF
+        context cache, the same confirmation-model routing) but shares both
+        across every substudy's pipeline run instead of building them once
+        per call — the direct extension of "one cache per extraction" to
+        "one cache per document, reused by every substudy extracted from
+        it." A single-schedule protocol costs exactly what extract() costs
+        today; a multi-substudy protocol runs one full pipeline per
+        substudy, bounded to a few concurrent pipelines at once.
+        """
+        from protocol_agent import (
+            _build_page_index,
+            run_schedule_extraction_agent_for_all_options,
+        )
+
+        max_refinements = int(os.getenv(
+            "PROTOCOL_EXTRACTION_MAX_REFINEMENTS", "2"))
+        confirmation_model = os.getenv(
+            "GEMINI_PROTOCOL_CONFIRMATION_MODEL",
+            os.getenv("PROTOCOL_CONFIRMATION_MODEL", self._model),
+        )
+        concurrency = int(os.getenv(
+            "PROTOCOL_EXTRACTION_VARIANT_CONCURRENCY", "3"))
+
+        page_index = await _build_page_index(pdf_bytes)
+        handle_box = [await self._create_pdf_cache(pdf_bytes)]
+        generate = self._cached_generate(pdf_bytes, handle_box)
+        confirm_base = generate if confirmation_model == self._model else self._generate
+
+        async def confirm_generate(*args, **kwargs):
+            return await confirm_base(
+                *args, **kwargs, model_override=confirmation_model)
+
+        try:
+            results = await run_schedule_extraction_agent_for_all_options(
+                pdf_bytes,
+                generate,
+                max_refinements=max_refinements,
+                confirmation_generate=confirm_generate,
+                page_index=page_index,
+                concurrency=max(1, concurrency),
+            )
+        finally:
+            if handle_box[0] is not None:
+                await self._delete_pdf_cache(handle_box[0].name)
+        log.info(
+            "Gemini agent extraction (all options): variants=%d",
+            len(results))
+        return results
+
     async def extract_bundle(
         self, pdf_bytes: bytes, *, selected_schedule_option_id: str | None = None,
     ) -> tuple[ExtractedTrialDetails, ExtractedSchedule]:
@@ -1576,6 +1650,53 @@ class GeminiProtocolExtractor:
         finally:
             if handle_box[0] is not None:
                 await self._delete_pdf_cache(handle_box[0].name)
+
+    async def extract_bundle_all(
+        self, pdf_bytes: bytes,
+    ) -> tuple[ExtractedTrialDetails, list[tuple[ScheduleOption | None, ExtractedSchedule]]]:
+        """Metadata + every independent Schedule of Assessments the PDF
+        prints, sharing one page index and one Gemini PDF context cache
+        across every substudy's pipeline run — same setup as extract_all,
+        plus the trial-level metadata extract_bundle also returns."""
+        from protocol_agent import (
+            _build_page_index,
+            run_protocol_extraction_agent_for_all_options,
+        )
+
+        max_refinements = int(os.getenv(
+            "PROTOCOL_EXTRACTION_MAX_REFINEMENTS", "2"))
+        confirmation_model = os.getenv(
+            "GEMINI_PROTOCOL_CONFIRMATION_MODEL",
+            os.getenv("PROTOCOL_CONFIRMATION_MODEL", self._model),
+        )
+        concurrency = int(os.getenv(
+            "PROTOCOL_EXTRACTION_VARIANT_CONCURRENCY", "3"))
+
+        page_index = await _build_page_index(pdf_bytes)
+        handle_box = [await self._create_pdf_cache(pdf_bytes)]
+        generate = self._cached_generate(pdf_bytes, handle_box)
+        confirm_base = generate if confirmation_model == self._model else self._generate
+
+        async def confirm_generate(*args, **kwargs):
+            return await confirm_base(
+                *args, **kwargs, model_override=confirmation_model)
+
+        try:
+            details, results = await run_protocol_extraction_agent_for_all_options(
+                pdf_bytes,
+                generate,
+                max_refinements=max_refinements,
+                confirmation_generate=confirm_generate,
+                page_index=page_index,
+                concurrency=max(1, concurrency),
+            )
+        finally:
+            if handle_box[0] is not None:
+                await self._delete_pdf_cache(handle_box[0].name)
+        log.info(
+            "Gemini agent bundle extraction (all options): variants=%d",
+            len(results))
+        return details, results
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         return await self._generate(
@@ -1739,6 +1860,14 @@ class OpenRouterProtocolExtractor:
             len(expanded.assumptions),
         )
         return expanded
+
+    async def extract_all(
+        self, pdf_bytes: bytes,
+    ) -> list[tuple[ScheduleOption | None, ExtractedSchedule]]:
+        """This single-shot backend never detects multiple independent
+        Schedules of Assessments (no classification stage), so there is
+        only ever one schedule to return."""
+        return [(None, await self.extract(pdf_bytes))]
 
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         return await self._generate(
@@ -1977,6 +2106,14 @@ class OllamaProtocolExtractor:
         )
         return expand_schedule(parsed)
 
+    async def extract_all(
+        self, pdf_bytes: bytes,
+    ) -> list[tuple[ScheduleOption | None, ExtractedSchedule]]:
+        """This single-shot backend never detects multiple independent
+        Schedules of Assessments (no classification stage), so there is
+        only ever one schedule to return."""
+        return [(None, await self.extract(pdf_bytes))]
+
     async def extract_details(self, pdf_bytes: bytes) -> ExtractedTrialDetails:
         return await self._generate(
             pdf_bytes,
@@ -2034,3 +2171,24 @@ async def extract_protocol_bundle(
     details_extractor = extractor if hasattr(extractor, "extract_details") else get_details_extractor()
     details = await details_extractor.extract_details(pdf_bytes)
     return details, schedule
+
+
+async def extract_protocol_bundle_all(
+    pdf_bytes: bytes,
+) -> tuple[ExtractedTrialDetails, list[tuple[ScheduleOption | None, ExtractedSchedule]]]:
+    """Extract details once and every independent Schedule of Assessments
+    the protocol prints, together when the provider supports it.
+
+    Gemini reuses its decomposed discovery pass across every substudy's
+    pipeline run. Other providers fall back to extract_all() (which is
+    itself a no-op wrapper around extract() when there's nothing to fan
+    out) plus one standalone metadata request.
+    """
+    extractor = get_extractor()
+    combined = getattr(extractor, "extract_bundle_all", None)
+    if callable(combined):
+        return await combined(pdf_bytes)
+    results = await extractor.extract_all(pdf_bytes)
+    details_extractor = extractor if hasattr(extractor, "extract_details") else get_details_extractor()
+    details = await details_extractor.extract_details(pdf_bytes)
+    return details, results
