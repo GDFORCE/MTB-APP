@@ -223,6 +223,48 @@ def test_canonical_projection_separates_visit_window_from_procedure_constraint()
         "Infusion — timing: Infusion over 30 minutes; window: ±1 minute"]
 
 
+def test_canonical_projection_converts_week_unit_windows_to_days():
+    """A tolerance window stated in weeks (e.g. Table 1's "Week 2 (±1 week)",
+    "Month 4 (±2 weeks)") must resolve into window_days/window_before/
+    window_after like a day-stated window does, instead of being dropped to
+    an operational_constraint note — the window UNIT is explicit and exact
+    here, unlike an ordinal "Week N" visit label, which is never assumed to
+    mean seven days."""
+    plan = CanonicalSchedulePlan(
+        anchors=[ScheduleAnchor(
+            id="anchor-baseline", name="Baseline", anchor_type="randomization")],
+        events=[
+            ScheduleEvent(
+                id="event-week2", name="Week 2",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-baseline",
+                    offset=TemporalAmount(value=14, unit="day"), source_label="Week 2"),
+                window=WindowSpec(
+                    state="stated",
+                    early=TemporalAmount(value=1, unit="week"),
+                    late=TemporalAmount(value=1, unit="week"), source_label="±1 week")),
+            ScheduleEvent(
+                id="event-month4", name="Month 4",
+                timing=TimingExpression(
+                    kind="offset", anchor_id="anchor-baseline",
+                    offset=TemporalAmount(value=120, unit="day"), source_label="Month 4"),
+                window=WindowSpec(
+                    state="stated",
+                    early=TemporalAmount(value=1, unit="week"),
+                    late=TemporalAmount(value=2, unit="week"), source_label="-1/+2 weeks")),
+        ])
+
+    rows, warnings = project_canonical_plan(plan)
+
+    assert warnings == []
+    week2, month4 = rows
+    assert week2["window_days"] == 7
+    assert week2["window_before"] is None and week2["window_after"] is None
+    assert month4["window_days"] is None
+    assert month4["window_before"] == 7
+    assert month4["window_after"] == 14
+
+
 def test_canonical_projection_approximates_calendar_month_timing_as_days():
     plan = CanonicalSchedulePlan(
         anchors=[ScheduleAnchor(

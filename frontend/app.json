@@ -56,6 +56,13 @@
         {
           "microphonePermission": "Allow My Trial Board to access your microphone to record voice messages."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow My Trial Board to access your photos to set a profile picture.",
+          "cameraPermission": "Allow My Trial Board to access your camera to take a profile picture."
+        }
       ]
     ],
     "experiments": {

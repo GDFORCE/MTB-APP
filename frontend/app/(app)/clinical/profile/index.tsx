@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import {
@@ -10,6 +10,9 @@ import {
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
+import { useAvatarUpload } from "@/src/hooks/use-avatar-upload";
+import { AvatarPickerSheet } from "@/src/components/AvatarPickerSheet";
+import { fetchFileUri } from "@/src/lib/upload";
 import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
@@ -22,10 +25,15 @@ const TYPE_LABEL: Record<string, string> = {
 
 export default function ClinicalProfile() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refresh } = useAuth();
   const unread = useUnreadCount();
   const [organization, setOrganization] = useState<Organization>({});
   const [loading, setLoading] = useState(true);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const avatar = useAvatarUpload({
+    onUploaded: async (uri) => { setAvatarUri(uri); await refresh(); },
+    onRemoved: async () => { setAvatarUri(null); await refresh(); },
+  });
 
   useEffect(() => {
     if (!user?.organization) { setLoading(false); return; }
@@ -38,6 +46,13 @@ export default function ClinicalProfile() {
       .catch(() => undefined)
       .finally(() => setLoading(false));
   }, [user?.organization]);
+
+  useEffect(() => {
+    if (!user?.avatar_file_id) { setAvatarUri(null); return; }
+    let cancelled = false;
+    fetchFileUri(user.avatar_file_id).then((uri) => { if (!cancelled) setAvatarUri(uri); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.avatar_file_id]);
 
   if (!user) return null;
   const isPi = user.role === "pi";
@@ -83,8 +98,14 @@ export default function ClinicalProfile() {
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
         <View style={s.profileHeader}>
-          <View style={s.avatarWrap}><View style={s.avatar}><Text style={s.avatarText}>{initials}</Text></View><Pressable onPress={() => router.push("/(app)/clinical/profile/edit")} style={s.cameraBadge}><Camera size={13} color={colors.mutedFg} /></Pressable></View>
+          <View style={s.avatarWrap}>
+            {avatarUri ? <Image source={{ uri: avatarUri }} style={s.avatar} /> : <View style={s.avatar}><Text style={s.avatarText}>{initials}</Text></View>}
+            <Pressable accessibilityLabel="Change profile photo" onPress={avatar.openSheet} disabled={avatar.avatarBusy} style={s.cameraBadge}>
+              {avatar.avatarBusy ? <ActivityIndicator size="small" color={colors.primary} /> : <Camera size={13} color={colors.mutedFg} />}
+            </Pressable>
+          </View>
           <Text style={s.name}>{user.full_name}</Text><View style={s.designation}><Text style={s.designationText}>{designation}</Text></View>
+          {avatar.avatarErr ? <Text style={s.avatarErrText}>{avatar.avatarErr}</Text> : null}
         </View>
 
         <View style={s.details}>
@@ -108,6 +129,15 @@ export default function ClinicalProfile() {
           role={navRole}
         />
       )}
+
+      <AvatarPickerSheet
+        visible={avatar.sheetOpen}
+        onClose={avatar.closeSheet}
+        onTakePhoto={avatar.pickFromCamera}
+        onChooseFromGallery={avatar.pickFromGallery}
+        onRemove={avatar.removeAvatar}
+        hasPhoto={!!avatarUri}
+      />
     </View>
   );
 }
@@ -121,7 +151,7 @@ const s = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 30 }, profileHeader: { alignItems: "center", marginBottom: 20 }, avatarWrap: { width: 76, height: 80, marginBottom: 7 },
   avatar: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center", backgroundColor: colors.primaryDeep }, avatarText: { color: colors.white, fontFamily: fonts.bold, fontSize: 20 },
   cameraBadge: { position: "absolute", right: 0, bottom: 4, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, ...shadows.sm },
-  name: { color: colors.foreground, fontFamily: fonts.bold, fontSize: 18 }, designation: { marginTop: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: colors.info + "18" }, designationText: { color: colors.info, fontFamily: fonts.semibold, fontSize: 10 },
+  name: { color: colors.foreground, fontFamily: fonts.bold, fontSize: 18 }, designation: { marginTop: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: colors.info + "18" }, designationText: { color: colors.info, fontFamily: fonts.semibold, fontSize: 10 }, avatarErrText: { marginTop: 8, color: colors.destructive, fontFamily: fonts.regular, fontSize: 10.5, textAlign: "center" },
   details: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm }, detailRow: { paddingVertical: 9 }, detailBorder: { borderTopWidth: 1, borderTopColor: colors.border + "99" }, detailLabelRow: { flexDirection: "row", alignItems: "center", gap: 4 }, detailLabel: { color: colors.mutedFg, fontFamily: fonts.regular, fontSize: 11 }, detailValue: { color: colors.foreground, fontFamily: fonts.medium, fontSize: 13, marginTop: 2 },
   verification: { marginTop: 12, padding: 12, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 9, borderWidth: 1, borderColor: colors.warning + "4D", backgroundColor: colors.warning + "12" }, verificationText: { flex: 1, color: colors.mutedFg, fontFamily: fonts.regular, fontSize: 11 },
   section: { marginTop: 18 }, sectionTitle: { color: colors.mutedFg, fontFamily: fonts.bold, fontSize: 9, letterSpacing: 1.2, marginBottom: 7, marginLeft: 4 }, menu: { overflow: "hidden", borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm }, menuRow: { minHeight: 51, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10 }, menuBorder: { borderTopWidth: 1, borderTopColor: colors.border }, menuPressed: { opacity: 0.65 }, menuIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }, menuLabel: { flex: 1, color: colors.foreground, fontFamily: fonts.medium, fontSize: 13 },

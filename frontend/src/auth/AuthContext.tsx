@@ -3,7 +3,7 @@ import { api, tokenStore, setSessionExpiredHandler } from '../api/client';
 import { commitAutofillContext } from '../../modules/mtb-autofill';
 
 export type Role = 'sponsor' | 'cro' | 'smo' | 'site' | 'pi' | 'crc' | 'patient';
-export type User = { id: string; email: string; full_name: string; role: Role; phone?: string; organization?: string; avatar_initials?: string; org_admin?: boolean; site?: string };
+export type User = { id: string; email: string; full_name: string; role: Role; phone?: string; organization?: string; avatar_initials?: string; avatar_file_id?: string; org_admin?: boolean; site?: string };
 
 type Session = { access_token: string; refresh_token: string; user: User };
 interface Ctx {

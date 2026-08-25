@@ -13,8 +13,9 @@ import { Springy } from "@/src/components/Springy";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
 import { LinearGradient } from "expo-linear-gradient";
-import * as ImagePicker from "expo-image-picker";
-import { uploadFile, fetchFileUri } from "@/src/lib/upload";
+import { fetchFileUri } from "@/src/lib/upload";
+import { useAvatarUpload } from "@/src/hooks/use-avatar-upload";
+import { AvatarPickerSheet } from "@/src/components/AvatarPickerSheet";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 import { APP_LOCALES, localeLabel, normalizeLocale, setLanguage, type AppLocale } from "@/src/i18n";
 import { sanitizeName } from "@/src/lib/validators";
@@ -96,8 +97,10 @@ export default function Profile() {
   // Avatar (uploaded profile photo). `avatarUri` is a render-ready object URL /
   // data URI fetched through the authed api client; null → fall back to initials.
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  const [avatarErr, setAvatarErr] = useState("");
+  const avatar = useAvatarUpload({
+    onUploaded: async (uri) => { setAvatarUri(uri); await refresh(); },
+    onRemoved: async () => { setAvatarUri(null); await refresh(); },
+  });
 
   // Profile fields (loaded from /auth/me — includes the profile sub-document)
   const [prof, setProf] = useState({ fullName: "", dob: "", gender: "", phone: "", email: "", language: "en" as AppLocale });
@@ -271,32 +274,6 @@ export default function Profile() {
     Linking.openURL(url).catch(() => {
       setSupportContactError("No compatible email or phone app is available.");
     });
-  };
-
-  // Pick an image → POST /files (user scope) → PATCH /auth/me → refresh + render.
-  const pickAvatar = async () => {
-    if (avatarBusy) return;
-    setAvatarErr("");
-    try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) { setAvatarErr("Photo access is needed to change your picture."); return; }
-      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
-      if (res.canceled || !res.assets?.length) return;
-      const a = res.assets[0];
-      const name = a.fileName || `avatar.${(a.uri.split(".").pop() || "jpg").split("?")[0]}`;
-      setAvatarBusy(true);
-      const uploaded = await uploadFile(
-        { uri: a.uri, name, mimeType: a.mimeType || "image/jpeg", file: (a as any).file },
-        { scopeType: "user" },
-      );
-      await api.patch("/auth/me", { avatar_file_id: uploaded.id });
-      await refresh();
-      setAvatarUri(await fetchFileUri(uploaded.id));
-    } catch (e: any) {
-      setAvatarErr(e?.response?.data?.detail || "Couldn't update your photo. Please try again.");
-    } finally {
-      setAvatarBusy(false);
-    }
   };
 
   const validateProfile = (): string => {
@@ -560,12 +537,20 @@ export default function Profile() {
                     <Text style={{ color: colors.primaryFg, fontFamily: fonts.display, fontSize: 26 }}>{initials}</Text>
                   </LinearGradient>
                 )}
-                <Pressable onPress={pickAvatar} disabled={avatarBusy} style={p.camBtn}>
-                  {avatarBusy ? <ActivityIndicator size="small" color={colors.primary} /> : <Camera size={16} color={colors.primary} />}
+                <Pressable onPress={avatar.openSheet} disabled={avatar.avatarBusy} style={p.camBtn}>
+                  {avatar.avatarBusy ? <ActivityIndicator size="small" color={colors.primary} /> : <Camera size={16} color={colors.primary} />}
                 </Pressable>
               </View>
-              {avatarErr ? <Small color={colors.destructive} style={{ marginTop: 8, textAlign: "center" }}>{avatarErr}</Small> : null}
+              {avatar.avatarErr ? <Small color={colors.destructive} style={{ marginTop: 8, textAlign: "center" }}>{avatar.avatarErr}</Small> : null}
             </Rise>
+            <AvatarPickerSheet
+              visible={avatar.sheetOpen}
+              onClose={avatar.closeSheet}
+              onTakePhoto={avatar.pickFromCamera}
+              onChooseFromGallery={avatar.pickFromGallery}
+              onRemove={avatar.removeAvatar}
+              hasPhoto={!!avatarUri}
+            />
             <Rise delay={110}>
               <View style={p.card}>
                 <Field label="Full Name *"><TextInput value={prof.fullName} onChangeText={v => { setProf({ ...prof, fullName: sanitizeName(v) }); setProfileFeedback(null); }} style={p.input} /></Field>

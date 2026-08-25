@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StatusBar,
@@ -30,6 +31,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
+import { useAvatarUpload } from "@/src/hooks/use-avatar-upload";
+import { AvatarPickerSheet } from "@/src/components/AvatarPickerSheet";
+import { fetchFileUri } from "@/src/lib/upload";
 import { SponsorBottomNav } from "@/src/features/sponsor/components/SponsorBottomNav";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
@@ -42,10 +46,15 @@ type MenuRow = {
 
 export default function SponsorProfile() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refresh } = useAuth();
   const unread = useUnreadCount();
   const [organization, setOrganization] = useState<Organization>({});
   const [loading, setLoading] = useState(true);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const avatar = useAvatarUpload({
+    onUploaded: async (uri) => { setAvatarUri(uri); await refresh(); },
+    onRemoved: async () => { setAvatarUri(null); await refresh(); },
+  });
 
   useEffect(() => {
     if (!user?.organization) {
@@ -61,6 +70,13 @@ export default function SponsorProfile() {
       .catch(() => undefined)
       .finally(() => setLoading(false));
   }, [user?.organization]);
+
+  useEffect(() => {
+    if (!user?.avatar_file_id) { setAvatarUri(null); return; }
+    let cancelled = false;
+    fetchFileUri(user.avatar_file_id).then((uri) => { if (!cancelled) setAvatarUri(uri); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.avatar_file_id]);
 
   if (!user) return null;
 
@@ -139,17 +155,27 @@ export default function SponsorProfile() {
       >
         <View style={s.profileHeader}>
           <View style={s.avatarWrap}>
-            <View style={s.avatar}><Text style={s.avatarText}>{initials}</Text></View>
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={s.avatar} />
+            ) : (
+              <View style={s.avatar}><Text style={s.avatarText}>{initials}</Text></View>
+            )}
             <Pressable
-              accessibilityLabel="Edit profile photo"
-              onPress={() => router.push("/(app)/clinical/profile/edit")}
+              accessibilityLabel="Change profile photo"
+              onPress={avatar.openSheet}
+              disabled={avatar.avatarBusy}
               style={({ pressed }) => [s.cameraBadge, pressed && s.pressed]}
             >
-              <Camera size={13} color={colors.mutedFg} />
+              {avatar.avatarBusy ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Camera size={13} color={colors.mutedFg} />
+              )}
             </Pressable>
           </View>
           <Text style={s.name}>{user.full_name}</Text>
           <View style={s.designation}><Text style={s.designationText}>{designation}</Text></View>
+          {avatar.avatarErr ? <Text style={s.avatarErrText}>{avatar.avatarErr}</Text> : null}
         </View>
 
         <View style={s.details}>
@@ -211,6 +237,15 @@ export default function SponsorProfile() {
       </ScrollView>
 
       <SponsorBottomNav active="me" unread={unread ?? 0} />
+
+      <AvatarPickerSheet
+        visible={avatar.sheetOpen}
+        onClose={avatar.closeSheet}
+        onTakePhoto={avatar.pickFromCamera}
+        onChooseFromGallery={avatar.pickFromGallery}
+        onRemove={avatar.removeAvatar}
+        hasPhoto={!!avatarUri}
+      />
     </View>
   );
 }
@@ -276,6 +311,7 @@ const s = StyleSheet.create({
   name: { color: colors.foreground, fontFamily: fonts.bold, fontSize: 18 },
   designation: { marginTop: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" },
   designationText: { color: colors.info, fontFamily: fonts.semibold, fontSize: 10 },
+  avatarErrText: { marginTop: 8, color: colors.destructive, fontFamily: fonts.regular, fontSize: 10.5, textAlign: "center" },
   details: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
   loader: { marginVertical: 28 },
   detailRow: { paddingVertical: 9 },

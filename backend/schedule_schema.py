@@ -695,6 +695,19 @@ def _elapsed_days(amount: TemporalAmount | None) -> float | None:
     return amount.value * factor if factor is not None else None
 
 
+def _window_side_days(amount: TemporalAmount | None) -> int | None:
+    """Whole-day count for one side of a visit window, via the same exact
+    minute/hour/day/week conversion as _elapsed_days — a window of "+/- 1
+    week" IS 7 days, unlike an ordinal "Week N" visit label, which is never
+    assumed to mean 7 days. None when the unit is month/year (a month's
+    day-count varies) or the amount does not land on a whole day; the caller
+    falls back to a readable operational_constraint note in that case."""
+    days = _elapsed_days(amount)
+    if days is None or not float(days).is_integer():
+        return None
+    return int(days)
+
+
 # A calendar-unit timing ("Month 3") states no day count — the protocol only
 # ever gives the unit. Leaving day_offset null is honest but leaves the visit
 # undated in every calendar/month-based schedule (seamless long-term-extension
@@ -1061,11 +1074,14 @@ def project_canonical_plan(
 
         early = event.window.early
         late = event.window.late
+        early_days = _window_side_days(early)
+        late_days = _window_side_days(late)
         visit_window_is_days = event.window.scope == "visit" \
             and event.window.window_type == "tolerance" and event.window.state == "stated" \
-            and all(item is None or item.unit == "day" for item in (early, late))
-        window_before = int(early.value) if visit_window_is_days and early else None
-        window_after = int(late.value) if visit_window_is_days and late else None
+            and (early is None or early_days is not None) \
+            and (late is None or late_days is not None)
+        window_before = early_days if visit_window_is_days else None
+        window_after = late_days if visit_window_is_days else None
         window_days = None
         if window_before is not None and window_after is not None \
                 and window_before == window_after:
