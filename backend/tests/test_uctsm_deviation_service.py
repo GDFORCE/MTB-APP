@@ -126,7 +126,7 @@ def _schedule(protocol_version_id):
             name="Primary", protocol_version_id=protocol_version_id,
             version_number=1, status=ScheduleStatus.APPROVED,
         ),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=events, conditional_definitions=[definition],
         evidence=[evidence], claim_evidence=claims,
     )

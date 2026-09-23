@@ -848,10 +848,14 @@ def trial_world(actors):
             assert r.status_code == 200, r.text
             trial = r.json()
             _extra_cleanup_ids['trials'].append(trial['id'])
-            rv = await cli.post('/api/visits', headers=sponsor_h, json={
-                'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
-                'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
-            assert rv.status_code == 200, rv.text
+            # `POST /api/visits` (the manual visit-schedule editor's write
+            # endpoint) is retired - seed the same `db.visits` template
+            # directly.
+            await server.db.visits.insert_one({
+                'id': str(uuid.uuid4()), 'trial_id': trial['id'],
+                'visit_number': 1, 'name': 'Screening', 'day_offset': 0,
+                'window_days': 3, 'activities': ['Vitals'], 'created_at': server.now(),
+            })
             pi, pi_h = await _register('pi', org=f'ADMORG-{RUN_ID} TrialSite')
             await server.db.invitations.insert_one({
                 'id': str(uuid.uuid4()), 'code': f'ADM-TRIAL-{RUN_ID}',

@@ -78,6 +78,13 @@ class ParityRun(IdMixin, Base):
     note: Mapped[str | None] = mapped_column(Text)
     ran_by: Mapped[UUID | None] = mapped_column(Uuid)
     ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # AD-1a: a DIFFERENCES_FOUND run a human has explicitly signed off, so a
+    # correct-but-permanent difference (e.g. ENGINE_UNDATED) doesn't leave the
+    # gate unclearable forever. Never set except through ParityService.accept_run -
+    # no auto-accept, no bulk accept, no accept without a reason.
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_by: Mapped[UUID | None] = mapped_column(Uuid)
+    accepted_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class Protocol(IdMixin, TimestampMixin, Base):
@@ -405,7 +412,10 @@ class ScheduleImpactProposal(IdMixin, Base):
 
 class PatientAnchor(IdMixin, Base):
     __tablename__ = "uctsm_patient_anchors"
-    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id", ondelete="CASCADE"), index=True)
+    # AD-9: append-only clinical history. No ondelete here (RESTRICT by
+    # default) - a patient delete must be blocked while history exists, never
+    # silently take it with them.
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id"), index=True)
     anchor_definition_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_anchors.id"))
     value_date: Mapped[date | None] = mapped_column(Date)
     value_datetime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -419,7 +429,10 @@ class PatientAnchor(IdMixin, Base):
 
 class PatientState(IdMixin, Base):
     __tablename__ = "uctsm_patient_states"
-    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id", ondelete="CASCADE"), index=True)
+    # AD-9: append-only clinical history. No ondelete here (RESTRICT by
+    # default) - a patient delete must be blocked while history exists, never
+    # silently take it with them.
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id"), index=True)
     state_code: Mapped[str] = mapped_column(String(128))
     state_value: Mapped[Any] = mapped_column(JsonType)
     effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
@@ -488,6 +501,17 @@ class PatientEvent(IdMixin, TimestampMixin, Base):
     generation_reason: Mapped[dict[str, Any]] = mapped_column(JsonType)
     visit_mode: Mapped[str | None] = mapped_column(String(64))
     unscheduled_reason: Mapped[str | None] = mapped_column(Text)
+    # AD-8: every materialized row carries provenance - which exact schedule
+    # and protocol version produced it, not just which patient/evaluation it
+    # belongs to (those already exist via patient_schedule_id/schedule_
+    # evaluation_id, but neither names the schedule VERSION or protocol
+    # VERSION directly, which is what a reviewer asking "what was in force
+    # when this was generated" actually needs). Nullable: rows written before
+    # this column existed have no way to backfill it retroactively.
+    schedule_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_schedule_versions.id"), index=True)
+    protocol_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_protocol_versions.id"), index=True)
 
 
 class PatientUnscheduledVisit(IdMixin, Base):
@@ -498,7 +522,10 @@ class PatientUnscheduledVisit(IdMixin, Base):
     """
 
     __tablename__ = "uctsm_patient_unscheduled_visits"
-    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id", ondelete="CASCADE"), index=True)
+    # AD-9: append-only clinical history. No ondelete here (RESTRICT by
+    # default) - a patient delete must be blocked while history exists, never
+    # silently take it with them.
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id"), index=True)
     event_definition_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_events.id"))
     event_code: Mapped[str] = mapped_column(String(128))
     occurred_on: Mapped[date] = mapped_column(Date)
@@ -529,7 +556,10 @@ class PatientCondition(IdMixin, Base):
     """
 
     __tablename__ = "uctsm_patient_conditions"
-    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id", ondelete="CASCADE"), index=True)
+    # AD-9: append-only clinical history. No ondelete here (RESTRICT by
+    # default) - a patient delete must be blocked while history exists, never
+    # silently take it with them.
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id"), index=True)
     condition_code: Mapped[str] = mapped_column(String(128), index=True)
     state: Mapped[str] = mapped_column(String(32), index=True)
     occurrence_index: Mapped[int] = mapped_column(Integer, default=0)
@@ -565,13 +595,22 @@ class PatientActivity(IdMixin, TimestampMixin, Base):
     actual_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timing_resolution: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
     generation_reason: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    # AD-8: see PatientEvent's identical pair for why this is needed alongside
+    # patient_event_id rather than always joined through it.
+    schedule_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_schedule_versions.id"), index=True)
+    protocol_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_protocol_versions.id"), index=True)
 
 
 class PatientActivityRecord(IdMixin, Base):
     """Append-only site record of an intra-day actual time or completion decision."""
 
     __tablename__ = "uctsm_patient_activity_records"
-    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id", ondelete="CASCADE"), index=True)
+    # AD-9: append-only clinical history. No ondelete here (RESTRICT by
+    # default) - a patient delete must be blocked while history exists, never
+    # silently take it with them.
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("uctsm_patients.id"), index=True)
     event_code: Mapped[str] = mapped_column(String(128), index=True)
     occurrence_index: Mapped[int] = mapped_column(Integer, default=0)
     activity_code: Mapped[str] = mapped_column(String(128), index=True)
@@ -582,6 +621,45 @@ class PatientActivityRecord(IdMixin, Base):
     recorded_by: Mapped[UUID | None] = mapped_column(Uuid)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+class PatientConfinementEpisode(IdMixin, TimestampMixin, Base):
+    """One materialized patient confinement episode: a single parent stay,
+    not one row per day (doc 6) - AD-8 persists this the same way
+    ``PatientEvent`` is persisted, rather than leaving it inside a transient
+    ``EvaluationResult`` a caller has to keep re-deriving or passing around.
+
+    ``episode_definition_id`` has no FK: confinement episode DEFINITIONS are
+    not their own relational table (they live as JSON on the schedule
+    version, like several other schedule-definition-level constructs), so
+    this is only ever a value to display next to ``episode_code`` - never a
+    join target.
+    """
+
+    __tablename__ = "uctsm_patient_confinement_episodes"
+    __table_args__ = (UniqueConstraint("schedule_evaluation_id", "episode_code"),)
+    patient_schedule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("uctsm_patient_schedules.id", ondelete="CASCADE"), index=True)
+    schedule_evaluation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("uctsm_schedule_evaluations.id", ondelete="CASCADE"), index=True)
+    episode_definition_id: Mapped[UUID] = mapped_column(Uuid)
+    episode_code: Mapped[str] = mapped_column(String(128), index=True)
+    logical_key: Mapped[str] = mapped_column(String(256), index=True)
+    supersedes_patient_confinement_episode_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_patient_confinement_episodes.id"))
+    protected_history: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    planned_admission: Mapped[date | None] = mapped_column(Date)
+    actual_admission: Mapped[date | None] = mapped_column(Date)
+    planned_discharge: Mapped[date | None] = mapped_column(Date)
+    actual_discharge: Mapped[date | None] = mapped_column(Date)
+    extended_by: Mapped[list[Any]] = mapped_column(JsonType, default=list)
+    explanation: Mapped[dict[str, Any]] = mapped_column(JsonType, default=dict)
+    # AD-8 provenance, same as PatientEvent/PatientActivity's identical pair.
+    schedule_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_schedule_versions.id"), index=True)
+    protocol_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("uctsm_protocol_versions.id"), index=True)
 
 
 class AuditEvent(IdMixin, Base):

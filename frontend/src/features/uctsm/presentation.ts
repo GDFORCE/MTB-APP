@@ -18,6 +18,8 @@ export type ProtocolScheduleRow = {
   status: string;
   evidenceRefs: string[];
   requiresReview: boolean;
+  reviewReasons?: string[];
+  sourceTiming?: { text: string; page?: number }[];
   /** Short indicator such as "Footnote a"; details open on expansion. */
   qualifier: string;
   qualifierDetails: QualifierDetail[];
@@ -25,6 +27,25 @@ export type ProtocolScheduleRow = {
   isConditional: boolean;
   /** Doc 10 s31-s32: every mode a hybrid visit permits, so none is invented. */
   allowedVisitModes: string[];
+  /**
+   * Doc 10 s21-s23: how the visit is conducted, in plain words - shown at
+   * protocol-review time as the protocol-stated mode (or "not stated"/"X or
+   * Y - to be confirmed"); a patient row overrides this with the
+   * patient-specific resolved mode instead. This is a genuinely different
+   * question from `type` (event_type: WHAT kind of occasion this is) - a CT
+   * scan the patient travels to is imaging *and* a clinic visit, not a
+   * choice between them - and previously existed only on PatientScheduleRow,
+   * so a reviewer approving the protocol schedule had no way to see it at
+   * all before a patient was ever enrolled.
+   */
+  visitMode: string;
+  /**
+   * The single mode `visitMode`'s text resolved to (e.g. "CLINIC"), for
+   * icon lookup only - `null` when the mode is unstated or still a hybrid
+   * of several allowed modes, since there is no one mode to symbolize yet.
+   * See `visitModeIconKey`.
+   */
+  visitModeKey: string | null;
   /**
    * UI spec s4.4. Present when this visit is a repeating RULE rather than one
    * occasion, so the row reads "every 21 days, continues" instead of looking
@@ -78,8 +99,6 @@ export type PatientScheduleRow = ProtocolScheduleRow & {
   dayScheduleRows: DayScheduleRow[];
   /** Doc 5 s26: how much of this visit is actually done. */
   completion: CompletionSummary;
-  /** Doc 10 s21-s23: how the patient attends, in plain words. */
-  visitMode: string;
   /** Doc 10 s14: why a site created this unscheduled visit. */
   unscheduledReason: string | null;
   /** Doc 10 s13-s15: a definition that is available but carries no date. */
@@ -106,6 +125,15 @@ export type RepeatRuleRow = {
 };
 
 const EMPTY = "—";
+
+/** Shorten equal-unit tolerances without discarding asymmetric limits. */
+export function compactScheduleWindow(value: string): string {
+  const match = value.match(/^-(\d+(?:\.\d+)?) (day|week|month|year|hour|minute)s?\/\+(\d+(?:\.\d+)?) \2s?$/i);
+  if (!match) return value;
+  const [, before, unit, after] = match;
+  const units = `${unit.toLowerCase()}${Number(before) === 1 && Number(after) === 1 ? "" : "s"}`;
+  return Number(before) === Number(after) ? `±${before} ${units}` : `-${before}/+${after} ${units}`;
+}
 
 // Codes such as PK_2H or ANC_LOW must read as clinical language, not as enums.
 const titleCase = (value: string) => value
@@ -196,11 +224,18 @@ function recurrenceText(recurrence?: Record<string, unknown>): string | null {
   if (!interval?.value || !interval.unit) return "Repeats as specified by protocol";
   const unit = titleCase(interval.unit).toLowerCase();
   const plural = interval.value === 1 ? unit : `${unit}s`;
-  const termination = recurrence.termination as { type?: string; event_code?: string; count?: number } | undefined;
+  const termination = recurrence.termination as { type?: string; event_code?: string; count?: number;
+    end_reference?: { code?: string }; end_offset?: { value?: number; unit?: string }; inclusive?: boolean } | undefined;
   let ending = "";
   if (termination?.type === "EVENT" && termination.event_code) ending = ` until ${titleCase(termination.event_code)}`;
   else if (termination?.type === "COUNT" && termination.count) ending = ` for ${termination.count} occurrences`;
   else if (termination?.type === "HORIZON") ending = " while the patient remains on study";
+  else if (termination?.type === "RELATIVE" && termination.end_reference?.code
+    && termination.end_offset?.value != null && termination.end_offset.unit) {
+    const amount = termination.end_offset.value;
+    const endUnit = titleCase(termination.end_offset.unit).toLowerCase();
+    ending = ` ${termination.inclusive ? "through" : "before"} ${amount} ${Math.abs(amount) === 1 ? endUnit : `${endUnit}s`} after ${titleCase(termination.end_reference.code)}`;
+  }
   return `Every ${interval.value} ${plural}${ending}`;
 }
 
@@ -217,6 +252,10 @@ const visitModeLabels: Record<string, string> = {
   LABORATORY: "At a laboratory",
   PHARMACY: "At the pharmacy",
 };
+
+/** Exact string displayVisitMode returns when nothing is known, so callers
+ * can flag it for review instead of comparing against a copy of the text. */
+export const UNSTATED_VISIT_MODE = "Not stated in the protocol";
 
 /**
  * Doc 10 s18 and s33: when the protocol did not state a mode, say so rather
@@ -236,7 +275,68 @@ export function displayVisitMode(
   if (options.length === 1) {
     return visitModeLabels[options[0].toUpperCase()] || titleCase(options[0]);
   }
-  return "Not stated in the protocol";
+  return UNSTATED_VISIT_MODE;
+}
+
+/**
+ * The single mode `displayVisitMode` resolved to, as a raw key for icon
+ * lookup (`ScheduleTable`'s `MODE_ICONS`) - `null` when unstated, or when
+ * several allowed modes are still an unresolved hybrid ("X or Y - to be
+ * confirmed"), since there is no one mode yet to symbolize.
+ */
+export function visitModeIconKey(
+  mode?: string | null, allowed?: string[] | null,
+): string | null {
+  if (mode) return mode.toUpperCase();
+  const options = (allowed || []).filter(Boolean);
+  return options.length === 1 ? options[0].toUpperCase() : null;
+}
+
+/**
+ * The same administrative-activity keyword patterns
+ * `schedule_schema.py::classify_visit_activities` already uses for the
+ * legacy operational editor's clinical/admin task columns, ported here so
+ * the canonical table classifies an activity name the same way in both
+ * places - not a second heuristic that could disagree on the same word.
+ * Word-anchored so "breakfast" does not match "fast" and "reconsent" still
+ * matches "consent".
+ */
+const ADMIN_ACTIVITY_PATTERNS: RegExp[] = [
+  /consent/i, /\bassent\b/i, /\be?crf\b/i, /case report form/i,
+  /source (?:data|document)/i, /data entry/i, /quer(?:y|ies)/i,
+  /protocol deviation/i, /\bdemographics?\b/i,
+  /\bdiary (?:issue|review|collection|dispens\w*)/i,
+  /randomi[sz]/i, /\biwrs\b/i, /\bivrs\b/i, /\brtsm\b/i, /enrol/i, /registration/i,
+  /subject (?:number|id)/i, /screening number/i, /eligibilit/i,
+  /inclusion/i, /exclusion/i,
+  /accountabilit/i, /dispens/i, /drug return/i, /\bcompliance\b/i,
+  /pill count/i, /tablet count/i,
+  /\bhousing\b/i, /confine/i, /check[- ]?in/i, /check[- ]?out/i,
+  /\badmission\b/i, /\badmitted\b/i, /\bdischarge\b/i, /overnight/i,
+  /ambulator/i, /\bwashout\b/i, /\bfast(?:ing)?\b/i, /\bmeals?\b/i,
+  /reimburse/i, /\btravel\b/i, /appointment/i, /schedul/i,
+];
+
+export type ActivityGroups = { clinical: string[]; administrative: string[] };
+
+/** Splits one visit's activity names into (clinical, administrative). Order
+ * and wording are preserved exactly, and a name repeated (e.g. once in the
+ * table, once in a footnote) is dropped case-insensitively - only which
+ * group it lands in changes. */
+export function classifyActivities(activities: string[]): ActivityGroups {
+  const clinical: string[] = [];
+  const administrative: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of activities || []) {
+    const name = (raw || "").trim();
+    if (!name) continue;
+    const key = name.split(/\s+/).join(" ").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const isAdmin = ADMIN_ACTIVITY_PATTERNS.some((pattern) => pattern.test(name));
+    (isAdmin ? administrative : clinical).push(name);
+  }
+  return { clinical, administrative };
 }
 
 /**
@@ -906,7 +1006,22 @@ export function toProtocolScheduleRows(
     const activityQualifiers = event.activities.flatMap(
       (activity) => toQualifierDetails(activity.qualifiers));
     const qualifierDetails = [...toQualifierDetails(event.qualifiers), ...activityQualifiers];
-    const baseTiming = recurring || projection?.timing_display || "Timing requires review";
+    const entityIds = new Set([event.id, ...event.activities.map((activity) => activity.id)]);
+    const reviewReasons = schedule.validation_issues
+      .filter((issue) => issue.status === "OPEN" && (
+        (issue.entity_id && entityIds.has(issue.entity_id))
+        || issue.details?.event_code === event.code))
+      .map((issue) => issue.message);
+    if (event.timing?.type === "UNRESOLVED" && typeof event.timing.reason === "string") {
+      reviewReasons.push(event.timing.reason);
+    }
+    const sourceReference = event.timing?.source_reference as { statements?: unknown[] } | undefined;
+    const sourceTiming = event.timing?.type === "UNRESOLVED" && Array.isArray(sourceReference?.statements)
+      ? sourceReference.statements.flatMap((value) => {
+        if (!value || typeof value !== "object" || !("text" in value) || typeof value.text !== "string") return [];
+        return [{ text: value.text, page: "page" in value && typeof value.page === "number" ? value.page : undefined }];
+      }) : [];
+    const baseTiming = [projection?.timing_display, recurring].filter(Boolean).join("; ") || "Timing requires review";
     const timing = conditionPrefix ? `${conditionPrefix} · ${baseTiming}` : baseTiming;
     return {
       id: event.id,
@@ -918,13 +1033,17 @@ export function toProtocolScheduleRows(
       type: displayVisitType(projection?.event_type_display || event.event_type),
       activities: projection?.activities_display?.filter(Boolean) || event.activities.map((item) => item.display_name),
       appliesTo: applicabilityText(event),
-      status: titleCase(projection?.status || event.interpretation_status),
+      status: schedule.schedule_metadata.status === "APPROVED" ? "Approved" : titleCase(projection?.status || event.interpretation_status),
       evidenceRefs: projection?.evidence_refs || event.evidence_refs,
-      requiresReview: projection?.requires_review ?? event.requires_review,
+      requiresReview: reviewReasons.length > 0 || (projection?.requires_review ?? event.requires_review),
+      reviewReasons: [...new Set(reviewReasons)],
+      sourceTiming,
       qualifier: qualifierIndicator(qualifierDetails),
       qualifierDetails,
       isConditional,
       allowedVisitModes: event.allowed_visit_modes || [],
+      visitMode: displayVisitMode(event.visit_mode, event.allowed_visit_modes),
+      visitModeKey: visitModeIconKey(event.visit_mode, event.allowed_visit_modes),
       repeatRule: recurring,
       activityRows: toProtocolActivityRows(event.activities),
     };
@@ -1032,6 +1151,8 @@ export function toPatientScheduleRows(
       qualifierDetails: [],
       isConditional: false,
       allowedVisitModes: [],
+      visitMode: EMPTY,
+      visitModeKey: null,
       repeatRule: null,
       activityRows: [],
     };
@@ -1056,6 +1177,7 @@ export function toPatientScheduleRows(
         : `${earliest} – ${latest}`,
       status: displayPatientState(event.status),
       visitMode: displayVisitMode(event.visit_mode, definition?.allowedVisitModes),
+      visitModeKey: visitModeIconKey(event.visit_mode, definition?.allowedVisitModes),
       unscheduledReason: event.unscheduled_reason || null,
       isOnDemand: event.status === "AVAILABLE_ON_DEMAND",
       expectedIso: event.nominal_start_date || null,
@@ -1222,6 +1344,7 @@ export type ProtocolActivityRow = {
   qualifier: string;
   evidenceRefs: string[];
   review: string;
+  category?: "Clinical" | "Administrative";
 };
 
 const requirednessLabels: Record<string, string> = {
@@ -1311,6 +1434,8 @@ export function toProtocolActivityRows(
     return {
       id: activity.id || `${activity.display_name}-${index}`,
       activity: activity.display_name,
+      category: /ADMINISTRATIVE|^ADMIN$|CONSENT|REGISTRATION/.test(activity.activity_type?.toUpperCase() || "")
+        ? "Administrative" : classifyActivities([activity.display_name]).administrative.length ? "Administrative" : "Clinical",
       timingRule,
       anchor: anchorText(nominal?.reference),
       // Never invent a window: an activity with no stated tolerance shows none.

@@ -92,8 +92,8 @@ def build_schedule() -> UniversalSchedule:
             name="UCTSM demonstration", status=ScheduleStatus.APPROVED,
         ),
         anchors=[
-            Anchor(code="LAST_DOSE", display_name="Last Dose", anchor_type="LAST_DOSE"),
-            Anchor(code="PROGRESSION", display_name="Progression", anchor_type="PROGRESSION"),
+            Anchor(code="LAST_DOSE", display_name="Last Dose", anchor_type="LAST_DOSE", status="RESOLVED"),
+            Anchor(code="PROGRESSION", display_name="Progression", anchor_type="PROGRESSION", status="RESOLVED"),
         ],
         events=[safety, progression], evidence=[evidence], claim_evidence=claims,
     )

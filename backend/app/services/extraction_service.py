@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from uuid import UUID
+from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -68,20 +69,20 @@ class ExtractionService:
         ))
         return run
 
-    def complete(self, run_id: UUID, result: ExtractionResult) -> UUID:
-        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True)
-        if run is None:
-            raise KeyError("extraction run not found")
-        if run.status not in {"QUEUED", "RUNNING", "PARTIAL"}:
-            raise ValueError(f"cannot complete extraction in {run.status} state")
-        run.trace = {"nodes": result.extraction_trace}
-        run.completed_at = utc_now()
-        if result.schedule is None:
-            run.status = "FAILED"
-            run.error_details = {"issues": [item.model_dump(mode="json") for item in result.issues]}
-            raise ValueError("extraction did not produce a schema-valid schedule")
-        schedule = result.schedule.model_copy(deep=True)
-        schedule.validation_issues = result.issues
+    def _persist_one(self, run: db.ExtractionRun, result: ExtractionResult) -> UUID:
+        """Persist one already-extracted schedule as a new draft version.
+
+        Shared by every caller of `complete_many` regardless of how many
+        schedules one run produced - the run itself is marked QUEUED->
+        COMPLETED exactly once, by the caller, after every schedule in the
+        batch has been persisted.
+        """
+        schedule = result.schedule
+        assert schedule is not None
+        schedule = schedule.model_copy(deep=True)
+        schedule.validation_issues = [
+            issue.model_copy(update={"id": uuid4()}, deep=True) for issue in result.issues
+        ]
         schedule.schedule_metadata.status = ScheduleStatus.VALIDATION_REQUIRED
         definition = self.session.scalar(select(db.ScheduleDefinition).where(
             db.ScheduleDefinition.protocol_version_id == run.protocol_version_id,
@@ -105,22 +106,70 @@ class ExtractionService:
         ScheduleRepository(self.session).persist_draft(
             schedule, schedule_definition_id=definition.id, extraction_run_id=run.id,
         )
-        run.status = "COMPLETED"
-        self.session.add(db.AuditEvent(
-            organization_id=run.organization_id, action="SCHEDULE_EXTRACTION_COMPLETED",
-            entity_type="SCHEDULE_VERSION", entity_id=schedule.schedule_version_id,
-            before=None, after={"extraction_run_id": str(run.id), "issues": len(result.issues)},
-        ))
         return schedule.schedule_version_id
 
-    def execute(
-        self,
-        run_id: UUID,
-        *,
-        provider: ExtractionProvider,
-        pages: list[DocumentPage],
-    ) -> UUID:
-        """Worker entry point from parsed private document pages to persisted draft."""
+    def complete_many(
+        self, run_id: UUID, results: list[tuple[dict[str, Any] | None, ExtractionResult]],
+    ) -> list[UUID]:
+        """Persist every schedule one run produced - one per independent
+        Schedule of Assessments the document printed (see
+        runner.run_extraction_for_all_options) - as its own draft version,
+        then mark the run COMPLETED once.
+
+        A run that produced no usable schedule at all (every option failed)
+        is marked FAILED with every option's issues attached, same as a
+        single-schedule run that failed outright.
+        """
+        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True)
+        if run is None:
+            raise KeyError("extraction run not found")
+        if run.status not in {"QUEUED", "RUNNING", "PARTIAL"}:
+            raise ValueError(f"cannot complete extraction in {run.status} state")
+        run.trace = {"options": [
+            {"option": option, "nodes": result.extraction_trace} for option, result in results
+        ]}
+        run.completed_at = utc_now()
+
+        version_ids: list[UUID] = []
+        for _option, result in results:
+            if result.schedule is None:
+                continue
+            version_ids.append(self._persist_one(run, result))
+
+        if not version_ids:
+            run.status = "FAILED"
+            run.error_details = {"issues": [
+                item.model_dump(mode="json")
+                for _option, result in results for item in result.issues
+            ]}
+            raise ValueError("extraction did not produce any schema-valid schedule")
+
+        failed_options = [
+            {"option": option, "issues": [item.model_dump(mode="json") for item in result.issues]}
+            for option, result in results if result.schedule is None
+        ]
+        run.status = "PARTIAL" if failed_options else "COMPLETED"
+        run.error_details = {"failed_options": failed_options} if failed_options else None
+        self.session.add(db.AuditEvent(
+            organization_id=run.organization_id, action="SCHEDULE_EXTRACTION_COMPLETED",
+            entity_type="EXTRACTION_RUN", entity_id=run.id,
+            before=None, after={
+                "schedule_version_ids": [str(item) for item in version_ids],
+                "issues": sum(len(result.issues) for _option, result in results),
+            },
+        ))
+        return version_ids
+
+    def complete(self, run_id: UUID, result: ExtractionResult) -> UUID:
+        return self.complete_many(run_id, [(None, result)])[0]
+
+    def start(self, run_id: UUID) -> db.ExtractionRun:
+        """QUEUED -> RUNNING. Split out from `execute` so a caller that needs
+        to build the extraction pipeline itself (runner.execute_run, to fan
+        out over several schedule options) can do so after the run is marked
+        RUNNING but before any model call happens, instead of this class
+        owning the whole pipeline construction.
+        """
         run = self.session.get(db.ExtractionRun, run_id, with_for_update=True)
         if run is None:
             raise KeyError("extraction run not found")
@@ -129,13 +178,32 @@ class ExtractionService:
         run.status = "RUNNING"
         run.started_at = utc_now()
         self.session.flush()
-        try:
-            result = run_extraction(
-                provider, document_hash=run.document_hash, pages=pages,
-            )
-            return self.complete(run_id, result)
-        except Exception as error:
+        return run
+
+    def fail(self, run_id: UUID, error: Exception) -> None:
+        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True)
+        if run is not None and run.status != "COMPLETED":
             run.status = "FAILED"
             run.completed_at = utc_now()
             run.error_details = {"type": type(error).__name__, "message": str(error)}
+
+    def execute(
+        self,
+        run_id: UUID,
+        *,
+        provider: ExtractionProvider,
+        pages: list[DocumentPage],
+    ) -> UUID:
+        """Worker entry point from parsed private document pages to persisted
+        draft, for a single already-built provider (the ungated, one-schedule
+        case) - kept for callers that only ever produce one schedule per run.
+        """
+        self.start(run_id)
+        run = self.session.get(db.ExtractionRun, run_id)
+        assert run is not None
+        try:
+            result = run_extraction(provider, document_hash=run.document_hash, pages=pages)
+            return self.complete(run_id, result)
+        except Exception as error:
+            self.fail(run_id, error)
             raise

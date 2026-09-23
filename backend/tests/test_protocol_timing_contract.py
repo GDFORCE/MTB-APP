@@ -1,11 +1,8 @@
 """Offline regression coverage for persistence-facing protocol timing helpers."""
-import asyncio
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -199,123 +196,13 @@ def test_relative_dependent_becomes_undated_when_target_is_renamed():
     assert "missing, ambiguous, or undated" in dependent["_relative_resolution_warning"]
 
 
-def test_create_visit_recomputes_relatives_and_returns_refetched_row(monkeypatch):
-    events = []
-    current = {
-        "id": "new-visit", "trial_id": "trial-1", "visit_number": 2,
-        "name": "Follow-up", "day_offset": 7,
-        "relative_to": "Dose", "relative_offset_days": 7,
-    }
-
-    async def insert_one(_doc):
-        events.append("insert")
-
-    async def refetch(_query, _projection):
-        events.append("refetch")
-        return current
-
-    fake_db = SimpleNamespace(
-        trials=SimpleNamespace(find_one=AsyncMock(return_value={"id": "trial-1"})),
-        visits=SimpleNamespace(
-            insert_one=AsyncMock(side_effect=insert_one),
-            find_one=AsyncMock(side_effect=refetch),
-        ),
-    )
-    monkeypatch.setattr(server, "db", fake_db)
-    monkeypatch.setattr(server.uuid, "uuid4", lambda: "new-visit")
-    monkeypatch.setattr(server, "_can_access_trial", AsyncMock(return_value=True))
-
-    async def materialize(_doc):
-        events.append("materialize")
-        return 1
-
-    async def recompute(trial_id):
-        assert trial_id == "trial-1"
-        events.append("recompute")
-        return 1
-
-    monkeypatch.setattr(server, "_materialize_new_template_for_enrolled", materialize)
-    monkeypatch.setattr(server, "_recompute_relative_templates", recompute)
-
-    result = asyncio.run(server.create_visit(
-        server.VisitIn(
-            trial_id="trial-1", visit_number=2, name="Follow-up",
-            day_offset=None, relative_to="Dose", relative_offset_days=7,
-        ),
-        user={"id": "sponsor-1", "role": "sponsor"},
-    ))
-
-    assert events == ["insert", "materialize", "recompute", "refetch"]
-    assert result["day_offset"] == 7
-    fake_db.visits.insert_one.assert_awaited_once()
-
-
-def test_update_visit_returns_post_recompute_row(monkeypatch):
-    template = {
-        "id": "dependent", "trial_id": "trial-1", "visit_number": 2,
-        "name": "Follow-up", "day_offset": 7,
-        "relative_to": "Dose", "relative_offset_days": 7,
-    }
-    fresh = {**template, "comments": "updated"}
-    recomputed = {**fresh, "day_offset": 12}
-    visits = SimpleNamespace(
-        find_one=AsyncMock(side_effect=[template, fresh, recomputed]),
-        update_one=AsyncMock(),
-    )
-    fake_db = SimpleNamespace(
-        visits=visits,
-        trials=SimpleNamespace(find_one=AsyncMock(return_value={"id": "trial-1"})),
-    )
-    monkeypatch.setattr(server, "db", fake_db)
-    monkeypatch.setattr(server, "_require_schedule_owner", AsyncMock())
-    monkeypatch.setattr(server, "_rematerialize_template_change", AsyncMock(return_value=1))
-    monkeypatch.setattr(server, "_recompute_relative_templates", AsyncMock(return_value=1))
-    monkeypatch.setattr(server, "write_audit", AsyncMock())
-
-    result = asyncio.run(server.update_visit(
-        "dependent", server.VisitUpdate(comments="updated"),
-        user={"id": "sponsor-1", "role": "sponsor"},
-    ))
-
-    assert result["day_offset"] == 12
-    assert visits.find_one.await_count == 3
-    server._recompute_relative_templates.assert_awaited_once_with("trial-1")
-
-
-def test_delete_visit_recomputes_dependents_after_target_removal(monkeypatch):
-    events = []
-    template = {
-        "id": "dose", "trial_id": "trial-1", "visit_number": 1,
-        "name": "Dose", "day_offset": 0,
-    }
-
-    async def delete_one(_query):
-        events.append("delete")
-
-    async def recompute(trial_id):
-        assert trial_id == "trial-1"
-        events.append("recompute")
-        return 2
-
-    fake_db = SimpleNamespace(
-        visits=SimpleNamespace(
-            find_one=AsyncMock(return_value=template),
-            delete_one=AsyncMock(side_effect=delete_one),
-        ),
-        trials=SimpleNamespace(find_one=AsyncMock(return_value={"id": "trial-1"})),
-    )
-    monkeypatch.setattr(server, "db", fake_db)
-    monkeypatch.setattr(server, "_require_schedule_owner", AsyncMock())
-    monkeypatch.setattr(server, "_rematerialize_template_delete", AsyncMock(return_value=1))
-    monkeypatch.setattr(server, "_recompute_relative_templates", recompute)
-    monkeypatch.setattr(server, "write_audit", AsyncMock())
-
-    result = asyncio.run(server.delete_visit(
-        "dose", user={"id": "sponsor-1", "role": "sponsor"}))
-
-    assert events == ["delete", "recompute"]
-    assert result == {
-        "deleted": True,
-        "instances_removed": 1,
-        "relative_templates_recalculated": 2,
-    }
+# The three `POST/PUT/DELETE /api/visits` route-handler unit tests that used
+# to live here (`test_create_visit_recomputes_relatives_and_returns_refetched_row`,
+# `test_update_visit_returns_post_recompute_row`,
+# `test_delete_visit_recomputes_dependents_after_target_removal`) are removed -
+# they exercised `server.create_visit`/`update_visit`/`delete_visit`, the
+# manual visit-schedule editor's write endpoints, which are retired (Phase 4).
+# The pure timing/materialization helpers above them
+# (`_normalized_template_timing`, `_calculate_template_datetime`,
+# `_resolve_relative_template_offsets`, etc.) are still real, still-called
+# code and stay covered here unchanged.

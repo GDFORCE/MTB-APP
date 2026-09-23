@@ -15,6 +15,7 @@ from app.db.repositories import ScheduleRepository
 from app.domain.schedule.models import (
     ConditionState, EvaluationResult, PatientConditionStatus,
 )
+from app.services.schedule_diff import compute_schedule_diff
 from app.services.schedule_service import PatientScheduleService
 
 
@@ -74,7 +75,7 @@ class PatientScheduleImpactService:
             state_overrides=state_override,
         )
         prior = self.patient_schedules.current_events(patient.id, source_id)
-        impact = self._impact(prior, result)
+        impact = compute_schedule_diff(self.patient_schedules, prior, result)
         if condition_change is not None:
             impact["condition_change"] = condition_change.model_dump(mode="json")
         if anchor_change is not None:
@@ -271,8 +272,13 @@ class PatientScheduleImpactService:
             patient.id,
             organization_id=organization_id,
             horizon=proposal.horizon,
+            # AD-4d: pass the target version explicitly rather than relying on
+            # the ``patient.current_schedule_version_id`` write two lines above
+            # being visible to a second, independent read inside evaluate().
+            schedule_version_id=proposal.to_schedule_version_id,
             idempotency_key=f"impact:{proposal.id}",
             prior_events_override=prior,
+            actor_id=actor_id, reason=reason or proposal.reason,
         )
         proposal.status = "CONFIRMED"
         proposal.confirmed_by = actor_id
@@ -329,43 +335,6 @@ class PatientScheduleImpactService:
         ).one_or_none()
         if target is None or target.trial_id != patient.trial_id:
             raise ValueError("target must be an approved schedule version for the patient's trial")
-
-    def _impact(self, prior: list[db.PatientEvent], result: EvaluationResult) -> dict[str, object]:
-        prior_by_key = {self.patient_schedules.logical_key_for_row(row): row for row in prior}
-        proposed = {f"{item.event_code}:{item.occurrence_index}": item for item in result.events}
-        protected_ids = self.patient_schedules.protected_event_ids(prior)
-        items: list[dict[str, object]] = []
-        counts = {key: 0 for key in ("UNCHANGED", "ADDED", "MOVED", "STATUS_CHANGED", "CANCELLED", "PROTECTED")}
-        for key in sorted(prior_by_key.keys() | proposed.keys()):
-            before = prior_by_key.get(key)
-            after = proposed.get(key)
-            before_date = before.nominal_start_date if before else None
-            after_date = self.patient_schedules.result_date(after) if after else None
-            before_status = before.status if before else None
-            after_status = after.status.value if after else "CANCELLED"
-            if before is None:
-                change = "ADDED"
-            elif before.id in protected_ids:
-                change = "PROTECTED"
-                after_date = before_date
-                after_status = before_status
-            elif after is None:
-                change = "CANCELLED"
-            elif before_date != after_date:
-                change = "MOVED"
-            elif before_status != after_status:
-                change = "STATUS_CHANGED"
-            else:
-                change = "UNCHANGED"
-            counts[change] += 1
-            items.append({
-                "logical_key": key,
-                "change": change,
-                "before": {"date": before_date, "status": before_status} if before else None,
-                "after": {"date": after_date, "status": after_status} if after else None,
-                "protected_history": change == "PROTECTED",
-            })
-        return to_jsonable_python({"summary": counts, "events": items})
 
     def _proposed_condition(
         self, proposal: db.ScheduleImpactProposal,

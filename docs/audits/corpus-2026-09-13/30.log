@@ -1,0 +1,5 @@
+C:\Users\hp\AppData\Local\Programs\Python\Python311\Lib\site-packages\pypdfium2\_helpers\textpage.py:80: UserWarning: get_text_range() call with default params will be implicitly redirected to get_text_bounded()
+  warnings.warn("get_text_range() call with default params will be implicitly redirected to get_text_bounded()")
+model call 1: SOURCE_MAP: Locate ALL schedule tables, continuations, footnotes, and narrative timin
+Direct use of automatic function calling (AFC) in Models.generate_content is not recommended. Instead, we recommend to use AFC in Chat.send_message. Similarly, direct use of AFC in Models.generate_content_stream is not recommended. Instead, we recommend to use AFC in Chat.send_message_stream.
+{"pipeline": "source_first", "calls": 1, "events": [0], "issues": [["SOURCE_MAP_UNCERTAIN", "SOURCE_SCHEDULE_NOT_FOUND"]]}

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -21,7 +21,7 @@ const C = {
 
 type Trial = { id: string; title?: string; protocol_id?: string; condition?: string; phase?: string };
 type PiOption = { id: string; full_name?: string; email?: string; role?: string };
-type ScheduleVisit = { visit_template_id?: string; visit_number?: number; name: string; scheduled_date?: string; status: string; manual_review_reason?: string };
+type ScheduleVisit = { visit_template_id?: string; visit_number?: number; name: string; scheduled_date?: string; window_start?: string; window_end?: string; status: string; manual_review_reason?: string };
 
 // Accepts "5 May 2025", "2025-05-05" or "05/05/2025" → Date (or null).
 function parseDate(s: string): Date | null {
@@ -50,6 +50,24 @@ function parseDate(s: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Anchor-date fields take free text; only entries that parse to a real date
+// are sent — an unparseable value would otherwise 422 and, since the error
+// handler renders `detail` directly, crash instead of showing a message.
+const parsedAnchorDates = (raw: Record<string, string>): Record<string, string> => {
+  const result: Record<string, string> = {};
+  for (const [code, value] of Object.entries(raw)) {
+    const parsed = parseDate(value);
+    if (parsed) result[code] = toISO(parsed);
+  }
+  return result;
+};
+// The backend's validation-error detail can be a string (our own raised
+// errors) or an array of Pydantic error objects (422s) — only the former is
+// safe to render as text.
+const errorMessage = (e: any, fallback: string): string => {
+  const detail = e?.response?.data?.detail;
+  return typeof detail === "string" && detail ? detail : fallback;
+};
 const formatDateInput = (value: string) => {
   const digits = value.replace(/\D/g, "").slice(0, 8);
   if (digits.length <= 2) return digits;
@@ -112,9 +130,16 @@ export default function AddPatient() {
   // Empty for a trial with no canonical schedule, which then keeps the
   // operational arm/substudy pickers below exactly as they were.
   const [assignment, setAssignment] = useState<ProtocolAssignment>(EMPTY_ASSIGNMENT);
-  const [baseline, setBaseline] = useState("5 May 2025");
+  const [baseline, setBaseline] = useState("");
+  const [anchorDates, setAnchorDates] = useState<Record<string, string>>({});
+  const [previewVersion, setPreviewVersion] = useState<string | null>(null);
+  const previewInput = JSON.stringify([trialId, baseline, anchorDates, assignment.values, assignment.scheduleVersionId]);
+  const latestPreviewInput = useRef(previewInput);
+  latestPreviewInput.current = previewInput;
   const [scheduleGenerated, setScheduleGenerated] = useState(false);
   const [scheduleVisits, setScheduleVisits] = useState<ScheduleVisit[]>([]);
+  const [scheduleHorizon, setScheduleHorizon] = useState<string | null>(null);
+  const [continuingRepeats, setContinuingRepeats] = useState<{ event_code: string; cadence: string; termination: string }[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -257,6 +282,8 @@ export default function AddPatient() {
     && (canonicalDimensions.has("SUBSTUDY") || substudies.length <= 1 || !!substudyLabel)
     && (canonicalDimensions.has("ARM") || arms.length <= 1 || !!armLabel)
     && assignment.complete
+    && assignment.ready
+    && previewVersion === assignment.scheduleVersionId
     && !subjectDuplicate
     && !emailDuplicate
     && !saving;
@@ -316,8 +343,9 @@ export default function AddPatient() {
   };
 
   const generateSchedule = async () => {
+    const input = latestPreviewInput.current;
     const parsedBaseline = parseDate(baseline);
-    if (!parsedBaseline || !trialId) {
+    if (!parsedBaseline || !trialId || !assignment.complete) {
       setError("Select a trial and enter a valid baseline date before generating the schedule.");
       return;
     }
@@ -329,17 +357,35 @@ export default function AddPatient() {
         baseline_date: toISO(parsedBaseline),
         substudy_label: effectiveSubstudyLabel || undefined,
         arm_label: effectiveArmLabel || undefined,
+        cohort_label: assignment.labels.COHORT || undefined,
+        population_label: assignment.labels.POPULATION || undefined,
+        dimension_values: dimensionValues,
+        anchor_dates: parsedAnchorDates(anchorDates),
+        schedule_definition_id: assignment.scheduleDefinitionId,
+        schedule_version_id: assignment.scheduleVersionId,
       });
+      if (input !== latestPreviewInput.current) return;
       setScheduleVisits(response.data?.visits || []);
+      setScheduleHorizon(response.data?.horizon || null);
+      setContinuingRepeats((response.data?.repeat_summaries || []).filter((item: { continues: boolean }) => item.continues));
+      setPreviewVersion(response.data?.schedule_version_id || null);
       setScheduleGenerated(true);
     } catch (e: any) {
+      if (input !== latestPreviewInput.current) return;
       setScheduleVisits([]);
       setScheduleGenerated(false);
-      setError(e?.response?.data?.detail || "We couldn't generate this trial's schedule. Please review the protocol visit templates.");
+      setError(errorMessage(e, "We couldn't generate this trial's schedule. Please review the protocol visit templates."));
     } finally {
-      setScheduleLoading(false);
+      if (input === latestPreviewInput.current) setScheduleLoading(false);
     }
   };
+
+  useEffect(() => {
+    setScheduleGenerated(false); setScheduleVisits([]); setPreviewVersion(null); setScheduleLoading(false);
+    if (!parseDate(baseline) || !assignment.complete || !assignment.ready) return;
+    const timer = setTimeout(() => { void generateSchedule(); }, 500);
+    return () => clearTimeout(timer);
+  }, [previewInput, assignment.complete, assignment.ready]);
 
   const submit = async () => {
     // The schedule preview is deliberately generated from the selected
@@ -359,7 +405,11 @@ export default function AddPatient() {
         substudy_label: effectiveSubstudyLabel || undefined,
         arm_label: effectiveArmLabel || undefined,
         cohort_label: assignment.labels.COHORT || undefined,
+        population_label: assignment.labels.POPULATION || undefined,
         dimension_values: Object.keys(dimensionValues).length ? dimensionValues : undefined,
+        anchor_dates: parsedAnchorDates(anchorDates),
+        schedule_definition_id: assignment.scheduleDefinitionId,
+        schedule_version_id: previewVersion,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
         dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
         gender: gender || undefined,
@@ -394,7 +444,7 @@ export default function AddPatient() {
       }
     } catch (e: any) {
       if (e?.response?.status === 409) {
-        setError(e.response.data?.detail || `SUBJ-${subjectId} already exists in this trial.`);
+        setError(errorMessage(e, `SUBJ-${subjectId} already exists in this trial.`));
       } else {
         setError("Couldn't add patient. Please check the details and try again.");
       }
@@ -614,7 +664,8 @@ export default function AddPatient() {
             trialId={trialId}
             onChange={(next) => {
               setAssignment(next);
-              if (JSON.stringify(next.values) !== JSON.stringify(assignment.values)) {
+              if (next.scheduleVersionId !== assignment.scheduleVersionId) setAnchorDates({});
+              if (next.scheduleVersionId !== assignment.scheduleVersionId || JSON.stringify(next.values) !== JSON.stringify(assignment.values)) {
                 // A schedule previewed under a different assignment no longer
                 // reflects what will be sent, so it has to be regenerated.
                 setScheduleGenerated(false);
@@ -699,7 +750,7 @@ export default function AddPatient() {
           </FormSection>
 
           <FormSection icon={<CalIcon size={18} color={C.primary} />} index="04" title="Visit schedule" subtitle="Preview protocol dates before sending the invite">
-          <Field label="Baseline Date *" hint="This date anchors all protocol visits.">
+          <Field label={`${assignment.anchors?.find((anchor) => anchor.code === assignment.originCode)?.display_name || "Baseline date"} *`} hint="Enter this protocol's reference date. Visits using other anchors wait for those dates.">
             <View style={{ position: "relative" }}>
               <TextInput
                 testID="baseline"
@@ -716,6 +767,17 @@ export default function AddPatient() {
               <CalIcon size={20} color={C.primary} style={{ position: "absolute", right: 16, top: 14 }} />
             </View>
           </Field>
+
+          {assignment.anchors?.filter((anchor) => anchor.code !== assignment.originCode && !anchor.source_condition_code).map((anchor) =>
+            <Field key={anchor.code} label={anchor.display_name} hint="Enter a known date as YYYY-MM-DD. Leave blank until this event occurs.">
+              <TextInput value={anchorDates[anchor.code] || ""} placeholder="YYYY-MM-DD"
+                placeholderTextColor={C.muted} style={s.input}
+                onChangeText={(value) => setAnchorDates((current) => {
+                  const next = { ...current };
+                  if (value.trim()) next[anchor.code] = value.trim(); else delete next[anchor.code];
+                  return next;
+                })} />
+            </Field>)}
 
           <Pressable
             testID="generate-schedule"
@@ -736,13 +798,25 @@ export default function AddPatient() {
             <View style={{ gap: 8 }}>
               {visible.map((v, index) => (
                 <View key={v.visit_template_id || `${v.name}-${index}`} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-                  <Text style={{ color: C.muted, fontSize: 13, flex: 1 }} numberOfLines={1}>{v.name || `Visit ${v.visit_number || index + 1}`}</Text>
+                  <Text style={{ color: C.muted, fontSize: 13, flex: 1 }}>{v.name || `Visit ${v.visit_number || index + 1}`}</Text>
+                  <View style={{ flex: 1, alignItems: "flex-end" }}>
                   <Text style={{ color: v.status === "manual_review" ? C.destructive : C.fg, fontWeight: "600", fontSize: 13 }}>
-                    {v.scheduled_date ? formatIsoCalendarDate(v.scheduled_date) : "Needs review"}
+                    {v.scheduled_date ? formatIsoCalendarDate(v.scheduled_date) : v.manual_review_reason || v.status.replace(/_/g, " ")}
                   </Text>
+                  {!!v.scheduled_date && !!v.window_start && !!v.window_end &&
+                    <Text style={{ color: C.muted, fontSize: 12, textAlign: "right" }}>
+                      Window: {formatIsoCalendarDate(v.window_start)} to {formatIsoCalendarDate(v.window_end)}
+                    </Text>}
+                  </View>
                 </View>
               ))}
             </View>
+            {!!scheduleHorizon && <Text style={{ color: C.muted, fontSize: 12, marginTop: 12 }}>
+              Dates calculated through {formatIsoCalendarDate(scheduleHorizon)} from the selected approved schedule.
+            </Text>}
+            {continuingRepeats.map((repeat) => <Text key={repeat.event_code} style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>
+              {repeat.event_code}: {repeat.cadence}; continues beyond these dates ({repeat.termination}).
+            </Text>)}
             <Pressable testID="toggle-all-visits" onPress={() => setShowAll(a => !a)} style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 4 }}>
               <Text style={{ color: C.accent, fontWeight: "600", fontSize: 13 }}>{showAll ? "Show Less" : `View All ${scheduleVisits.length} Visits`}</Text>
               <ChevronRight size={16} color={C.accent} style={{ transform: [{ rotate: showAll ? "-90deg" : "90deg" }] }} />

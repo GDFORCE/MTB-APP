@@ -35,14 +35,16 @@ export function Button({ children, onPress, variant = 'primary', disabled, loadi
 
   if (variant === 'dawn') {
     return (
-      <Pressable testID={testID} onPress={disabled || loading ? undefined : onPress} style={[{ opacity: disabled ? 0.5 : 1 }, style]}>
+      <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled: !!disabled || !!loading, busy: !!loading }}
+        disabled={!!disabled || !!loading} onPress={disabled || loading ? undefined : onPress} style={[{ opacity: disabled ? 0.5 : 1 }, style]}>
         <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[btnStyles.base, { backgroundColor: 'transparent' }]}>{body}</LinearGradient>
       </Pressable>
     );
   }
   const bg = variant === 'primary' ? colors.primary : variant === 'secondary' ? colors.card : 'transparent';
   return (
-    <Pressable testID={testID} onPress={disabled || loading ? undefined : onPress}
+    <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled: !!disabled || !!loading, busy: !!loading }}
+      disabled={!!disabled || !!loading} onPress={disabled || loading ? undefined : onPress}
       style={({ pressed }) => [btnStyles.base, { backgroundColor: bg, borderWidth: variant === 'secondary' ? 1 : 0, borderColor: colors.primary + '55', opacity: disabled ? 0.4 : pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] }, style]}>
       {body}
     </Pressable>

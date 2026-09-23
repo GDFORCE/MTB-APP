@@ -1,0 +1,67 @@
+{
+  "passed": true,
+  "api_mode": "mocked",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d/projection"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d/approve-table"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d/projection"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d/projection"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uctsm/schedule-versions/1ddde645-67e6-456f-beb0-003c470bb25d/projection"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/protocols/lookup/UI-SMOKE"
+    },
+    {
+      "method": "POST",
+      "path": "/api/protocols/extract"
+    }
+  ],
+  "page_errors": []
+}

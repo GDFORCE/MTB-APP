@@ -87,6 +87,42 @@ def test_reminder_wording_follows_the_event_type():
     assert attendance["C1D1"] is True and attendance["DAY7"] is False
 
 
+def test_visit_mode_overrides_event_type_wording_when_they_disagree():
+    """event_type answers "what kind of occasion"; visit_mode answers "how
+    does the patient attend it" - two independently-extracted signals that
+    can legitimately disagree (a CT scan the patient travels to is IMAGING
+    *and* CLINIC) or, if extraction misclassified the occasion's category,
+    can actively conflict (a phone-conducted visit the LLM filed under
+    ASSESSMENT rather than TELEPHONE_CONTACT). Before this, only event_type
+    ever reached this module - visit_mode was extracted and persisted but
+    never selected into the projection query at all, so a correct visit_mode
+    could not rescue a wrong event_type. Now visit_mode wins whenever it
+    names a recognised mode.
+    """
+    result = project([
+        event("MISFILED", event_type="ASSESSMENT", visit_mode="TELEPHONE",
+              display_name="Week 8 safety check"),
+        event("UNSET_MODE", event_type="IMAGING", visit_mode=None,
+              display_name="CT assessment"),
+        event("UNKNOWN_MODE", event_type="SITE_VISIT", visit_mode="TELEHEALTH_APP",
+              display_name="Pilot telehealth visit"),
+    ], today=TODAY)
+    messages = {item.event_code: item.message for item in result.reminders}
+    attendance = {item.event_code: item.requires_attendance for item in result.reminders}
+
+    # visit_mode overrides event_type's wording and attendance answer.
+    assert messages["MISFILED"].startswith("Your study team is expected to contact you")
+    assert attendance["MISFILED"] is False
+    # No visit_mode at all: falls back to event_type, unchanged from before.
+    assert messages["UNSET_MODE"].startswith("Your imaging assessment is scheduled")
+    assert attendance["UNSET_MODE"] is True
+    # An unrecognised visit_mode is not silently trusted as travel-free -
+    # falls back to event_type rather than guessing about a mode nobody
+    # taught this module, consistent with AD-6's escape-member discipline.
+    assert messages["UNKNOWN_MODE"].startswith("Your study visit is scheduled")
+    assert attendance["UNKNOWN_MODE"] is True
+
+
 def test_the_vocabulary_is_the_one_thing_shared_across_the_pipeline():
     """The concrete guarantee doc s13 asks for: no second vocabulary exists.
 

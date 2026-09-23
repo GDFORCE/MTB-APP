@@ -151,3 +151,39 @@ def place_address(place_id: str, session_token: str) -> dict:
         "place_id": str(payload.get("id") or place_id),
         "address": address,
     }
+
+
+def place_address_with_location(place_id: str, session_token: str) -> dict:
+    """Same as `place_address`, plus coordinates -- kept as a SEPARATE,
+    opt-in function rather than added to `place_address`'s field mask,
+    because that function is deliberately billing-conscious (see
+    test_google_places.py's `test_details_requests_essentials_address_only`)
+    and used broadly across the app; requesting `location` is a distinct,
+    isolated decision scoped to remote-audit site geofence onboarding
+    (Phase 3), which is the only caller that actually needs coordinates.
+    """
+    if not PLACE_ID_RE.fullmatch(place_id):
+        raise ValueError("Invalid Google Place ID")
+    if not SESSION_TOKEN_RE.fullmatch(session_token):
+        raise ValueError("Invalid Places session token")
+    try:
+        response = requests.get(
+            DETAILS_URL.format(place_id=quote(place_id, safe="")),
+            params={"sessionToken": session_token},
+            headers=_headers("id,formattedAddress,location"),
+            timeout=5,
+        )
+    except requests.RequestException as exc:
+        raise PlacesUpstreamError("Google Places is temporarily unreachable") from exc
+    payload = _json_response(response)
+    address = str(payload.get("formattedAddress") or "").strip()
+    location = payload.get("location") or {}
+    lat, lon = location.get("latitude"), location.get("longitude")
+    if not address or lat is None or lon is None:
+        raise PlacesUpstreamError("Google Places did not return an address with coordinates")
+    return {
+        "place_id": str(payload.get("id") or place_id),
+        "address": address,
+        "lat": float(lat),
+        "lon": float(lon),
+    }

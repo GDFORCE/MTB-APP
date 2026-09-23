@@ -123,8 +123,10 @@ export type UniversalSchedule = {
     schedule_type: string;
     version_number: number;
     status: ScheduleStatus;
+    day_numbering?: { day_1_anchor: { code: string } } | null;
   };
-  anchors: Array<{ id: string; code: string; display_name: string; status: string }>;
+  anchors: Array<{ id: string; code: string; display_name: string; status: string;
+    source_condition_code?: string | null; derivation_rule?: Record<string, unknown> | null }>;
   events: ScheduleEvent[];
   evidence: Evidence[];
   validation_issues: ValidationIssue[];

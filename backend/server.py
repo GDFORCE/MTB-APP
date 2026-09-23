@@ -450,6 +450,10 @@ class PatientIn(BaseModel):
     language: Optional[str] = None
     avatar_initials: Optional[str] = None
     baseline_date: Optional[str] = None   # anchors visit-instance scheduling
+    population_label: Optional[str] = None
+    anchor_dates: dict[str, str] = Field(default_factory=dict)
+    schedule_definition_id: Optional[str] = None
+    schedule_version_id: Optional[str] = None
     # Which substudy (independent Schedule of Assessments) this patient is
     # enrolled under, for a trial with more than one — see
     # GET /trials/{trial_id}/substudies. None for every ordinary trial;
@@ -499,8 +503,14 @@ def patient_initials(value: Optional[str], full_name: str) -> str:
 
 class SchedulePreviewIn(BaseModel):
     baseline_date: str
+    population_label: Optional[str] = None
     arm_label: Optional[str] = ''
     substudy_label: Optional[str] = ''
+    cohort_label: Optional[str] = None
+    dimension_values: dict[str, list[str]] = Field(default_factory=dict)
+    anchor_dates: dict[str, date] = Field(default_factory=dict)
+    schedule_definition_id: Optional[uuid.UUID] = None
+    schedule_version_id: Optional[uuid.UUID] = None
 
 class MessageIn(BaseModel):
     conversation_id: str
@@ -806,8 +816,14 @@ async def register(body: RegisterIn):
         body.organization, org_type_for_role(body.role), actor=doc)
     if organization:
         doc['org_admin'] = bool(created and body.role != 'patient')
+        # Remote Audit module (Phase 1): a real organization_id, resolved once
+        # here rather than re-derived by name-matching on every request (the
+        # existing pattern current_uctsm_user() already does ad hoc). Additive
+        # only — nothing that reads `organization` (the name string) changes.
+        doc['organization_id'] = organization['id']
         await db.users.update_one(
-            {'id': uid}, {'$set': {'org_admin': doc['org_admin']}})
+            {'id': uid},
+            {'$set': {'org_admin': doc['org_admin'], 'organization_id': doc['organization_id']}})
     access = make_token(uid, body.role, 'access')
     refresh, _ = await issue_refresh_token(uid, body.role)
     return {'access_token': access, 'refresh_token': refresh, 'user': serialize({**doc})}
@@ -2213,6 +2229,150 @@ async def extract_protocol_details(file: UploadFile = File(...),
     return {'details': details}
 
 
+def _native_add_trial_enabled() -> bool:
+    """Doc-mistake fix / Phase 2 cutover: whether Add Trial uses the native
+    canonical-extraction pipeline (app/extraction/) instead of the legacy
+    protocol_extraction.py one. Default off - flip with one env var, no code
+    change, if a real protocol surfaces a quality gap the scripted extraction
+    tests can't catch. Both pipelines stay in the tree either way; nothing is
+    deleted by this flag.
+    """
+    return os.getenv('UCTSM_NATIVE_ADD_TRIAL', '').strip().lower() in ('1', 'true', 'yes')
+
+
+def _extraction_table_preview(result) -> dict:
+    from app.domain.schedule.projection import project_schedule
+    if result.schedule is None:
+        return {'schedule': None, 'projections': [],
+                'issues': [item.model_dump(mode='json') for item in result.issues]}
+    schedule = result.schedule.model_copy(deep=True)
+    schedule.validation_issues = result.issues
+    return {'schedule': schedule.model_dump(mode='json'),
+            'projections': [item.model_dump(mode='json') for item in project_schedule(schedule)],
+            'issues': [item.model_dump(mode='json') for item in result.issues]}
+
+
+async def _extract_protocol_native(data: bytes, filename: str, user: dict, *, is_text=False) -> dict:
+    """Add Trial's native-pipeline path, gated by UCTSM_NATIVE_ADD_TRIAL.
+
+    Trial-level details and schedules use the same configured native client
+    and source document. This path does not require the legacy AI provider.
+
+    The uploaded PDF is saved to real storage here (the legacy path never
+    retains it at all - see canonical_bridge.py's own docstring), so the
+    protocol version built at consume-time points at a genuinely resolvable,
+    auditable document instead of a synthetic, never-opened URI.
+    """
+    from app.extraction.llm_client import ExtractionModelError, ExtractionNotConfigured
+    from app.extraction.runner import (
+        build_client, document_text, pages_from_pdf, pages_from_text, run_extraction_for_all_options, source_first_enabled,
+    )
+
+    extracted_details = pe.ExtractedTrialDetails()
+
+    document_hash = hashlib.sha256(data).hexdigest()
+    storage_key = f'protocol-uploads/{uuid.uuid4()}.{"txt" if is_text else "pdf"}'
+    await file_storage.get_storage().save(storage_key, data, 'text/plain' if is_text else 'application/pdf')
+
+    def _run_native_pipeline():
+        nonlocal extracted_details
+        pages = pages_from_text(data.decode('utf-8-sig')) if is_text else pages_from_pdf(data)
+        needs_image_fallback = any(page.text_status != 'text' for page in pages)
+        client = build_client(
+            document_text=document_text(pages),
+            pdf_bytes=data if (needs_image_fallback or source_first_enabled()) and not is_text else None,
+        )
+        from app.extraction.llm_client import parse_json_object
+        extracted_details = pe.ExtractedTrialDetails.model_validate(parse_json_object(
+            client.complete(
+                system='Extract trial metadata from the supplied protocol. Never invent missing values. Return JSON only.',
+                prompt='Return trial metadata matching this JSON schema, using empty strings or null for unstated values: '
+                + json.dumps(pe.ExtractedTrialDetails.model_json_schema()),
+            )))
+        return run_extraction_for_all_options(
+            client, pages, document_hash=document_hash,
+            schedule_name=filename or 'Schedule of Assessments',
+        )
+
+    try:
+        # LLMClient.complete is a blocking call, unlike the legacy pipeline's
+        # AsyncAnthropic client - offloaded so a multi-minute, possibly
+        # multi-schedule extraction does not stall this process's event loop.
+        results = await run_in_threadpool(_run_native_pipeline)
+    except ExtractionNotConfigured as exc:
+        raise HTTPException(503, f'Protocol extraction is not configured: {exc}') from exc
+    except (ExtractionModelError, ValueError) as exc:
+        raise HTTPException(502, f'Could not analyse protocol: {exc}') from exc
+
+    if not results:
+        raise HTTPException(502, 'Could not analyse protocol: no schedule could be extracted')
+
+    details = extracted_details.model_dump()
+    details['status'] = (
+        details.get('status') if details.get('status') in
+        ('active', 'completed', 'terminated') else 'active')
+    created_at = now()
+    await db.protocol_extractions.delete_many({'expires_at': {'$lte': created_at}})
+    extractions = []
+    total_visits = 0
+    for option, result in results:
+        extraction_id = str(uuid.uuid4())
+        schedule_dict = result.schedule.model_dump(mode='json') if result.schedule else None
+        visit_count = len(schedule_dict.get('events', [])) if schedule_dict else 0
+        await db.protocol_extractions.insert_one({
+            'id': extraction_id,
+            'user_id': user['id'],
+            'file_name': filename or 'protocol.pdf',
+            'details': details,
+            'native_schedule': schedule_dict,
+            'native_issues': [item.model_dump(mode='json') for item in result.issues],
+            'pdf_storage_key': storage_key,
+            'pdf_document_hash': document_hash,
+            'option_id': option['id'] if option else '',
+            'option_label': option['label'] if option else '',
+            'option_description': (option.get('description') or '') if option else '',
+            'created_at': created_at,
+            'expires_at': created_at + timedelta(hours=2),
+        })
+        total_visits += visit_count
+        extractions.append({
+            'extraction_id': extraction_id,
+            'option_id': option['id'] if option else '',
+            'option_label': option['label'] if option else '',
+            'option_description': (option.get('description') or '') if option else '',
+            'schedule_visit_count': visit_count,
+            'preview': _extraction_table_preview(result),
+            'verification': {
+                'status': 'needs_review' if result.issues else 'ok',
+                'confidence': None,
+                'refinement_count': 0,
+                'issues': [item.message for item in result.issues],
+                'accuracy': None,
+            },
+        })
+    await write_audit(
+        user, 'trial.extract_protocol',
+        f'Extracted trial details and {total_visits} schedule visit(s) across '
+        f'{len(extractions)} schedule(s) from {filename or "protocol PDF"} '
+        '(native pipeline)')
+
+    if len(extractions) == 1 and results[0][0] is None:
+        only = extractions[0]
+        return {
+            'details': details,
+            'extraction_id': only['extraction_id'],
+            'schedule_visit_count': only['schedule_visit_count'],
+            'needs_schedule_selection': False,
+            'verification': only['verification'],
+            'preview': only['preview'],
+        }
+    return {
+        'details': details,
+        'extractions': extractions,
+        'needs_schedule_selection': False,
+    }
+
+
 @api.post('/protocols/extract',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_protocol_alias(file: UploadFile = File(...),
@@ -2232,13 +2392,24 @@ async def extract_protocol_alias(file: UploadFile = File(...),
     """
     content_type = (file.content_type or '').lower()
     filename = (file.filename or '').lower()
-    if content_type != 'application/pdf' and not filename.endswith('.pdf'):
-        raise HTTPException(400, 'Upload a PDF protocol document')
+    is_text = content_type == 'text/plain' or filename.endswith('.txt')
+    if content_type != 'application/pdf' and not filename.endswith('.pdf') and not is_text:
+        raise HTTPException(400, 'Upload a PDF or UTF-8 text protocol document')
     data = await file.read(pe.MAX_PDF_BYTES + 1)
     if not data:
         raise HTTPException(400, 'The uploaded PDF is empty')
     if len(data) > pe.MAX_PDF_BYTES:
         raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
+    if is_text:
+        try:
+            if not data.decode('utf-8-sig').strip():
+                raise ValueError('The uploaded text is empty')
+        except UnicodeDecodeError as exc:
+            raise HTTPException(400, 'Text protocols must use UTF-8 encoding') from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    if _native_add_trial_enabled() or is_text:
+        return await _extract_protocol_native(data, file.filename or 'protocol.pdf', user, is_text=is_text)
     try:
         extracted_details, results = await pe.extract_protocol_bundle_all(data)
     except pe.ExtractionNotConfigured as exc:
@@ -2259,6 +2430,17 @@ async def extract_protocol_alias(file: UploadFile = File(...),
     total_visits = 0
     for option, schedule in results:
         extraction_id = str(uuid.uuid4())
+        from app.services.canonical_import import extraction_result_from_plan
+        from app.extraction.graph import ExtractionResult
+        from app.domain.schedule.models import ValidationIssue
+        preview_result = extraction_result_from_plan(
+            schedule.canonical_plan.model_dump(mode='json'),
+            name=option.label if option else 'Primary',
+            evidence_facts=[item.model_dump(mode='json') for item in schedule.evidence_facts],
+        ) if schedule.canonical_plan else ExtractionResult(
+            schedule=None, issues=[ValidationIssue(
+                issue_code='EMPTY_SCHEDULE', message='No canonical schedule was extracted. Retry the upload.',
+                severity='ERROR', blocking=True)], extraction_trace=[])
         await db.protocol_extractions.insert_one({
             'id': extraction_id,
             'user_id': user['id'],
@@ -2278,6 +2460,7 @@ async def extract_protocol_alias(file: UploadFile = File(...),
             'option_label': option.label if option else '',
             'option_description': option.description if option else '',
             'schedule_visit_count': len(schedule.visits),
+            'preview': _extraction_table_preview(preview_result),
             'verification': {
                 'status': schedule.verification_status,
                 'confidence': schedule.verification_confidence,
@@ -2301,6 +2484,7 @@ async def extract_protocol_alias(file: UploadFile = File(...),
             'schedule_visit_count': only['schedule_visit_count'],
             'needs_schedule_selection': False,
             'verification': only['verification'],
+            'preview': only['preview'],
         }
     return {
         'details': details,
@@ -2878,7 +3062,7 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
         {'trial_id': trial_id},
         {'_id': 0, 'id': 1, 'subject_id': 1, 'avatar_initials': 1,
          'pi_id': 1, 'crc_id': 1, 'created_by': 1, 'status': 1,
-         'enrolled_date': 1, 'created_at': 1},
+         'enrolled_date': 1, 'created_at': 1, 'uctsm_patient_id': 1},
     ).to_list(5000)
     staff_ids = {
         staff_id for patient in patients
@@ -3014,6 +3198,11 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
                 'window_start': iso(current_visit.get('window_start')),
                 'window_end': iso(current_visit.get('window_end')),
             } if current_visit else None,
+            # Doc 9 - the canonical patient this subject is linked to, if any,
+            # so a caller can open the engine's schedule for them (same field
+            # visit-detail.tsx already reads for its own canonical-schedule
+            # link) without a second lookup.
+            'uctsm_patient_id': patient.get('uctsm_patient_id') or None,
             'deidentified': True,
         })
 
@@ -3814,6 +4003,49 @@ async def _persist_schedule_definition(
     return definition_id
 
 
+async def _persist_native_schedule_definition(
+    trial_id: str,
+    draft: dict,
+    user: dict,
+    *,
+    source_extraction_id: str,
+) -> str:
+    """Native-pipeline sibling of `_persist_schedule_definition`: the cached
+    draft already carries a full `native_schedule` (a UniversalSchedule, not
+    a legacy ExtractedSchedule to translate), so this just copies it onto the
+    immutable Mongo record `build_canonical_schedule` will later read -
+    no second AI call, same "immutable AI draft" discipline as the legacy path.
+    """
+    existing = await db.schedule_definitions.find_one({
+        'trial_id': trial_id,
+        'source_extraction_id': source_extraction_id,
+    }, {'_id': 0, 'id': 1})
+    if existing:
+        return existing['id']
+    definition_id = str(uuid.uuid4())
+    document = {
+        'id': definition_id,
+        'trial_id': trial_id,
+        'schema_version': 'uctsm.v1',
+        'status': 'draft_review',
+        'native_schedule': draft.get('native_schedule'),
+        'native_issues': draft.get('native_issues') or [],
+        'pdf_storage_key': draft.get('pdf_storage_key'),
+        'pdf_document_hash': draft.get('pdf_document_hash'),
+        'file_name': draft.get('file_name') or 'protocol.pdf',
+        'option_label': draft.get('option_label') or '',
+        'option_description': draft.get('option_description') or '',
+        'source_extraction_id': source_extraction_id,
+        'created_by': user['id'],
+        'created_at': now(),
+    }
+    await db.schedule_definitions.insert_one(document)
+    await db.trials.update_one(
+        {'id': trial_id},
+        {'$set': {'current_schedule_definition_id': definition_id}})
+    return definition_id
+
+
 def _schedule_extraction_payload(
     schedule: pe.ExtractedSchedule,
     *,
@@ -4002,6 +4234,28 @@ async def consume_protocol_extraction(
     if linked_trial and linked_trial != trial_id:
         raise HTTPException(409, 'This protocol extraction belongs to another trial')
 
+    if draft.get('native_schedule'):
+        # Cut Add-Trial over (Phase 2): a native draft has no legacy
+        # ExtractedSchedule to parse - build_canonical_schedule reads the
+        # persisted native_schedule directly, with no second AI call here.
+        await db.protocol_extractions.update_one(
+            {'id': extraction_id},
+            {'$set': {'trial_id': trial_id, 'consumed_at': now()}})
+        definition_id = await _persist_native_schedule_definition(
+            trial_id, draft, user, source_extraction_id=extraction_id)
+        await write_audit(
+            user, 'trial.consume_protocol_extraction',
+            f'Reused prepared protocol schedule for '
+            f'{trial.get("protocol_id") or trial_id} (native pipeline)',
+            trial_id=trial_id, target_id=trial_id)
+        return {
+            'schema_version': 'uctsm.v1',
+            'schedule_definition_id': definition_id,
+            'option_id': draft.get('option_id') or '',
+            'option_label': draft.get('option_label') or '',
+            'option_description': draft.get('option_description') or '',
+        }
+
     try:
         schedule = pe.ExtractedSchedule.model_validate(draft.get('schedule') or {})
     except ValueError as exc:
@@ -4041,44 +4295,15 @@ async def get_schedule_definition(trial_id: str, user=Depends(current_user)):
         raise HTTPException(404, 'Canonical schedule definition was not found')
     return serialize(definition)
 
-# ── Visit schedule ──────────────────────────────────────────────────────────
-@api.post('/visits')
-async def create_visit(body: VisitIn, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
-    trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
-    if not trial:
-        raise HTTPException(404, 'Trial not found')
-    if not await _can_access_trial(user, trial):
-        raise HTTPException(403, 'You do not have access to this trial')
-    vid = str(uuid.uuid4())
-    values = body.model_dump()
-    if values.get('arm') and not values.get('arm_label'):
-        values['arm_label'] = values['arm']
-    values, timing_warning = _normalized_template_timing(values)
-    explicitly_acknowledged = (
-        values.get('review_status') == 'ok'
-        and values.get('extraction_warning') is False
-    )
-    if timing_warning or (
-        not _has_calculable_template_time(values) and not explicitly_acknowledged
-    ):
-        values['extraction_warning'] = True
-        values['review_status'] = 'pending'
-        existing = str(values.get('comments') or '').strip()
-        reason = timing_warning or 'Visit has no calculable day offset.'
-        values['comments'] = ' '.join(part for part in (existing, reason) if part)
-    doc = {'id': vid, **values, 'created_at': now()}
-    await db.visits.insert_one(doc)
-    # Finding 2: a visit ADDED to an in-flight schedule must appear for patients
-    # already enrolled (materialize_visit_instances is a per-patient no-op once
-    # they have instances, so it would never reach them otherwise).
-    await _materialize_new_template_for_enrolled(doc)
-    # A newly-added target may resolve existing dependents; a newly-added
-    # relative visit may itself become dated. The recomputation re-materializes
-    # the already-created instance in place, so no duplicate is created.
-    await _recompute_relative_templates(body.trial_id)
-    current = await db.visits.find_one({'id': vid}, {'_id': 0})
-    return serialize(current or doc)
-
+# Doc 9 / Phase 4: the sponsor's manual visit-TEMPLATE editor
+# (`sponsor/visit-schedule.tsx`) and the `POST/PUT/DELETE /visits`,
+# `GET /trials/{id}/visits` endpoints that powered it are retired - schedules
+# are built only from protocol extraction now (see `add-trial.tsx`), reviewed
+# and corrected through the canonical engine (`ProtocolScheduleScreen`,
+# `ProtocolReviewScreen`), never hand-typed from scratch. `db.visits` itself,
+# and every OTHER endpoint that reads it (`/schedule-preview`, `/substudies`,
+# `/arms`, `/visits/mine*`), are untouched - each has its own, still-live
+# caller unrelated to the deleted editor.
 
 @api.post('/trials/{trial_id}/schedule-preview')
 async def preview_trial_schedule(trial_id: str, body: SchedulePreviewIn,
@@ -4099,6 +4324,15 @@ async def preview_trial_schedule(trial_id: str, body: SchedulePreviewIn,
         raise HTTPException(400, 'baseline_date must be an ISO 8601 date or datetime')
     if baseline.tzinfo is None:
         baseline = baseline.replace(tzinfo=timezone.utc)
+    if trial.get('uctsm_trial_id'):
+        organization = await find_organization_by_name(user.get('organization'))
+        if not organization or not organization.get('id'):
+            raise HTTPException(403, 'No organization context is available')
+        try:
+            return await run_in_threadpool(
+                _preview_canonical_enrolment_sync, trial, body, organization['id'], baseline.date())
+        except (KeyError, RuntimeError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
     templates = await db.visits.find({'trial_id': trial_id}, {'_id': 0}) \
                                .sort('visit_number', 1).to_list(500)
     if not templates:
@@ -4124,19 +4358,6 @@ async def _require_schedule_owner(user: dict, trial: dict):
         owns = await _pi_owns_trial(user, trial)
     if not owns:
         raise HTTPException(403, 'You do not have access to this trial')
-
-
-@api.get('/trials/{trial_id}/visits')
-async def list_trial_visits(trial_id: str,
-                            user=Depends(require_roles('sponsor', 'cro', 'pi'))):
-    """The trial's visit TEMPLATES, sorted by visit_number — the schedule the
-    edit screen loads on entry. Trial-ownership scoped (403 for a foreign trial)."""
-    trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
-    if not trial:
-        raise HTTPException(404, 'Trial not found')
-    await _require_schedule_owner(user, trial)
-    return await db.visits.find({'trial_id': trial_id}, {'_id': 0}) \
-                          .sort('visit_number', 1).to_list(500)
 
 
 @api.get('/trials/{trial_id}/substudies',
@@ -4170,84 +4391,6 @@ async def list_trial_arms(trial_id: str, user=Depends(current_user)):
     labels = await db.visits.distinct('arm_label', {'trial_id': trial_id})
     return sorted(label for label in labels if label)
 
-
-@api.put('/visits/{visit_id}')
-async def update_visit(visit_id: str, body: VisitUpdate,
-                       user=Depends(require_roles('sponsor', 'cro', 'pi'))):
-    """Update a visit TEMPLATE (name/day_offset/window_days/activities/checklist)
-    and re-materialize the trial's future-pending instances. Trial-ownership
-    scoped (403 for a foreign trial)."""
-    tpl = await db.visits.find_one({'id': visit_id}, {'_id': 0})
-    if not tpl:
-        raise HTTPException(404, 'Visit template not found')
-    trial = await db.trials.find_one({'id': tpl.get('trial_id')}, {'_id': 0})
-    if not trial:
-        raise HTTPException(404, 'Trial not found')
-    await _require_schedule_owner(user, trial)
-    # ``exclude_unset`` distinguishes "not edited" from an explicit null. That
-    # lets a reviewer safely mark a visit undated instead of retaining a stale
-    # offset from an earlier extraction.
-    fields = body.model_dump(exclude_unset=True)
-    if fields.get('arm') and not fields.get('arm_label'):
-        fields['arm_label'] = fields['arm']
-    candidate, timing_warning = _normalized_template_timing({**tpl, **fields})
-    if candidate.get('day_offset') != tpl.get('day_offset') or 'day_offset' in fields:
-        fields['day_offset'] = candidate.get('day_offset')
-    if candidate.get('day_end') != tpl.get('day_end') or 'day_end' in fields:
-        fields['day_end'] = candidate.get('day_end')
-    explicitly_acknowledged = (
-        fields.get('review_status') == 'ok'
-        and fields.get('extraction_warning') is False
-    )
-    if timing_warning or (
-        not _has_calculable_template_time(candidate) and not explicitly_acknowledged
-    ):
-        fields['extraction_warning'] = True
-        fields['review_status'] = 'pending'
-        existing = str(candidate.get('comments') or '').strip()
-        reason = timing_warning or 'Visit has no calculable day offset.'
-        fields['comments'] = ' '.join(part for part in (existing, reason) if part)
-    if not fields:
-        raise HTTPException(400, 'Nothing to update')
-    await db.visits.update_one({'id': visit_id}, {'$set': fields})
-    fresh = await db.visits.find_one({'id': visit_id}, {'_id': 0})
-    remat = await _rematerialize_template_change(fresh)
-    relative_updates = await _recompute_relative_templates(fresh['trial_id'])
-    current = await db.visits.find_one({'id': visit_id}, {'_id': 0}) or fresh
-    await write_audit(user, 'visit.update',
-                      f"Updated visit template {fresh.get('name', '')} "
-                      f"({remat} future instance(s) re-materialized; "
-                      f"{relative_updates} relative template(s) recalculated)",
-                      target_id=visit_id, trial_id=tpl.get('trial_id'),
-                      changes={k: iso(v) for k, v in fields.items()})
-    return serialize(current)
-
-
-@api.delete('/visits/{visit_id}')
-async def delete_visit(visit_id: str,
-                       user=Depends(require_roles('sponsor', 'cro', 'pi'))):
-    """Delete a visit TEMPLATE and remove its future-pending instances (completed
-    / missed / past ones are kept as history). Trial-ownership scoped (403)."""
-    tpl = await db.visits.find_one({'id': visit_id}, {'_id': 0})
-    if not tpl:
-        raise HTTPException(404, 'Visit template not found')
-    trial = await db.trials.find_one({'id': tpl.get('trial_id')}, {'_id': 0})
-    if not trial:
-        raise HTTPException(404, 'Trial not found')
-    await _require_schedule_owner(user, trial)
-    removed = await _rematerialize_template_delete(tpl)
-    await db.visits.delete_one({'id': visit_id})
-    relative_updates = await _recompute_relative_templates(tpl['trial_id'])
-    await write_audit(user, 'visit.delete',
-                      f"Deleted visit template {tpl.get('name', '')} "
-                      f"({removed} future instance(s) removed; "
-                      f"{relative_updates} relative template(s) recalculated)",
-                      target_id=visit_id, trial_id=tpl.get('trial_id'))
-    return {
-        'deleted': True,
-        'instances_removed': removed,
-        'relative_templates_recalculated': relative_updates,
-    }
 
 async def _patient_care_context(patient) -> dict:
     """Site + PI contact for a patient, joined from their assigned PI user.
@@ -4409,11 +4552,15 @@ async def _apply_canonical_dates(patient: dict, rows: list) -> list:
                 ))
                 if linked is None or linked.current_schedule_version_id is None:
                     return None
-                _evaluation, events = PatientScheduleService(session).evaluate(
-                    linked.id, organization_id=linked.organization_id,
-                    horizon=date.today() + timedelta(days=730),
+                # AD-10: a GET must never move a patient's dates. This used to
+                # call the persisting evaluate() and commit it on every read -
+                # an unattributed, unaudited schedule write as a side effect of
+                # someone viewing their own visits. current_events() only reads
+                # whatever the last legitimate, gated evaluation (enrolment or
+                # a confirmed impact proposal) already materialized.
+                events = PatientScheduleService(session).current_events(
+                    linked.id, linked.current_schedule_version_id,
                 )
-                session.commit()
                 return ParityService(session)._engine_rows(linked, events)
             finally:
                 session.close()
@@ -5608,28 +5755,164 @@ async def _sync_reminders_for_one_patient(patient_doc: dict) -> None:
         )
 
 
+#: AD-12: bounds one worker pass. Kept as a name (not a bare literal) so the
+#: truncation check below and the query below it can never silently drift
+#: apart.
+REMINDER_WORKER_PATIENT_CAP = 5000
+
+
 async def sync_all_patient_reminders() -> None:
     """One pass over every canonically-linked patient. Never raises past a
     single patient's own failure - one bad record must not stop everyone
-    else's reminders from being recalculated."""
+    else's reminders from being recalculated.
+
+    AD-12: a per-patient failure used to be a log line only - invisible to
+    the CRC/PI responsible for that patient's delivery. It is now also
+    persisted onto the patient's own document (`uctsm_reminder_sync`) so
+    `GET /api/patients/reminder-sync-status` can surface it, and clears
+    itself the next time that patient's sync succeeds.
+    """
     patients = await db.patients.find(
         {'uctsm_patient_id': {'$exists': True, '$ne': None}}, {'_id': 0},
-    ).to_list(5000)
+    ).to_list(REMINDER_WORKER_PATIENT_CAP)
+    truncated = len(patients) >= REMINDER_WORKER_PATIENT_CAP
     for patient_doc in patients:
         try:
             await _sync_reminders_for_one_patient(patient_doc)
-        except Exception:
+        except Exception as error:
             logging.exception(
                 'Reminder sync failed for patient %s', patient_doc.get('id'))
+            await db.patients.update_one(
+                {'id': patient_doc['id']},
+                {'$set': {'uctsm_reminder_sync': {
+                    'status': 'FAILED', 'last_error': str(error)[:500],
+                    'last_attempt_at': now(),
+                }}},
+            )
+        else:
+            await db.patients.update_one(
+                {'id': patient_doc['id']},
+                {'$set': {'uctsm_reminder_sync': {
+                    'status': 'OK', 'last_attempt_at': now(),
+                }}},
+            )
+    await db.worker_status.update_one(
+        {'id': 'reminder_worker'},
+        {'$set': {
+            'last_run_at': now(), 'patients_processed': len(patients),
+            'truncated': truncated,
+        }},
+        upsert=True,
+    )
+    if truncated:
+        logging.getLogger(__name__).warning(
+            'Reminder worker pass truncated at %d patients - some patients '
+            'were not processed this pass', REMINDER_WORKER_PATIENT_CAP)
+
+
+#: AD-10 Step 1a's disclosed follow-up: reads no longer silently extend a
+#: patient's materialized horizon (see _apply_canonical_dates), so this is
+#: the deliberate, rate-limited, audited replacement. A patient whose
+#: furthest materialized date is within this many days of today gets
+#: re-evaluated out to HORIZON_REFRESH_EXTEND_DAYS.
+HORIZON_REFRESH_THRESHOLD_DAYS = int(os.getenv('UCTSM_HORIZON_REFRESH_THRESHOLD_DAYS', '60'))
+HORIZON_REFRESH_EXTEND_DAYS = int(os.getenv('UCTSM_HORIZON_REFRESH_EXTEND_DAYS', '730'))
+
+
+def _extend_stale_horizons_sync(threshold_days: int, extend_days: int) -> list[dict]:
+    """Runs on the threadpool: one SQL session, one pass over every patient
+    pinned to an approved schedule. A patient with no dated events yet
+    (everything still WAITING_FOR_ANCHOR/WAITING_FOR_CONDITION) is skipped -
+    extending the horizon cannot resolve a blocked input.
+    """
+    from datetime import timedelta as _timedelta
+    from sqlalchemy import select as _select
+    from app.db import models as _db
+    from app.db.base import get_session
+    from app.services.schedule_service import PatientScheduleService
+
+    results: list[dict] = []
+    today = now().date()
+    threshold = today + _timedelta(days=threshold_days)
+    for session in get_session():
+        try:
+            patients = session.scalars(_select(_db.Patient).where(
+                _db.Patient.current_schedule_version_id.is_not(None),
+            )).all()
+            service = PatientScheduleService(session)
+            for patient in patients:
+                try:
+                    events = service.current_events(
+                        patient.id, patient.current_schedule_version_id)
+                    dated = [
+                        item.latest_date or item.nominal_start_date for item in events
+                        if item.latest_date or item.nominal_start_date
+                    ]
+                    if not dated or max(dated) >= threshold:
+                        continue
+                    service.evaluate(
+                        patient.id, organization_id=patient.organization_id,
+                        horizon=today + _timedelta(days=extend_days),
+                        schedule_version_id=patient.current_schedule_version_id,
+                        idempotency_key=f"horizon-refresh:{patient.id}:{today.isoformat()}",
+                        actor_id=None, reason="Scheduled rolling-horizon extension",
+                    )
+                    session.commit()
+                    results.append({
+                        'external_patient_id': patient.external_patient_id,
+                        'status': 'EXTENDED',
+                    })
+                except Exception as error:  # noqa: BLE001 - one patient must not sink the pass
+                    session.rollback()
+                    results.append({
+                        'external_patient_id': patient.external_patient_id,
+                        'status': 'FAILED', 'error': str(error)[:500],
+                    })
+        finally:
+            session.close()
+        break
+    return results
+
+
+async def extend_stale_horizons() -> None:
+    """AD-12's same discipline applied to this job: a per-patient failure is
+    patient-visible delivery state (mirrored onto the linked patient's own
+    Mongo document as `uctsm_horizon_refresh`), not only a log line. A
+    canonical-only patient with no `external_patient_id` has no Mongo
+    document to record it on and is logged only - there is nowhere else for
+    that visibility to live today.
+    """
+    results = await run_in_threadpool(
+        _extend_stale_horizons_sync, HORIZON_REFRESH_THRESHOLD_DAYS, HORIZON_REFRESH_EXTEND_DAYS)
+    for item in results:
+        external_id = item.get('external_patient_id')
+        if item['status'] == 'FAILED':
+            logging.getLogger(__name__).warning(
+                'Horizon refresh failed for patient %s: %s', external_id, item.get('error'))
+        if not external_id:
+            continue
+        state = (
+            {'status': 'FAILED', 'last_error': item.get('error'), 'last_attempt_at': now()}
+            if item['status'] == 'FAILED'
+            else {'status': 'OK', 'last_attempt_at': now()}
+        )
+        await db.patients.update_one(
+            {'id': external_id}, {'$set': {'uctsm_horizon_refresh': state}})
 
 
 async def reminder_worker_loop():
-    """Long-running startup task: keep in-app reminders current (doc s15)."""
+    """Long-running startup task: keep in-app reminders current (doc s15),
+    and keep every patient's materialized horizon from running dry (AD-10's
+    Step 1a follow-up) - one loop, two periodic jobs, same cadence."""
     while True:
         try:
             await sync_all_patient_reminders()
         except Exception:
             logging.exception('Reminder worker pass failed')
+        try:
+            await extend_stale_horizons()
+        except Exception:
+            logging.exception('Horizon refresh pass failed')
         await asyncio.sleep(REMINDER_WORKER_INTERVAL_SEC)
 
 
@@ -5651,6 +5934,37 @@ def _link_operational_trial_sync(
         return result
 
 
+def _preview_canonical_enrolment_sync(trial, body, organization_id, baseline):
+    from app.services.enrolment_preview import preview_enrolment
+    with _operational_factory()() as session:
+        return preview_enrolment(
+            session, organization_id=_canonical_uuid(organization_id, 'organization_id'),
+            trial_id=_canonical_uuid(trial.get('uctsm_trial_id'), 'uctsm_trial_id'),
+            definition_id=_canonical_uuid(
+                body.schedule_definition_id or trial.get('uctsm_schedule_definition_id'),
+                'schedule_definition_id'),
+            expected_version_id=(_canonical_uuid(body.schedule_version_id, 'schedule_version_id')
+                                 if body.schedule_version_id else None),
+            baseline=baseline, horizon=max(baseline, now().date()) + timedelta(days=366),
+            anchor_dates={key: _parse_baseline_date(value) for key, value in body.anchor_dates.items()},
+            arm_label=body.arm_label,
+            cohort_label=body.cohort_label, population_label=body.population_label,
+            dimension_values=body.dimension_values,
+        )
+
+
+async def _validate_enrolment_schedule(trial, body, user):
+    organization = await find_organization_by_name(user.get('organization'))
+    if not organization or not organization.get('id'):
+        raise HTTPException(403, 'No organization context is available')
+    try:
+        await run_in_threadpool(
+            _preview_canonical_enrolment_sync, trial, body, organization['id'],
+            _parse_baseline_date(body.baseline_date))
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise HTTPException(409, f'Schedule is not ready for enrollment: {exc}') from exc
+
+
 def _enroll_operational_patient_sync(
     *, organization_id: str, actor_id: str, trial: dict, patient: dict,
     baseline: date, horizon: date,
@@ -5662,7 +5976,7 @@ def _enroll_operational_patient_sync(
             canonical_trial_id=_canonical_uuid(
                 trial.get('uctsm_trial_id'), 'uctsm_trial_id'),
             schedule_definition_id=_canonical_uuid(
-                trial.get('uctsm_schedule_definition_id'),
+                patient.get('schedule_definition_id') or trial.get('uctsm_schedule_definition_id'),
                 'uctsm_schedule_definition_id',
             ),
             external_patient_id=patient['id'],
@@ -5671,7 +5985,12 @@ def _enroll_operational_patient_sync(
             horizon=horizon,
             arm_label=patient.get('arm_label'),
             cohort_label=patient.get('cohort_label'),
+            population_label=patient.get('population_label'),
             dimension_values=patient.get('dimension_values') or {},
+            anchor_dates={key: _parse_baseline_date(value) for key, value in
+                          (patient.get('anchor_dates') or {}).items()},
+            expected_version_id=(_canonical_uuid(patient['schedule_version_id'], 'schedule_version_id')
+                                 if patient.get('schedule_version_id') else None),
         )
         session.commit()
         return enrollment
@@ -5878,18 +6197,43 @@ async def link_trial_to_uctsm(
 def _import_canonical_schedules_sync(
     organization_id: str, actor_id: str, trial: dict, definitions: list[dict],
 ):
-    from app.services.canonical_bridge import import_schedule_definitions
-
     with _operational_factory()() as session:
-        canonical_trial, imported = import_schedule_definitions(
-            session,
-            organization_id=_canonical_uuid(organization_id, 'organization_id'),
-            actor_id=_canonical_uuid(actor_id, 'actor_id'),
-            external_trial_id=trial['id'],
-            protocol_number=(trial.get('protocol_id') or trial['id']),
-            study_title=trial.get('title'),
-            definitions=definitions,
-        )
+        if any(item.get('native_schedule') for item in definitions):
+            # Cut Add-Trial over (Phase 2): every definition from one Add
+            # Trial submission comes from the same upload, so if any of them
+            # is native the whole batch is - branch once, not per-definition.
+            from app.services.native_import import import_native_schedules
+
+            native = next(item for item in reversed(definitions) if item.get('native_schedule'))
+            # One uploaded document owns this draft batch. Older extraction
+            # definitions must not attach an amendment to the first PDF's hash.
+            definitions = [item for item in definitions
+                           if item.get('native_schedule') and
+                           item.get('pdf_storage_key') == native.get('pdf_storage_key')]
+            canonical_trial, imported = import_native_schedules(
+                session,
+                organization_id=_canonical_uuid(organization_id, 'organization_id'),
+                actor_id=_canonical_uuid(actor_id, 'actor_id'),
+                external_trial_id=trial['id'],
+                protocol_number=(trial.get('protocol_id') or trial['id']),
+                study_title=trial.get('title'),
+                document_uri=f"private://{native.get('pdf_storage_key')}",
+                document_name=native.get('file_name') or 'protocol.pdf',
+                document_hash=native.get('pdf_document_hash') or '',
+                definitions=definitions,
+            )
+        else:
+            from app.services.canonical_bridge import import_schedule_definitions
+
+            canonical_trial, imported = import_schedule_definitions(
+                session,
+                organization_id=_canonical_uuid(organization_id, 'organization_id'),
+                actor_id=_canonical_uuid(actor_id, 'actor_id'),
+                external_trial_id=trial['id'],
+                protocol_number=(trial.get('protocol_id') or trial['id']),
+                study_title=trial.get('title'),
+                definitions=definitions,
+            )
         session.commit()
         return str(canonical_trial.id), [
             {
@@ -6051,6 +6395,36 @@ async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'
             p['next_visit'] = next_visit
     return patients
 
+
+@api.get('/patients/reminder-sync-status')
+async def reminder_sync_status(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
+    """AD-12: patients whose reminder/calendar sync failed, visible to the
+    CRC/PI/sponsor responsible for them - the worker already isolates one
+    patient's failure from the rest, but used to only log it. Same
+    trial/PI/CRC access scoping as `GET /patients`.
+    """
+    if user['role'] == 'pi':
+        q: dict = {'pi_id': user['id']}
+    elif user['role'] == 'crc':
+        q = {'crc_id': user['id']}
+    else:
+        org = (user.get('organization') or '').strip()
+        trial_or = [{'created_by': user['id']}]
+        if org:
+            trial_or.append({'sponsor_name': org})
+        trials = await db.trials.find({'$or': trial_or}, {'_id': 0, 'id': 1}).to_list(2000)
+        q = {'trial_id': {'$in': [t['id'] for t in trials]}}
+    q['uctsm_reminder_sync.status'] = 'FAILED'
+    failed = await db.patients.find(q, {
+        '_id': 0, 'id': 1, 'full_name': 1, 'trial_id': 1, 'uctsm_reminder_sync': 1,
+    }).to_list(500)
+    worker = await db.worker_status.find_one({'id': 'reminder_worker'}, {'_id': 0})
+    return {
+        'patients': failed,
+        'worker_last_run_at': worker.get('last_run_at') if worker else None,
+        'worker_truncated_last_run': bool(worker.get('truncated')) if worker else False,
+    }
+
 @api.post('/patients', dependencies=[Depends(require_roles('pi', 'crc', 'smo', 'site'))])
 async def add_patient(body: PatientIn, user=Depends(current_user)):
     trial = await db.trials.find_one({'id': body.trial_id}, {'_id': 0})
@@ -6066,10 +6440,7 @@ async def add_patient(body: PatientIn, user=Depends(current_user)):
             'Link it before enrolling patients.',
         )
     if trial.get('uctsm_trial_id'):
-        try:
-            _parse_baseline_date(body.baseline_date)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        await _validate_enrolment_schedule(trial, body, user)
 
     caller_org = (user.get('organization') or '').strip()
     if user['role'] in ('smo', 'site'):
@@ -6222,10 +6593,7 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
             'Link it before inviting patients.',
         )
     if trial.get('uctsm_trial_id'):
-        try:
-            _parse_baseline_date(body.baseline_date)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        await _validate_enrolment_schedule(trial, body, user)
 
     caller_org = (user.get('organization') or '').strip()
     if user['role'] in ('smo', 'site') and not user.get('org_admin'):
@@ -6350,6 +6718,115 @@ async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cr
         await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}).to_list(500))
     instances = [await _ensure_visit_instance_workflow(row) for row in raw_instances]
     return {**p, 'trial': trial, 'instances': instances}
+
+
+def _audit_trail_canonical_sync(mongo_patient_id: str) -> list[dict]:
+    """The canonical (SQL) half of one patient's audit trail.
+
+    Runs on the threadpool - a fresh SQL session, resolves the linked
+    canonical patient via `external_patient_id` (the same lookup
+    `_apply_canonical_dates` already uses), then reads every AuditEvent whose
+    entity is that patient or something that belongs to them. Built by
+    enumerating every `entity_type=`/`entity_id=` an AuditEvent construction
+    site in app/ actually uses for a patient-owned row (grep, not guesswork):
+    PATIENT (patient.id itself - activity records, state changes, schedule
+    version assignment), PATIENT_EVENT (current_events()'s own ids - occurrence
+    recording), PATIENT_ANCHOR (candidate ids, including ones derived from a
+    recorded occurrence), PATIENT_CONDITION (condition ids), and
+    SCHEDULE_IMPACT_PROPOSAL (proposal ids - impact_service.py's preview/
+    confirm/cancel audit trail keys on the PROPOSAL's own id, not the
+    patient's, so it would otherwise be invisible here). This is the concrete,
+    boundable set of canonical rows one patient can have today - not a
+    generic cross-table join engine, and not exhaustive against every entity
+    type that could ever exist, only every one that exists now.
+    """
+    from sqlalchemy import select as _select
+    from app.db import models as _db
+    from app.db.base import get_session
+    from app.services.schedule_service import PatientScheduleService
+
+    for session in get_session():
+        try:
+            linked = session.scalar(_select(_db.Patient).where(
+                _db.Patient.external_patient_id == mongo_patient_id,
+            ))
+            if linked is None:
+                return []
+            entity_ids = {linked.id}
+            if linked.current_schedule_version_id is not None:
+                entity_ids.update(
+                    item.id for item in PatientScheduleService(session).current_events(
+                        linked.id, linked.current_schedule_version_id)
+                )
+            entity_ids.update(session.scalars(_select(_db.PatientAnchor.id).where(
+                _db.PatientAnchor.patient_id == linked.id)))
+            entity_ids.update(session.scalars(_select(_db.PatientCondition.id).where(
+                _db.PatientCondition.patient_id == linked.id)))
+            entity_ids.update(session.scalars(_select(_db.ScheduleImpactProposal.id).where(
+                _db.ScheduleImpactProposal.patient_id == linked.id)))
+            rows = session.scalars(_select(_db.AuditEvent).where(
+                _db.AuditEvent.entity_id.in_(entity_ids),
+            ).order_by(_db.AuditEvent.created_at))
+            return [
+                {
+                    'source': 'canonical', 'action': item.action,
+                    'entity_type': item.entity_type,
+                    'actor_id': str(item.actor_id) if item.actor_id else None,
+                    'before': item.before, 'after': item.after, 'reason': item.reason,
+                    'created_at': item.created_at,
+                }
+                for item in rows
+            ]
+        finally:
+            session.close()
+    return []
+
+
+def _as_aware(value) -> datetime:
+    """SQLite (the test/dev backend) can return a naive datetime even for a
+    timezone(True) column; Mongo's own `now()` never is. Comparing the two
+    logs by timestamp must not crash on that difference."""
+    if not isinstance(value, datetime):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+@api.get('/patients/{patient_id}/audit-trail')
+async def patient_audit_trail(
+    patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc')),
+):
+    """Both audit logs, for one patient, merged and time-ordered.
+
+    Doc's Consistency Conventions: two audit logs exist by design for as long
+    as AD-1 runs - canonical schedule meaning/evaluation writes
+    `uctsm_audit_events`, operational workflow state writes Mongo
+    `audit_logs` - and "neither log may be read alone and presented as
+    complete." This is that combined view.
+    """
+    await _require_patient(user, patient_id)
+
+    operational = await db.audit_logs.find(
+        {'$or': [{'target_id': patient_id}, {'patient_id': patient_id}]}, {'_id': 0},
+    ).to_list(1000)
+    operational_entries = [
+        {
+            'source': 'operational', 'action': item.get('action'),
+            'entity_type': item.get('category'),
+            'actor_id': item.get('user_id'), 'reason': item.get('detail'),
+            'before': None, 'after': item.get('changes'),
+            'created_at': item.get('created_at'),
+        }
+        for item in operational
+    ]
+    canonical_entries = await run_in_threadpool(_audit_trail_canonical_sync, patient_id)
+
+    combined = sorted(
+        [*operational_entries, *canonical_entries],
+        key=lambda item: _as_aware(item.get('created_at')),
+    )
+    for item in combined:
+        item['created_at'] = iso(item.get('created_at'))
+    return {'patient_id': patient_id, 'entries': combined}
 
 
 @api.post('/patients/{patient_id}/uctsm-reconcile',
@@ -8128,13 +8605,6 @@ async def add_visit_instance_comment(
 class ScheduleFlagIn(BaseModel):
     reason: str
 
-class ScheduleDecisionIn(BaseModel):
-    notes: Optional[str] = Field(default='', max_length=1000)
-
-class ScheduleRejectIn(BaseModel):
-    reason: str = Field(min_length=1, max_length=1000)
-    notes: Optional[str] = Field(default='', max_length=1000)
-
 async def _notify_trial_sponsors(trial, title, body_text):
     """Notify the trial's sponsor users: its creator (if sponsor/cro) plus every
     sponsor-role user in the trial's sponsor organization."""
@@ -8209,119 +8679,18 @@ async def _refresh_trial_schedule_status(trial_id: str):
         {'$set': {'schedule_status': status, 'schedule_status_updated_at': now()}})
     return status
 
-async def _schedule_review_row(row: dict) -> dict:
-    trial = await db.trials.find_one({'id': row['trial_id']}, {'_id': 0}) or {}
-    share = await db.shares.find_one({'id': row.get('share_id')}, {'_id': 0}) or {}
-    version = await db.schedule_versions.find_one(
-        {'id': row.get('version_id')}, {'_id': 0}) if row.get('version_id') else None
-    visits = (
-        row.get('visit_snapshot')
-        or (version or {}).get('visits')
-        or share.get('visit_snapshot')
-    )
-    # Legacy shares made before version snapshots existed retain their old
-    # behavior, while every new review is pinned to the immutable shared rows.
-    if visits is None:
-        visits = await db.visits.find(
-            {'trial_id': row['trial_id']}, {'_id': 0},
-        ).sort('visit_number', 1).to_list(500)
-    document = (
-        row.get('document') or (version or {}).get('document')
-        or share.get('document')
-    )
-    if not document and row.get('document_id'):
-        stored_document = await db.files.find_one(
-            {'id': row['document_id']}, {'_id': 0, 'key': 0})
-        document = _shared_document_metadata(stored_document)
-    return serialize({
-        **row,
-        'protocol_id': trial.get('protocol_id') or '',
-        'trial_title': trial.get('title') or '',
-        'phase': trial.get('phase') or '',
-        'condition': trial.get('condition') or '',
-        'visits': visits,
-        'schedule_version': (
-            row.get('schedule_version') or (version or {}).get('version')
-            or share.get('schedule_version') or 0
-        ),
-        'version_id': row.get('version_id') or share.get('version_id') or '',
-        'changed_visits': (
-            row.get('changed_visits')
-            or (version or {}).get('changed_visits')
-            or share.get('changed_visits')
-            or []
-        ),
-        'document': document,
-        'share_token': share.get('token') or '',
-        'share_expires_at': share.get('expires_at'),
-    })
-
-@api.get('/schedule-reviews')
-async def list_schedule_reviews(user=Depends(require_roles('pi'))):
-    """PI inbox of schedule packages explicitly shared with this user."""
-    rows = await db.schedule_reviews.find(
-        {'reviewer_id': user['id']}, {'_id': 0}).sort('created_at', -1).to_list(500)
-    return [await _schedule_review_row(row) for row in rows]
-
-@api.get('/schedule-reviews/{review_id}')
-async def get_schedule_review(review_id: str, user=Depends(require_roles('pi'))):
-    row = await db.schedule_reviews.find_one({'id': review_id}, {'_id': 0})
-    if not row:
-        raise HTTPException(404, 'Schedule review not found')
-    if row.get('reviewer_id') != user['id']:
-        raise HTTPException(403, 'This schedule review is assigned to another investigator')
-    return await _schedule_review_row(row)
-
-async def _decide_schedule_review(review_id: str, user: dict, status: str,
-                                  notes: str = '', reason: str = ''):
-    row = await db.schedule_reviews.find_one({'id': review_id}, {'_id': 0})
-    if not row:
-        raise HTTPException(404, 'Schedule review not found')
-    if row.get('reviewer_id') != user['id']:
-        raise HTTPException(403, 'This schedule review is assigned to another investigator')
-    if row.get('status') != 'pending':
-        raise HTTPException(409, f"Schedule was already {row.get('status', 'reviewed')}")
-    updates = {
-        'status': status,
-        'pi_notes': (notes or '').strip(),
-        'reviewed_by': user['id'],
-        'reviewed_at': now(),
-    }
-    if status == 'rejected':
-        updates['rejection_reason'] = reason.strip()
-    await db.schedule_reviews.update_one({'id': review_id}, {'$set': updates})
-    aggregate = await _refresh_trial_schedule_status(row['trial_id'])
-    trial = await db.trials.find_one({'id': row['trial_id']}, {'_id': 0}) or {}
-    label = trial.get('protocol_id') or trial.get('title') or row['trial_id']
-    if status == 'approved':
-        title = f'Schedule approved · {label}'
-        body_text = f"{user['full_name']} approved the schedule for {row.get('site_name') or 'their site'}."
-    else:
-        title = f'Schedule rejected · {label}'
-        body_text = (
-            f"{user['full_name']} rejected the schedule for "
-            f"{row.get('site_name') or 'their site'}: {reason.strip()}"
-        )
-    notified = await _notify_trial_sponsors(trial, title, body_text)
-    await write_audit(
-        user, f'schedule_review.{status}',
-        f"{label} schedule {status} for {row.get('site_name') or 'site'}",
-        target_id=review_id, trial_id=row['trial_id'], share_id=row.get('share_id'),
-        notes=(notes or '').strip(), reason=reason.strip(), notified=notified,
-    )
-    fresh = await db.schedule_reviews.find_one({'id': review_id}, {'_id': 0})
-    return {**await _schedule_review_row(fresh), 'trial_schedule_status': aggregate}
-
-@api.post('/schedule-reviews/{review_id}/approve')
-async def approve_schedule_review(review_id: str, body: ScheduleDecisionIn,
-                                  user=Depends(require_roles('pi'))):
-    return await _decide_schedule_review(review_id, user, 'approved', notes=body.notes or '')
-
-@api.post('/schedule-reviews/{review_id}/reject')
-async def reject_schedule_review(review_id: str, body: ScheduleRejectIn,
-                                 user=Depends(require_roles('pi'))):
-    return await _decide_schedule_review(
-        review_id, user, 'rejected', notes=body.notes or '', reason=body.reason)
+# Doc 9 / Phase 4: the PI decision surface for a schedule now runs entirely
+# through the canonical engine - `ScheduleReviewService.list_pending_review`,
+# `.approve`/.reject` (backend/app/services/schedule_service.py), exposed at
+# `/api/uctsm/schedule-versions/pending-review` and `.../review`. The former
+# `GET/POST /schedule-reviews*` read/decide endpoints that powered
+# `clinical/schedule-review.tsx` are removed - that screen now re-exports
+# `ScheduleReviewInboxScreen`, backed by the canonical endpoints instead.
+#
+# `db.schedule_reviews` itself, and the `POST /shares` endpoint that writes to
+# it (below), are intentionally left in place: `/shares` also carries the
+# external/email-link distribution capability, which is unrelated to the PI
+# in-app decision flow being replaced here.
 
 # ── Tasks queue (pi/crc action items, computed on read) ─────────────────────
 VISIT_QUEUE_TERMINAL_STATUSES = [
@@ -10406,9 +10775,11 @@ async def disable_legacy_schedule_authoring(request: Request, call_next):
 # prefixes and their own role gates (admin-only / org-admin-only).
 import admin_routes                              # noqa: E402
 import org_routes                                # noqa: E402
+import remote_audit_routes                       # noqa: E402
 app.include_router(admin_routes.router)
 app.include_router(org_routes.router)
 app.include_router(org_routes.trial_access_router)
+app.include_router(remote_audit_routes.router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 

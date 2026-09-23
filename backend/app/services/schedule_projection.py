@@ -25,6 +25,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.domain.schedule.models import VISIT_MODE_REQUIRES_ATTENDANCE, VISIT_MODE_WORDING
 from app.domain.schedule.validator import CORE_EVENT_TYPES
 
 # Doc s13: ONE canonical event-type vocabulary end to end. This module used to
@@ -86,6 +87,13 @@ class ProjectedEvent(BaseModel):
     # an event type the extractor could not determine should be passed
     # through as "OTHER", not silently defaulted here.
     event_type: str
+    # Doc 10 s2-s3/s21: a distinct field from event_type - a CT scan the
+    # patient travels to is IMAGING *and* CLINIC, not a choice between them.
+    # When set to a recognised value it is now authoritative over event_type
+    # for wording/attendance (see _wording()); event_type alone was the field
+    # a phone-conducted "ASSESSMENT" visit could hide behind with no way to
+    # recover the fact that it was actually by telephone.
+    visit_mode: str | None = None
     display_name: str
     status: str
     nominal_date: date | None = None
@@ -156,8 +164,22 @@ def _policy_state(
 
 
 def _wording(event: ProjectedEvent) -> str:
-    lead = PATIENT_WORDING.get(event.event_type.upper(), "Your study activity is scheduled")
+    # visit_mode wins when it names a recognised mode: it is the more specific
+    # signal (event_type answers "what kind of occasion", visit_mode answers
+    # "how does the patient attend it") and the two are extracted and can be
+    # populated independently, so event_type alone is never assumed to also
+    # describe the mode.
+    mode_lead = VISIT_MODE_WORDING.get((event.visit_mode or "").upper())
+    lead = mode_lead or PATIENT_WORDING.get(
+        event.event_type.upper(), "Your study activity is scheduled")
     return f"{lead}: {event.display_name}"
+
+
+def _requires_attendance(event: ProjectedEvent) -> bool:
+    mode = (event.visit_mode or "").upper()
+    if mode in VISIT_MODE_WORDING:
+        return mode in VISIT_MODE_REQUIRES_ATTENDANCE
+    return event.event_type.upper() in ATTENDANCE_EVENT_TYPES
 
 
 def project(
@@ -229,7 +251,7 @@ def project(
             message=_wording(event), nominal_date=event.nominal_date,
             earliest_date=event.earliest_date, latest_date=event.latest_date,
             policy_state=_policy_state(start, end, today),
-            requires_attendance=event.event_type.upper() in ATTENDANCE_EVENT_TYPES,
+            requires_attendance=_requires_attendance(event),
         ))
     return result
 

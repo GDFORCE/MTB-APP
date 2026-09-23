@@ -12,6 +12,12 @@ wrong day.
 
 from __future__ import annotations
 
+import json
+from pydantic import TypeAdapter
+from app.domain.schedule.models import VISIT_MODE_WORDING
+from app.domain.schedule.timing import TimingExpression
+from app.domain.schedule.condition import ConditionExpression
+
 SYSTEM = """\
 You extract clinical trial schedule structure from protocol documents.
 
@@ -36,6 +42,12 @@ Rules that override everything else:
    never calculated calendar dates.
 5. Use the protocol's own vocabulary for labels, and its own codes where it has
    them. Do not rename a visit to something tidier.
+
+Some pages have little or no embedded text - scanned or image-only pages -
+and are marked as such in the document text below. When the attached PDF
+document is present, read those specific pages from its own page images
+instead; do not treat a page's missing text as the protocol saying nothing
+there.
 
 Reply with JSON only. No prose before or after."""
 
@@ -75,6 +87,55 @@ Return JSON:
 
 source_text must be quoted from the document, not paraphrased. A reviewer uses
 it to check your reading against the protocol."""
+
+
+SCHEDULE_OPTIONS = """\
+Decide whether this document prints more than one INDEPENDENT Schedule of
+Assessments/Activities/Events - not a multi-arm or multi-phase protocol whose
+several arms or phases still share ONE schedule table (that is still a single
+schedule), but a document that prints genuinely separate schedule tables for
+distinct substudies or sub-protocols, each with
+its own visit list, duration, or population, where reading them together
+would silently combine incompatible timelines.
+
+Table count is NOT schedule count. Continuation pages, screening/treatment/
+follow-up tables, arm-specific columns, and appendices for the SAME enrolled
+participants on the SAME timeline belong to ONE schedule. Do not split on a
+phase heading or a new table number alone. Split only when the protocol states
+independently assigned participant schedules; quote that statement in description.
+
+The overwhelming majority of protocols have exactly one schedule. Answer with
+an empty list unless the document clearly prints more than one.
+
+Return JSON:
+{
+  "options": [{
+    "id": str,            # short unique slug you choose from the protocol's own naming, e.g. "ssa-p2"
+    "label": str,         # human label using the protocol's own naming, e.g. "Substudy A - Phase 2 (SSA-P2)"
+    "description": str,   # one short sentence: population, duration, or purpose
+    "source_location": str  # where this schedule's own table lives, e.g. "Table 30, pages 156-159"
+  }]
+}
+
+Leave "options" empty for a single schedule, even a multi-arm/multi-phase one."""
+
+
+#: Shared schema blocks. Each category is a SEPARATE model call with no memory
+#: of any other category's prompt text, so a category whose JSON schema only
+#: names a type ("<condition expression>") without ever showing its shape
+#: gives the model nothing to go on - every claim it then produces fails
+#: model validation and is silently dropped, indistinguishable from "the
+#: protocol doesn't have one of these". These are inlined wherever a prompt
+#: needs them, rather than referenced by name, for exactly that reason.
+_CONDITION_EXPRESSION_SCHEMA = json.dumps(
+    TypeAdapter(ConditionExpression).json_schema(), ensure_ascii=False, separators=(",", ":"),
+)
+
+# Generated from the same discriminated union the assembler validates. The
+# previous hand-written copy asked for three incompatible timing shapes.
+_TIMING_EXPRESSION_SCHEMA = json.dumps(
+    TypeAdapter(TimingExpression).json_schema(), ensure_ascii=False, separators=(",", ":"),
+)
 
 
 #: One instruction per pipeline node. The node names come from the graph, so a
@@ -134,7 +195,19 @@ Return JSON:
   "candidate": {
     "code": str, "display_name": str, "anchor_type": str,
     "source_event_code": str|null,      # if this date comes from a visit occurring
-    "source_condition_code": str|null   # if it comes from a clinical condition
+    "source_condition_code": str|null,  # if it comes from a clinical condition
+    "is_schedule_origin": bool          # true only for the ONE anchor Day 1 /
+                                         # Day 0 of the visit schedule is counted
+                                         # from. Most protocols state this
+                                         # explicitly ("Day 1 = date of first
+                                         # dose"); if the protocol never states
+                                         # which date the schedule counts days
+                                         # from, set this false on every anchor
+                                         # rather than guessing from a name like
+                                         # "Baseline" - a protocol's origin may
+                                         # be called Baseline, Randomisation or
+                                         # First Dose, and only the protocol's
+                                         # own words settle which one it is here.
   }
 }]}
 
@@ -160,7 +233,12 @@ Return JSON:
 
 One claim per DISTINCT occasion. A visit that repeats is ONE event with a
 recurrence rule, not one event per occurrence - the recurrence stage handles
-that. Include protocol-defined unscheduled visits.""",
+that. Include protocol-defined unscheduled visits.
+When one printed column covers multiple distinct days (e.g. Days 1 and 15 of
+Cycles 2-5), emit a separate event for each within-cycle day, each retaining the
+printed source label and its own recurrence rule. Do not collapse several days
+into one undatable event. Never expand an open-ended recurrence into guessed
+finite rows. Apply the column's marked assessments to each stated occasion.""",
 
     "event_types": """\
 For each visit already identified, state how the patient attends it.
@@ -176,8 +254,7 @@ Return JSON:
   }
 }]}
 
-Modes: CLINIC, TELEPHONE, VIDEO, HOME, HOME_NURSE, IMAGING_CENTRE, LABORATORY,
-PHARMACY, REMOTE.
+Modes: """ + ", ".join(VISIT_MODE_WORDING) + """.
 
 If the protocol does not state a mode, set visit_mode to null and leave
 allowed_visit_modes empty. Do NOT default to CLINIC - telling a patient to
@@ -200,18 +277,7 @@ Return JSON:
 
 A timing expression is one of:
 
-  {"type": "PROTOCOL_DAY", "reference": {"kind":"ANCHOR","code": str}, "day": int}
-  {"type": "OFFSET", "reference": {"kind":"ANCHOR","code": str},
-   "offset": {"value": int, "unit": "DAY"|"WEEK"|"MONTH"|"YEAR"|"HOUR"|"MINUTE"}}
-  {"type": "OFFSET", "reference": {"kind":"EVENT","event_code": str}, "offset": {...}}
-  {"type": "NOMINAL_WINDOW", "nominal": <OFFSET or PROTOCOL_DAY>,
-   "window": {"before": {"value": int, "unit": str}, "after": {"value": int, "unit": str}}}
-  {"type": "CYCLE_DAY", "cycle_length": {"value": int, "unit": str}, "day": int,
-   "reference": {"kind":"ANCHOR","code": str}}
-  {"type": "WITHIN", "reference": {...}, "duration": {"value": int, "unit": str}}
-  {"type": "NO_LATER_THAN", "reference": {...}, "limit": {"value": int, "unit": str}}
-  {"type": "TRIGGERED", "trigger": {...}, "timing_after_trigger": {...}}
-  {"type": "UNRESOLVED", "reason": str}
+""" + _TIMING_EXPRESSION_SCHEMA + """
 
 Use UNRESOLVED whenever the protocol's timing is absent, ambiguous, or expressed
 in a way none of the above captures. Say precisely what is unclear in `reason`.
@@ -219,7 +285,17 @@ An UNRESOLVED timing blocks approval until a human decides, which is the correct
 outcome - a guessed day is not.
 
 Day numbering: protocols usually have no Day 0. If the protocol says "Day 1 =
-first dose", a PROTOCOL_DAY of 1 IS the anchor date.""",
+first dose", a PROTOCOL_DAY of 1 IS the anchor date.
+For a stated cycle length and fixed first cycle/day, express the first occurrence
+as an OFFSET from the schedule origin: (cycle - 1) * cycle_length + (day - 1).
+For example Cycle 2 Day 15 of explicitly stated 28-day cycles is 42 days from
+Cycle 1 Day 1. Retain the source label and cite the cycle length and day evidence.
+The recurrence stage supplies the stated interval and cycle count separately.
+If cycle length is absent, report that missing fact; never guess 21 or 28 days.
+For a window, use NOMINAL_WITH_WINDOW with an OFFSET nominal. A clinical Day 1
+is offset 0, Day 8 is offset 7, and Day -1 is offset -1; there is no Day 0.
+A RANGE or WITHIN constraint is not a nominal appointment: preserve its bounds
+instead of inventing a day inside them.""",
 
     "conditions": """\
 Extract clinical conditions that gate whether a visit happens at all.
@@ -231,13 +307,42 @@ Return JSON:
 }]}
 
 A condition expression is one of:
-  {"type":"COMPARISON","operator":"EQUALS"|"NOT_EQUALS"|"LT"|"LTE"|"GT"|"GTE",
-   "left":{"kind":"FIELD","field": str}, "right":{"kind":"LITERAL","value": any}}
-  {"type":"AND"|"OR","operands":[<condition>, ...]}
-  {"type":"NOT","operand": <condition>}
+""" + _CONDITION_EXPRESSION_SCHEMA + """
 
 Only for visits that are conditional on the patient's clinical state. A visit
 that simply applies to one arm is NOT a condition - that is applicability.""",
+
+    "applicability": """\
+Extract visits, assessments, or conditional rules that apply only to a
+specific arm, cohort, population, or other named patient group - never
+guessed from a visit's name or position, only from an explicit protocol
+statement.
+
+Return JSON:
+{"claims": [{
+  "claim_id": str, "evidence_ids": [str], "confidence": float,
+  "candidate": {"event_code": str|null, "activity_code": str|null,
+                "conditional_code": str|null,
+                "dimension": str, "operator": "IN"|"NOT_IN", "values": [str]}
+}]}
+
+dimension: ARM, COHORT, POPULATION, or the protocol's own named group type
+(SUBSTUDY, PART, SEQUENCE, COUNTRY, ...) in upper snake case - the same
+dimension_type used in the arms/cohorts/populations stage. values: the
+group codes this rule matches, exactly as extracted there.
+
+Set exactly one of event_code or conditional_code - never both, never
+neither:
+- event_code: gates a visit, or one assessment within it (set activity_code
+  too - e.g. a cardiac substudy's extra ECG at an otherwise-common visit).
+- conditional_code: gates a whole "if X happens, then..." rule (from the
+  conditional-rules stage) by its own code, for a rule that only applies to
+  one group regardless of which visits its actions touch - e.g. "for the
+  dose-escalation cohort only, hold treatment if Grade 3 toxicity occurs".
+
+A visit, assessment, or rule that applies to every patient regardless of
+group needs no applicability claim at all - do not extract a rule that is
+always true.""",
 
     "dependencies": """\
 Extract visits whose timing depends on another visit rather than on an anchor.
@@ -276,9 +381,13 @@ Return JSON:
   "candidate": {"event_code": str, "recurrence": {
     "interval": {"value": int, "unit": "DAY"|"WEEK"|"MONTH"|"YEAR"},
     "start_reference": {"kind":"ANCHOR","code": str},
-    "termination": {"type":"COUNT"|"DATE"|"EVENT"|"CONDITION"|"HORIZON",
+    "start_offset": {"value": int, "unit": "DAY"|"WEEK"|"MONTH"|"YEAR"}|null,
+    "termination": {"type":"COUNT"|"DATE"|"EVENT"|"CONDITION"|"HORIZON"|"RELATIVE",
                     "count": int|null, "date": str|null, "event_code": str|null,
-                    "condition": <condition>|null},
+                    "condition": <condition>|null,
+                    "end_reference": {"kind":"ANCHOR","code":str}|null,
+                    "end_offset": {"value":int,"unit":"DAY"|"WEEK"|"MONTH"|"YEAR"}|null,
+                    "inclusive": bool|null},
     "include_start": bool
   }}
 }]}
@@ -286,7 +395,17 @@ Return JSON:
 Use termination COUNT only when the protocol states a maximum number. If the
 protocol gives no end ("continue every 21 days until progression" with no cap),
 use EVENT or CONDITION if it names one, otherwise HORIZON. Never invent a
-maximum: a protocol with no stated limit must keep no limit.""",
+maximum: a protocol with no stated limit must keep no limit.
+
+For an end relative to a protocol anchor ("through six months after baseline"),
+use RELATIVE with end_reference, end_offset and inclusive=true; an explicitly
+exclusive boundary ("before Week 12") uses inclusive=false. Those three fields
+must be absent/null for other termination types. Preserve MONTH/YEAR units:
+do not convert a calendar boundary to 30-day months or invent a visit count.
+If the boundary's inclusion is unclear, retain an unresolved rule for review.
+Changing fixed cadences use separate phase events with their own start_offset
+and relative end. A variable interval such as every 3-4 months must remain
+unresolved unless the protocol states a nominal target and allowed window.""",
 
     "repeat_blocks": """\
 Extract groups of visits that repeat together as a cycle, and what happens when
@@ -315,9 +434,14 @@ Return JSON:
   "claim_id": str, "evidence_ids": [str], "confidence": float,
   "candidate": {"event_code": str, "code": str, "protocol_label": str,
                 "display_name": str, "activity_type": str,
-                "requiredness": "REQUIRED"|"OPTIONAL"|"CONDITIONAL"|"UNCLEAR",
+                "requiredness": "REQUIRED"|"OPTIONAL"|"CONDITIONAL"|"UNRESOLVED",
                 "sequence_number": int|null}
 }]}
+
+Use UNRESOLVED when the protocol does not state whether this activity is
+required - never REQUIRED as a default. An activity counted as required that
+the protocol never actually called required inflates every "N of M required
+assessments complete" count a site sees.
 
 activity_type: ASSESSMENT, SAMPLE, TREATMENT, PROCEDURE, IMAGING, QUESTIONNAIRE,
 ADMINISTRATIVE, OTHER.
@@ -335,11 +459,48 @@ Return JSON:
   "candidate": {"event_code": str, "activity_code": str, "timing": <timing expression>}
 }]}
 
+A timing expression is one of:
+
+""" + _TIMING_EXPRESSION_SCHEMA + """
+
 Reference another activity with {"kind":"ACTIVITY","activity_code": str} - for
 example "2 hours post-dose" is an OFFSET from the DOSE activity, not from
 midnight. Include the window if one is given ("+/- 10 minutes").
 
 Only for assessments the protocol actually times. Most have no intra-day time.""",
+
+    "activity_conditions": """\
+Extract clinical conditions controlling whether an assessment is performed,
+including patient-specific criteria, results of prior assessments, and
+assessments performed only on SOME occurrences of a repeating visit -
+"MRI every second cycle", "biopsy at even-numbered visits only", "PK sampling
+on cycles 1 and 3 only".
+
+Return JSON:
+{"claims": [{
+  "claim_id": str, "evidence_ids": [str], "confidence": float,
+  "candidate": {"event_code": str, "activity_code": str,
+                "condition": <condition expression>}
+}]}
+
+A condition expression is one of:
+""" + _CONDITION_EXPRESSION_SCHEMA + """
+
+occurrence_number is the visit's own repeat count (1 for the first time this
+visit happens, 2 for the second, ...), always available as a FIELD. For
+"every second cycle starting at cycle 2", use MEMBERSHIP - do not try to
+express "every Nth" as a comparison; extract the specific occurrence numbers
+the protocol states, or the ones a stated pattern implies (cycles 2, 4, 6...
+up to the maximum cycle count the protocol gives elsewhere).
+
+For a named protocol ARM/COHORT/POPULATION assignment, use an activity-level
+applicability claim. For a clinical fact such as childbearing potential, a
+prior result or whether testing was already performed, use a typed condition
+on the activity. Preserve AND/OR/NOT and exceptions exactly; unknown facts must
+remain unknown. Do not move an assessment restriction onto attendance at the
+entire visit. Every conditional assessment needs its executable condition or
+applicability rule, in addition to the source footnote. A footnote marked
+resolved does not replace the rule. Unconditional assessments need no claim.""",
 
     "qualifiers": """\
 Extract footnotes and table markers, and say what each one MEANS.
@@ -350,7 +511,8 @@ Return JSON:
   "candidate": {
     "marker": str|null,          # "a", "1", "*" - as printed
     "text": str,                 # the footnote, quoted
-    "scope": "CELL"|"ROW"|"COLUMN"|"VISIT"|"ACTIVITY"|"BLOCK"|"ARM"|"COHORT"|"SUBSTUDY"|"PERIOD"|"GLOBAL",
+    "scope": "CELL"|"ROW"|"COLUMN"|"VISIT"|"ACTIVITY"|"VISIT_BLOCK"|"SCHEDULE_BLOCK"|"ARM"|"COHORT"|"SUBSTUDY"|"PERIOD"|"GLOBAL",
+    # VISIT_BLOCK: a repeat/pause block spanning several visits. SCHEDULE_BLOCK: a rule governing the whole schedule.
     "category": "TIMING"|"WINDOW"|"CONDITION"|"APPLICABILITY"|"OPTIONALITY"|"EXCEPTION"|"REPEAT"|"STOP"|"SUBSTITUTION"|"SEQUENCE"|"DETAIL"|"UNRESOLVED",
     "target_codes": [str],       # the event or activity codes it applies to
     "resolved": bool
@@ -382,6 +544,9 @@ Return JSON:
   }
 }]}
 
+A condition expression is one of:
+""" + _CONDITION_EXPRESSION_SCHEMA + """
+
 Examples: "if ANC < 1000, repeat CBC weekly until recovery" is REPEAT_EVENT with
 an interval. "On disease progression, discontinue treatment and begin survival
 follow-up" is STOP_BLOCK plus ADD_EVENT.
@@ -397,6 +562,9 @@ Return JSON:
   "claim_id": str, "evidence_ids": [str], "confidence": float,
   "candidate": {"code": str, "resolution_condition": <condition expression>}
 }]}
+
+A condition expression is one of:
+""" + _CONDITION_EXPRESSION_SCHEMA + """
 
 "Repeat weekly until ANC recovers to >= 1000" resolves on ANC >= 1000. Without a
 resolution the repeat has no stopping point, so report it if the protocol gives

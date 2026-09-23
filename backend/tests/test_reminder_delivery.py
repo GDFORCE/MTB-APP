@@ -159,8 +159,8 @@ def test_compute_patient_projection_agrees_with_a_real_enrolled_patient():
     from app.db.base import Base
     from app.db.repositories import ScheduleRepository
     from app.domain.schedule.models import (
-        Activity, Anchor, ClaimEvidence, Event, Evidence, ScheduleMetadata,
-        ScheduleStatus, UniversalSchedule,
+        Activity, Anchor, ClaimEvidence, DayNumbering, Event, Evidence,
+        ScheduleMetadata, ScheduleStatus, UniversalSchedule,
     )
     from app.domain.schedule.timing import AnchorReference, OffsetTiming, TemporalAmount
     from app.services.operational_bridge import OperationalBridgeService
@@ -183,6 +183,10 @@ def test_compute_patient_projection_agrees_with_a_real_enrolled_patient():
             uploaded_by=journey.REVIEWER, extraction_status="COMPLETED",
         )
         session.add(protocol_version)
+        # id defaults are applied at flush, not at construction -- flush first
+        # so protocol_version.id is real before it's read.
+        session.flush()
+        protocol.current_version_id = protocol_version.id
         session.flush()
 
         evidence = Evidence(evidence_type="TABLE_CELL", page_number=1, source_text="Day 1")
@@ -208,8 +212,9 @@ def test_compute_patient_projection_agrees_with_a_real_enrolled_patient():
             schedule_metadata=ScheduleMetadata(
                 name="Primary", protocol_version_id=protocol_version.id,
                 version_number=1, status=ScheduleStatus.APPROVED,
+                day_numbering=DayNumbering(day_1_anchor=AnchorReference(code="BASELINE")),
             ),
-            anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+            anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
             events=[event], evidence=[evidence], claim_evidence=claims,
         )
         definition = db.ScheduleDefinition(protocol_version_id=protocol_version.id, name="Primary")

@@ -147,10 +147,13 @@ def world():
             assert r.status_code == 200, r.text
             trial = r.json()
             _trial_ids.append(trial['id'])
-            rv = await cli.post('/api/visits', headers=sponsor_admin_h, json={
-                'trial_id': trial['id'], 'visit_number': 1, 'name': 'Screening',
-                'day_offset': 0, 'window_days': 3, 'activities': ['Vitals']})
-            assert rv.status_code == 200, rv.text
+        # `POST /api/visits` (the manual visit-schedule editor's write
+        # endpoint) is retired - seed the same `db.visits` template directly.
+        await server.db.visits.insert_one({
+            'id': str(uuid.uuid4()), 'trial_id': trial['id'], 'visit_number': 1,
+            'name': 'Screening', 'day_offset': 0, 'window_days': 3,
+            'activities': ['Vitals'], 'created_at': server.now(),
+        })
         await server.db.invitations.insert_one({
             'id': str(uuid.uuid4()),
             'email': successor_a['email'],

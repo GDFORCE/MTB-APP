@@ -78,7 +78,7 @@ def approved(events: list[Event]) -> UniversalSchedule:
             ))
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary", status=ScheduleStatus.APPROVED),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=events, evidence=[evidence], claim_evidence=claims,
     )
 
@@ -273,6 +273,32 @@ def test_an_on_demand_visit_with_a_calculated_date_is_contradictory():
     schedule = approved([scheduled_visit("WEEK_4", 28, activation="ON_DEMAND")])
 
     assert "CONFLICTING_SOURCE" in codes(schedule, blocking_only=True)
+
+
+def test_an_event_type_outside_the_taxonomy_is_a_non_blocking_warning():
+    """AD-6: EventType is a closed taxonomy with an escape member (OTHER), not
+    a hard enum on Event.event_type - an unrecognised value must reach a
+    reviewer, never fail validation outright (doc 10 s3).
+    """
+    from app.domain.schedule.models import EventType
+    from app.domain.schedule.validator import CORE_EVENT_TYPES
+
+    assert frozenset(EventType) == CORE_EVENT_TYPES
+    assert EventType.OTHER in CORE_EVENT_TYPES
+
+    event = Event(
+        code="MYSTERY", protocol_label="Mystery", display_name="Mystery",
+        event_type="SOMETHING_THE_TAXONOMY_HAS_NEVER_SEEN",
+        timing=ProtocolDayTiming(reference=AnchorReference(code="BASELINE"), day=28),
+    )
+    schedule = approved([event])
+    issues = ScheduleValidator().validate(schedule)
+
+    warning = next(
+        item for item in issues
+        if item.issue_code == "UNRESOLVED_REFERENCE" and item.entity_id == event.id)
+    assert warning.blocking is False
+    assert not any(item.entity_id == event.id for item in ScheduleValidator.blocking(issues))
 
 
 def test_an_on_demand_visit_without_a_date_does_not_block_approval():

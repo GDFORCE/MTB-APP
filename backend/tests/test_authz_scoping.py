@@ -75,12 +75,14 @@ async def _make_trial(sponsor_headers, sponsor_name,
         assert r.status_code == 200, r.text
         trial = r.json()
         _trial_ids.append(trial['id'])
-        for i, (off, name) in enumerate(templates, start=1):
-            rv = await cli.post('/api/visits', headers=sponsor_headers, json={
-                'trial_id': trial['id'], 'visit_number': i, 'name': name,
-                'day_offset': off, 'window_days': 3, 'activities': ['Vitals'],
-            })
-            assert rv.status_code == 200, rv.text
+    # `POST /api/visits` (the manual visit-schedule editor's write endpoint)
+    # is retired - seed the same `db.visits` templates directly.
+    for i, (off, name) in enumerate(templates, start=1):
+        await server.db.visits.insert_one({
+            'id': str(uuid.uuid4()), 'trial_id': trial['id'], 'visit_number': i,
+            'name': name, 'day_offset': off, 'window_days': 3,
+            'activities': ['Vitals'], 'created_at': server.now(),
+        })
     return trial
 
 

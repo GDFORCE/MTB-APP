@@ -100,6 +100,40 @@ def test_details_requests_essentials_address_only(monkeypatch):
     assert "server-only-secret" not in str(result)
 
 
+def test_place_address_with_location_is_a_separate_opt_in_call(monkeypatch):
+    """Remote-audit site onboarding (Phase 3) needs coordinates, but the
+    default `place_address` stays on the cheap essentials-only field mask
+    (test above) -- this is a distinct function with its own field mask."""
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "server-only-secret")
+    captured = {}
+
+    def fake_get(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return FakeResponse({
+            "id": "ChIJhospital123",
+            "formattedAddress": "21 Greams Lane, Chennai, Tamil Nadu, India",
+            "location": {"latitude": 13.0827, "longitude": 80.2707},
+        })
+
+    monkeypatch.setattr(google_places.requests, "get", fake_get)
+    result = google_places.place_address_with_location("ChIJhospital123", "session_token-1")
+
+    assert result["lat"] == 13.0827
+    assert result["lon"] == 80.2707
+    assert captured["headers"]["X-Goog-FieldMask"] == "id,formattedAddress,location"
+
+
+def test_place_address_with_location_raises_when_location_missing(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "server-only-secret")
+
+    def fake_get(url, **kwargs):
+        return FakeResponse({"id": "ChIJhospital123", "formattedAddress": "Somewhere"})
+
+    monkeypatch.setattr(google_places.requests, "get", fake_get)
+    with pytest.raises(google_places.PlacesUpstreamError):
+        google_places.place_address_with_location("ChIJhospital123", "session_token-1")
+
+
 def test_public_proxy_returns_safe_shape_without_key(monkeypatch):
     async def no_limit(_request):
         return None

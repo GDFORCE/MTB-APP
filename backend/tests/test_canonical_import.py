@@ -214,13 +214,15 @@ def test_a_fixed_cadence_recurrence_gets_no_repeat_qualifier():
     assert not [q for q in c1d1.qualifiers if q.category == QualifierCategory.REPEAT]
 
 
-def test_a_repeat_starting_away_from_its_anchor_is_refused_not_mis_placed():
+def test_a_repeat_starting_away_from_its_anchor_preserves_the_start_offset():
     """Placing it on the anchor anyway would move every cycle of a real patient."""
     schedule, issues = build()
 
-    assert schedule.events[1].recurrence is None
-    blocking = [item for item in issues if item.blocking]
-    assert any("needs a reviewed start rule" in item.message for item in blocking)
+    event = schedule.events[1]
+    assert event.recurrence is not None
+    nominal = event.timing.nominal if hasattr(event.timing, "nominal") else event.timing
+    assert event.recurrence.start_offset == nominal.offset
+    assert not any("needs a reviewed start rule" in item.message for item in issues)
 
 
 def test_activity_footnote_is_kept_unresolved_and_targeted():

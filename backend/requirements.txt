@@ -37,3 +37,20 @@ langgraph>=1.1.6,<1.2
 SQLAlchemy>=2.0,<2.1
 alembic>=1.13,<2
 psycopg[binary]>=3.2,<4
+
+# ── Virtual Visit & Remote Audit module ──────────────────────────────────────
+# Document structure/metadata extraction and page rasterisation for the
+# certificate vision path. Parses untrusted bytes, so it runs ONLY in the
+# worker process — see docs/remote-audit/worker-architecture.md.
+PyMuPDF>=1.26,<2
+# PDF digital-signature validation at the full scope of spec §10.3: certificate
+# chain against configured trust anchors, signing time, validity AT signing
+# time, revocation, and current-revision coverage.
+pyhanko>=0.30,<1
+# LiveKit server SDK — participant access tokens for virtual visits. Env-gated:
+# with no credentials configured, scheduling and consent still work and joining
+# reports LIVEKIT_UNAVAILABLE.
+livekit-api>=1.0,<2
+# Optional: ClamAV client. WITHOUT a reachable scanner, evidence and documents
+# correctly stay PROCESSING_BLOCKED and never reach a reviewer.
+clamd>=1.0.2

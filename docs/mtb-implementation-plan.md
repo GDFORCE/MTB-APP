@@ -152,4 +152,3 @@ After every major batch:
 - frontend presentation tests;
 - import/type/syntax checks;
 - working-tree diff review to ensure user-owned edits are preserved.
-

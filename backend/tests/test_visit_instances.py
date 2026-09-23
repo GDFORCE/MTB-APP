@@ -58,6 +58,40 @@ async def _register(role, org=None):
     return j['user'], {'Authorization': f"Bearer {j['access_token']}"}
 
 
+async def _create_visit_template(trial_id, **fields):
+    """Create one visit TEMPLATE directly against the store.
+
+    `POST /api/visits` (the manual visit-schedule editor's write endpoint) is
+    retired, but the materialization/timing behavior it triggered is still
+    real and still covered here - this calls the same server.py functions the
+    endpoint itself called (`_normalized_template_timing`,
+    `_materialize_new_template_for_enrolled`, `_recompute_relative_templates`),
+    just without the deleted HTTP layer in between, so a late-added template's
+    effect on already-enrolled patients is still genuinely exercised rather
+    than silently skipped.
+    """
+    values = {'trial_id': trial_id, **fields}
+    if values.get('arm') and not values.get('arm_label'):
+        values['arm_label'] = values['arm']
+    values, timing_warning = server._normalized_template_timing(values)
+    explicitly_acknowledged = (
+        values.get('review_status') == 'ok' and values.get('extraction_warning') is False
+    )
+    if timing_warning or (
+        not server._has_calculable_template_time(values) and not explicitly_acknowledged
+    ):
+        values['extraction_warning'] = True
+        values['review_status'] = 'pending'
+        existing = str(values.get('comments') or '').strip()
+        reason = timing_warning or 'Visit has no calculable day offset.'
+        values['comments'] = ' '.join(part for part in (existing, reason) if part)
+    doc = {'id': str(uuid.uuid4()), **values, 'created_at': server.now()}
+    await server.db.visits.insert_one(doc)
+    await server._materialize_new_template_for_enrolled(doc)
+    await server._recompute_relative_templates(trial_id)
+    return doc
+
+
 async def _make_trial(sponsor_headers, templates=((0, 'Screening'), (7, 'Baseline'), (14, 'Week 2'))):
     """Create a trial + visit templates via the public API; returns (trial, template_list)."""
     async with make_client() as cli:
@@ -68,14 +102,13 @@ async def _make_trial(sponsor_headers, templates=((0, 'Screening'), (7, 'Baselin
         assert r.status_code == 200, r.text
         trial = r.json()
         _trial_ids.append(trial['id'])
-        tpls = []
-        for i, (off, name) in enumerate(templates, start=1):
-            rv = await cli.post('/api/visits', headers=sponsor_headers, json={
-                'trial_id': trial['id'], 'visit_number': i, 'name': name,
-                'day_offset': off, 'window_days': 3, 'activities': ['Vitals'],
-            })
-            assert rv.status_code == 200, rv.text
-            tpls.append(rv.json())
+    tpls = [
+        await _create_visit_template(
+            trial['id'], visit_number=i, name=name,
+            day_offset=off, window_days=3, activities=['Vitals'],
+        )
+        for i, (off, name) in enumerate(templates, start=1)
+    ]
     return trial, tpls
 
 
@@ -280,13 +313,11 @@ class TestArmScopedMaterialization:
         trial_doc, _ = await _make_trial(sp_headers, templates=())
         specs = [(1, 'Screening A', 0, 'Arm A'), (2, 'Dosing A', 7, 'Arm A'),
                  (3, 'Screening B', 0, 'Arm B'), (4, 'Dosing B', 7, 'Arm B')]
-        async with make_client() as cli:
-            for num, name, off, arm in specs:
-                r = await cli.post('/api/visits', headers=sp_headers, json={
-                    'trial_id': trial_doc['id'], 'visit_number': num, 'name': name,
-                    'day_offset': off, 'window_days': 3, 'arm_label': arm,
-                })
-                assert r.status_code == 200, r.text
+        for num, name, off, arm in specs:
+            await _create_visit_template(
+                trial_doc['id'], visit_number=num, name=name,
+                day_offset=off, window_days=3, arm_label=arm,
+            )
         return trial_doc
 
     def test_enrollment_only_materializes_the_patients_own_arm(self, sponsor):
@@ -324,13 +355,10 @@ class TestArmScopedMaterialization:
             }
             await server.db.patients.insert_one(patient_a)
             await server.materialize_visit_instances(patient_a)
-            async with make_client() as cli:
-                r = await cli.post('/api/visits', headers=sp_headers, json={
-                    'trial_id': trial_doc['id'], 'visit_number': 5,
-                    'name': 'Late Visit B', 'day_offset': 14, 'window_days': 3,
-                    'arm_label': 'Arm B',
-                })
-            assert r.status_code == 200, r.text
+            await _create_visit_template(
+                trial_doc['id'], visit_number=5, name='Late Visit B',
+                day_offset=14, window_days=3, arm_label='Arm B',
+            )
             leaked = await server.db.visit_instances.count_documents(
                 {'patient_id': patient_a['id'], 'name': 'Late Visit B'})
             assert leaked == 0, 'arm leak: Arm-B-only template reached an Arm-A patient'
@@ -340,12 +368,10 @@ class TestArmScopedMaterialization:
         _, sp_headers = sponsor
         async def flow():
             trial_doc = await self._two_arm_trial(sp_headers)
-            async with make_client() as cli:
-                r = await cli.post('/api/visits', headers=sp_headers, json={
-                    'trial_id': trial_doc['id'], 'visit_number': 5,
-                    'name': 'Shared Baseline', 'day_offset': -1, 'window_days': 3,
-                })
-                assert r.status_code == 200, r.text
+            await _create_visit_template(
+                trial_doc['id'], visit_number=5, name='Shared Baseline',
+                day_offset=-1, window_days=3,
+            )
             patient_a = {
                 'id': str(uuid.uuid4()), 'trial_id': trial_doc['id'],
                 'full_name': f'Shared Test A {RUN_ID}',
@@ -639,14 +665,11 @@ class TestVisitsMine:
             # fresh trial with a template that carries a checklist
             t, _ = await _make_trial(sp_headers, templates=())
             prep = ['Fast 8 hours', 'Bring your ID card']
-            async with make_client() as cli:
-                rv = await cli.post('/api/visits', headers=sp_headers, json={
-                    'trial_id': t['id'], 'visit_number': 1,
-                    'name': f'Checklist Visit {RUN_ID}', 'day_offset': 3,
-                    'window_days': 3, 'activities': ['Vitals'], 'checklist': prep,
-                })
-            assert rv.status_code == 200, rv.text
-            assert rv.json().get('checklist') == prep     # template stores checklist
+            created = await _create_visit_template(
+                t['id'], visit_number=1, name=f'Checklist Visit {RUN_ID}',
+                day_offset=3, window_days=3, activities=['Vitals'], checklist=prep,
+            )
+            assert created.get('checklist') == prep        # template stores checklist
             pt_user, pt_headers = await _register('patient')
             patient = await _enroll(pi_headers, t['id'], pi_id=pi_user['id'], days_ago=5)
             await server.db.patients.update_one({'id': patient['id']},
@@ -1293,13 +1316,12 @@ class TestAddedPatientVisits:
         pi_user, pi_headers = pi
         async def flow():
             undated, _ = await _make_trial(sp_headers, templates=((0, 'Screening'),))
+            await _create_visit_template(
+                undated['id'], visit_number=2, name='Early Termination',
+                day_offset=None, source_day_label='Unscheduled',
+                activities=['Safety review'],
+            )
             async with make_client() as cli:
-                rv = await cli.post('/api/visits', headers=sp_headers, json={
-                    'trial_id': undated['id'], 'visit_number': 2,
-                    'name': 'Early Termination', 'day_offset': None,
-                    'source_day_label': 'Unscheduled', 'activities': ['Safety review'],
-                })
-                assert rv.status_code == 200, rv.text
                 patient = await _enroll(pi_headers, undated['id'], pi_id=pi_user['id'], days_ago=5)
                 rows = (await cli.get(
                     f"/api/patients/{patient['id']}/visits", headers=pi_headers)).json()

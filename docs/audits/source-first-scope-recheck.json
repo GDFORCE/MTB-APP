@@ -1,0 +1,33 @@
+{
+  "document": "NCT00129740__Prot_SAP_000 (1).pdf",
+  "pages": 32,
+  "runs": {
+    "source_first": {
+      "calls": 1,
+      "seconds": 13.49,
+      "results": [
+        {
+          "option": null,
+          "schedule": null,
+          "issues": [
+            {
+              "id": "724d4ff9-a01e-4193-8252-6927c376207b",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_RECONSTRUCTION_FAILED",
+              "severity": "ERROR",
+              "message": "The source inventory could not be built; retry extraction.",
+              "details": {
+                "origin": "EXTRACTION",
+                "error": "model request failed: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            }
+          ],
+          "extraction_trace": []
+        }
+      ]
+    }
+  }
+}

@@ -55,7 +55,7 @@ def schedule(events: list[Event], *, anchors: list[Anchor] | None = None) -> Uni
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary"),
         anchors=anchors or [
-            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         arms=[StudyDimension(code="ARM_A", protocol_label="A", display_name="Arm A")],
         events=events,
     )
@@ -226,8 +226,8 @@ def test_a_new_anchor_says_sites_must_supply_it():
     diff = compare_schedule_versions(
         schedule([visit("WEEK_4", 28)]),
         schedule([visit("WEEK_4", 28)], anchors=[
-            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE"),
-            Anchor(code="SURGERY", display_name="Surgery Date", anchor_type="SURGERY"),
+            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED"),
+            Anchor(code="SURGERY", display_name="Surgery Date", anchor_type="SURGERY", status="RESOLVED"),
         ]),
     )
 

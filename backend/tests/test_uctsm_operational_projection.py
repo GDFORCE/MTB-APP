@@ -46,3 +46,20 @@ def test_inactive_event_is_not_projected_as_due_or_overdue():
     )[0]
     assert row["scheduled_date"] is None
     assert row["operational_status"] == "not_applicable"
+
+
+def test_a_canonical_sync_row_carries_no_workflow_key_not_even_a_default():
+    """AD-1b: this row is $set wholesale onto an existing visit_instances
+    document on every canonical resync (server.py's reconciliation path). If
+    it carried, say, "comments": [] as a default, that $set would silently
+    blank a site's real comment thread the next time this patient's schedule
+    is reconciled - not because anyone meant to, but because the row existed
+    at all. The fix is that it must not exist in this output, ever.
+    """
+    row = bridge_visit_documents(
+        patient_id="p", trial_id="t", schedule_version_id="v",
+        evaluation_id="e", events=[_event("RESOLVED", date(2026, 9, 2))],
+        generated_at=datetime.now(timezone.utc),
+    )[0]
+    for workflow_key in ("note", "clinical_tasks", "admin_tasks", "comments", "updated_by"):
+        assert workflow_key not in row, f"{workflow_key!r} must not appear in a canonical sync row"

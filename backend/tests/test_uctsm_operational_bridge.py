@@ -13,8 +13,8 @@ from app.db import models as db
 from app.db.base import Base
 from app.db.repositories import ScheduleRepository
 from app.domain.schedule.models import (
-    Anchor, ClaimEvidence, Event, Evidence, ScheduleMetadata, ScheduleStatus,
-    UniversalSchedule,
+    Anchor, ClaimEvidence, DayNumbering, Event, Evidence, ScheduleMetadata,
+    ScheduleStatus, UniversalSchedule,
 )
 from app.domain.schedule.timing import AnchorReference, OffsetTiming, TemporalAmount
 from app.services.operational_bridge import OperationalBridgeService
@@ -33,8 +33,9 @@ def _schedule(protocol_version_id, version):
         schedule_metadata=ScheduleMetadata(
             name="Primary", protocol_version_id=protocol_version_id,
             version_number=version, status=ScheduleStatus.APPROVED,
+            day_numbering=DayNumbering(day_1_anchor=AnchorReference(code="BASELINE")),
         ),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=[event], evidence=[evidence], claim_evidence=[
             ClaimEvidence(
                 evidence_id=evidence.id, claim_type=claim_type, claim_entity_type="EVENT",
@@ -52,7 +53,10 @@ def test_operational_enrolment_is_linked_pinned_and_idempotent():
         protocol_version_id, definition_id, actor_id = uuid4(), uuid4(), uuid4()
         session.add_all([
             db.Trial(id=trial_id, organization_id=organization_id),
-            db.Protocol(id=protocol_id, trial_id=trial_id, protocol_number="P-1"),
+            db.Protocol(
+                id=protocol_id, trial_id=trial_id, protocol_number="P-1",
+                current_version_id=protocol_version_id,
+            ),
             db.ProtocolVersion(
                 id=protocol_version_id, protocol_id=protocol_id, version_label="1",
                 document_name="p.pdf", document_uri="private://p.pdf", document_hash="a" * 64,
@@ -103,7 +107,10 @@ def test_new_approved_version_does_not_silently_move_existing_linked_patient():
         protocol_version_id, definition_id, actor_id = uuid4(), uuid4(), uuid4()
         session.add_all([
             db.Trial(id=trial_id, organization_id=organization_id),
-            db.Protocol(id=protocol_id, trial_id=trial_id, protocol_number="P-1"),
+            db.Protocol(
+                id=protocol_id, trial_id=trial_id, protocol_number="P-1",
+                current_version_id=protocol_version_id,
+            ),
             db.ProtocolVersion(
                 id=protocol_version_id, protocol_id=protocol_id, version_label="1",
                 document_name="p.pdf", document_uri="private://p.pdf", document_hash="a" * 64,
@@ -136,3 +143,47 @@ def test_new_approved_version_does_not_silently_move_existing_linked_patient():
             )
         patient = session.get(db.Patient, enrolled.patient_id)
         assert patient.current_schedule_version_id == v1.schedule_version_id
+
+
+def test_schedule_under_a_superseded_protocol_version_is_not_enrollable():
+    """AD-4d: before consolidation, the operational bridge's own version
+    resolver did not check which protocol version is current, so a schedule
+    approved under a SUPERSEDED protocol version was enrollable through the
+    bridge while the canonical Add-Patient endpoint (which always checked)
+    refused it -- two different answers to one question. Both now resolve
+    through one shared function and must agree: refuse.
+    """
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        organization_id, trial_id, protocol_id = uuid4(), uuid4(), uuid4()
+        old_protocol_version_id, new_protocol_version_id = uuid4(), uuid4()
+        definition_id = uuid4()
+        session.add_all([
+            db.Trial(id=trial_id, organization_id=organization_id),
+            db.Protocol(
+                id=protocol_id, trial_id=trial_id, protocol_number="P-1",
+                # The trial has MOVED ON to the new protocol version.
+                current_version_id=new_protocol_version_id,
+            ),
+            db.ProtocolVersion(
+                id=old_protocol_version_id, protocol_id=protocol_id, version_label="1",
+                document_name="p1.pdf", document_uri="private://p1.pdf", document_hash="a" * 64,
+            ),
+            db.ProtocolVersion(
+                id=new_protocol_version_id, protocol_id=protocol_id, version_label="2",
+                document_name="p2.pdf", document_uri="private://p2.pdf", document_hash="b" * 64,
+            ),
+            # Only the OLD protocol version has an approved schedule -- the
+            # new one has not been reviewed/approved yet.
+            db.ScheduleDefinition(
+                id=definition_id, protocol_version_id=old_protocol_version_id, name="Primary",
+            ),
+        ])
+        session.flush()
+        stale_schedule = _schedule(old_protocol_version_id, 1)
+        ScheduleRepository(session).persist_draft(stale_schedule, schedule_definition_id=definition_id)
+        session.commit()
+
+        with pytest.raises(ValueError, match="no approved canonical schedule"):
+            OperationalBridgeService(session)._approved_version(trial_id, definition_id)

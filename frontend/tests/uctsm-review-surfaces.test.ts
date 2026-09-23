@@ -251,7 +251,7 @@ function row(changes: Partial<PatientScheduleRow>): PatientScheduleRow {
     isConditional: false, allowedVisitModes: [], repeatRule: null,
     patientEventId: "pe", expectedDate: "—", actualDate: "—", allowedWindow: "—",
     dayScheduleRows: [], completion: toCompletionSummary([]),
-    visitMode: "", unscheduledReason: null, isOnDemand: false,
+    visitMode: "", visitModeKey: null, unscheduledReason: null, isOnDemand: false,
     expectedIso: null, actualIso: null,
     ...changes,
   };

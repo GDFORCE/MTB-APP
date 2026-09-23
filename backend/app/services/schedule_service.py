@@ -10,6 +10,7 @@ from app.db import models as db
 from app.db.repositories import ScheduleRepository
 from app.domain.schedule.evaluator import ScheduleEvaluator
 from app.domain.schedule.exceptions import ImmutableScheduleError
+from app.domain.schedule.identity import activity_logical_key, event_logical_key
 from app.domain.schedule.models import (
     ConditionState, EvaluationResult, Event, PatientConditionStatus, PatientContext,
     QualifierCategory, QualifierScope,
@@ -22,6 +23,58 @@ from app.domain.schedule.validator import ScheduleValidator
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def current_protocol_approved_versions(trial_id: UUID):
+    """Approved schedule versions under a trial's CURRENT protocol version.
+
+    AD-4d: before this existed, "which schedule version currently applies to
+    this trial" was answered by two independently-written queries -- the
+    canonical Add-Patient endpoint filtered by ``Protocol.current_version_id``;
+    ``OperationalBridgeService._approved_version`` did not. A schedule approved
+    under a SUPERSEDED protocol version was therefore enrollable through the
+    operational bridge and refused by canonical Add-Patient -- two different
+    answers to one question. Every caller now resolves it through this one
+    query, using the stricter of the two prior behaviours.
+    """
+    return (
+        select(db.ScheduleVersion)
+        .join(db.ScheduleDefinition, db.ScheduleDefinition.id == db.ScheduleVersion.schedule_definition_id)
+        .join(db.ProtocolVersion, db.ProtocolVersion.id == db.ScheduleDefinition.protocol_version_id)
+        .join(db.Protocol, db.Protocol.id == db.ProtocolVersion.protocol_id)
+        .where(
+            db.Protocol.trial_id == trial_id,
+            db.Protocol.current_version_id == db.ProtocolVersion.id,
+            db.ScheduleVersion.status == ScheduleStatus.APPROVED.value,
+        )
+    )
+
+
+def in_force_today(versions: list[db.ScheduleVersion]) -> list[db.ScheduleVersion]:
+    """Doc 9 s8: a version approved but not yet effective must not look available."""
+    today = date.today()
+    return [item for item in versions if item.effective_from is None or item.effective_from <= today]
+
+
+def resolve_current_schedule_version(
+    session: Session, trial_id: UUID, schedule_definition_id: UUID,
+) -> db.ScheduleVersion:
+    """The one schedule version a new enrolment/link against this definition should use."""
+    approved = list(session.scalars(
+        current_protocol_approved_versions(trial_id)
+        .where(db.ScheduleVersion.schedule_definition_id == schedule_definition_id)
+        .order_by(db.ScheduleVersion.version_number.desc())
+    ))
+    versions_in_force = in_force_today(approved)
+    if versions_in_force:
+        return versions_in_force[0]
+    if approved:
+        soonest = min(item.effective_from for item in approved if item.effective_from is not None)
+        raise ValueError(
+            "no approved canonical schedule is in force today; the approved "
+            f"version takes effect on {soonest.isoformat()}"
+        )
+    raise ValueError("no approved canonical schedule is available for the linked trial")
 
 
 class ScheduleReviewService:
@@ -278,10 +331,58 @@ class ScheduleReviewService:
         version = self.session.get(db.ScheduleVersion, schedule_version_id)
         if version is None:
             raise KeyError("schedule version not found")
-        if version.status not in {ScheduleStatus.VALIDATION_REQUIRED.value, ScheduleStatus.EXTRACTED.value}:
+        if version.status not in {ScheduleStatus.DRAFT.value, ScheduleStatus.VALIDATION_REQUIRED.value,
+                                  ScheduleStatus.EXTRACTED.value, ScheduleStatus.REJECTED.value}:
             raise ValueError(f"cannot submit schedule in {version.status} state")
         version.status = ScheduleStatus.IN_REVIEW.value
         self._audit(version, actor_id, "SCHEDULE_SUBMITTED_FOR_REVIEW")
+
+    def resolve_extraction_issue(self, schedule_version_id: UUID, issue_id: UUID,
+                                 *, reviewer_id: UUID, reason: str) -> None:
+        if not reason.strip():
+            raise ValueError("Explain the source review or correction that resolves this finding.")
+        version = self.session.get(db.ScheduleVersion, schedule_version_id)
+        if version is None:
+            raise KeyError("schedule version not found")
+        if version.status in {ScheduleStatus.APPROVED.value, ScheduleStatus.SUPERSEDED.value}:
+            raise ImmutableScheduleError("approved schedules cannot be corrected")
+        issue = self.session.get(db.ValidationIssue, issue_id)
+        if issue is None or issue.schedule_version_id != schedule_version_id:
+            raise KeyError("extraction finding not found")
+        if issue.status != "OPEN" or issue.details.get("origin") != "EXTRACTION":
+            raise ValueError("Only open extraction findings can be resolved by source review.")
+        if issue.issue_code in {"SCHEDULE_OPTION_FAILED", "SCHEDULE_DISCOVERY_FAILED"}:
+            raise ValueError("Retry extraction to recover the missing schedule coverage before approval.")
+        issue.status = "RESOLVED"
+        self.session.add(db.ReviewDecision(
+            schedule_version_id=schedule_version_id, entity_type="VALIDATION_ISSUE",
+            entity_id=issue.id, decision="RESOLVE", reviewer_id=reviewer_id, reason=reason,
+            previous_value={"status": "OPEN", "message": issue.message},
+            new_value={"status": "RESOLVED"},
+        ))
+        self._audit(version, reviewer_id, "EXTRACTION_FINDING_RESOLVED", reason)
+
+    def approve_reviewed_table(self, schedule_version_id: UUID, *, reviewer_id: UUID, reason: str) -> None:
+        """One explicit table confirmation, with existing gates and bulk audit.
+
+        The API commits this transaction atomically. Source findings are never
+        dismissed by this action.
+        """
+        if not reason.strip():
+            raise ValueError("Add a note confirming your review of the schedule table.")
+        version = self.session.get(db.ScheduleVersion, schedule_version_id, with_for_update=True)
+        if version is None:
+            raise KeyError("schedule version not found")
+        if version.status in {ScheduleStatus.APPROVED.value, ScheduleStatus.SUPERSEDED.value, "ARCHIVED"}:
+            raise ImmutableScheduleError("this schedule is no longer editable")
+        issues = ScheduleValidator().validate(self.repository.get(schedule_version_id))
+        if ScheduleValidator.blocking(issues):
+            raise ValueError("Resolve the flagged schedule items before approval.")
+        if version.status != ScheduleStatus.IN_REVIEW.value:
+            self.submit_for_review(schedule_version_id, actor_id=reviewer_id)
+        self.bulk_confirm_all_fields(schedule_version_id, reviewer_id=reviewer_id, reason=reason.strip())
+        self.session.flush()
+        self.approve(schedule_version_id, reviewer_id=reviewer_id, comment=reason.strip())
 
     def approve(
         self,
@@ -328,6 +429,16 @@ class ScheduleReviewService:
         version.effective_from = effective_from
         version.approved_by = reviewer_id
         version.approved_at = utc_now()
+        definition = self.session.get(db.ScheduleDefinition, version.schedule_definition_id)
+        protocol_version = self.session.get(db.ProtocolVersion, definition.protocol_version_id)
+        protocol = self.session.get(db.Protocol, protocol_version.protocol_id)
+        # A replacement extraction can recover an unapproved first draft. It
+        # must not remain unusable behind that old draft's protocol pointer.
+        # An already-approved protocol keeps its explicit amendment lifecycle.
+        if protocol.current_version_id != protocol_version.id and self.session.scalar(
+            current_protocol_approved_versions(protocol.trial_id).limit(1)
+        ) is None:
+            protocol.current_version_id = protocol_version.id
         self.session.add(db.ReviewDecision(
             schedule_version_id=version.id, decision="APPROVE",
             reviewer_id=reviewer_id, comment=comment,
@@ -351,6 +462,52 @@ class ScheduleReviewService:
             reviewer_id=reviewer_id, reason=reason,
         ))
         self._audit(version, reviewer_id, "SCHEDULE_REJECTED", reason)
+
+    def list_pending_review(self, *, organization_id: UUID) -> list[dict[str, object]]:
+        """Every IN_REVIEW schedule version across this org's trials.
+
+        The cross-trial "what needs my decision" list `schedule-review.tsx`
+        used to provide from a separate `schedule_reviews` Mongo collection -
+        this is its canonical replacement, queried directly off the same
+        tables `approve`/`reject` already act on rather than a second,
+        independently-maintained record of "what's pending".
+        """
+        rows = self.session.execute(
+            select(
+                db.Trial.id, db.Trial.study_title, db.Trial.protocol_id,
+                db.ScheduleDefinition.id, db.ScheduleDefinition.name,
+                db.ScheduleVersion.id, db.ScheduleVersion.version_number,
+                db.ScheduleVersion.updated_at, db.ProtocolVersion.version_label,
+            )
+            .select_from(db.ScheduleVersion)
+            .join(db.ScheduleDefinition,
+                  db.ScheduleDefinition.id == db.ScheduleVersion.schedule_definition_id)
+            .join(db.ProtocolVersion,
+                  db.ProtocolVersion.id == db.ScheduleDefinition.protocol_version_id)
+            .join(db.Protocol, db.Protocol.id == db.ProtocolVersion.protocol_id)
+            .join(db.Trial, db.Trial.id == db.Protocol.trial_id)
+            .where(
+                db.ScheduleVersion.status == ScheduleStatus.IN_REVIEW.value,
+                db.Trial.organization_id == organization_id,
+            )
+            .order_by(db.ScheduleVersion.updated_at)
+        ).all()
+        return [
+            {
+                "trial_id": str(trial_id),
+                "trial_name": study_title or protocol_id or "Untitled trial",
+                "schedule_definition_id": str(definition_id),
+                "schedule_name": schedule_name,
+                "schedule_version_id": str(version_id),
+                "version_number": version_number,
+                "protocol_version_label": version_label,
+                "submitted_at": updated_at.isoformat() if updated_at else None,
+            }
+            for (
+                trial_id, study_title, protocol_id, definition_id, schedule_name,
+                version_id, version_number, updated_at, version_label,
+            ) in rows
+        ]
 
     def _organization_id(self, version: db.ScheduleVersion) -> UUID:
         return self.session.execute(
@@ -386,7 +543,8 @@ class PatientScheduleService:
         if row.logical_key:
             return row.logical_key
         event = self.session.get(db.Event, row.event_definition_id)
-        return f"{event.code if event else row.event_definition_id}:{row.occurrence_index}"
+        return event_logical_key(
+            event.code if event else str(row.event_definition_id), row.occurrence_index)
 
     def current_events(self, patient_id: UUID, schedule_version_id: UUID) -> list[db.PatientEvent]:
         patient_schedule = self.session.scalar(select(db.PatientSchedule).where(
@@ -545,12 +703,17 @@ class PatientScheduleService:
             dimension_values=patient.dimension_values or {},
         )
 
-    def _persist_activities(self, row: db.PatientEvent, item: object) -> None:
+    def _persist_activities(
+        self, row: db.PatientEvent, item: object,
+        *, schedule_version_id: UUID | None = None, protocol_version_id: UUID | None = None,
+    ) -> None:
         """Materialize the day-wise activity schedule for one visit occurrence."""
         activities = getattr(item, "activities", None) or []
         if not activities:
             return
         self.session.flush()
+        event_code = getattr(item, "event_code", None) or row.logical_key
+        occurrence_index = getattr(item, "occurrence_index", row.occurrence_index)
 
         def as_datetime(value: date | datetime | None) -> datetime | None:
             if value is None or isinstance(value, datetime):
@@ -563,7 +726,10 @@ class PatientScheduleService:
                 patient_event_id=row.id,
                 activity_definition_id=activity.activity_definition_id,
                 activity_code=activity.activity_code,
-                logical_key=f"{row.logical_key}#{activity.activity_code or activity.activity_definition_id}",
+                logical_key=activity_logical_key(
+                    event_code, occurrence_index,
+                    activity.activity_code or str(activity.activity_definition_id),
+                ),
                 status=activity.status.value,
                 requiredness=activity.requiredness.value,
                 sequence_number=activity.sequence_number,
@@ -573,7 +739,68 @@ class PatientScheduleService:
                 actual_time=as_datetime(activity.actual_time),
                 timing_resolution=timing.model_dump(mode="json") if timing else {},
                 generation_reason=activity.explanation,
+                schedule_version_id=schedule_version_id,
+                protocol_version_id=protocol_version_id,
             ))
+
+    def _persist_confinements(
+        self,
+        patient_schedule_id: UUID,
+        schedule_evaluation_id: UUID,
+        confinements: list,
+        *,
+        prior_evaluation_id: UUID | None,
+        schedule_version_id: UUID,
+        protocol_version_id: UUID | None,
+    ) -> list["db.PatientConfinementEpisode"]:
+        """Materialize this evaluation's confinement episodes (AD-8).
+
+        Before this, ``result.confinements`` was computed on every evaluation
+        and then discarded - every consumer (the operational bridge, the
+        deviation report, reminder delivery) recomputed it fresh from a
+        transient ``EvaluationResult`` instead of reading a persisted row, the
+        same way ``PatientEvent`` already is.
+
+        Mirrors ``evaluate()``'s own event reconciliation: a DISCHARGED
+        episode's actual dates are protected across re-evaluation once
+        recorded, found via ``episode_code`` as the stable logical key
+        (Step 1's identity discipline - an episode is not per-occurrence
+        indexed the way an event is, so there is nothing else to key on).
+        """
+        def as_date(value: date | datetime | None) -> date | None:
+            return value.date() if isinstance(value, datetime) else value
+
+        prior_by_key: dict[str, db.PatientConfinementEpisode] = {}
+        if prior_evaluation_id is not None:
+            prior_by_key = {
+                item.logical_key: item
+                for item in self.session.scalars(select(db.PatientConfinementEpisode).where(
+                    db.PatientConfinementEpisode.schedule_evaluation_id == prior_evaluation_id,
+                ))
+            }
+        persisted: list[db.PatientConfinementEpisode] = []
+        for item in confinements:
+            logical_key = item.episode_code
+            previous = prior_by_key.get(logical_key)
+            protected = previous is not None and previous.status == "DISCHARGED"
+            row = db.PatientConfinementEpisode(
+                patient_schedule_id=patient_schedule_id, schedule_evaluation_id=schedule_evaluation_id,
+                episode_definition_id=item.episode_definition_id, episode_code=item.episode_code,
+                logical_key=logical_key,
+                supersedes_patient_confinement_episode_id=previous.id if previous else None,
+                protected_history=protected,
+                status=(previous.status if protected and previous else item.status.value),
+                planned_admission=(previous.planned_admission if protected and previous else as_date(item.planned_admission)),
+                actual_admission=(previous.actual_admission if protected and previous else as_date(item.actual_admission)),
+                planned_discharge=(previous.planned_discharge if protected and previous else as_date(item.planned_discharge)),
+                actual_discharge=(previous.actual_discharge if protected and previous else as_date(item.actual_discharge)),
+                extended_by=(previous.extended_by if protected and previous else list(item.extended_by)),
+                explanation=(previous.explanation if protected and previous else dict(item.explanation)),
+                schedule_version_id=schedule_version_id, protocol_version_id=protocol_version_id,
+            )
+            self.session.add(row)
+            persisted.append(row)
+        return persisted
 
     def create_unscheduled_visit(
         self,
@@ -658,7 +885,7 @@ class PatientScheduleService:
         ))
         if patient is None:
             raise KeyError("patient not found")
-        logical_key = f"{event_code}#{occurrence_index}#{activity_code}"
+        logical_key = activity_logical_key(event_code, occurrence_index, activity_code)
         record = db.PatientActivityRecord(
             patient_id=patient.id, event_code=event_code, occurrence_index=occurrence_index,
             activity_code=activity_code, logical_key=logical_key, status=status,
@@ -697,16 +924,34 @@ class PatientScheduleService:
         *,
         organization_id: UUID,
         horizon: date,
+        schedule_version_id: UUID | None = None,
         idempotency_key: str | None = None,
         prior_events_override: list[db.PatientEvent] | None = None,
         rolling: RollingHorizon | None = None,
+        actor_id: UUID | None = None,
+        reason: str | None = None,
     ) -> tuple[db.ScheduleEvaluation, list[db.PatientEvent]]:
+        """Evaluate one patient against a schedule version.
+
+        AD-4d: ``schedule_version_id`` lets a caller that already resolved the
+        target version (``impact_service.confirm()``, which is in the middle of
+        MOVING a patient to a new version) pass it explicitly instead of relying
+        on a just-written ``patient.current_schedule_version_id`` being visible
+        to a second, independent read inside this method. When omitted, the
+        patient's currently pinned version is used -- resolved exactly once,
+        here, and threaded through the rest of this call rather than re-read
+        later.
+        """
         patient = self.session.scalar(select(db.Patient).where(
             db.Patient.id == patient_id, db.Patient.organization_id == organization_id,
         ))
         if patient is None:
             raise KeyError("patient not found")
-        if patient.current_schedule_version_id is None:
+        resolved_version_id = (
+            schedule_version_id if schedule_version_id is not None
+            else patient.current_schedule_version_id
+        )
+        if resolved_version_id is None:
             raise ValueError("patient is not pinned to an approved schedule")
         if idempotency_key:
             existing = self.session.scalar(select(db.ScheduleGenerationRun).where(
@@ -722,7 +967,7 @@ class PatientScheduleService:
                     db.PatientEvent.schedule_evaluation_id == evaluation.id,
                 )))
                 return evaluation, events
-        schedule = self.repository.get(patient.current_schedule_version_id)
+        schedule = self.repository.get(resolved_version_id)
         prior_events = (
             prior_events_override if prior_events_override is not None
             else self.current_events(patient.id, schedule.schedule_version_id)
@@ -749,6 +994,9 @@ class PatientScheduleService:
             )
             self.session.add(patient_schedule)
             self.session.flush()
+        # Captured before it is overwritten below, so confinement reconciliation
+        # can find the episodes the OUTGOING evaluation produced.
+        prior_evaluation_id = patient_schedule.current_evaluation_id
         patient_schedule.status = "ACTIVE"
         evaluation = db.ScheduleEvaluation(
             patient_schedule_id=patient_schedule.id, generation_run_id=run.id,
@@ -766,7 +1014,7 @@ class PatientScheduleService:
             timing = item.timing
             def as_date(value: date | datetime | None) -> date | None:
                 return value.date() if isinstance(value, datetime) else value
-            logical_key = f"{item.event_code}:{item.occurrence_index}"
+            logical_key = event_logical_key(item.event_code, item.occurrence_index)
             previous = prior_by_key.pop(logical_key, None)
             protected = previous is not None and previous.id in protected_ids
             status = previous.status if protected else item.status.value
@@ -807,9 +1055,13 @@ class PatientScheduleService:
                 generation_reason=explanation,
                 visit_mode=item.visit_mode,
                 unscheduled_reason=item.unscheduled_reason,
+                schedule_version_id=schedule.schedule_version_id,
+                protocol_version_id=schedule.schedule_metadata.protocol_version_id,
             )
             self.session.add(row)
-            self._persist_activities(row, item)
+            self._persist_activities(
+                row, item, schedule_version_id=schedule.schedule_version_id,
+                protocol_version_id=schedule.schedule_metadata.protocol_version_id)
             persisted.append(row)
         for logical_key, previous in prior_by_key.items():
             protected = previous.id in protected_ids
@@ -837,9 +1089,17 @@ class PatientScheduleService:
                         "supersedes_patient_event_id": str(previous.id),
                     },
                 },
+                schedule_version_id=schedule.schedule_version_id,
+                protocol_version_id=schedule.schedule_metadata.protocol_version_id,
             )
             self.session.add(row)
             persisted.append(row)
+        self._persist_confinements(
+            patient_schedule.id, evaluation.id, result.confinements,
+            prior_evaluation_id=prior_evaluation_id,
+            schedule_version_id=schedule.schedule_version_id,
+            protocol_version_id=schedule.schedule_metadata.protocol_version_id,
+        )
         self.session.flush()
         evaluation.output_summary = {
             **evaluation.output_summary,
@@ -849,9 +1109,14 @@ class PatientScheduleService:
         patient_schedule.current_evaluation_id = evaluation.id
         patient_schedule.generation_run_id = run.id
         self.session.add(db.AuditEvent(
-            organization_id=organization_id, action="PATIENT_SCHEDULE_EVALUATED",
+            organization_id=organization_id, actor_id=actor_id,
+            action="PATIENT_SCHEDULE_EVALUATED",
             entity_type="PATIENT", entity_id=patient.id, before=None,
-            after={"evaluation_id": str(evaluation.id), "event_count": len(persisted)},
+            after={
+                "evaluation_id": str(evaluation.id), "event_count": len(persisted),
+                "reconciliation": reconciliation,
+            },
+            reason=reason,
             metadata_json={"evaluator_version": result.evaluator_version},
         ))
         return evaluation, persisted

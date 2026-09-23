@@ -32,8 +32,14 @@ UPLOADS_DIR = Path(__file__).resolve().parent / 'uploads'
 class Storage(Protocol):
     async def save(self, key: str, data: bytes, content_type: str) -> str: ...
     async def open(self, key: str) -> Tuple[bytes, str]: ...
+    async def exists(self, key: str) -> bool: ...
     async def delete(self, key: str) -> None: ...
     def url(self, key: str) -> Optional[str]: ...   # presigned for S3, None for local
+    async def presign_upload(self, key: str, content_type: str, max_bytes: int) -> Optional[dict]: ...
+    # Short-lived, size/content-type-constrained direct upload (S3 presigned
+    # POST). Returns None when the backend can't offer this (local disk has
+    # no such thing — the caller falls back to uploading through the API
+    # instead, receiving the bytes itself and calling save()).
 
 
 class LocalDiskStorage:
@@ -81,6 +87,16 @@ class LocalDiskStorage:
         ct = mimetypes.guess_type(key)[0] or 'application/octet-stream'
         return data, ct
 
+    async def exists(self, key: str) -> bool:
+        """Cheap presence check without reading the object.
+
+        Used before enqueueing worker jobs: a job for bytes that were never
+        uploaded would otherwise fail in the worker and burn its whole retry
+        budget before anyone learned the upload simply never happened.
+        """
+        target = self._resolve(key)
+        return await run_in_threadpool(target.is_file)
+
     async def delete(self, key: str) -> None:
         target = self._resolve(key)
 
@@ -93,6 +109,9 @@ class LocalDiskStorage:
 
     def url(self, key: str) -> Optional[str]:
         return None   # local blobs are streamed through the authenticated API
+
+    async def presign_upload(self, key: str, content_type: str, max_bytes: int) -> Optional[dict]:
+        return None   # local disk has no direct-upload equivalent -- caller falls back to server-mediated upload
 
 
 class S3Storage:
@@ -122,6 +141,22 @@ class S3Storage:
             return obj['Body'].read(), obj.get('ContentType', 'application/octet-stream')
         return await run_in_threadpool(_get)
 
+    async def exists(self, key: str) -> bool:
+        """HEAD the object. A 404/NoSuchKey means "not uploaded"; any OTHER
+        error is re-raised rather than reported as absent, so an S3 outage or a
+        permissions mistake can never be mistaken for a missing upload."""
+        def _head() -> bool:
+            from botocore.exceptions import ClientError
+            try:
+                self._client.head_object(Bucket=self.bucket, Key=key)
+                return True
+            except ClientError as exc:
+                code = str(exc.response.get('Error', {}).get('Code', ''))
+                if code in ('404', 'NoSuchKey', 'NotFound'):
+                    return False
+                raise
+        return await run_in_threadpool(_head)
+
     async def delete(self, key: str) -> None:
         await run_in_threadpool(
             lambda: self._client.delete_object(Bucket=self.bucket, Key=key))
@@ -130,6 +165,22 @@ class S3Storage:
         return self._client.generate_presigned_url(
             'get_object', Params={'Bucket': self.bucket, 'Key': key},
             ExpiresIn=self.PRESIGN_TTL)
+
+    async def presign_upload(self, key: str, content_type: str, max_bytes: int) -> Optional[dict]:
+        """A presigned POST (not a bare PUT) so the size cap is an enforced
+        upload condition, not just documentation — S3 rejects the upload
+        outright if the body exceeds ``max_bytes``."""
+        def _presign():
+            return self._client.generate_presigned_post(
+                Bucket=self.bucket, Key=key,
+                Fields={'Content-Type': content_type},
+                Conditions=[
+                    {'Content-Type': content_type},
+                    ['content-length-range', 0, max_bytes],
+                ],
+                ExpiresIn=self.PRESIGN_TTL,
+            )
+        return await run_in_threadpool(_presign)
 
 
 def get_storage() -> Storage:

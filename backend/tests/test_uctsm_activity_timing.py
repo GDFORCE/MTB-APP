@@ -105,7 +105,7 @@ def approved(event: Event) -> UniversalSchedule:
             ))
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary", status=ScheduleStatus.APPROVED),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=[event], evidence=[evidence], claim_evidence=claims,
     )
 

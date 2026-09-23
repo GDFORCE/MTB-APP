@@ -38,7 +38,7 @@ def _schedule(dimension="SUBSTUDY", value="CARDIAC"):
             dimension_type="SUBSTUDY", code="CARDIAC", protocol_label="Cardiac",
             display_name="Cardiac substudy",
         )],
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=[event], evidence=[evidence], claim_evidence=claims,
     )
 

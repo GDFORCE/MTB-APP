@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -10,11 +10,12 @@ import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Body, Button, Card, Small } from "@/src/components/ui";
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import {
-  bulkConfirmSchedule, decideSchedule, getApprovedSchedules, getScheduleProjection,
-  getUniversalSchedule, submitScheduleReview, validateSchedule,
+  decideSchedule, getApprovedSchedules, getScheduleProjection,
+  getUniversalSchedule, submitScheduleReview, validateSchedule, resolveExtractionIssue,
+  approveReviewedTable,
 } from "./api";
-import { toProtocolScheduleRows, type ProtocolScheduleRow } from "./presentation";
-import { ScheduleTable } from "./ScheduleTable";
+import { toProtocolScheduleRows, UNSTATED_VISIT_MODE, type ProtocolScheduleRow } from "./presentation";
+import { SimpleScheduleTable } from "./SimpleScheduleTable";
 import type { Evidence, ScheduleProjection, UniversalSchedule } from "./types";
 
 const first = (value?: string | string[]) => Array.isArray(value) ? value[0] : value;
@@ -32,6 +33,12 @@ export default function ProtocolScheduleScreen() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [bulkReason, setBulkReason] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [sourceText, setSourceText] = useState<string | null>(null);
+  const [issueReasons, setIssueReasons] = useState<Record<string, string>>({});
+  const [showChecks, setShowChecks] = useState(false);
+  const [showApproval, setShowApproval] = useState(false);
+  const [showReject, setShowReject] = useState(false);
 
   const loadVersion = async (versionId: string) => {
     const [nextSchedule, nextProjections] = await Promise.all([
@@ -73,6 +80,15 @@ export default function ProtocolScheduleScreen() {
   );
   const openIssues = schedule?.validation_issues.filter((issue) => issue.status === "OPEN") || [];
   const blocking = openIssues.filter((issue) => issue.blocking).length;
+  const canReview = !!schedule && ["DRAFT", "EXTRACTED", "VALIDATION_REQUIRED", "REJECTED", "IN_REVIEW"]
+    .includes(schedule.schedule_metadata.status);
+  const statusLabel = schedule?.schedule_metadata.status.toLowerCase().replace(/_/g, " ");
+  // Doc 10 s18/s33: never let an unstated visit mode reach a patient. It is
+  // not a validation issue (extraction is not wrong for leaving it unstated -
+  // the protocol just did not say), so it needs its own reviewer-visible
+  // count rather than hiding inside "openIssues", matching the existing
+  // pendingCount/AlertTriangle pattern the legacy visit-schedule screen uses.
+  const unstatedModeCount = rows.filter((row) => row.visitMode === UNSTATED_VISIT_MODE).length;
 
   const run = async (label: string, action: () => Promise<void>) => {
     if (!schedule || busy) return;
@@ -90,40 +106,35 @@ export default function ProtocolScheduleScreen() {
     await submitScheduleReview(schedule!.schedule_version_id);
     setMessage("Schedule submitted for clinical review.");
   });
-  // Doc s14: this is a BULK action, not a stand-in for field-by-field review,
-  // and the UI/audit trail must never blur that line. A mandatory reason and
-  // an explicit "bulk" label on the button are what make this honest;
-  // bulkConfirmSchedule records ONE distinct SCHEDULE_BULK_CONFIRMED audit
-  // event rather than N decisions that would look like N individual reviews.
-  const confirmFields = () => run("confirm", async () => {
-    const reason = bulkReason.trim();
-    if (!reason) {
-      throw new Error("Say why you are bulk-confirming before saving it.");
-    }
-    const result = await bulkConfirmSchedule(schedule!.schedule_version_id, reason);
-    setBulkReason("");
-    setMessage(
-      `${result.fields_confirmed} field(s) bulk-confirmed in one action - `
-      + "not reviewed individually.",
-    );
-  });
   const approve = () => run("approve", async () => {
-    await decideSchedule(schedule!.schedule_version_id, "APPROVE", "Approved from protocol schedule review.");
-    setMessage("Schedule approved and frozen as an immutable version.");
+    await approveReviewedTable(schedule!.schedule_version_id, bulkReason.trim());
+    setShowApproval(false);
+    setMessage("Schedule approved. It can now be used to calculate patient visits.");
+  });
+  // The PI-facing sibling of `approve`: the reviewer who now reaches this
+  // screen from the pending-review inbox needs a way to say no, not just yes.
+  const reject = () => run("reject", async () => {
+    const reason = rejectReason.trim();
+    if (!reason) {
+      throw new Error("Say why this schedule is being rejected before saving it.");
+    }
+    await decideSchedule(schedule!.schedule_version_id, "REJECT", reason);
+    setRejectReason("");
+    setMessage("Schedule rejected. It stays editable for a new extraction or correction.");
   });
 
   const openEvidence = (row: ProtocolScheduleRow) => {
     const evidence = schedule?.evidence.filter((item) => row.evidenceRefs.includes(item.id)) || [];
-    if (!evidence.length) return Alert.alert("Protocol evidence", "No linked evidence is available for this event.");
+    if (!evidence.length) return setSourceText("No linked evidence is available for this event.");
     const text = evidence.map(formatEvidence).join("\n\n──────────\n\n");
-    Alert.alert(`${row.visit} · ${row.visitName}`, text);
+    setSourceText(`${row.visit} · ${row.visitName}\n\n${text}`);
   };
 
   if (busy === "load") return <ScreenContainer><ScreenHeader eyebrow="Protocol" title="Schedule" /><View style={styles.center}><ActivityIndicator color={colors.primary} /><Small style={{ marginTop: 10 }}>Loading approved schedule…</Small></View></ScreenContainer>;
 
   return (
     <ScreenContainer>
-      <ScreenHeader eyebrow="Protocol schedule" title="Schedule Review" />
+      <ScreenHeader eyebrow="Protocol schedule" title="Visit Schedule" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {error && !schedule ? (
           <Card style={styles.emptyCard}>
@@ -136,23 +147,30 @@ export default function ProtocolScheduleScreen() {
         ) : schedule ? (
           <>
             <View style={styles.summaryRow}>
-              <Card style={styles.summaryMain}>
-                <Small>TRIAL / PROTOCOL</Small>
+              <View style={{ flex: 1 }}>
                 <Body weight="700" style={styles.summaryTitle}>{first(params.trialName) || schedule.schedule_metadata.name}</Body>
-                <Small>{first(params.protocolVersion) || `Protocol schedule version ${schedule.schedule_metadata.version_number}`}</Small>
-              </Card>
-              <Card style={styles.statusCard}>
-                <Small>STATUS</Small>
+                <Small>{rows.length} visits · {first(params.protocolVersion) || `Version ${schedule.schedule_metadata.version_number}`}</Small>
+              </View>
+              <View>
                 <View style={[styles.statusPill, schedule.schedule_metadata.status === "APPROVED" && styles.approvedPill]}>
                   {schedule.schedule_metadata.status === "APPROVED" ? <ShieldCheck size={14} color={colors.success} /> : <RefreshCw size={14} color={colors.warning} />}
-                  <Text style={[styles.statusText, schedule.schedule_metadata.status === "APPROVED" && styles.approvedText]}>{schedule.schedule_metadata.status.replace(/_/g, " ")}</Text>
+                  <Text style={[styles.statusText, schedule.schedule_metadata.status === "APPROVED" && styles.approvedText]}>{statusLabel ? statusLabel[0].toUpperCase() + statusLabel.slice(1) : ""}</Text>
                 </View>
-              </Card>
+              </View>
             </View>
 
             {!!error && <Notice error text={error} />}
             {!!message && <Notice text={message} />}
 
+            <Small>Tap a visit for activities, notes and source details.</Small>
+            <SimpleScheduleTable rows={rows} onEvidence={openEvidence} />
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: showChecks }}
+              onPress={() => setShowChecks((value) => !value)} style={{ paddingVertical: 12 }}>
+              <Small color={blocking ? "#87591F" : colors.primary}>
+                {showChecks ? "Hide" : "Show"} schedule checks{openIssues.length ? ` (${openIssues.length})` : ""}
+              </Small>
+            </Pressable>
+            {showChecks && <>
             <Card style={styles.validationCard}>
               <View style={styles.validationHead}>
                 {blocking ? <AlertTriangle size={21} color={colors.warning} /> : <CheckCircle2 size={21} color={colors.success} />}
@@ -161,12 +179,41 @@ export default function ProtocolScheduleScreen() {
                   <Small>{openIssues.length ? `${openIssues.length} item(s) require attention; ${blocking} block approval.` : "No open validation issues."}</Small>
                 </View>
               </View>
-              {openIssues.slice(0, 5).map((issue) => <View key={issue.id} style={styles.issue}><Text style={styles.issueText}>{issue.message}</Text></View>)}
+              {openIssues.map((issue) => <View key={issue.id} style={styles.issue}>
+                <Text style={styles.issueText}>{issue.blocking ? "Blocks approval: " : "Review: "}{issue.message}</Text>
+                {issue.details.origin === "EXTRACTION" && !["SCHEDULE_OPTION_FAILED", "SCHEDULE_DISCOVERY_FAILED"].includes(issue.issue_code) && canReview && <>
+                  <TextInput value={issueReasons[issue.id] || ""}
+                    onChangeText={(value) => setIssueReasons((current) => ({ ...current, [issue.id]: value }))}
+                    placeholder="Describe the source review or correction that resolves this finding"
+                    placeholderTextColor={colors.mutedFg} style={styles.bulkConfirmInput} />
+                  <Button variant="secondary" disabled={!issueReasons[issue.id]?.trim() || !!busy}
+                    onPress={() => run("resolve", async () => {
+                      await resolveExtractionIssue(schedule.schedule_version_id, issue.id, issueReasons[issue.id].trim());
+                      setMessage("Source review recorded. Structural errors still need correction before approval.");
+                    })}>Record source resolution</Button>
+                </>}
+              </View>)}
             </Card>
+
+            {!!unstatedModeCount && (
+              <Card style={styles.validationCard}>
+                <View style={styles.validationHead}>
+                  <AlertTriangle size={21} color={colors.warning} />
+                  <View style={{ flex: 1 }}>
+                    <Body weight="700">Visit mode needs review</Body>
+                    <Small>
+                      {unstatedModeCount} visit{unstatedModeCount === 1 ? "" : "s"} do
+                      not state how the patient attends - resolve these before
+                      approval so a reminder never guesses.
+                    </Small>
+                  </View>
+                </View>
+              </Card>
+            )}
 
             <View style={styles.sectionHead}>
               <View><Body weight="700" style={styles.sectionTitle}>Protocol Schedule</Body><Small>{rows.length} visits and protocol events</Small></View>
-              {schedule.schedule_metadata.status !== "APPROVED" && <Button onPress={validate} loading={busy === "validate"} variant="secondary" style={styles.smallButton}>Validate</Button>}
+              {canReview && <Button onPress={validate} loading={busy === "validate"} variant="secondary" style={styles.smallButton}>Validate</Button>}
               {/* Doc 4 s7 and doc 8 s33. The decisions that block approval live
                   on their own screen, because they need explanation rather than
                   a row in a table. */}
@@ -180,41 +227,76 @@ export default function ProtocolScheduleScreen() {
                 Review rules
               </Button>
             </View>
-            <ScheduleTable rows={rows} onEvidence={openEvidence} />
+            </>}
 
-            {schedule.schedule_metadata.status !== "APPROVED" && (
+            {canReview && <Button
+              onPress={() => { setShowApproval((value) => !value); if (blocking) setShowChecks(true); }}>
+              {showApproval ? "Close approval" : blocking ? "Resolve items before approval" : "Review and approve"}
+            </Button>}
+
+            {showApproval && canReview && (
               <Card style={styles.reviewCard}>
                 <View style={styles.reviewTitle}><ClipboardCheck size={20} color={colors.primary} /><View style={{ flex: 1 }}><Body weight="700">Review and approval</Body><Small>Review the table and evidence before approving this version.</Small></View></View>
                 <View style={styles.actions}>
-                  {["EXTRACTED", "VALIDATION_REQUIRED"].includes(schedule.schedule_metadata.status) && <Button onPress={submit} loading={busy === "submit"} style={styles.actionButton}>Submit for review</Button>}
-                  {schedule.schedule_metadata.status === "IN_REVIEW" && (
                 <View style={styles.bulkConfirmBlock}>
                   <Small style={styles.bulkConfirmLabel}>
-                    Bulk-confirm all fields (not the same as reviewing each field)
+                    This confirms the whole table in one action. Check the visits, activities and source notes first.
                   </Small>
                   <TextInput
                     value={bulkReason}
                     onChangeText={setBulkReason}
-                    placeholder="Why are you bulk-confirming? (recorded in the audit trail)"
+                    placeholder="Add a short note about your review"
                     placeholderTextColor={colors.mutedFg}
                     style={styles.bulkConfirmInput}
                   />
                   <Button
-                    onPress={confirmFields}
-                    loading={busy === "confirm"}
-                    variant="secondary"
+                    onPress={approve}
+                    loading={busy === "approve"}
+                    disabled={blocking > 0 || !bulkReason.trim() || !!busy}
                     style={styles.actionButton}>
-                    Bulk-confirm all fields
+                    Confirm table and approve
                   </Button>
                 </View>
-              )}
-                  {schedule.schedule_metadata.status === "IN_REVIEW" && <Button onPress={approve} loading={busy === "approve"} disabled={blocking > 0} style={styles.actionButton}>Approve schedule</Button>}
                 </View>
+                <Pressable accessibilityRole="button" onPress={() => setShowReject((value) => !value)} style={{ paddingVertical: 10 }}>
+                  <Small color={colors.primary}>{showReject ? "Hide" : "Show"} other review options</Small>
+                </Pressable>
+                {showReject && <>
+                  {["DRAFT", "EXTRACTED", "VALIDATION_REQUIRED", "REJECTED"].includes(schedule.schedule_metadata.status) && <Button onPress={submit} loading={busy === "submit"} variant="secondary">Send for review</Button>}
+                {schedule.schedule_metadata.status === "IN_REVIEW" && (
+                  <View style={styles.bulkConfirmBlock}>
+                    <Small style={styles.bulkConfirmLabel}>Reject instead</Small>
+                    <TextInput
+                      value={rejectReason}
+                      onChangeText={setRejectReason}
+                      placeholder="Why is this schedule being rejected? (recorded in the audit trail)"
+                      placeholderTextColor={colors.mutedFg}
+                      style={styles.bulkConfirmInput}
+                    />
+                    <Button
+                      onPress={reject}
+                      loading={busy === "reject"}
+                      variant="secondary"
+                      style={styles.actionButton}>
+                      Reject schedule
+                    </Button>
+                  </View>
+                )}
+                </>}
               </Card>
             )}
           </>
         ) : null}
       </ScrollView>
+      <Modal visible={sourceText !== null} transparent onRequestClose={() => setSourceText(null)}>
+        <View style={{ flex: 1, padding: 24, justifyContent: "center", backgroundColor: "rgba(0,0,0,0.4)" }}>
+          <Card style={{ maxHeight: "80%" }}>
+            <Body weight="700">Protocol evidence</Body>
+            <ScrollView><Text style={{ color: colors.foreground, paddingVertical: 16 }}>{sourceText}</Text></ScrollView>
+            <Button onPress={() => setSourceText(null)}>Close</Button>
+          </Card>
+        </View>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -250,14 +332,14 @@ const styles = StyleSheet.create({
   validationHead: { flexDirection: "row", alignItems: "center", gap: 10 },
   issue: { padding: 9, borderRadius: radii.sm, backgroundColor: "#FFF7E8" },
   issueText: { color: "#754A16", fontFamily: fonts.regular, fontSize: 12 },
-  sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 5 },
+  sectionHead: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 5 },
   sectionTitle: { fontSize: 20 },
   smallButton: { minWidth: 110, paddingHorizontal: 12 },
   reviewCard: { gap: 13 },
   reviewTitle: { flexDirection: "row", alignItems: "center", gap: 10 },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  actions: { gap: 10 },
   actionButton: { minWidth: 180, flexGrow: 1 },
-  bulkConfirmBlock: { gap: 8, marginTop: 4 },
+  bulkConfirmBlock: { gap: 8, marginTop: 4, minWidth: 0, width: "100%" },
   bulkConfirmLabel: { fontStyle: "italic" },
   bulkConfirmInput: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radii.md,

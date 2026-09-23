@@ -277,7 +277,12 @@ export default function SponsorDashboard() {
               {dashboard.capabilities.canAddSite ? (
                 <QuickAction icon={MapPin} gradient label="Add Site" onPress={openAddSite} />
               ) : null}
-              <QuickAction icon={FileText} color={C.accent} iconColor={C.accentFg} label="Share Schedule" disabled={!dashboard.capabilities.canShareSchedule} onPress={() => router.push("/(app)/sponsor/share-schedule")} />
+              {/* Doc 9 - schedule review now runs entirely through the
+                  canonical engine (submit/approve/reject live on
+                  Protocol & Schedule Versions), which needs a trial picked
+                  first - there is no standalone "share" step to jump into
+                  directly the way the legacy flow had. */}
+              <QuickAction icon={FileText} color={C.accent} iconColor={C.accentFg} label="Submit Schedule" disabled={!dashboard.capabilities.canShareSchedule} onPress={() => router.push("/(app)/sponsor/trials")} />
             </View>
           </MotionItem>
 

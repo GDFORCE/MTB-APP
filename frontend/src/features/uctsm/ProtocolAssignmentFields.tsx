@@ -3,7 +3,9 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { ChevronRight } from "lucide-react-native";
 
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
-import { getCanonicalSchedules, getEnrolmentOptions } from "./api";
+import { getCanonicalSchedules, getEnrolmentOptions, getUniversalSchedule } from "./api";
+import type { CanonicalScheduleRow } from "./api";
+import type { UniversalSchedule } from "./types";
 import { toEnrolmentFields, toEnrolmentReadiness } from "./presentation";
 import type { EnrolmentField } from "./presentation";
 
@@ -13,6 +15,9 @@ export type ProtocolAssignment = {
   /** The same selections as protocol display names, for the operational path. */
   labels: Record<string, string>;
   scheduleVersionId: string | null;
+  scheduleDefinitionId?: string | null;
+  anchors?: UniversalSchedule["anchors"];
+  originCode?: string | null;
   /** Every dimension this protocol defines. Empty for a simple trial. */
   dimensionTypes: string[];
   /** True once every dimension the protocol requires has been chosen. */
@@ -23,7 +28,7 @@ export type ProtocolAssignment = {
 
 export const EMPTY_ASSIGNMENT: ProtocolAssignment = {
   values: {}, labels: {}, scheduleVersionId: null, dimensionTypes: [],
-  complete: true, ready: false, message: "",
+  complete: false, ready: false, message: "Select an approved protocol schedule.",
 };
 
 type Props = {
@@ -50,6 +55,11 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
   const [selected, setSelected] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [schedules, setSchedules] = useState<CanonicalScheduleRow[]>([]);
+  const [anchors, setAnchors] = useState<UniversalSchedule["anchors"]>([]);
+  const [originCode, setOriginCode] = useState<string | null>(null);
+  const [optionsLoaded, setOptionsLoaded] = useState(false);
+  const request = useRef(0);
   const notify = useRef(onChange);
   notify.current = onChange;
 
@@ -58,6 +68,10 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
     setScheduleVersionId(null);
     setFields([]);
     setSelected({});
+    setSchedules([]);
+    setAnchors([]);
+    setOptionsLoaded(false);
+    request.current += 1;
     setReadiness({ ready: false, message: "" });
     if (!trialId) return () => { alive = false; };
     (async () => {
@@ -65,13 +79,23 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
       try {
         const index = await getCanonicalSchedules(trialId);
         if (!alive) return;
-        const next = toEnrolmentReadiness(index.schedules);
+        const current = index.schedules.filter((item) => item.is_current_protocol_version !== false);
+        const available = current.filter((item) => item.status === "APPROVED"
+          && (!item.effective_from || item.effective_from <= new Date().toISOString().slice(0, 10)))
+          .sort((a, b) => b.version_number - a.version_number)
+          .filter((item, index, all) => all.findIndex((other) => other.schedule_definition_id === item.schedule_definition_id) === index);
+        setSchedules(available);
+        if (available.length > 1) {
+          setReadiness({ ready: false, message: "Select the approved Schedule of Assessments for this patient." });
+          return;
+        }
+        const next = toEnrolmentReadiness(current);
         setReadiness({ ready: next.ready, message: next.message });
         setScheduleVersionId(next.scheduleVersionId);
       } catch {
         // A trial with no canonical side yet keeps the operational enrolment
         // path exactly as it was; this block adds fields, it never removes any.
-        if (alive) setReadiness({ ready: false, message: "" });
+        if (alive) setReadiness({ ready: false, message: "Could not load the approved schedule. Reload this screen to try again." });
       } finally {
         if (alive) setLoading(false);
       }
@@ -80,14 +104,24 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
   }, [trialId]);
 
   const loadOptions = useCallback(async (versionId: string, current: Record<string, string>) => {
+    const generation = ++request.current;
     setLoading(true);
+    setOptionsLoaded(false);
     try {
-      const response = await getEnrolmentOptions(versionId, current);
+      const [response, schedule] = await Promise.all([
+        getEnrolmentOptions(versionId, current), getUniversalSchedule(versionId),
+      ]);
+      if (generation !== request.current) return;
       setFields(toEnrolmentFields(response.dimensions));
+      setAnchors(schedule.anchors);
+      setOriginCode(schedule.schedule_metadata.day_numbering?.day_1_anchor.code
+        || schedule.anchors.find((anchor) => anchor.derivation_rule?.role === "SCHEDULE_ORIGIN")?.code || null);
+      setOptionsLoaded(true);
     } catch {
-      setFields([]);
+      if (generation !== request.current) return;
+      setReadiness({ ready: false, message: "Protocol assignment could not be loaded. Reload before enrolling this patient." });
     } finally {
-      setLoading(false);
+      if (generation === request.current) setLoading(false);
     }
   }, []);
 
@@ -108,12 +142,15 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
       values: selected,
       labels,
       scheduleVersionId,
+      scheduleDefinitionId: schedules.find((item) => item.schedule_version_id === scheduleVersionId)?.schedule_definition_id,
+      anchors,
+      originCode,
       dimensionTypes: fields.map((field) => field.id),
-      complete: required.every((field) => !!selected[field.id]),
-      ready: readiness.ready,
+      complete: readiness.ready && optionsLoaded && !loading && required.every((field) => !!selected[field.id]),
+      ready: readiness.ready && optionsLoaded && !loading,
       message: readiness.message,
     };
-  }, [fields, selected, scheduleVersionId, readiness]);
+  }, [fields, selected, scheduleVersionId, readiness, schedules, anchors, originCode, optionsLoaded, loading]);
 
   useEffect(() => { notify.current(assignment); }, [assignment]);
 
@@ -145,7 +182,7 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
     });
   };
 
-  if (!trialId || (!readiness.message && !fields.length)) return null;
+  if (!trialId) return null;
 
   const visible = fields.filter((field) => field.disabled || field.options.length > 1);
 
@@ -162,6 +199,16 @@ export function ProtocolAssignmentFields({ trialId, onChange }: Props) {
             : readiness.message}
         </Text>
       )}
+      {schedules.length > 1 && schedules.map((item) => <Pressable
+        key={item.schedule_version_id} accessibilityRole="button"
+        onPress={() => {
+          request.current += 1;
+          setOptionsLoaded(false); setSelected({}); setFields([]); setAnchors([]);
+          setScheduleVersionId(item.schedule_version_id);
+          setReadiness({ ready: true, message: `${item.name} · Schedule v${item.version_number}` });
+        }} style={styles.control}>
+        <Text style={styles.controlText}>{item.schedule_version_id === scheduleVersionId ? "✓ " : ""}{item.name} · v{item.version_number}</Text>
+      </Pressable>)}
       {visible.map((field) => (
         <View key={field.id} style={styles.field}>
           <Text style={styles.label}>

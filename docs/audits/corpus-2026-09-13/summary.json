@@ -1,0 +1,68 @@
+{
+  "accuracy_score": null,
+  "note": "Structural diagnostics; source review remains required.",
+  "documents": [
+    {
+      "number": 30,
+      "document": "30. GCP checklist.pdf",
+      "exit_code": 0,
+      "calls": 1,
+      "seconds": 11.25,
+      "reused_responses": 0,
+      "measurement": "fresh",
+      "schedules": 0,
+      "events": [
+        0
+      ],
+      "blocking_findings": {
+        "SOURCE_MAP_UNCERTAIN": 1,
+        "SOURCE_SCHEDULE_NOT_FOUND": 1
+      },
+      "source_review": "PENDING"
+    },
+    {
+      "number": 2,
+      "document": "2. SPIL 26200657-21-01_Ipratropium_Protocol PPT_01April2022(1)(1).pptx - Google Slides.pdf",
+      "exit_code": 0,
+      "calls": 9,
+      "seconds": 177.12,
+      "reused_responses": 0,
+      "measurement": "fresh",
+      "schedules": 1,
+      "events": [
+        12
+      ],
+      "blocking_findings": {
+        "UNVERIFIED_SOURCE_QUOTE": 14,
+        "AMBIGUOUS_TIMING": 20,
+        "CONFLICTING_SOURCE": 1,
+        "UNKNOWN_ANCHOR": 2,
+        "UNRESOLVED_QUALIFIER": 10,
+        "SOURCE_QUOTE_UNVERIFIED": 14
+      },
+      "source_review": "PENDING"
+    },
+    {
+      "number": 29,
+      "document": "29. Fever-Synopsis.pdf",
+      "exit_code": 0,
+      "calls": 9,
+      "seconds": 200.31,
+      "reused_responses": 0,
+      "measurement": "fresh",
+      "schedules": 1,
+      "events": [
+        27
+      ],
+      "blocking_findings": {
+        "UNVERIFIED_SOURCE_QUOTE": 23,
+        "CONFLICTING_SOURCE": 1,
+        "UNKNOWN_ANCHOR": 27,
+        "CONFLICTING_EVIDENCE": 2,
+        "SOURCE_QUOTE_UNVERIFIED": 23,
+        "SOURCE_CONTENT_UNMAPPED": 5
+      },
+      "source_review": "PENDING"
+    }
+  ]
+}

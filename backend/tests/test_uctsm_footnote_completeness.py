@@ -7,6 +7,7 @@ schedule.
 
 from pathlib import Path
 import sys
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -52,7 +53,7 @@ def schedule_with(qualifiers: list[Qualifier], *, activity_qualifiers=None) -> U
     )
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary"),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=[Event(
             code="C1D1", protocol_label="C1D1", display_name="Cycle 1 Day 1",
             event_type="SITE_VISIT",
@@ -192,6 +193,42 @@ def test_the_same_statement_repeated_is_not_a_conflict():
         qualifier("b", "perform pre-dose."),
     ])
     assert check_qualifier_conflicts(schedule) == []
+
+
+@pytest.mark.parametrize("second_table,second_page,scope,conflict", [
+    ("Table 2", 1, "CELL", False),
+    ("Table 1", 2, "CELL", True),
+    (None, 2, "CELL", True),
+    ("Table 2", 2, "GLOBAL", True),
+])
+def test_reused_marker_is_scoped_to_its_explicit_table_legend(second_table, second_page, scope, conflict):
+    from app.domain.schedule.models import Evidence
+    from app.domain.schedule.validator import ScheduleValidator
+    first = Evidence(evidence_type="FOOTNOTE", page_number=1, table_title="Table 1", source_text="a. Before dose")
+    second = Evidence(evidence_type="FOOTNOTE", page_number=second_page, table_title=second_table, source_text="a. After infusion")
+    schedule = schedule_with([
+        qualifier("a", "Before dose", evidence_refs=[first.id]),
+        qualifier("a", "After infusion", evidence_refs=[second.id], scope=scope),
+    ])
+    schedule.evidence = [first, second]
+    issues = ScheduleValidator().validate(schedule)
+    marker_conflicts = [issue for issue in issues if issue.issue_code == "CONFLICTING_EVIDENCE" and "marker" in issue.message]
+    assert bool(marker_conflicts) == conflict
+
+
+def test_an_unknown_legend_does_not_hide_a_conflict_between_known_table_scopes():
+    from app.domain.schedule.models import Evidence
+    from app.domain.schedule.validator import ScheduleValidator
+    first = Evidence(evidence_type="FOOTNOTE", table_title="Table 1", source_text="Before dose")
+    second = Evidence(evidence_type="FOOTNOTE", table_title="Table 2", source_text="After dose")
+    schedule = schedule_with([
+        qualifier("a", "Before dose", evidence_refs=[first.id]),
+        qualifier("a", "After dose", evidence_refs=[second.id]),
+        qualifier("a", "During infusion"),
+    ])
+    schedule.evidence = [first, second]
+    issues = ScheduleValidator().validate(schedule)
+    assert any(issue.issue_code == "CONFLICTING_EVIDENCE" and "marker" in issue.message for issue in issues)
 
 
 def test_the_full_pass_combines_both_kinds_of_finding():

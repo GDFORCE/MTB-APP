@@ -52,14 +52,18 @@ def compute_patient_projection(
         return ProjectionResult()
 
     rows = session.execute(
-        select(db.PatientEvent, db.Event.code, db.Event.event_type, db.Event.display_name)
+        select(
+            db.PatientEvent, db.Event.code, db.Event.event_type,
+            db.Event.visit_mode, db.Event.display_name,
+        )
         .join(db.Event, db.Event.id == db.PatientEvent.event_definition_id)
         .where(db.PatientEvent.schedule_evaluation_id == patient_schedule.current_evaluation_id)
     ).all()
     projected = [
         ProjectedEvent(
             logical_key=row.PatientEvent.logical_key, event_code=row.code,
-            event_type=row.event_type, display_name=row.display_name,
+            event_type=row.event_type, visit_mode=row.visit_mode,
+            display_name=row.display_name,
             status=row.PatientEvent.status,
             nominal_date=row.PatientEvent.nominal_start_date,
             earliest_date=row.PatientEvent.earliest_date,

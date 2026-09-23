@@ -360,16 +360,10 @@ def _timing_for(
 
 
 def _recurrence_start(timing: Any) -> Any | None:
-    """The reference a repeat's first occurrence falls on, or None if it does not.
-
-    The engine expands a recurrence from the resolved start reference itself, so
-    the reference is only usable when the event's own timing puts occurrence one
-    exactly there. "Day 1 then every 21 days", where Day 1 IS the baseline, is
-    the ordinary case and maps exactly.
-    """
+    """The reference for a repeat's first occurrence; its offset is retained separately."""
     nominal = timing.nominal if isinstance(timing, NominalWindowTiming) else timing
     if isinstance(nominal, OffsetTiming):
-        return nominal.reference if nominal.offset.value == 0 else None
+        return nominal.reference
     return None
 
 
@@ -1093,6 +1087,7 @@ def universal_schedule_from_plan(
                         interval={"value": interval.value, "unit": interval.unit},
                         start_reference=start_reference,
                         termination=termination,
+                        start_offset=(timing.nominal if isinstance(timing, NominalWindowTiming) else timing).offset,
                     )
                     # The engine's interval is a single whole-unit value - it has
                     # nowhere to hold a protocol-stated range ("every 3-4 months").

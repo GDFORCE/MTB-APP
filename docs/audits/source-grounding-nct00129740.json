@@ -1,0 +1,22 @@
+{
+  "document": "NCT00129740__Prot_SAP_000 (1).pdf",
+  "model_calls": 0,
+  "scope": "Deterministic replay of captured output; not a fresh extraction accuracy score",
+  "population_counts_rejected_as_visits": [
+    {
+      "code": "VISIT_EVAL_7_PTS",
+      "label": "7 Patients Evaluated"
+    },
+    {
+      "code": "VISIT_EVAL_19_PTS",
+      "label": "19 Patients Evaluated"
+    }
+  ],
+  "referenced_pages_recovered": [],
+  "missing_referenced_sources": [
+    {
+      "page": 19,
+      "reference": "Appendix B"
+    }
+  ]
+}

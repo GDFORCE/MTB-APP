@@ -23,8 +23,8 @@ from app.db.base import Base
 from app.db.repositories import ScheduleRepository
 from app.domain.schedule.condition import ComparisonCondition, FieldOperand, LiteralOperand
 from app.domain.schedule.models import (
-    Anchor, ClaimEvidence, ConditionalAction, ConditionalDefinition, Event, Evidence,
-    RecurrenceRule, RecurrenceTermination, ScheduleMetadata, ScheduleStatus,
+    Activity, Anchor, ClaimEvidence, ConditionalAction, ConditionalDefinition, Event,
+    Evidence, RecurrenceRule, RecurrenceTermination, ScheduleMetadata, ScheduleStatus,
     UniversalSchedule,
 )
 from app.domain.schedule.timing import (
@@ -109,7 +109,7 @@ def _schedule(protocol_version_id):
             name="Primary", protocol_version_id=protocol_version_id,
             version_number=1, status=ScheduleStatus.APPROVED,
         ),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=events, conditional_definitions=[definition],
         evidence=[evidence], claim_evidence=claims,
     )
@@ -288,3 +288,83 @@ def test_the_board_is_scoped_to_the_organization(fixture):
     other = DashboardService(session).actions(
         organization_id=uuid4(), today=TODAY)
     assert other.actions == []
+
+
+def test_an_activity_whose_requiredness_the_protocol_never_stated_is_not_counted_as_required():
+    """AD-5: extraction used to default an unstated requiredness to REQUIRED,
+    which put an activity the protocol never confirmed as mandatory onto the
+    'N required activity(ies) not recorded' count. The correct unstated value
+    is UNRESOLVED, which must not inflate this denominator.
+    """
+    evidence = Evidence(evidence_type="SECTION", page_number=1, source_text="Visit 1")
+    required = Activity(
+        code="ECG", protocol_label="ECG", display_name="ECG",
+        activity_type="ASSESSMENT", requiredness="REQUIRED",
+        evidence_refs=[evidence.id],
+    )
+    unresolved = Activity(
+        code="PK_SAMPLE", protocol_label="PK sample", display_name="PK sample",
+        activity_type="ASSESSMENT", requiredness="UNRESOLVED",
+        evidence_refs=[evidence.id],
+    )
+    visit = Event(
+        code="VISIT1", protocol_label="Visit 1", display_name="Visit 1",
+        event_type="SITE_VISIT", timing=windowed(0, 2),
+        activities=[required, unresolved], evidence_refs=[evidence.id],
+    )
+    claims = [
+        ClaimEvidence(evidence_id=evidence.id, claim_type=claim_type,
+                      claim_entity_type="EVENT", claim_entity_id=visit.id, claim_path=path)
+        for claim_type, path in (("EVENT_NAME", "display_name"), ("TIMING", "timing"))
+    ] + [
+        ClaimEvidence(evidence_id=evidence.id, claim_type="ACTIVITY",
+                      claim_entity_type="ACTIVITY", claim_entity_id=activity.id)
+        for activity in (required, unresolved)
+    ]
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        organization_id, trial_id, protocol_id, protocol_version_id, definition_id, patient_id = (
+            uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4())
+        session.add_all([
+            db.Trial(id=trial_id, organization_id=organization_id),
+            db.Protocol(id=protocol_id, trial_id=trial_id, protocol_number="P-1"),
+            db.ProtocolVersion(
+                id=protocol_version_id, protocol_id=protocol_id, version_label="1",
+                document_name="protocol.pdf", document_uri="private://protocol.pdf",
+                document_hash="a" * 64,
+            ),
+            db.ScheduleDefinition(
+                id=definition_id, protocol_version_id=protocol_version_id, name="Primary"),
+        ])
+        session.flush()
+        schedule = UniversalSchedule(
+            schedule_metadata=ScheduleMetadata(
+                name="Primary", protocol_version_id=protocol_version_id,
+                version_number=1, status=ScheduleStatus.APPROVED),
+            anchors=[Anchor(code="BASELINE", display_name="Baseline",
+                             anchor_type="BASELINE", status="RESOLVED")],
+            events=[visit], evidence=[evidence], claim_evidence=claims,
+        )
+        ScheduleRepository(session).persist_draft(
+            schedule, schedule_definition_id=definition_id)
+        patient = db.Patient(
+            id=patient_id, organization_id=organization_id, trial_id=trial_id,
+            patient_code="P001", current_schedule_version_id=schedule.schedule_version_id,
+        )
+        session.add(patient)
+        session.add(db.PatientAnchor(
+            patient_id=patient.id, anchor_definition_id=schedule.anchors[0].id,
+            value_date=BASELINE, status="CONFIRMED",
+        ))
+        session.commit()
+        PatientScheduleService(session).evaluate(
+            patient.id, organization_id=organization_id, horizon=HORIZON)
+        session.commit()
+
+        result = DashboardService(session).actions(
+            organization_id=organization_id, trial_id=trial_id, today=TODAY)
+
+        incomplete = result.by_category(ActionCategory.ACTIVITY_INCOMPLETE)
+        assert len(incomplete) == 1
+        assert "1 required activity" in incomplete[0].message

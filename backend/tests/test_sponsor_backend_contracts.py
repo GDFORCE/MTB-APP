@@ -255,12 +255,17 @@ def test_schedule_shares_pin_versions_snapshots_documents_and_real_diffs():
             assert diff["before"]["window_days"] == 3
             assert diff["after"]["window_days"] == 7
 
-            inbox = await cli.get(
-                "/api/schedule-reviews", headers=headers(pi))
-            assert inbox.status_code == 200, inbox.text
-            reviews = {row["schedule_version"]: row for row in inbox.json()}
-            assert reviews[1]["visits"][1]["window_days"] == 3
-            assert reviews[2]["visits"][1]["window_days"] == 7
+            # The PI decision endpoints that used to read this collection back
+            # over HTTP (`GET /api/schedule-reviews`) are gone - PI decisions
+            # now run through the canonical engine (see
+            # test_uctsm_schedule_review_inbox.py). `POST /shares` itself is
+            # unchanged, so its write is checked directly against the store.
+            review_rows = await server.db.schedule_reviews.find(
+                {"trial_id": trial["id"], "reviewer_id": pi["id"]}, {"_id": 0},
+            ).to_list(10)
+            reviews = {row["schedule_version"]: row for row in review_rows}
+            assert reviews[1]["visit_snapshot"][1]["window_days"] == 3
+            assert reviews[2]["visit_snapshot"][1]["window_days"] == 7
             assert reviews[2]["changed_visits"][0]["changed_fields"] == [
                 "window_days"]
             assert reviews[2]["document"] == {

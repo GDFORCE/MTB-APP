@@ -52,7 +52,7 @@ def _schedule(protocol_version_id, version_number: int, day: int, *, add_extra=F
             name="Primary", protocol_version_id=protocol_version_id,
             version_number=version_number, status=ScheduleStatus.APPROVED,
         ),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=events, evidence=[evidence], claim_evidence=claims,
     )
 

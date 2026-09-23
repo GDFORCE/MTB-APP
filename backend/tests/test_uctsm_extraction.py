@@ -52,7 +52,7 @@ def test_langgraph_pipeline_is_claim_based_and_returns_typed_schedule():
     )
     schedule = UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary"),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=[event], evidence=[evidence],
         claim_evidence=[
             ClaimEvidence(

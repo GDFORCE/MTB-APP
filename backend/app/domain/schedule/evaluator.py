@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from .condition import TruthValue, evaluate_condition
 from .conditional import ConditionalPlan, build_conditional_plan
 from .exceptions import ScheduleNotApprovedError, UnsupportedTimingError
+from .identity import activity_logical_key
 from .models import (
     Activity,
     ApplicabilityRule,
@@ -316,6 +317,11 @@ def _termination_text(termination: object) -> str:
         return f"until {getattr(termination, 'event_code', 'a later event')}"
     if kind == "CONDITION":
         return "until the protocol stopping condition is met"
+    if kind == "RELATIVE":
+        offset = termination.end_offset
+        unit = offset.unit.value.lower()
+        boundary = "through" if termination.inclusive else "before"
+        return f"{boundary} {offset.value} {unit if abs(offset.value) == 1 else unit + 's'} after {termination.end_reference.code}"
     return "no stated maximum; the protocol continues while the patient remains on study"
 
 
@@ -470,9 +476,10 @@ def add_amount(value: Temporal, amount: TemporalAmount, multiplier: int = 1) -> 
     return value.replace(year=year, month=month, day=day)
 
 
-def activity_actual_key(event_code: str, occurrence_index: int, activity_code: str) -> str:
-    """Composite key for an intra-day actual time inside one visit occurrence."""
-    return f"{event_code}#{occurrence_index}#{activity_code}"
+#: Re-exported so existing importers (this module's own callers below, plus
+#: tests) keep working unchanged now that the identity is built in one place
+#: (AD-4f) rather than redefined here.
+activity_actual_key = activity_logical_key
 
 
 def _resolve_reference(
@@ -603,6 +610,63 @@ def evaluate_timing(
     raise UnsupportedTimingError(f"unsupported timing expression {type(expression).__name__}")
 
 
+#: AD-7's own motivating example ("subjects aged >= 65") needs a comparable
+#: numeric dimension that isn't tied to a StudyDimension code list. Sourced
+#: from ``context.state["age"]`` rather than a computed age-from-DOB: no
+#: patient model anywhere in this codebase carries a date of birth today, and
+#: adding one is a real product decision (collecting and storing patient DOB),
+#: not a taxonomy change - a caller that already knows the patient's age can
+#: put it in ``state`` exactly like any other computed PATIENT_ATTRIBUTE.
+_COMPARISON_OPERATORS = {
+    "EQ": lambda left, right: left == right,
+    "NE": lambda left, right: left != right,
+    "LT": lambda left, right: left < right,
+    "LTE": lambda left, right: left <= right,
+    "GT": lambda left, right: left > right,
+    "GTE": lambda left, right: left >= right,
+}
+
+
+def _coerce_threshold(raw: str, reference: object) -> object:
+    """Parse a rule's string threshold to compare against an already-typed
+    dimension value (AD-7: numeric/date-aware compare, not string compare)."""
+    if isinstance(reference, bool):
+        return raw
+    if isinstance(reference, int):
+        try:
+            return int(raw)
+        except ValueError:
+            return raw
+    if isinstance(reference, float):
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+    if isinstance(reference, datetime):
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return raw
+    if isinstance(reference, date):
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            return raw
+    return raw
+
+
+def _kleene_and(left: TruthValue, right: TruthValue) -> TruthValue:
+    if TruthValue.FALSE in (left, right):
+        return TruthValue.FALSE
+    return TruthValue.UNKNOWN if TruthValue.UNKNOWN in (left, right) else TruthValue.TRUE
+
+
+def _kleene_or(left: TruthValue, right: TruthValue) -> TruthValue:
+    if TruthValue.TRUE in (left, right):
+        return TruthValue.TRUE
+    return TruthValue.UNKNOWN if TruthValue.UNKNOWN in (left, right) else TruthValue.FALSE
+
+
 def _evaluate_applicability(rules: list[ApplicabilityRule], context: PatientContext) -> TruthValue:
     if not rules:
         return TruthValue.TRUE
@@ -610,6 +674,7 @@ def _evaluate_applicability(rules: list[ApplicabilityRule], context: PatientCont
         "ARM": context.arm_code,
         "COHORT": context.cohort_code,
         "POPULATION": context.population_code,
+        "AGE": context.state.get("age"),
         **context.dimension_values,
     }
     results: list[TruthValue] = []
@@ -625,14 +690,28 @@ def _evaluate_applicability(rules: list[ApplicabilityRule], context: PatientCont
         if value is None:
             results.append(TruthValue.UNKNOWN)
             continue
+        if rule.operator in _COMPARISON_OPERATORS:
+            threshold = _coerce_threshold(rule.values[0], value)
+            try:
+                included = _COMPARISON_OPERATORS[rule.operator](value, threshold)
+            except TypeError:
+                results.append(TruthValue.UNKNOWN)
+                continue
+            results.append(TruthValue.TRUE if included else TruthValue.FALSE)
+            continue
         values = value if isinstance(value, list) else [value]
         included = any(str(item) in rule.values for item in values)
         if rule.operator == "NOT_IN":
             included = not included
         results.append(TruthValue.TRUE if included else TruthValue.FALSE)
-    if TruthValue.FALSE in results:
-        return TruthValue.FALSE
-    return TruthValue.UNKNOWN if TruthValue.UNKNOWN in results else TruthValue.TRUE
+    # Left-to-right fold: each rule's own ``combinator`` says how it joins
+    # with the NEXT rule's result. Every existing rule list defaults every
+    # entry to AND, which folds to exactly the old pure-AND behaviour.
+    accumulated = results[0]
+    for index in range(1, len(results)):
+        combine = _kleene_and if rules[index - 1].combinator == "AND" else _kleene_or
+        accumulated = combine(accumulated, results[index])
+    return accumulated
 
 
 def _missing_activity_anchor(timing: object) -> str | None:
@@ -782,6 +861,7 @@ class ScheduleEvaluator:
         *,
         horizon: date,
         rolling: RollingHorizon | None = None,
+        today: date | None = None,
     ) -> EvaluationResult:
         if schedule.schedule_metadata.status != ScheduleStatus.APPROVED:
             raise ScheduleNotApprovedError("patient schedules require an approved schedule version")
@@ -838,7 +918,8 @@ class ScheduleEvaluator:
             input_snapshot=context.model_dump(mode="json"),
             events=evaluated,
             confinements=self._evaluate_confinements(
-                schedule, working_context, results_by_code, plan),
+                schedule, working_context, results_by_code, plan,
+                today=today or date.today()),
         )
 
     def _evaluate_confinements(
@@ -847,6 +928,8 @@ class ScheduleEvaluator:
         context: PatientContext,
         results: dict[str, list[EvaluatedEvent]],
         plan: ConditionalPlan,
+        *,
+        today: date,
     ) -> list[EvaluatedConfinement]:
         """Resolve continuous inpatient stays as one parent episode each.
 
@@ -857,7 +940,8 @@ class ScheduleEvaluator:
         """
         output: list[EvaluatedConfinement] = []
         for definition in schedule.confinement_episodes:
-            output.append(self._evaluate_confinement(definition, context, results, plan))
+            output.append(
+                self._evaluate_confinement(definition, context, results, plan, today=today))
         return _flag_overlapping_episodes(output)
 
     def _evaluate_confinement(
@@ -866,6 +950,8 @@ class ScheduleEvaluator:
         context: PatientContext,
         results: dict[str, list[EvaluatedEvent]],
         plan: ConditionalPlan,
+        *,
+        today: date,
     ) -> EvaluatedConfinement:
         base = {
             "episode_definition_id": definition.id,
@@ -902,8 +988,13 @@ class ScheduleEvaluator:
             status = ConfinementStatus.DISCHARGED
         elif actual_admission is not None:
             # The patient stays confined until an actual discharge is recorded, even
-            # if the planned discharge date has already passed.
-            status = ConfinementStatus.EXTENDED if extended_by else ConfinementStatus.IN_CONFINEMENT
+            # if the planned discharge date has already passed - but a passed date
+            # with nothing recorded still needs a CRC to look, so it is surfaced as
+            # its own status rather than sitting silently inside IN_CONFINEMENT.
+            if planned_discharge is not None and today >= _as_date(planned_discharge):
+                status = ConfinementStatus.DISCHARGE_PLANNED
+            else:
+                status = ConfinementStatus.EXTENDED if extended_by else ConfinementStatus.IN_CONFINEMENT
         elif planned_admission is None:
             status = ConfinementStatus.WAITING_FOR_ANCHOR
             explanation["reason"] = (
@@ -1216,13 +1307,23 @@ class ScheduleEvaluator:
         current = _resolve_reference(rule.start_reference, context)
         if current is None:
             return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
+        if rule.start_offset is not None:
+            current = add_amount(current, rule.start_offset)
         stop_date: Temporal = horizon
         max_count = 10000
         termination = rule.termination
+        relative_end: Temporal | None = None
         if termination.type == "COUNT":
             max_count = termination.count or 0
         elif termination.type == "DATE" and termination.termination_date is not None:
             stop_date = min(horizon, termination.termination_date)
+        elif termination.type == "RELATIVE":
+            end_anchor = _resolve_reference(termination.end_reference, context)
+            if end_anchor is None:
+                explanation = {**base["explanation"], "reason": "The recurrence end anchor has not been recorded.",
+                    "waiting_for_anchor": termination.end_reference.code}
+                return [EvaluatedEvent(**{**base, "explanation": explanation}, status=PatientEventStatus.WAITING_FOR_ANCHOR)]
+            relative_end = add_amount(end_anchor, termination.end_offset)
         elif termination.type == "EVENT" and termination.event_code:
             values = context.event_values.get(termination.event_code, [])
             if values:
@@ -1248,7 +1349,10 @@ class ScheduleEvaluator:
         index = 0
         if not rule.include_start:
             current = add_amount(current, rule.interval)
-        while index < max_count and current <= stop_date:
+        while index < max_count and _before_or_equal(current, stop_date):
+            if relative_end is not None and (not _before_or_equal(current, relative_end)
+                or (not termination.inclusive and _before_or_equal(relative_end, current))):
+                break
             earliest = latest = None
             if isinstance(event.timing, NominalWindowTiming):
                 before = TemporalAmount(value=-event.timing.window.before.value, unit=event.timing.window.before.unit)

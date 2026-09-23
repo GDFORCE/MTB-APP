@@ -38,7 +38,7 @@ def test_review_approval_and_patient_evaluation_are_reproducible_and_idempotent(
         ])
         session.flush()
         evidence = Evidence(evidence_type="TABLE_CELL", page_number=84, source_text="30 days after last dose")
-        anchor = Anchor(code="LAST_DOSE", display_name="Last Dose", anchor_type="LAST_DOSE")
+        anchor = Anchor(code="LAST_DOSE", display_name="Last Dose", anchor_type="LAST_DOSE", status="RESOLVED")
         event = Event(
             code="SAFETY_FOLLOW_UP", protocol_label="Safety Follow-up", display_name="Safety Follow-up",
             event_type="SAFETY_ASSESSMENT",

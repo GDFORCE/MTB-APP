@@ -114,7 +114,7 @@ def confinement_schedule(*, conditionals=None, applicability=None) -> UniversalS
             ))
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary", status=ScheduleStatus.APPROVED),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=events, confinement_episodes=[episode],
         conditional_definitions=conditionals or [],
         evidence=[evidence], claim_evidence=claims,
@@ -129,8 +129,8 @@ def context(schedule: UniversalSchedule, **changes) -> PatientContext:
     return PatientContext(**{**values, **changes})
 
 
-def evaluate(schedule, ctx):
-    return ScheduleEvaluator().evaluate(schedule, ctx, horizon=HORIZON)
+def evaluate(schedule, ctx, today=None):
+    return ScheduleEvaluator().evaluate(schedule, ctx, horizon=HORIZON, today=today)
 
 
 def episode_of(result):
@@ -156,7 +156,7 @@ def test_continuous_stay_is_one_episode_with_child_study_days():
 def test_actual_admission_puts_the_patient_in_confinement():
     schedule = confinement_schedule()
     ctx = context(schedule, actual_event_values={"ADMISSION": [date(2026, 9, 10)]})
-    episode = episode_of(evaluate(schedule, ctx))
+    episode = episode_of(evaluate(schedule, ctx, today=date(2026, 9, 11)))
 
     assert episode.status == ConfinementStatus.IN_CONFINEMENT
     assert episode.actual_admission == date(2026, 9, 10)
@@ -167,11 +167,34 @@ def test_planned_discharge_passing_does_not_close_the_episode():
     """Doc 6 section 18: the patient stays confined until an ACTUAL discharge."""
     schedule = confinement_schedule()
     ctx = context(schedule, actual_event_values={"ADMISSION": [date(2026, 9, 10)]})
-    episode = episode_of(evaluate(schedule, ctx))
+    episode = episode_of(evaluate(schedule, ctx, today=date(2026, 9, 14)))
 
     assert episode.planned_discharge == date(2026, 9, 13)
     # No actual discharge recorded, so the episode is still open regardless of date.
-    assert episode.status == ConfinementStatus.IN_CONFINEMENT
+    assert episode.status == ConfinementStatus.DISCHARGE_PLANNED
+    assert episode.actual_discharge is None
+
+
+def test_a_planned_discharge_that_has_passed_with_no_actual_is_flagged():
+    """AD-6: this used to read as an ordinary IN_CONFINEMENT day forever, with
+    nothing telling a CRC the stay has run past its plan and needs a look.
+    """
+    schedule = confinement_schedule()
+    ctx = context(schedule, actual_event_values={"ADMISSION": [date(2026, 9, 10)]})
+
+    # planned_discharge is 2026-09-13; before it, the episode is ordinary.
+    still_open = episode_of(evaluate(schedule, ctx, today=date(2026, 9, 12)))
+    assert still_open.status == ConfinementStatus.IN_CONFINEMENT
+
+    overdue = episode_of(evaluate(schedule, ctx, today=date(2026, 9, 13)))
+    assert overdue.status == ConfinementStatus.DISCHARGE_PLANNED
+    assert overdue.actual_discharge is None
+
+    # An actual discharge, once recorded, still wins over the overdue plan.
+    discharged = episode_of(evaluate(schedule, context(schedule, actual_event_values={
+        "ADMISSION": [date(2026, 9, 10)], "DISCHARGE": [date(2026, 9, 14)],
+    }), today=date(2026, 9, 20)))
+    assert discharged.status == ConfinementStatus.DISCHARGED
 
 
 def test_actual_discharge_closes_the_episode():
@@ -219,7 +242,7 @@ def test_conditional_extension_moves_discharge_without_creating_a_second_episode
             occurrence_date=date(2026, 9, 13),
         )},
     )
-    result = evaluate(schedule, ctx)
+    result = evaluate(schedule, ctx, today=date(2026, 9, 13))
     episode = episode_of(result)
 
     assert len(result.confinements) == 1
@@ -366,4 +389,111 @@ def test_sequential_confinement_periods_do_not_overlap():
     assert len(result.confinements) == 2
     for episode in result.confinements:
         assert episode.status == ConfinementStatus.UPCOMING
+
+
+# --- AD-8: confinement episodes are a real persisted table -------------------
+
+def test_a_confinement_episode_round_trips_through_a_real_evaluation():
+    """Before this, ``result.confinements`` was computed on every evaluation
+    and discarded - every consumer recomputed it fresh from a transient
+    ``EvaluationResult``. This proves it now reaches the database, carrying
+    provenance, the same way ``PatientEvent`` already does.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from app.db import models as db
+    from app.db.base import Base
+    from app.db.repositories import ScheduleRepository
+    from app.services.schedule_service import PatientScheduleService
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        organization_id, trial_id, protocol_id = uuid4(), uuid4(), uuid4()
+        protocol_version_id, definition_id, patient_id = uuid4(), uuid4(), uuid4()
+        session.add_all([
+            db.Trial(id=trial_id, organization_id=organization_id),
+            db.Protocol(id=protocol_id, trial_id=trial_id, protocol_number="P-1"),
+            db.ProtocolVersion(
+                id=protocol_version_id, protocol_id=protocol_id, version_label="1",
+                document_name="p.pdf", document_uri="private://p.pdf", document_hash="a" * 64,
+            ),
+            db.ScheduleDefinition(
+                id=definition_id, protocol_version_id=protocol_version_id, name="Primary"),
+        ])
+        session.flush()
+        schedule = confinement_schedule()
+        schedule.schedule_metadata.protocol_version_id = protocol_version_id
+        ScheduleRepository(session).persist_draft(schedule, schedule_definition_id=definition_id)
+        patient = db.Patient(
+            id=patient_id, organization_id=organization_id, trial_id=trial_id,
+            patient_code="P001", current_schedule_version_id=schedule.schedule_version_id,
+        )
+        session.add(patient)
+        session.add(db.PatientAnchor(
+            patient_id=patient.id, anchor_definition_id=schedule.anchors[0].id,
+            value_date=BASELINE, status="CONFIRMED",
+        ))
+        session.commit()
+
+        PatientScheduleService(session).evaluate(
+            patient.id, organization_id=organization_id, horizon=HORIZON)
+        session.commit()
+
+        episode = session.scalar(select(db.PatientConfinementEpisode).where(
+            db.PatientConfinementEpisode.episode_code == "CONFINEMENT_1"))
+        assert episode is not None
+        assert episode.status == ConfinementStatus.UPCOMING.value
+        assert episode.planned_admission == date(2026, 9, 10)
+        assert episode.planned_discharge == date(2026, 9, 13)
+        assert episode.protected_history is False
+        assert episode.schedule_version_id == schedule.schedule_version_id
+        assert episode.protocol_version_id == protocol_version_id
+
+        discharge_event = session.scalar(select(db.PatientEvent).join(
+            db.Event, db.Event.id == db.PatientEvent.event_definition_id,
+        ).where(db.Event.code == "DISCHARGE"))
+        assert discharge_event.schedule_version_id == schedule.schedule_version_id
+        assert discharge_event.protocol_version_id == protocol_version_id
+        dose_activity = session.scalar(select(db.PatientActivity).where(
+            db.PatientActivity.activity_code == "DOSE"))
+        assert dose_activity.schedule_version_id == schedule.schedule_version_id
+        assert dose_activity.protocol_version_id == protocol_version_id
+
+        # Record the actual discharge, then re-evaluate: the episode closes.
+        session.add(db.PatientEventOccurrence(
+            patient_event_id=discharge_event.id, occurrence_type="VISIT",
+            scheduled_date=discharge_event.nominal_start_date,
+            actual_date=date(2026, 9, 14), status="COMPLETED",
+        ))
+        session.commit()
+        PatientScheduleService(session).evaluate(
+            patient.id, organization_id=organization_id, horizon=HORIZON)
+        session.commit()
+
+        discharged = session.scalar(select(db.PatientConfinementEpisode).where(
+            db.PatientConfinementEpisode.episode_code == "CONFINEMENT_1",
+            db.PatientConfinementEpisode.supersedes_patient_confinement_episode_id == episode.id,
+        ))
+        assert discharged is not None
+        assert discharged.status == ConfinementStatus.DISCHARGED.value
+        assert discharged.actual_discharge == date(2026, 9, 14)
+        assert discharged.protected_history is False
+
+        # A third evaluation, nothing new recorded: the DISCHARGED episode's
+        # actual dates are now protected, the same discipline PatientEvent
+        # already has for its own history.
+        PatientScheduleService(session).evaluate(
+            patient.id, organization_id=organization_id, horizon=HORIZON)
+        session.commit()
+
+        final = session.scalar(select(db.PatientConfinementEpisode).where(
+            db.PatientConfinementEpisode.episode_code == "CONFINEMENT_1",
+            db.PatientConfinementEpisode.supersedes_patient_confinement_episode_id == discharged.id,
+        ))
+        assert final is not None
+        assert final.status == ConfinementStatus.DISCHARGED.value
+        assert final.actual_discharge == date(2026, 9, 14)
+        assert final.protected_history is True
         assert "overlapping_episodes" not in episode.explanation

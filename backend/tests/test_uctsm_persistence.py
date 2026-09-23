@@ -69,7 +69,7 @@ def test_relational_schedule_round_trip_uses_typed_json_contracts():
         )
         schedule = UniversalSchedule(
             schedule_metadata=ScheduleMetadata(name="Primary", protocol_version_id=protocol_version_id),
-            anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+            anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
             events=[event], evidence=[evidence],
             claim_evidence=[
                 ClaimEvidence(
@@ -88,3 +88,18 @@ def test_relational_schedule_round_trip_uses_typed_json_contracts():
         loaded = ScheduleRepository(session).get(schedule.schedule_version_id)
         assert loaded.model_dump(exclude={"created_at"}) == schedule.model_dump(exclude={"created_at"})
         assert loaded.events[0].timing.type == "OFFSET"
+
+
+def test_patient_history_foreign_keys_do_not_cascade_from_a_patient_delete():
+    """AD-9: patient clinical history is append-only. A patient delete must be
+    blocked while history exists, never silently take the history with it -
+    so none of these five FKs may specify ON DELETE CASCADE.
+    """
+    history_tables = (
+        db.PatientAnchor, db.PatientState, db.PatientUnscheduledVisit,
+        db.PatientCondition, db.PatientActivityRecord,
+    )
+    for model in history_tables:
+        foreign_key = next(iter(model.__table__.c.patient_id.foreign_keys))
+        assert foreign_key.ondelete is None, (
+            f"{model.__name__}.patient_id must not cascade-delete with its patient")

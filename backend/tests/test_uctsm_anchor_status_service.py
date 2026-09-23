@@ -81,9 +81,9 @@ def _schedule(protocol_version_id) -> UniversalSchedule:
             version_number=1, status=ScheduleStatus.APPROVED,
         ),
         anchors=[
-            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE"),
+            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED"),
             Anchor(code="SURGERY", display_name="Surgery Date", anchor_type="SURGERY",
-                   source_event_code="SURGERY_PROCEDURE"),
+                   source_event_code="SURGERY_PROCEDURE", status="RESOLVED"),
         ],
         arms=[surgical, medical], events=events,
         evidence=[evidence], claim_evidence=claims,

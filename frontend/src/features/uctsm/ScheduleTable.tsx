@@ -1,13 +1,18 @@
 import React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { AlertCircle, ChevronDown, ChevronRight, FileText } from "lucide-react-native";
+import {
+  AlertCircle, Building2, ChevronDown, ChevronRight, FileText, FlaskConical,
+  Globe, Home, Phone, Pill, Scan, Stethoscope, Video,
+} from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
 
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import type {
-  ConditionalRequirementRow, DayScheduleRow, PatientScheduleRow, ProtocolActivityRow,
+  ConditionalRequirementRow, PatientScheduleRow,
   ProtocolScheduleRow, AnchorStatusRow, ConfinementRow, ImpactRow, QualifierDetail,
   RepeatRuleRow, TimelineEntry, VersionContext,
 } from "./presentation";
+import { classifyActivities, UNSTATED_VISIT_MODE } from "./presentation";
 
 type Props = {
   rows: Array<ProtocolScheduleRow | PatientScheduleRow>;
@@ -15,15 +20,19 @@ type Props = {
   onEvidence?: (row: ProtocolScheduleRow) => void;
 };
 
+/** The Activities column already names every activity, classified as
+ * Clinical or Administrative - a visit only still needs its own expand row
+ * for a footnote the Activities column can't carry inline. */
 function hasDetail(row: ProtocolScheduleRow | PatientScheduleRow): boolean {
-  const day = (row as PatientScheduleRow).dayScheduleRows;
-  return Boolean(
-    row.qualifierDetails?.length || day?.length || row.activityRows?.length);
+  return Boolean(row.qualifierDetails?.length);
 }
 
 const widths = {
   visit: 74,
-  name: 190,
+  // Doc 10 s21-s23: was a dedicated column; the mode symbol now sits under
+  // the visit name instead (see the Name Cell below), so this column
+  // absorbed the width freed up by dropping Mode's own.
+  name: 220,
   timing: 250,
   window: 130,
   type: 130,
@@ -50,6 +59,11 @@ export function ScheduleTable({ rows, patient = false, onEvidence }: Props) {
       <View style={styles.table}>
         <View style={styles.headerRow}>
           <Header label="Visit" width={widths.visit} />
+          {/* Doc 10 s21-s23: HOW the visit happens - a distinct question from
+              Type below (WHAT kind of occasion it is) - no longer a column of
+              its own; the mode symbol sits right under the visit name instead
+              (still always visible on the main row, never buried behind the
+              expand toggle, and not patient-view-only). */}
           <Header label="Visit Name" width={widths.name} />
           {patient ? <Header label="Expected Date" width={widths.expected} /> : <Header label="Timing" width={widths.timing} />}
           <Header label={patient ? "Allowed Window" : "Window"} width={widths.window} />
@@ -79,17 +93,21 @@ export function ScheduleTable({ rows, patient = false, onEvidence }: Props) {
             </Cell>
             <Cell width={widths.name}>
               <Text style={styles.name}>{row.visitName}</Text>
+              <VisitModeValue value={row.visitMode} modeKey={row.visitModeKey} />
               {row.requiresReview && <View style={styles.reviewLine}><AlertCircle size={12} color={colors.warning} /><Text style={styles.reviewText}>Review required</Text></View>}
               {!!row.evidenceRefs.length && onEvidence && <EvidenceButton onPress={() => onEvidence(row)} />}
             </Cell>
             <Cell width={patient ? widths.expected : widths.timing}><Text style={styles.value}>{patient ? (row as PatientScheduleRow).expectedDate : row.timing}</Text></Cell>
             <Cell width={widths.window}><Text style={styles.value}>{patient ? (row as PatientScheduleRow).allowedWindow : row.window}</Text></Cell>
             <Cell width={widths.type}><Text style={styles.value}>{row.type}</Text></Cell>
-            <Cell width={widths.activities}>{row.activities.length ? row.activities.map((activity) => <View key={activity} style={styles.bulletLine}><Text style={styles.bullet}>•</Text><Text style={styles.value}>{activity}</Text></View>) : <Text style={styles.muted}>—</Text>}</Cell>
+            <Cell width={widths.activities}><ActivityGroupsView activities={row.activities} empty={patient ? "No applicable activities" : "No activities extracted"} /></Cell>
             {!patient && <Cell width={widths.appliesTo}><Text style={styles.value}>{row.appliesTo}</Text></Cell>}
             {patient && <Cell width={widths.actual}><Text style={styles.value}>{(row as PatientScheduleRow).actualDate}</Text></Cell>}
             <Cell width={widths.status}><Status value={row.status} /></Cell>
-            <Cell width={widths.qualifier}><Text style={row.qualifier === "—" ? styles.muted : styles.value}>{row.qualifier}</Text></Cell>
+            <Cell width={widths.qualifier}>
+              <Text style={row.qualifier === "—" ? styles.muted : styles.value}>{row.qualifier}</Text>
+              {row.reviewReasons?.map((reason) => <Text key={reason} style={styles.reviewText}>{reason}</Text>)}
+            </Cell>
           </View>
           {expanded[row.id] && <DetailPanel row={row} />}
           </React.Fragment>
@@ -99,17 +117,18 @@ export function ScheduleTable({ rows, patient = false, onEvidence }: Props) {
   );
 }
 
-/** Child tables for one visit: the day-wise activity schedule and source notes. */
+/** Child panel for one visit: whatever the Activities column itself can't
+ * carry inline - the unscheduled reason, a repeating rule, progress against
+ * required assessments, and footnotes. Day-wise activity timing used to have
+ * its own sub-table here; the Activities column names every activity
+ * (grouped Clinical/Administrative) directly on the row now, so that table
+ * was a second place saying the same thing and is gone. */
 function DetailPanel({ row }: { row: ProtocolScheduleRow | PatientScheduleRow }) {
   const patientRow = row as PatientScheduleRow;
-  const day = patientRow.dayScheduleRows || [];
   return (
     <View style={styles.detailPanel}>
-      {/* Doc 10 s21-s23: how the patient attends belongs with the visit, and an
-          unstated mode must read as unstated rather than as a clinic visit. */}
-      {!!patientRow.visitMode && (
-        <MobileField label="How this visit happens" value={patientRow.visitMode} />
-      )}
+      {/* Mode now lives on the main row (both protocol and patient tables) -
+          no longer shown here to avoid saying the same thing twice. */}
       {!!patientRow.unscheduledReason && (
         <MobileField label="Reason recorded" value={patientRow.unscheduledReason} />
       )}
@@ -122,48 +141,7 @@ function DetailPanel({ row }: { row: ProtocolScheduleRow | PatientScheduleRow })
       {!!patientRow.completion?.required && (
         <MobileField label="Progress" value={patientRow.completion.label} />
       )}
-      {!!day.length && <DayScheduleTable rows={day} />}
-      {/* Case 6 at protocol-review level. Shown only when there are no patient
-          times to show instead: the rule is what a reviewer checks, the clock
-          times are what a site reads. */}
-      {!day.length && !!row.activityRows?.length && (
-        <ProtocolActivityTable rows={row.activityRows} />
-      )}
       {!!row.qualifierDetails?.length && <QualifierPanel details={row.qualifierDetails} />}
-    </View>
-  );
-}
-
-/**
- * The activities of one visit at protocol-review level: what each one is timed
- * against and by how much, with no dates or clock times, because none exist
- * until a patient does.
- */
-export function ProtocolActivityTable({ rows }: { rows: ProtocolActivityRow[] }) {
-  if (!rows.length) return null;
-  return (
-    <View style={styles.childBlock}>
-      <Text style={styles.childTitle}>Activities</Text>
-      <View style={styles.childHeader}>
-        <Text style={[styles.childHeaderText, styles.childActivity]}>Activity</Text>
-        <Text style={[styles.childHeaderText, styles.childRule]}>Timing rule</Text>
-        <Text style={[styles.childHeaderText, styles.childRule]}>Anchor</Text>
-        <Text style={[styles.childHeaderText, styles.childTime]}>Window</Text>
-        <Text style={[styles.childHeaderText, styles.childTime]}>Review</Text>
-      </View>
-      {rows.map((item) => (
-        <View key={item.id} style={styles.childRow}>
-          <Text style={[styles.value, styles.childActivity]}>
-            {item.activity}{item.qualifier ? " *" : ""}
-          </Text>
-          <Text style={[styles.muted, styles.childRule]}>{item.timingRule}</Text>
-          <Text style={[styles.muted, styles.childRule]}>{item.anchor}</Text>
-          <Text style={[styles.muted, styles.childTime]}>{item.window}</Text>
-          <View style={styles.childTime}>
-            <Status value={item.review} compact />
-          </View>
-        </View>
-      ))}
     </View>
   );
 }
@@ -373,30 +351,6 @@ export function PatientTimeline({ entries }: { entries: TimelineEntry[] }) {
   );
 }
 
-export function DayScheduleTable({ rows }: { rows: DayScheduleRow[] }) {
-  return (
-    <View style={styles.childBlock}>
-      <Text style={styles.childTitle}>Day-wise schedule</Text>
-      <View style={styles.childHeader}>
-        <Text style={[styles.childHeaderText, styles.childActivity]}>Activity</Text>
-        <Text style={[styles.childHeaderText, styles.childRule]}>Timing rule</Text>
-        <Text style={[styles.childHeaderText, styles.childTime]}>Planned</Text>
-        <Text style={[styles.childHeaderText, styles.childTime]}>Actual</Text>
-        <Text style={[styles.childHeaderText, styles.childStatus]}>Status</Text>
-      </View>
-      {rows.map((item) => (
-        <View key={item.id} style={styles.childRow}>
-          <Text style={[styles.value, styles.childActivity]}>{item.activity}</Text>
-          <Text style={[styles.muted, styles.childRule]}>{item.timingRule}</Text>
-          <Text style={[styles.value, styles.childTime]}>{item.plannedTime}</Text>
-          <Text style={[styles.value, styles.childTime]}>{item.actualTime}</Text>
-          <View style={styles.childStatus}><Status value={item.status} compact /></View>
-        </View>
-      ))}
-    </View>
-  );
-}
-
 export function QualifierPanel({ details }: { details: QualifierDetail[] }) {
   return (
     <View style={styles.childBlock}>
@@ -471,7 +425,14 @@ function MobileRow({ row, patient, onEvidence, expanded, onToggle }: { row: Prot
     <View style={styles.mobileCard} accessibilityLabel={`${row.visit} ${row.visitName}`}>
       <View style={styles.mobileHead}>
         <View style={styles.visitBadge}><Text style={styles.visitBadgeText}>{row.visit}</Text></View>
-        <View style={{ flex: 1 }}><Text style={styles.mobileName}>{row.visitName}</Text>{row.requiresReview && <Text style={styles.reviewText}>Review required</Text>}</View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.mobileName}>{row.visitName}</Text>
+          {/* Doc 10 s21-s23: always shown, on both the protocol and patient
+              table - not patient-view-only, so a reviewer sees it too. Under
+              the name now rather than its own field, same as desktop. */}
+          <VisitModeValue value={row.visitMode} modeKey={row.visitModeKey} />
+          {row.requiresReview && <Text style={styles.reviewText}>Review required</Text>}
+        </View>
         {patient && <Status value={patientRow.status} compact />}
       </View>
       <View style={styles.mobileGrid}>
@@ -480,12 +441,10 @@ function MobileRow({ row, patient, onEvidence, expanded, onToggle }: { row: Prot
         <MobileField label="Type" value={row.type} />
         {!patient && <MobileField label="Applies to" value={row.appliesTo} />}
         {patient && <MobileField label="Actual date" value={patientRow.actualDate} />}
-        {patient && !!patientRow.visitMode && (
-          <MobileField label="How it happens" value={patientRow.visitMode} />
-        )}
       </View>
       <Text style={styles.mobileLabel}>Activities</Text>
-      {row.activities.length ? row.activities.map((activity) => <View key={activity} style={styles.bulletLine}><Text style={styles.bullet}>•</Text><Text style={styles.value}>{activity}</Text></View>) : <Text style={styles.muted}>No activities listed</Text>}
+      <ActivityGroupsView activities={row.activities} empty="No activities listed" />
+      {row.reviewReasons?.map((reason) => <Text key={reason} style={styles.reviewText}>{reason}</Text>)}
       {!!row.evidenceRefs.length && onEvidence && <EvidenceButton onPress={() => onEvidence(row)} />}
       {hasDetail(row) && (
         <Pressable
@@ -504,8 +463,95 @@ function MobileRow({ row, patient, onEvidence, expanded, onToggle }: { row: Prot
 
 function Header({ label, width }: { label: string; width: number }) { return <View style={[styles.headerCell, { width }]}><Text style={styles.headerText}>{label}</Text></View>; }
 function Cell({ width, children }: { width: number; children: React.ReactNode }) { return <View style={[styles.cell, { width }]}>{children}</View>; }
-function MobileField({ label, value }: { label: string; value: string }) { return <View style={styles.mobileField}><Text style={styles.mobileLabel}>{label}</Text><Text style={styles.value}>{value}</Text></View>; }
+function MobileField({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.mobileField}>
+      <Text style={styles.mobileLabel}>{label}</Text>
+      <Text style={styles.value}>{value}</Text>
+    </View>
+  );
+}
 function EvidenceButton({ onPress }: { onPress: () => void }) { return <Pressable onPress={onPress} style={styles.evidence}><FileText size={13} color={colors.primary} /><Text style={styles.evidenceText}>View source</Text></Pressable>; }
+
+/** Every activity named directly on the row, split Clinical/Administrative -
+ * the same keyword classification the legacy operational editor already
+ * uses (`classifyActivities`), so no separate expand is needed just to see
+ * what a visit involves. */
+function ActivityGroupsView({ activities, empty }: { activities: string[]; empty?: string }) {
+  const { clinical, administrative } = classifyActivities(activities);
+  if (!clinical.length && !administrative.length) {
+    return <Text style={styles.muted}>{empty || "—"}</Text>;
+  }
+  return (
+    <View style={styles.activityGroups}>
+      {!!clinical.length && (
+        <View>
+          <Text style={styles.activityGroupLabel}>Clinical</Text>
+          {clinical.map((activity) => (
+            <View key={activity} style={styles.bulletLine}>
+              <Text style={styles.bullet}>•</Text><Text style={styles.value}>{activity}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+      {!!administrative.length && (
+        <View>
+          <Text style={styles.activityGroupLabel}>Administrative</Text>
+          {administrative.map((activity) => (
+            <View key={activity} style={styles.bulletLine}>
+              <Text style={styles.bullet}>•</Text><Text style={styles.value}>{activity}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * The user's own idea: a mode this compact reads faster as a symbol than as
+ * a sentence, the same way a phone icon or a hospital cross already means
+ * "call" or "site visit" everywhere else. One icon per mode key, so a
+ * reviewer scanning a long schedule can tell a telephone contact from a
+ * site visit without reading every cell - the text stays, right next to it,
+ * for the mode this doesn't have an icon for yet or a screen reader.
+ */
+const MODE_ICONS: Record<string, LucideIcon> = {
+  CLINIC: Building2,
+  SITE_VISIT: Building2,
+  TELEPHONE: Phone,
+  PHONE_CONTACT: Phone,
+  VIDEO: Video,
+  HOME: Home,
+  HOME_NURSE: Stethoscope,
+  REMOTE: Globe,
+  IMAGING_CENTRE: Scan,
+  LABORATORY: FlaskConical,
+  PHARMACY: Pill,
+};
+
+function VisitModeValue({ value, modeKey }: { value: string; modeKey?: string | null }) {
+  // Nested under the visit name now, not its own column - nothing to show
+  // is nothing to render, rather than a stray "—" cluttering the name cell.
+  if (!value) return null;
+  const unstated = value === UNSTATED_VISIT_MODE;
+  if (unstated) {
+    return (
+      <View style={styles.reviewLine}>
+        <AlertCircle size={12} color={colors.warning} />
+        <Text style={styles.reviewText}>{value}</Text>
+      </View>
+    );
+  }
+  const Icon = modeKey ? MODE_ICONS[modeKey] : undefined;
+  return (
+    <View style={styles.modeLine}>
+      {Icon && <Icon size={13} color={colors.mutedFg} />}
+      <Text style={styles.modeText}>{value}</Text>
+    </View>
+  );
+}
+
 function Status({ value, compact = false }: { value: string; compact?: boolean }) {
   const pending = value.startsWith("Waiting") || value === "Review required";
   const inactive = value === "Not applicable";
@@ -532,9 +578,16 @@ const styles = StyleSheet.create({
   muted: { fontFamily: fonts.regular, fontSize: 13, color: colors.mutedFg },
   bulletLine: { flexDirection: "row", alignItems: "flex-start", gap: 6 },
   bullet: { color: colors.primary, fontSize: 13, lineHeight: 19 },
+  activityGroups: { gap: 8 },
+  activityGroupLabel: {
+    color: colors.mutedFg, fontFamily: fonts.semibold, fontSize: 10,
+    textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 2,
+  },
   evidence: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8, alignSelf: "flex-start", minHeight: 28 },
   evidenceText: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 12 },
   reviewLine: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 5 },
+  modeLine: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 4 },
+  modeText: { fontFamily: fonts.regular, fontSize: 12, color: colors.mutedFg },
   reviewText: { color: colors.warning, fontFamily: fonts.medium, fontSize: 11 },
   status: { alignSelf: "flex-start", paddingHorizontal: 9, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: "#E7F4EA" },
   statusCompact: { maxWidth: 120 },

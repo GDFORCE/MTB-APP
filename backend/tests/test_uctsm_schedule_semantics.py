@@ -28,7 +28,7 @@ def _event(**changes) -> Event:
 def _schedule(event: Event) -> UniversalSchedule:
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Test"),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=[event],
     )
 

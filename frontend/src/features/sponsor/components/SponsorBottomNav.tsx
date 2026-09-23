@@ -2,20 +2,25 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Bell, FlaskConical, LayoutGrid, MessageCircle, UserRound } from "lucide-react-native";
+import { ClipboardCheck, FlaskConical, LayoutGrid, MessageCircle, UserRound } from "lucide-react-native";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
-// "sites" is kept in the union (not in the tab bar) purely so sites.tsx's
-// existing `active="sites"` prop still type-checks — Sites is no longer a
-// persistent tab (replaced by Messages) but stays reachable from Dashboard /
-// trial detail, so nothing gets highlighted while viewing it.
-export type SponsorTab = "dashboard" | "trials" | "chat" | "notifs" | "me" | "sites" | "patients";
+// "sites" and "notifs" are kept in the union but NOT in the tab bar:
+//   - "sites" so sites.tsx's existing `active="sites"` prop still type-checks
+//     (Sites was replaced by Messages but stays reachable from Dashboard).
+//   - "notifs" for the same reason after the Remote Audit module took the
+//     fifth slot. Notifications were NOT removed — they moved to the bell in
+//     each screen's header, which every sponsor screen already had. Passing
+//     `active="notifs"` now simply highlights nothing, which is correct:
+//     Notifications is a pushed screen, not a tab.
+export type SponsorTab =
+  | "dashboard" | "trials" | "chat" | "audits" | "me" | "sites" | "patients" | "notifs";
 
 const tabs = [
   { key: "dashboard", label: "Dashboard", icon: LayoutGrid, route: "/(app)/sponsor/dashboard" },
   { key: "trials", label: "Trials", icon: FlaskConical, route: "/(app)/sponsor/trials" },
   { key: "chat", label: "Messages", icon: MessageCircle, route: "/(app)/chat" },
-  { key: "notifs", label: "Notifs", icon: Bell, route: "/(app)/sponsor/notifications" },
+  { key: "audits", label: "Audits", icon: ClipboardCheck, route: "/(app)/sponsor/remote-audit" },
   { key: "me", label: "Me", icon: UserRound, route: "/(app)/sponsor/profile" },
 ] as const;
 
@@ -36,7 +41,10 @@ export function SponsorBottomNav({
       {tabs.map((tab) => {
         const selected = active === tab.key;
         const Icon = tab.icon;
-        const badgeCount = tab.key === "notifs" ? unread : tab.key === "chat" ? unreadMessages : 0;
+        // `unread` is still accepted and still drives the header bell on every
+        // screen — it just no longer has a tab to badge, since Notifications
+        // is not a tab any more.
+        const badgeCount = tab.key === "chat" ? unreadMessages : 0;
         return (
           <Pressable
             key={tab.key}

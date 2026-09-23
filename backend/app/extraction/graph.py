@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
@@ -15,6 +15,11 @@ class DocumentPage(BaseModel):
     page_number: int
     text: str
     layout: dict[str, Any] = Field(default_factory=dict)
+    # AD-2a: whether this page has real embedded text to extract from, or
+    # needs the attached PDF's own page image instead. "text" is the default
+    # so callers that never classify a page (pages_from_text, tests) behave
+    # exactly as before - only pages_from_pdf sets this from a real reading.
+    text_status: Literal["text", "sparse_text", "image_or_empty"] = "text"
 
 
 class ExtractionClaim(BaseModel):
@@ -43,6 +48,7 @@ class ExtractionProvider(Protocol):
 
     def document_structure(self, state: ExtractionState) -> dict[str, Any]: ...
     def discover_schedule_evidence(self, state: ExtractionState) -> list[dict[str, Any]]: ...
+    def detect_schedule_options(self, pages: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
     def extract_claims(self, category: str, state: ExtractionState) -> list[dict[str, Any]]: ...
     def build_relationships(self, state: ExtractionState) -> dict[str, Any]: ...
     def completeness_check(self, state: ExtractionState) -> list[dict[str, Any]]: ...
@@ -116,7 +122,11 @@ def build_extraction_graph(provider: ExtractionProvider):
         ]
         return {
             "schedule": schedule.model_dump(mode="json"),
-            "issues": [*state.get("issues", []), *deterministic, *completeness],
+            "issues": [
+                *[{**item, "details": {**item.get("details", {}), "origin": "EXTRACTION"}}
+                  for item in [*state.get("issues", []), *completeness]],
+                *deterministic,
+            ],
             "trace": _append_trace(state, "FINAL_VALIDATION", {
                 "valid": True, "issues": len(deterministic),
                 "completeness_findings": len(completeness),
@@ -137,12 +147,14 @@ def build_extraction_graph(provider: ExtractionProvider):
         ("event_types", claims_node("event_types")),
         ("timing", claims_node("timing")),
         ("conditions", claims_node("conditions")),
+        ("applicability", claims_node("applicability")),
         ("dependencies", claims_node("dependencies")),
         ("dependency_modes", claims_node("dependency_modes")),
         ("recurrence", claims_node("recurrence")),
         ("repeat_blocks", claims_node("repeat_blocks")),
         ("activities", claims_node("activities")),
         ("activity_timing", claims_node("activity_timing")),
+        ("activity_conditions", claims_node("activity_conditions")),
         ("qualifiers", claims_node("qualifiers")),
         ("conditional_actions", claims_node("conditional_actions")),
         ("conditional_resolution", claims_node("conditional_resolution")),
@@ -179,7 +191,7 @@ def run_extraction(
         "document_hash": document_hash,
         "pages": [page.model_dump() for page in pages],
         "claims": [], "components": {}, "issues": [], "trace": [],
-    })
+    }, config={"recursion_limit": 100})
     schedule = None
     try:
         schedule = UniversalSchedule.model_validate(state.get("schedule"))

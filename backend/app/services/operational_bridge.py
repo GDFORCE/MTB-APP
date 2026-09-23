@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db import models as db
 from app.db.repositories import ScheduleRepository
 from app.domain.schedule.models import schedule_origin_anchor
-from app.services.schedule_service import PatientScheduleService
+from app.services.schedule_service import PatientScheduleService, resolve_current_schedule_version
 
 
 @dataclass(frozen=True)
@@ -133,7 +133,10 @@ class OperationalBridgeService:
         horizon: date,
         arm_label: str | None = None,
         cohort_label: str | None = None,
+        population_label: str | None = None,
         dimension_values: dict[str, list[str]] | None = None,
+        anchor_dates: dict[str, date] | None = None,
+        expected_version_id: UUID | None = None,
     ) -> BridgeEnrollment:
         trial = self.session.scalar(select(db.Trial).where(
             db.Trial.id == canonical_trial_id,
@@ -142,7 +145,11 @@ class OperationalBridgeService:
         if trial is None:
             raise KeyError("canonical trial not found")
         schedule_version = self._approved_version(trial.id, schedule_definition_id)
+        if expected_version_id and schedule_version.id != expected_version_id:
+            raise ValueError("The approved schedule changed. Reload and preview it again.")
         schedule = self.repository.get(schedule_version.id)
+        from app.services.enrolment_preview import enrollment_anchors
+        dates = enrollment_anchors(schedule, baseline_date, anchor_dates or {})
         existing = self.session.scalar(select(db.Patient).where(
             db.Patient.trial_id == trial.id,
             db.Patient.external_patient_id == external_patient_id,
@@ -159,6 +166,7 @@ class OperationalBridgeService:
                 current_schedule_version_id=schedule_version.id,
                 arm_id=self._dimension_id(schedule.arms, arm_label),
                 cohort_id=self._dimension_id(schedule.cohorts, cohort_label),
+                population_id=self._dimension_id(schedule.populations, population_label),
                 dimension_values=dimension_values or {},
             )
             self.session.add(patient)
@@ -205,9 +213,30 @@ class OperationalBridgeService:
         elif current_anchor.value_date != baseline_date:
             raise ValueError(
                 "linked patient's baseline differs; use anchor impact preview/confirm")
+        for anchor in schedule.anchors:
+            if anchor.id == baseline_anchor.id or anchor.code not in dates:
+                continue
+            existing_anchor = self.session.scalar(select(db.PatientAnchor).where(
+                db.PatientAnchor.patient_id == patient.id,
+                db.PatientAnchor.anchor_definition_id == anchor.id,
+                db.PatientAnchor.status.in_(["CONFIRMED", "PROVISIONAL"]),
+            ).order_by(db.PatientAnchor.recorded_at.desc()))
+            if existing_anchor is not None:
+                if existing_anchor.value_date != dates[anchor.code]:
+                    raise ValueError(f"{anchor.code} changed; use anchor impact preview/confirm")
+                continue
+            self.session.add(db.PatientAnchor(
+                patient_id=patient.id, anchor_definition_id=anchor.id,
+                value_date=dates[anchor.code], status="CONFIRMED",
+                source_type="OPERATIONAL_ENROLMENT", recorded_by=actor_id,
+                source_reference={"external_patient_id": external_patient_id},
+            ))
+        self.session.flush()
         evaluation, rows = PatientScheduleService(self.session).evaluate(
             patient.id, organization_id=organization_id, horizon=horizon,
+            schedule_version_id=schedule_version.id,
             idempotency_key=f"operational-enrolment:{external_patient_id}:{schedule_version.id}",
+            actor_id=actor_id, reason="Operational patient enrolment bridge",
         )
         definitions = {item.id: item for item in schedule.events}
         # Doc s10/s12: per-OCCURRENCE activity results, not the event's static
@@ -275,40 +304,13 @@ class OperationalBridgeService:
     def _approved_version(
         self, trial_id: UUID, schedule_definition_id: UUID,
     ) -> db.ScheduleVersion:
-        approved = list(self.session.scalars(
-            select(db.ScheduleVersion)
-            .join(db.ScheduleDefinition, db.ScheduleDefinition.id == db.ScheduleVersion.schedule_definition_id)
-            .join(db.ProtocolVersion, db.ProtocolVersion.id == db.ScheduleDefinition.protocol_version_id)
-            .join(db.Protocol, db.Protocol.id == db.ProtocolVersion.protocol_id)
-            .where(
-                db.Protocol.trial_id == trial_id,
-                db.ScheduleDefinition.id == schedule_definition_id,
-                db.ScheduleVersion.status == "APPROVED",
-            )
-            .order_by(db.ScheduleVersion.version_number.desc())
-        ))
-        # Doc 9 s8: an amendment can be approved before it applies. Enrolling
-        # onto a version that is not in force yet would schedule a patient by a
-        # protocol that does not govern them today - the same rule the canonical
-        # enrolment endpoint already applies, enforced here too so the live Add
-        # Patient flow cannot bypass it.
-        today = date.today()
-        in_force = [
-            item for item in approved
-            if item.effective_from is None or item.effective_from <= today
-        ]
-        if in_force:
-            return in_force[0]
-        if approved:
-            soonest = min(
-                item.effective_from for item in approved
-                if item.effective_from is not None
-            )
-            raise ValueError(
-                "no approved canonical schedule is in force today; the approved "
-                f"version takes effect on {soonest.isoformat()}"
-            )
-        raise ValueError("no approved canonical schedule is available for the linked trial")
+        # AD-4d: this used to be an independent query that (unlike canonical
+        # Add-Patient) did not filter by the trial's CURRENT protocol version,
+        # so a schedule approved under a superseded protocol version was
+        # enrollable through this bridge and refused by the canonical endpoint.
+        # Both now resolve "this trial's current enrollable schedule" the same
+        # way, including doc 9 s8's in-force check.
+        return resolve_current_schedule_version(self.session, trial_id, schedule_definition_id)
 
     @staticmethod
     def _dimension_id(values: list[object], label: str | None) -> UUID | None:

@@ -84,14 +84,13 @@ def test_patient_receives_structured_trial_content_schedule_and_contacts():
             assert trial_response.status_code == 200, trial_response.text
             trial = trial_response.json()
             IDS['trials'].append(trial['id'])
-            visit_response = await cli.post('/api/visits', headers=pi_headers, json={
-                'trial_id': trial['id'],
-                'visit_number': 1,
-                'name': 'Baseline',
-                'day_offset': 2,
-                'window_days': 1,
-                'visit_type': 'On-site',
-                'location': ORG,
+            # `POST /api/visits` (the manual visit-schedule editor's write
+            # endpoint) is retired - seed the same `db.visits` template
+            # directly.
+            await server.db.visits.insert_one({
+                'id': str(uuid.uuid4()), 'trial_id': trial['id'],
+                'visit_number': 1, 'name': 'Baseline', 'day_offset': 2,
+                'window_days': 1, 'visit_type': 'On-site', 'location': ORG,
                 'activities': ['Vital signs'],
                 'procedures': [{
                     'id': 'vitals',
@@ -99,8 +98,8 @@ def test_patient_receives_structured_trial_content_schedule_and_contacts():
                     'description': 'Blood pressure and pulse',
                 }],
                 'checklist': ['Bring your patient ID card'],
+                'created_at': server.now(),
             })
-            assert visit_response.status_code == 200, visit_response.text
             patient_response = await cli.post('/api/patients', headers=pi_headers, json={
                 'full_name': patient_user['full_name'],
                 'email': patient_user['email'],

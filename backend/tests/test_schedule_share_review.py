@@ -1,4 +1,15 @@
-"""Persistent sponsor share -> assigned PI review workflow."""
+"""Persistent sponsor share -> assigned PI review workflow.
+
+The PI decision half of this flow (the former `GET/POST /schedule-reviews*`
+inbox `clinical/schedule-review.tsx` used) has moved to the canonical engine -
+see `tests/test_uctsm_schedule_review_inbox.py` and
+`tests/test_uctsm_cutover.py`'s sibling coverage for `approve`/`reject`. What
+remains genuinely untested elsewhere is `POST /shares` itself: it still
+carries the external/email-link distribution capability, and its `via:
+"in_app"` path still writes one `schedule_reviews` row per assigned site/PI -
+this file now checks only that write, not a decision flow nothing reads
+through this collection anymore.
+"""
 import asyncio
 import sys
 import uuid
@@ -104,7 +115,7 @@ async def build_world():
     return sponsor, pi_a, pi_b, outsider, trial, shared_document
 
 
-def test_share_creates_site_reviews_and_decisions_are_isolated():
+def test_share_creates_one_pending_review_row_per_assigned_site():
     async def flow():
         sponsor, pi_a, pi_b, outsider, trial, shared_document = await build_world()
         async with client() as cli:
@@ -126,56 +137,23 @@ def test_share_creates_site_reviews_and_decisions_are_isolated():
             assert len(shared.json()["review_ids"]) == 2
             assert shared.json()["document_id"] == shared_document["id"]
 
-            inbox_a = await cli.get("/api/schedule-reviews", headers=headers(pi_a))
-            assert inbox_a.status_code == 200, inbox_a.text
-            assert len(inbox_a.json()) == 1
-            row_a = inbox_a.json()[0]
-            assert row_a["reviewer_id"] == pi_a["id"]
-            assert row_a["message"] == "Please review the updated windows."
-            assert row_a["document_id"] == shared_document["id"]
-            assert row_a["document_name"] == "Protocol schedule v2.pdf"
-            assert len(row_a["visits"]) == 2
+        row_a = await server.db.schedule_reviews.find_one(
+            {"trial_id": trial["id"], "reviewer_id": pi_a["id"]}, {"_id": 0})
+        assert row_a is not None
+        assert row_a["status"] == "pending"
+        assert row_a["message"] == "Please review the updated windows."
+        assert row_a["document_id"] == shared_document["id"]
+        assert row_a["document_name"] == "Protocol schedule v2.pdf"
+        assert len(row_a["visit_snapshot"]) == 2
 
-            forbidden = await cli.post(
-                f"/api/schedule-reviews/{row_a['id']}/approve",
-                headers=headers(outsider), json={"notes": ""},
-            )
-            assert forbidden.status_code == 403
+        row_b = await server.db.schedule_reviews.find_one(
+            {"trial_id": trial["id"], "reviewer_id": pi_b["id"]}, {"_id": 0})
+        assert row_b is not None and row_b["status"] == "pending"
 
-            approved = await cli.post(
-                f"/api/schedule-reviews/{row_a['id']}/approve",
-                headers=headers(pi_a), json={"notes": "Site A can support this schedule."},
-            )
-            assert approved.status_code == 200, approved.text
-            assert approved.json()["status"] == "approved"
-            assert approved.json()["trial_schedule_status"] == "pending_review"
-
-            duplicate = await cli.post(
-                f"/api/schedule-reviews/{row_a['id']}/approve",
-                headers=headers(pi_a), json={"notes": ""},
-            )
-            assert duplicate.status_code == 409
-
-            inbox_b = await cli.get("/api/schedule-reviews", headers=headers(pi_b))
-            row_b = inbox_b.json()[0]
-            rejected = await cli.post(
-                f"/api/schedule-reviews/{row_b['id']}/reject",
-                headers=headers(pi_b),
-                json={"reason": "The baseline window conflicts with site capacity.", "notes": "Revise Visit 2."},
-            )
-            assert rejected.status_code == 200, rejected.text
-            assert rejected.json()["status"] == "rejected"
-            assert rejected.json()["trial_schedule_status"] == "flagged"
-
-        fresh = await server.db.trials.find_one({"id": trial["id"]}, {"_id": 0})
-        assert fresh["schedule_status"] == "flagged"
+        assert outsider["id"] not in {row_a["reviewer_id"], row_b["reviewer_id"]}
         assert await server.db.notifications.count_documents({
             "user_id": {"$in": [pi_a["id"], pi_b["id"]]},
             "schedule_review_id": {"$exists": True},
-        }) == 2
-        assert await server.db.audit_logs.count_documents({
-            "trial_id": trial["id"],
-            "action": {"$in": ["schedule_review.approved", "schedule_review.rejected"]},
         }) == 2
 
     try:

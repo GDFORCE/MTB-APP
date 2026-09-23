@@ -51,7 +51,9 @@ def timing_display(event: Event) -> tuple[str, str | None]:
         return f"Cycle {cycle}, Day {timing.day}", None
     if isinstance(timing, ApproximateTiming):
         return f"Approximately {_amount(timing.offset)} from {_reference(timing.reference)}", None
-    if isinstance(timing, (UnresolvedTiming, ProtocolDefinedTiming)):
+    if isinstance(timing, UnresolvedTiming):
+        return f"Needs review: {timing.reason}", None
+    if isinstance(timing, ProtocolDefinedTiming):
         return "Timing requires site/sponsor confirmation", None
     return "Timing unavailable", None
 
@@ -74,6 +76,12 @@ def project_schedule(schedule: UniversalSchedule) -> list[ScheduleDisplayProject
     output = []
     for event in schedule.events:
         timing, window = timing_display(event)
+        entities = {event.id, *(activity.id for activity in event.activities)}
+        evidence_refs = list(dict.fromkeys([
+            *event.evidence_refs,
+            *(ref for activity in event.activities for ref in activity.evidence_refs),
+            *(claim.evidence_id for claim in schedule.claim_evidence if claim.claim_entity_id in entities),
+        ]))
         output.append(ScheduleDisplayProjection(
             event_id=str(event.id), event_code=event.code, title=event.display_name,
             timing_display=timing, window_display=window,
@@ -82,6 +90,6 @@ def project_schedule(schedule: UniversalSchedule) -> list[ScheduleDisplayProject
             condition_display="Conditional" if event.conditions else None,
             status=event.interpretation_status.value,
             requires_review=event.requires_review,
-            evidence_refs=[str(item) for item in event.evidence_refs],
+            evidence_refs=[str(item) for item in evidence_refs],
         ))
     return output

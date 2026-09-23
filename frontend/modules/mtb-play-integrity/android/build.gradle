@@ -1,0 +1,23 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.gdforce.mytrialboard'
+version = '1.0.0'
+
+android {
+  namespace "com.gdforce.mytrialboard.integrity"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Play Integrity API. This is the ONLY thing in the capture chain that an
+  // attacker running a modified build cannot forge — the verdict is signed by
+  // Google, and the server verifies it against Google directly rather than
+  // trusting anything this app says about itself.
+  implementation 'com.google.android.play:integrity:1.6.0'
+}

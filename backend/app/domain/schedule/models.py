@@ -13,6 +13,7 @@ from .timing import (
     PositiveTemporalAmount,
     StrictModel,
     TemporalReference,
+    TemporalAmount,
     TimingExpression,
 )
 
@@ -30,6 +31,15 @@ class ScheduleStatus(StrEnum):
     REJECTED = "REJECTED"
     SUPERSEDED = "SUPERSEDED"
     ARCHIVED = "ARCHIVED"
+    # Doc 9 s34: finer-grained than APPROVED/SUPERSEDED alone, for a version
+    # that is approved but should no longer take NEW patients while existing
+    # patients stay on it. AD-6: members only for now - no service transitions
+    # these automatically yet (Phase 1 follow-up; see current_enrollable_
+    # schedule_version's single resolution path in schedule_service.py, which
+    # any such transition should build on rather than duplicate).
+    CURRENT_FOR_NEW_ENROLLMENT = "CURRENT_FOR_NEW_ENROLLMENT"
+    HISTORICAL_ACTIVE = "HISTORICAL_ACTIVE"
+    RETIRED_FOR_NEW_ENROLLMENT = "RETIRED_FOR_NEW_ENROLLMENT"
 
 
 class InterpretationStatus(StrEnum):
@@ -51,6 +61,70 @@ class Requiredness(StrEnum):
     UNRESOLVED = "UNRESOLVED"
 
 
+class EventType(StrEnum):
+    """The event types the projection layer knows how to present - reminder
+    wording, attendance expectation, calendar treatment (doc 10 s2-s3).
+
+    AD-6: closed but escapable. ``Event.event_type`` itself stays a plain
+    ``str`` (not this enum) so an unrecognised value never fails validation -
+    doc 10 s3 requires it surface as a non-blocking review warning instead,
+    which is what ``validator.py`` already does by comparing against
+    ``frozenset(EventType)``. A protocol may legitimately name something this
+    list has never seen; refusing approval over vocabulary would stop real
+    work for no clinical reason, while presenting an unknown type as an
+    ordinary site visit could tell a patient to travel. OTHER is the escape
+    member for exactly that case.
+    """
+
+    SITE_VISIT = "SITE_VISIT"
+    TELEPHONE_CONTACT = "TELEPHONE_CONTACT"
+    HOME_VISIT = "HOME_VISIT"
+    ASSESSMENT = "ASSESSMENT"
+    IMAGING = "IMAGING"
+    LABORATORY = "LABORATORY"
+    INPATIENT_ADMISSION = "INPATIENT_ADMISSION"
+    INPATIENT_DISCHARGE = "INPATIENT_DISCHARGE"
+    UNSCHEDULED = "UNSCHEDULED"
+    SAFETY_ASSESSMENT = "SAFETY_ASSESSMENT"
+    TREATMENT = "TREATMENT"
+    PROCEDURE = "PROCEDURE"
+    REMOTE = "REMOTE"
+    # Generic labels are accepted because they are presentation-SAFE: they
+    # promise nothing about how the patient attends, so the mode fields decide
+    # that. It is the specific-but-unknown type that needs a reviewer.
+    VISIT = "VISIT"
+    CONTACT = "CONTACT"
+    OTHER = "OTHER"
+
+
+#: HOW a scheduled occasion happens, once EventType has said what kind of
+#: occasion it is - a distinct question ("a CT scan the patient travels to" is
+#: IMAGING *and* CLINIC, not a choice between them). Kept separate from
+#: EventType and defined exactly once, imported everywhere it is written
+#: (extraction) or read (reminder/calendar projection), because this file's
+#: own history already has one incident of a second, drifted vocabulary for
+#: the same concept living in schedule_projection.py - see that module's
+#: docstring. Plain string on Event.visit_mode, not this dict's key set, is
+#: still what gets stored: an unrecognised mode must surface for review, not
+#: fail validation (AD-6's closed-but-escapable pattern).
+VISIT_MODE_WORDING: dict[str, str] = {
+    "CLINIC": "Your study visit is scheduled",
+    "TELEPHONE": "Your study team is expected to contact you",
+    "VIDEO": "Your video study visit is scheduled",
+    "HOME": "A study-related home visit is scheduled",
+    "HOME_NURSE": "A study nurse home visit is scheduled",
+    "REMOTE": "Your remote study visit is scheduled",
+    "IMAGING_CENTRE": "Your imaging appointment is scheduled",
+    "LABORATORY": "Your laboratory appointment is scheduled",
+    "PHARMACY": "Your pharmacy appointment is scheduled",
+}
+
+#: Modes where the patient is expected to travel somewhere, as opposed to
+#: being contacted or visited. Drives the reminder title (doc 10 s22: "Please
+#: travel to the hospital" must never reach a telephone-contact patient).
+VISIT_MODE_REQUIRES_ATTENDANCE = frozenset({"CLINIC", "IMAGING_CENTRE", "LABORATORY", "PHARMACY"})
+
+
 class DependencyMode(StrEnum):
     NOMINAL = "NOMINAL"
     ACTUAL_PREVIOUS_EVENT = "ACTUAL_PREVIOUS_EVENT"
@@ -64,7 +138,12 @@ class QualifierScope(StrEnum):
     COLUMN = "COLUMN"
     VISIT = "VISIT"
     ACTIVITY = "ACTIVITY"
-    BLOCK = "BLOCK"
+    # AD-6: "BLOCK" alone conflated two different things a footnote can scope
+    # to - a repeat/pause block spanning several visits (VISIT_BLOCK) versus a
+    # rule that governs the whole schedule (SCHEDULE_BLOCK). Split rather than
+    # left as one member a reader has to guess between.
+    VISIT_BLOCK = "VISIT_BLOCK"
+    SCHEDULE_BLOCK = "SCHEDULE_BLOCK"
     ARM = "ARM"
     COHORT = "COHORT"
     SUBSTUDY = "SUBSTUDY"
@@ -87,6 +166,13 @@ class QualifierCategory(StrEnum):
     SEQUENCE = "SEQUENCE"
     DETAIL = "DETAIL"
     POPULATION_RESTRICTION = "POPULATION_RESTRICTION"
+    # Doc 8: a footnote can restrict eligibility to one arm/cohort/country
+    # specifically, distinct from POPULATION_RESTRICTION's broader clinical
+    # population (e.g. "renal impairment") and from applicability's own
+    # dimension/value rules on the event itself.
+    ARM_RESTRICTION = "ARM_RESTRICTION"
+    COHORT_RESTRICTION = "COHORT_RESTRICTION"
+    COUNTRY_RESTRICTION = "COUNTRY_RESTRICTION"
     # A reviewer determined the marker does not govern THIS schedule. It is
     # a decision that was made, which is why it is not the same as UNRESOLVED.
     NOT_APPLICABLE = "NOT_APPLICABLE"
@@ -134,6 +220,27 @@ class BlockState(StrEnum):
     STOPPED = "STOPPED"
 
 
+#: AD-4a: one owner per status member, stated once so it is reviewable rather
+#: than an implicit discipline scattered across the evaluator.
+#:
+#: PROTOCOL-LOGIC members are computed by ScheduleEvaluator from the schedule
+#: definition and previously recorded facts - no code outside the evaluator
+#: writes them: RESOLVED, AVAILABLE_ON_DEMAND, WAITING_FOR_ANCHOR,
+#: WAITING_FOR_CONDITION, NOT_APPLICABLE, BLOCKED, PAUSED, UNRESOLVED,
+#: CANCELLED, UPCOMING, IN_CONFINEMENT, EXTENDED, DISCHARGE_PLANNED.
+#:
+#: OPERATIONAL-REALITY members are facts a human/site recorded - the evaluator
+#: only ever REFLECTS one it already finds in `PatientContext` (see
+#: evaluator.py's `_evaluate_activity`: COMPLETED/NOT_DONE come from
+#: `context.activity_actuals`/`activity_statuses`, populated from
+#: `PatientScheduleService.record_activity`'s persisted `PatientActivityRecord`
+#: rows), it never originates one: COMPLETED, MISSED, NOT_DONE, DISCHARGED.
+#: `PatientEventStatus.COMPLETED`/`MISSED` are written directly by the
+#: occurrence-recording API (`record_patient_occurrence`), never by the
+#: evaluator - confirmed by grep: no `PatientEventStatus.COMPLETED`/`MISSED`
+#: literal exists anywhere in evaluator.py.
+
+
 class ConfinementStatus(StrEnum):
     """State of one continuous inpatient stay (requirement doc 6 section 36).
 
@@ -144,6 +251,10 @@ class ConfinementStatus(StrEnum):
     UPCOMING = "UPCOMING"
     IN_CONFINEMENT = "IN_CONFINEMENT"
     EXTENDED = "EXTENDED"
+    # A planned discharge date has passed with no actual discharge recorded
+    # yet - clinically distinct from an ordinary IN_CONFINEMENT day and from
+    # EXTENDED (which means a conditional rule pushed the plan itself out).
+    DISCHARGE_PLANNED = "DISCHARGE_PLANNED"
     DISCHARGED = "DISCHARGED"
     CANCELLED = "CANCELLED"
     NOT_APPLICABLE = "NOT_APPLICABLE"
@@ -260,7 +371,13 @@ class Anchor(StrictModel):
     derivation_rule: dict[str, object] | None = None
     source_event_code: str | None = None
     source_condition_code: str | None = None
-    status: Literal["RESOLVED", "UNRESOLVED", "AMBIGUOUS"] = "RESOLVED"
+    # AD-5: no default. Whether an anchor's resolution is actually settled is
+    # itself a fact that must be stated, not assumed - a model-level default
+    # here would silently cover every extraction path that never sets it,
+    # including any future ambiguity-detecting one, the same way this exact
+    # default let every anchor from the native pipeline read RESOLVED with
+    # nothing ever having checked.
+    status: Literal["RESOLVED", "UNRESOLVED", "AMBIGUOUS"]
     evidence_refs: list[UUID] = Field(default_factory=list)
 
 
@@ -277,25 +394,52 @@ def schedule_origin_anchor(schedule: "UniversalSchedule"):
     Never matches on an anchor's printed NAME. A protocol's origin may be called
     Baseline, Day 1, Randomisation or First Dose, and those are different
     clinical facts; the origin is whichever anchor the schedule was built
-    against, which the builder records explicitly.
+    against, which the builder records explicitly - either as this schedule's
+    stated ``day_numbering.day_1_anchor`` (the primary, correct source: a
+    protocol-stated fact, not an inference) or, for the legacy adapter path
+    until it is retired, an anchor whose ``derivation_rule`` carries the
+    origin role directly.
+
+    Returns ``None`` when neither is stated. That is the correct answer, not a
+    gap: a caller needing this anchor (patient enrolment) must fail loudly
+    rather than guess, and the validator blocks approval of a CLINICAL_DAY
+    schedule that reaches this state.
     """
+    day_numbering = schedule.schedule_metadata.day_numbering
+    if day_numbering is not None:
+        code = day_numbering.day_1_anchor.code
+        for anchor in schedule.anchors:
+            if anchor.code == code:
+                return anchor
+        return None
     for anchor in schedule.anchors:
         if (anchor.derivation_rule or {}).get("role") == SCHEDULE_ORIGIN_ROLE:
-            return anchor
-    # Schedules persisted before the origin was recorded explicitly, plus the
-    # demo/native-extraction paths that mint an anchor typed BASELINE outright.
-    for anchor in schedule.anchors:
-        if anchor.anchor_type.upper() == "BASELINE" or anchor.code == "BASELINE":
             return anchor
     return None
 
 
 class ApplicabilityRule(StrictModel):
     dimension: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_]*$")
-    operator: Literal["IN", "NOT_IN"] = "IN"
+    operator: Literal["IN", "NOT_IN", "EQ", "NE", "LT", "LTE", "GT", "GTE"] = "IN"
     values: list[str] = Field(min_length=1)
     field: str | None = None
     condition: ConditionExpression | None = None
+    # AD-7: how this rule combines with the NEXT rule in the same list
+    # (a left-to-right fold, not a global operator for the whole list).
+    # Default AND is byte-for-byte the old, only behaviour, so every
+    # existing applicability list keeps evaluating exactly as before.
+    combinator: Literal["AND", "OR"] = "AND"
+
+    @model_validator(mode="after")
+    def comparison_operator_takes_exactly_one_value(self) -> "ApplicabilityRule":
+        """EQ/NE/LT/LTE/GT/GTE compare against one threshold, not a membership
+        set - a second value would silently be ignored rather than compared."""
+        if self.operator not in {"IN", "NOT_IN"} and len(self.values) != 1:
+            raise ValueError(
+                f"a {self.operator} applicability rule needs exactly one "
+                "comparison value, not a membership set"
+            )
+        return self
 
 
 class Dependency(StrictModel):
@@ -390,11 +534,14 @@ class ConfinementEpisodeDefinition(StrictModel):
 
 
 class RecurrenceTermination(StrictModel):
-    type: Literal["COUNT", "DATE", "EVENT", "CONDITION", "HORIZON"]
+    type: Literal["COUNT", "DATE", "EVENT", "CONDITION", "HORIZON", "RELATIVE"]
     count: int | None = Field(default=None, gt=0)
     termination_date: date | None = Field(default=None, alias="date")
     event_code: str | None = None
     condition: ConditionExpression | None = None
+    end_reference: AnchorReference | None = None
+    end_offset: TemporalAmount | None = None
+    inclusive: bool | None = None
 
     @model_validator(mode="after")
     def matching_value(self) -> "RecurrenceTermination":
@@ -404,9 +551,15 @@ class RecurrenceTermination(StrictModel):
             "EVENT": self.event_code,
             "CONDITION": self.condition,
             "HORIZON": True,
+            "RELATIVE": self.end_reference,
         }
         if values[self.type] is None:
             raise ValueError(f"{self.type} termination requires its matching value")
+        if self.type == "RELATIVE":
+            if self.end_offset is None or self.inclusive is None:
+                raise ValueError("RELATIVE termination requires an offset and an explicit inclusive boundary")
+        elif any(value is not None for value in (self.end_reference, self.end_offset, self.inclusive)):
+            raise ValueError("Relative boundary fields require RELATIVE termination")
         return self
 
 
@@ -414,6 +567,9 @@ class RecurrenceRule(StrictModel):
     type: Literal["INTERVAL"] = "INTERVAL"
     interval: PositiveTemporalAmount
     start_reference: TemporalReference
+    # Optional for existing approved schedules. New extraction retains a stated
+    # delayed first occurrence instead of restarting every repeat at baseline.
+    start_offset: TemporalAmount | None = None
     termination: RecurrenceTermination
     include_start: bool = True
 

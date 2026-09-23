@@ -80,11 +80,11 @@ class DemoService:
         )
         last_dose = Anchor(
             code="LAST_DOSE", display_name="Last Dose", anchor_type="LAST_DOSE",
-            evidence_refs=[evidence.id],
+            status="RESOLVED", evidence_refs=[evidence.id],
         )
         progression_anchor = Anchor(
             code="PROGRESSION", display_name="Disease Progression",
-            anchor_type="PROGRESSION", evidence_refs=[evidence.id],
+            anchor_type="PROGRESSION", status="RESOLVED", evidence_refs=[evidence.id],
         )
         safety = Event(
             code="SAFETY_FOLLOW_UP", protocol_label="Safety Follow-up",

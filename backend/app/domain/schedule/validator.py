@@ -5,11 +5,13 @@ from uuid import UUID
 
 from .models import (
     DependencyMode,
+    EventType,
     IssueStatus,
     InterpretationStatus,
     Severity,
     UniversalSchedule,
     ValidationIssue,
+    schedule_origin_anchor,
 )
 from .timing import (
     ActivityReference,
@@ -36,28 +38,27 @@ def timing_references(timing: object) -> list[object]:
     return references
 
 
-#: Doc 10 s2-s3. The event types the projection layer knows how to present -
-#: reminder wording, attendance expectation, calendar treatment. A protocol may
-#: legitimately name something else, so an unknown type is surfaced for a
-#: reviewer rather than blocked: refusing approval over vocabulary would stop
-#: real work for no clinical reason, while presenting an unknown type as an
-#: ordinary site visit could tell a patient to travel.
-CORE_EVENT_TYPES = frozenset({
-    "SITE_VISIT", "TELEPHONE_CONTACT", "HOME_VISIT", "ASSESSMENT", "IMAGING",
-    "LABORATORY", "INPATIENT_ADMISSION", "INPATIENT_DISCHARGE", "UNSCHEDULED",
-    "SAFETY_ASSESSMENT", "TREATMENT", "PROCEDURE", "REMOTE",
-    # Generic labels are accepted because they are presentation-SAFE: they
-    # promise nothing about how the patient attends, so the mode fields decide
-    # that. It is the specific-but-unknown type that needs a reviewer.
-    "VISIT", "CONTACT", "OTHER",
-})
+#: AD-6: the closed taxonomy now lives as ``EventType`` on the domain model
+#: itself (models.py); re-exported here under its original name for the
+#: existing importers (schedule_projection.py, dashboard_service.py, tests).
+#: ``Event.event_type`` stays a plain ``str`` - see ``EventType``'s docstring
+#: for why an unrecognised value is a review WARNING here, never a hard
+#: validation failure.
+CORE_EVENT_TYPES = frozenset(EventType)
 
 
 class ScheduleValidator:
     version = "uctsm-validator.v1"
 
     def validate(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
-        issues: list[ValidationIssue] = []
+        # Source coverage cannot be recomputed from the surviving schedule.
+        # Preserve these findings until explicitly resolved or re-extracted.
+        issues: list[ValidationIssue] = [
+            issue.model_copy(deep=True) for issue in schedule.validation_issues
+            if issue.status == IssueStatus.OPEN and issue.details.get("origin") == "EXTRACTION"
+        ]
+        if not schedule.events:
+            issues.append(self._issue("EMPTY_SCHEDULE", "No visits or protocol events were extracted."))
         issues.extend(self._unique_codes(schedule))
         issues.extend(self._references(schedule))
         issues.extend(self._dependency_graph(schedule))
@@ -150,6 +151,42 @@ class ScheduleValidator:
                     "the protocol and needs a reviewed value.",
                     entity_type="ANCHOR", entity_id=anchor.id,
                 ))
+        # AD-5: a CLINICAL_DAY schedule's Day-N labels are computed relative to
+        # its stated origin anchor. This only fires once ``day_numbering`` is
+        # actually stated: a schedule built by hand with a legacy
+        # SCHEDULE_ORIGIN-tagged anchor and no ``day_numbering`` at all is
+        # still resolved by ``schedule_origin_anchor``'s second path and is
+        # not touched by this check. Enrolment (operational_bridge.py) already
+        # raises a ValueError for an unresolvable origin; this check exists so
+        # the same schedule cannot be silently approved first.
+        day_numbering = schedule.schedule_metadata.day_numbering
+        if (
+            day_numbering is not None
+            and day_numbering.counting_convention == "CLINICAL_DAY"
+            and schedule_origin_anchor(schedule) is None
+        ):
+            issues.append(self._issue(
+                "UNRESOLVED_SCHEDULE_ORIGIN",
+                "This schedule counts visits by clinical day but does not "
+                "state which anchor Day 0 is measured from; every Day-N date "
+                "on it would be uncomputable.",
+            ))
+        # The extraction pipeline hits a different shape of the same gap: it
+        # has anchors but the model never claimed any of them as the origin
+        # (claude_provider.py's ``_apply_anchors``), so there is no
+        # ``day_numbering`` to check above. Re-derived from
+        # ``schedule_metadata.extensions`` for the same durability reason as
+        # ``_information_loss`` below, rather than only from the one-time
+        # issue the adapter emits at import.
+        for extension in schedule.schedule_metadata.extensions:
+            if extension.get("type") != "UNRESOLVED_SCHEDULE_ORIGIN":
+                continue
+            issues.append(self._issue(
+                "UNRESOLVED_SCHEDULE_ORIGIN",
+                str(extension.get("detail") or (
+                    "This schedule has anchors but none was recorded as its "
+                    "Day 1/Day 0 origin.")),
+            ))
         return issues
 
     def _information_loss(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
@@ -239,6 +276,10 @@ class ScheduleValidator:
             timing = event.timing
             for reference in timing_references(timing):
                 check_reference(reference, event.id)
+            if event.recurrence is not None:
+                check_reference(event.recurrence.start_reference, event.id)
+                if event.recurrence.termination.type == "RELATIVE":
+                    check_reference(event.recurrence.termination.end_reference, event.id)
             for dependency in event.dependencies:
                 if dependency.source_event_code not in events:
                     issues.append(self._issue(
@@ -259,13 +300,21 @@ class ScheduleValidator:
                 ))
             for rule in event.applicability:
                 allowed = dimensions.get(rule.dimension)
-                if allowed is None and rule.dimension not in {"PATIENT_ATTRIBUTE", "CUSTOM"}:
+                # AD-7: AGE is a known dimension with no fixed code list (it is
+                # compared, not matched by membership) - the same shape as
+                # PATIENT_ATTRIBUTE/CUSTOM, so it is exempt from "unknown
+                # dimension" the same way.
+                if (allowed is None
+                        and rule.dimension not in {"PATIENT_ATTRIBUTE", "CUSTOM", "AGE"}):
                     issues.append(self._issue(
                         "UNRESOLVED_REFERENCE",
                         f"Unknown applicability dimension {rule.dimension!r}",
                         entity_type="EVENT", entity_id=event.id,
                     ))
-                if allowed is not None:
+                # A comparison rule's values are a threshold, not a code list -
+                # checking them against the dimension's known codes would flag
+                # a real number like "65" as an unknown ARM/COHORT code.
+                if allowed is not None and rule.operator in {"IN", "NOT_IN"}:
                     unknown = sorted(set(rule.values) - allowed)
                     if unknown:
                         issues.append(self._issue(
@@ -283,6 +332,11 @@ class ScheduleValidator:
             activity_codes = {item.code for item in event.activities if item.code}
             seen_activity_codes: set[str] = set()
             for activity in event.activities:
+                if activity.requiredness.value == "CONDITIONAL" and not activity.conditions and not activity.applicability:
+                    issues.append(self._issue(
+                        "AMBIGUOUS_CONDITION", "A conditional assessment has no executable condition or applicability rule.",
+                        entity_type="ACTIVITY", entity_id=activity.id,
+                    ))
                 if activity.code:
                     normalized = activity.code.casefold()
                     if normalized in seen_activity_codes:
@@ -416,7 +470,8 @@ class ScheduleValidator:
                         "evidence_id": str(claim.evidence_id),
                     },
                 ))
-        qualifier_markers: dict[str, list[tuple[str, UUID, str]]] = defaultdict(list)
+        qualifier_markers: dict[str, list[tuple[str, UUID, str, frozenset[str]]]] = defaultdict(list)
+        evidence_by_id = {item.id: item for item in schedule.evidence}
         for event in schedule.events:
             missing_refs = [str(ref) for ref in event.evidence_refs if ref not in evidence_ids]
             has_name_claim = (event.id, "EVENT_NAME") in claims
@@ -472,9 +527,19 @@ class ScheduleValidator:
             ):
                 for qualifier in qualifiers:
                     if qualifier.marker:
+                        # A symbol is local to its explicitly cited table legend.
+                        # Do not infer scope from page numbers: a table can span
+                        # pages, and several tables can share one page. Unknown
+                        # or global scope remains comparable to every legend.
+                        definitions = [evidence_by_id[ref] for ref in qualifier.evidence_refs
+                            if ref in evidence_by_id and evidence_by_id[ref].evidence_type == "FOOTNOTE"]
+                        tables = frozenset(item.table_title.strip().casefold() for item in definitions
+                            if item.table_title and item.table_title.strip()) if (
+                                definitions and all(item.table_title and item.table_title.strip() for item in definitions)
+                                and qualifier.scope.value != "GLOBAL") else frozenset()
                         qualifier_markers[qualifier.marker.casefold()].append((
                             qualifier.text.strip().casefold(), qualifier.id,
-                            qualifier.category.value,
+                            qualifier.category.value, tables,
                         ))
                     missing_qualifier_refs = [
                         str(ref) for ref in qualifier.evidence_refs if ref not in evidence_ids]
@@ -583,16 +648,22 @@ class ScheduleValidator:
                     entity_type="EVENT", entity_id=event.id,
                 ))
         for marker, meanings in qualifier_markers.items():
-            normalized_meanings = {(text, category) for text, _, category in meanings}
-            if len(normalized_meanings) > 1:
+            conflicting = set()
+            for index, (text, identifier, category, tables) in enumerate(meanings):
+                for other_text, other_id, other_category, other_tables in meanings[index + 1:]:
+                    if (text, category) != (other_text, other_category) and (
+                        not tables or not other_tables or not tables.isdisjoint(other_tables)):
+                        conflicting.update([identifier, other_id])
+            if conflicting:
+                relevant = [item for item in meanings if item[1] in conflicting]
                 issues.append(self._issue(
                     "CONFLICTING_EVIDENCE",
                     f"Table marker {marker!r} has conflicting qualifier meanings",
-                    entity_type="QUALIFIER", entity_id=meanings[0][1],
+                    entity_type="QUALIFIER", entity_id=relevant[0][1],
                     details={
-                        "qualifier_ids": [str(item[1]) for item in meanings],
+                        "qualifier_ids": sorted({str(item[1]) for item in relevant}),
                         "meanings": sorted({
-                            f"{category}: {text}" for text, _, category in meanings
+                            f"{category}: {text}" for text, _, category, _ in relevant
                         }),
                     },
                 ))

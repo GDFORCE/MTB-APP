@@ -105,7 +105,7 @@ def approved(
         )
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary", status=ScheduleStatus.APPROVED),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE"),
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED"),
                  *(anchors or [])],
         events=events, conditional_definitions=conditionals or [],
         repeat_blocks=repeat_blocks or [], arms=arms or [],
@@ -262,6 +262,7 @@ def progression_schedule() -> UniversalSchedule:
         anchors=[Anchor(
             code="PROGRESSION_DATE", display_name="Disease progression",
             anchor_type="CONDITION", source_condition_code="DISEASE_PROGRESSION",
+            status="RESOLVED",
         )],
         repeat_blocks=[RepeatBlock(
             code="TREATMENT_BLOCK", protocol_label="Treatment", display_name="Treatment",

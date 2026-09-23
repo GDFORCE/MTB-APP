@@ -81,11 +81,15 @@ def bridge_visit_documents(
             "operational_status": operational_status,
             "canonical_status": event.status,
             "manual_review_reason": reason,
-            "note": "",
-            "clinical_tasks": [],
-            "admin_tasks": [],
-            "comments": [],
-            "updated_by": None,
+            # AD-1b: this row is $set wholesale onto an existing document on
+            # every canonical resync (server.py's reconciliation path). It
+            # must never carry a workflow key - not even an empty default -
+            # or a site's real comments/tasks get silently blanked the next
+            # time this patient's schedule is reconciled. A brand-new
+            # document simply lacks these keys until the next read, when
+            # server.py's _ensure_visit_instance_workflow lazily backfills
+            # them - the same mechanism that already handles legacy
+            # instances missing these fields.
             "updated_at": generated_at,
             "created_at": generated_at,
         })

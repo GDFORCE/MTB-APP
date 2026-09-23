@@ -273,39 +273,49 @@ def test_repeated_extraction_of_one_source_reuses_its_definition(
 def test_visit_create_and_update_round_trip_operational_constraints(
     headers, trial_id, extracted,
 ):
+    """`POST/PUT /api/visits` (the manual visit-schedule editor's write
+    endpoints) are retired - this now exercises the same round trip directly
+    against the store, through the same `_normalized_template_timing`
+    normalization the endpoints themselves called, so the create/update
+    contract this test actually covers (operational constraints and
+    procedures surviving a template edit) stays real coverage rather than a
+    call to a route that no longer exists.
+    """
     async def exercise():
         row = extracted["visits"][0]
-        async with client() as cli:
-            created = await cli.post("/api/visits", headers=headers, json={
-                "trial_id": trial_id,
-                "visit_number": 1,
-                "name": row["name"],
-                "day_offset": row["day_offset"],
-                "window_before": row["window_before"],
-                "window_after": row["window_after"],
-                "activities": row["activities"],
-                "procedures": row["procedures"],
-                "operational_constraints": row["operational_constraints"],
-                "visit_type": row["visit_type"],
-                "extracted_from_protocol": True,
-            })
-            assert created.status_code == 200, created.text
-            visit_id = created.json()["id"]
-            updated = await cli.put(
-                f"/api/visits/{visit_id}", headers=headers, json={
-                    "operational_constraints": [
-                        "Overnight housing required",
-                        "Minimum 21 days since the previous dose",
-                    ],
-                })
-        return created.json(), updated
+        values = {
+            "trial_id": trial_id,
+            "visit_number": 1,
+            "name": row["name"],
+            "day_offset": row["day_offset"],
+            "window_before": row["window_before"],
+            "window_after": row["window_after"],
+            "activities": row["activities"],
+            "procedures": row["procedures"],
+            "operational_constraints": row["operational_constraints"],
+            "visit_type": row["visit_type"],
+            "extracted_from_protocol": True,
+        }
+        values, _timing_warning = server._normalized_template_timing(values)
+        doc = {"id": str(uuid.uuid4()), **values, "created_at": server.now()}
+        await server.db.visits.insert_one(doc)
+        created = await server.db.visits.find_one({"id": doc["id"]}, {"_id": 0})
+
+        fields = {
+            "operational_constraints": [
+                "Overnight housing required",
+                "Minimum 21 days since the previous dose",
+            ],
+        }
+        await server.db.visits.update_one({"id": doc["id"]}, {"$set": fields})
+        updated = await server.db.visits.find_one({"id": doc["id"]}, {"_id": 0})
+        return created, updated
 
     created, updated = run(exercise())
     assert "Overnight housing required" in created["operational_constraints"]
     assert any(item["name"] == "12-lead ECG" for item in created["procedures"])
     assert created["window_before"] == 1 and created["window_after"] == 3
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["operational_constraints"] == [
+    assert updated["operational_constraints"] == [
         "Overnight housing required",
         "Minimum 21 days since the previous dose",
     ]

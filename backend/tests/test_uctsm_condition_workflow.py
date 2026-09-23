@@ -118,10 +118,11 @@ def _schedule(protocol_version_id):
             version_number=1, status=ScheduleStatus.APPROVED,
         ),
         anchors=[
-            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE"),
+            Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED"),
             Anchor(
                 code="PROGRESSION_DATE", display_name="Disease progression",
                 anchor_type="CONDITION", source_condition_code="DISEASE_PROGRESSION",
+                status="RESOLVED",
             ),
         ],
         events=events,

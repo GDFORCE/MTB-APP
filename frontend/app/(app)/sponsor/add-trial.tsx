@@ -1,6 +1,7 @@
 import React, { useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react-native";
 import { api } from "@/src/api/client";
 import { buildCanonicalSchedule } from "@/src/features/uctsm/api";
+import { ExtractionPreview, type ExtractionPreviewData } from "@/src/features/uctsm/ExtractionPreview";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Button, Card, Small } from "@/src/components/ui";
 import {
@@ -137,7 +139,7 @@ function normalized(raw: any): Details {
 
 export default function AddTrial() {
   const router = useRouter();
-  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const [protocolId, setProtocolId] = useState("");
   const [details, setDetails] = useState<Details>(EMPTY);
   const [source, setSource] = useState<Source | null>(null);
@@ -146,9 +148,11 @@ export default function AddTrial() {
   const [showUpload, setShowUpload] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extractionIds, setExtractionIds] = useState<string[]>([]);
-  const [progress, setProgress] = useState(0);
+  const [previews, setPreviews] = useState<ExtractionPreviewData[]>([]);
+  const [showTrialDetails, setShowTrialDetails] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [createdTrialId, setCreatedTrialId] = useState<string | null>(null);
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(true);
 
   const update = (patch: Partial<Details>) =>
@@ -160,6 +164,7 @@ export default function AddTrial() {
     setSource(null);
     setDetails(EMPTY);
     setExtractionIds([]);
+    setPreviews([]);
     setErr("");
   };
 
@@ -187,13 +192,11 @@ export default function AddTrial() {
   };
 
   const runExtract = async (asset: any) => {
+    setExtractionIds([]);
+    setPreviews([]);
+    setResolved(false);
     setExtracting(true);
-    setProgress(10);
     setErr("");
-    progressTimer.current = setInterval(
-      () => setProgress((value) => Math.min(88, value + 7)),
-      280,
-    );
     try {
       const form = new FormData();
       if (Platform.OS === "web") {
@@ -211,14 +214,16 @@ export default function AddTrial() {
         // extracted in this one analysis (see backend extract_protocol_alias).
         timeout: 1800000,
       });
-      setProgress(100);
       setDetails(normalized(response.data?.details));
-      const extractions: { extraction_id: string }[] = response.data?.extractions
-        || (response.data?.extraction_id ? [{ extraction_id: response.data.extraction_id }] : []);
+      const extractions: { extraction_id: string; preview?: ExtractionPreviewData }[] = response.data?.extractions
+        || (response.data?.extraction_id ? [response.data] : []);
+      setPreviews(extractions.flatMap((item) => item.preview ? [item.preview] : []));
       setExtractionIds(extractions.map((item) => item.extraction_id).filter(Boolean));
       setSource("upload");
       setResolved(true);
-      setTimeout(() => setShowUpload(false), 250);
+      setShowTrialDetails(false);
+      scrollRef.current?.scrollTo({ y: 0, animated: false });
+      setShowUpload(false);
     } catch (error: any) {
       const status = error?.response?.status;
       setErr(
@@ -228,15 +233,13 @@ export default function AddTrial() {
           : "We could not extract this PDF. Check the file and try again."),
       );
     } finally {
-      if (progressTimer.current) clearInterval(progressTimer.current);
-      progressTimer.current = null;
       setExtracting(false);
     }
   };
 
   const extract = async () => {
     const picked = await DocumentPicker.getDocumentAsync({
-      type: "application/pdf",
+      type: ["application/pdf", "text/plain"],
       copyToCacheDirectory: true,
     });
     if (picked.canceled) return;
@@ -245,6 +248,10 @@ export default function AddTrial() {
   };
 
   const submit = async () => {
+    if (source === "upload" && (!previews.length || previews.some((preview) => !preview.schedule?.events.length))) {
+      setErr("At least one schedule could not be extracted. Review the extraction messages and retry the upload before saving.");
+      return;
+    }
     const indications = details.indications.map((item) => item.trim()).filter(Boolean);
     const missing = [
       !resolved || !protocolId.trim() ? "Protocol ID lookup or PDF upload" : "",
@@ -253,13 +260,14 @@ export default function AddTrial() {
       !indications.length ? "Disease / Indication" : "",
     ].filter(Boolean);
     if (missing.length) {
+      setShowTrialDetails(true);
       setErr(`Please complete: ${missing.join(", ")}.`);
       return;
     }
     setLoading(true);
     setErr("");
     try {
-      const response = await api.post("/trials", {
+      const response = createdTrialId ? { data: { id: createdTrialId } } : await api.post("/trials", {
         title: details.title.trim(),
         protocol_id: protocolId.trim(),
         phase: details.phase,
@@ -276,37 +284,61 @@ export default function AddTrial() {
         recruitment_status: details.status === "active" ? "recruiting" : "closed",
       });
       const trialId = response.data.id;
-      const legacyEditor = () => router.replace({
-        pathname: "/(app)/sponsor/visit-schedule",
-        params: {
-          id: trialId,
-          extractionIds: extractionIds.length ? extractionIds.join(",") : undefined,
-        },
-      });
+      setCreatedTrialId(trialId);
+      // Doc 9 / Phase 2 "surface the failure": schedules are built only from
+      // extraction now - there is no manual editor to fall back into. A
+      // build that can't run yet, or fails, is not a dead end: the sponsor
+      // lands on the trial page and can retry from Protocol & Schedule
+      // Versions (`buildCanonicalSchedule`, the same call made below), told
+      // plainly why they didn't land on the review screen they expected.
+      const goToTrialWithNotice = (message: string) => {
+        setErr(message);
+        if (Platform.OS === "web") return;
+        Alert.alert(
+        "Schedule not built yet", message,
+        [{ text: "OK", onPress: () => router.replace({
+          pathname: "/(app)/clinical/trial-summary", params: { id: trialId },
+        }) }],
+        );
+      };
       // A newly created trial is scheduled by the canonical engine: the protocol
       // just extracted becomes a DRAFT schedule version the sponsor reviews and
       // approves, and that approved version is what patients are enrolled onto.
       // Nothing here approves anything, and nothing reaches a patient yet.
-      if (!extractionIds.length) { legacyEditor(); return; }
+      if (!extractionIds.length) {
+        goToTrialWithNotice(
+          "This trial was created, but no protocol was extracted, so it has "
+          + "no schedule yet. Upload a protocol PDF from the trial page to build one."
+        );
+        return;
+      }
       try {
         await Promise.all(extractionIds.map((extractionId) =>
           api.post(`/trials/${trialId}/protocol-extractions/${extractionId}/consume`)));
         const built = await buildCanonicalSchedule(trialId);
         const version = built.schedules[0];
         if (!version) throw new Error("No canonical schedule was produced");
+        // Saving the trial is complete here - it does not require resolving
+        // any schedule review items first. The draft schedule can still have
+        // open items to review before approval, but that is a separate,
+        // optional next step reached from the trial page (Protocol &
+        // Schedule Versions), not something the save flow forces on the
+        // sponsor immediately.
         router.replace({
-          pathname: "/(app)/sponsor/protocol-schedule",
-          params: {
-            id: trialId,
-            scheduleVersionId: version.schedule_version_id,
-            trialName: details.title.trim(),
-          },
+          pathname: "/(app)/clinical/trial-summary",
+          params: { id: trialId },
         });
-      } catch {
-        // The trial exists and its schedule was extracted; only the canonical
-        // build failed. Dropping the sponsor into the operational editor keeps
-        // the work rather than stranding a trial with no schedule at all.
-        legacyEditor();
+      } catch (canonicalError: any) {
+        // The trial exists and its protocol was extracted; only the canonical
+        // build failed. The sponsor is told why, and can retry the build from
+        // the trial page rather than being silently redirected anywhere.
+        goToTrialWithNotice(
+          (canonicalError?.response?.data?.detail || canonicalError?.message
+            ? `Building the canonical schedule failed: ${
+                canonicalError?.response?.data?.detail || canonicalError?.message}`
+            : "Building the canonical schedule failed.")
+          + " Retry it from Protocol & Schedule Versions on the trial page."
+        );
       }
     } catch (error: any) {
       setErr(error?.response?.data?.detail || "Could not save this trial.");
@@ -318,15 +350,23 @@ export default function AddTrial() {
   const locked = !resolved;
   return (
     <ScreenContainer>
-      <ScreenHeader eyebrow="New study" title="Add New Trial" />
+      <ScreenHeader eyebrow="New study" title={previews.length ? "Visit Schedule" : "Add New Trial"} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={s.flex}
       >
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={s.content}
           keyboardShouldPersistTaps="handled"
         >
+          {previews.length > 0 && <ExtractionPreview previews={previews} />}
+          {previews.length > 0 && <Pressable accessibilityRole="button"
+            accessibilityState={{ expanded: showTrialDetails }} onPress={() => setShowTrialDetails((value) => !value)}
+            style={{ paddingVertical: 16 }}>
+            <Small color={colors.primary}>{showTrialDetails ? "Hide" : "Show"} trial details · {details.title || protocolId}</Small>
+          </Pressable>}
+          {(!previews.length || showTrialDetails) && <>
           <View style={s.stepRow}>
             <View style={s.stepNumber}><Text style={s.stepNumberText}>1</Text></View>
             <View style={s.flex}>
@@ -432,6 +472,7 @@ export default function AddTrial() {
             </View>
           </View>
 
+          </>}
           {!!err && <Text style={s.error}>{err}</Text>}
           <Button
             testID="add-trial-submit"
@@ -440,7 +481,7 @@ export default function AddTrial() {
             disabled={locked}
             style={s.submit}
           >
-            Save & build visit schedule
+            {previews.length ? "Save schedule and continue" : "Save & build visit schedule"}
           </Button>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -509,9 +550,6 @@ export default function AddTrial() {
                 <View style={s.uploadIcon}><FileText size={23} color={colors.primary} /></View>
                 <Text style={s.modalTitle}>Reading your protocol…</Text>
                 <Small style={s.modalCopy}>Analyzing trial details and preparing the complete visit schedule. Keep this screen open.</Small>
-                <View style={s.progressTrack}>
-                  <View style={[s.progressFill, { width: `${progress}%` }]} />
-                </View>
                 <Text style={s.progressText}>Processing…</Text>
               </View>
             ) : (
@@ -529,8 +567,8 @@ export default function AddTrial() {
                 {!!err && <Text style={s.error}>{err}</Text>}
                 <Pressable testID="upload-protocol" onPress={extract} style={s.dropZone}>
                   <View style={s.uploadIcon}><UploadCloud size={24} color={colors.primary} /></View>
-                  <Text style={s.dropTitle}>Choose protocol PDF</Text>
-                  <Small>PDF up to 25 MB</Small>
+                  <Text style={s.dropTitle}>Choose protocol PDF or text</Text>
+                  <Small>PDF or UTF-8 text, up to 25 MB</Small>
                 </Pressable>
               </>
             )}

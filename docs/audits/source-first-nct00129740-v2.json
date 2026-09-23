@@ -1,0 +1,4143 @@
+{
+  "document": "NCT00129740__Prot_SAP_000 (1).pdf",
+  "pages": 32,
+  "runs": {
+    "source_first": {
+      "calls": 11,
+      "seconds": 127.39,
+      "results": [
+        {
+          "option": {
+            "id": "schedule-1",
+            "label": "Main Study Schedule",
+            "description": "Reconciled source tables"
+          },
+          "schedule": {
+            "schema_version": "uctsm.v1",
+            "schedule_version_id": "b1f68f7f-ed6b-4edd-b11d-63608ffb0938",
+            "schedule_metadata": {
+              "name": "Main Study Schedule",
+              "description": "Pretreatment Evaluation and Evaluation During Study schedule",
+              "schedule_type": "MAIN",
+              "protocol_version_id": null,
+              "version_number": 1,
+              "status": "DRAFT",
+              "effective_from": null,
+              "day_numbering": null,
+              "extensions": [
+                {
+                  "type": "source_coverage.v1",
+                  "items": [
+                    {
+                      "source_id": "source-12-1",
+                      "page": 12,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-13-2",
+                      "page": 13,
+                      "table": null,
+                      "row": "4.1",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-13-3",
+                      "page": 13,
+                      "table": null,
+                      "row": "4.2",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-13-4",
+                      "page": 13,
+                      "table": null,
+                      "row": "4.3",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-13-5",
+                      "page": 13,
+                      "table": null,
+                      "row": "4.4",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-13-6",
+                      "page": 13,
+                      "table": null,
+                      "row": "4.5",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-13-7",
+                      "page": 13,
+                      "table": null,
+                      "row": "4.6",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-14-8",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.7.a",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-14-9",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.7.b",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-14-10",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.7.c",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a"
+                      ]
+                    },
+                    {
+                      "source_id": "source-14-11",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.7.d",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-14-12",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.7.e",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-14-13",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.7.f",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-14-14",
+                      "page": 14,
+                      "table": null,
+                      "row": "4.8",
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-15-15",
+                      "page": 15,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-15-16",
+                      "page": 15,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-15-17",
+                      "page": 15,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-16-18",
+                      "page": 16,
+                      "table": "Dose Modifications",
+                      "row": "Dose Level 0",
+                      "column": "Nilotinib",
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-16-19",
+                      "page": 16,
+                      "table": "Dose Modifications",
+                      "row": "Dose Level -1",
+                      "column": "Nilotinib",
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-16-20",
+                      "page": 16,
+                      "table": "Dose Modifications",
+                      "row": "Dose Level -2",
+                      "column": "Nilotinib",
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-16-21",
+                      "page": 16,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "VISIT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a"
+                      ]
+                    },
+                    {
+                      "source_id": "source-16-22",
+                      "page": 16,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "VISIT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-16-23",
+                      "page": 16,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-16-24",
+                      "page": 16,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "42f0ed28-781b-4be6-b8c2-3c371ab3e72e",
+                        "a5f291ec-38b8-473a-9649-3ba5234b1119"
+                      ]
+                    },
+                    {
+                      "source_id": "source-17-25",
+                      "page": 17,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-17-26",
+                      "page": 17,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-19-27",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.1",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "e717daed-6ff4-476e-9c4a-204896855eb4"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-28",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.2",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "1d9c9582-c4bb-4fd6-b9a5-bd66ca349eb4"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-29",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.3",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "cd947eaa-52fd-4d12-b05b-e6a9fc2ecc88"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-30",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.4",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "450bae0b-2a83-4ea9-91ab-7a6f44404dcb"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-31",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.5",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "d9ddf5a0-2c99-429e-ac02-1197d44bf5d7"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-32",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.6",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "6cc16a55-e91a-4a5d-8d67-a2661a6530ea"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-33",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.7",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "df61eb0d-e92f-4907-9a01-2645c61a04f9"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-34",
+                      "page": 19,
+                      "table": null,
+                      "row": "6.8",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "3ba31a65-08c9-4f90-bb5c-e3653db64dc0"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-35",
+                      "page": 19,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "FOOTNOTE",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "b680dd60-96c6-4491-b8cf-3f894f823d19"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-36",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.1",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "5f08646a-f3d8-4cc6-ab33-b50891f8d2c3"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-37",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.1",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-38",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.2",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "a2ac5a94-844e-4d38-a7f8-31d06c066be9"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-39",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.2",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-40",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.3",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "a5f291ec-38b8-473a-9649-3ba5234b1119"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-41",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.3",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-42",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.4",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "976722c1-e68f-408f-8431-a95a9a357f44"
+                      ]
+                    },
+                    {
+                      "source_id": "source-19-43",
+                      "page": 19,
+                      "table": null,
+                      "row": "7.4",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-44",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.5",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "01ab1ce3-cb50-4490-b221-a85774dda606"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-45",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.6",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "42f0ed28-781b-4be6-b8c2-3c371ab3e72e"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-46",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.6",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-47",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.7",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "6ed794a7-f081-4b70-862a-1d42f167b883"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-48",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.7",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-49",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.8",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "1f2237ee-c1ae-45dd-b2e6-ec618b413345"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-50",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.9",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "44f5fb0a-6ba9-44b5-a9b3-743da1f82ea9"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-51",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.9",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "aa22fe9b-3c47-445b-9429-76854b423246"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-52",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.10",
+                      "column": null,
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "2d874b2e-bd3c-4abc-9d79-d29660026590"
+                      ]
+                    },
+                    {
+                      "source_id": "source-20-53",
+                      "page": 20,
+                      "table": null,
+                      "row": "7.10",
+                      "column": null,
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-20-54",
+                      "page": 20,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "FOOTNOTE",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "b680dd60-96c6-4491-b8cf-3f894f823d19"
+                      ]
+                    },
+                    {
+                      "source_id": "source-21-55",
+                      "page": 21,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-21-56",
+                      "page": 21,
+                      "table": "Stopping boundaries for molecular response (MR) at 12 months",
+                      "row": "Recommend Stopping if <= # of MR Observed: 0",
+                      "column": "Number of Patients Evaluated: 7",
+                      "kind": "ASSESSMENT",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-21-57",
+                      "page": 21,
+                      "table": "Stopping boundaries for molecular response (MR) at 12 months",
+                      "row": "Recommend Stopping if <= # of MR Observed: 1",
+                      "column": "Number of Patients Evaluated: 19",
+                      "kind": "ASSESSMENT",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    }
+                  ]
+                }
+              ]
+            },
+            "epochs": [],
+            "arms": [],
+            "cohorts": [],
+            "populations": [],
+            "dimensions": [],
+            "anchors": [],
+            "events": [
+              {
+                "id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "code": "VISIT-PRETX",
+                "protocol_label": "Pretreatment Evaluation",
+                "display_name": "Pretreatment Evaluation",
+                "normalized_name": null,
+                "event_type": "SITE_VISIT",
+                "epoch_id": null,
+                "sequence_number": 1,
+                "timing": {
+                  "type": "WITHIN",
+                  "reference": {
+                    "kind": "ANCHOR",
+                    "code": "FIRST_DOSE"
+                  },
+                  "duration": {
+                    "value": 7,
+                    "unit": "DAY"
+                  },
+                  "direction": "BEFORE"
+                },
+                "applicability": [],
+                "conditions": [],
+                "dependencies": [],
+                "dependency_mode": null,
+                "visit_mode": null,
+                "allowed_visit_modes": [],
+                "activation": "SCHEDULED",
+                "recurrence": null,
+                "conditional_actions": [],
+                "qualifiers": [
+                  {
+                    "id": "b680dd60-96c6-4491-b8cf-3f894f823d19",
+                    "marker": "*",
+                    "text": "* Missed collection of any of the optional procedures will not be considered a protocol deviation or violation.",
+                    "scope": "GLOBAL",
+                    "category": "OPTIONALITY",
+                    "target_codes": [
+                      "ACT-MDASI-PRETX",
+                      "ACT-MIRNA-PRETX",
+                      "ACT-MIRNA-STUDY",
+                      "ACT-MDASI-STUDY",
+                      "ACT-QOL-STUDY"
+                    ],
+                    "resolved": true,
+                    "evidence_refs": [
+                      "b2b7f508-c005-4ea9-a7e0-6a4429ede287",
+                      "6a6bb071-eba2-4f44-bc30-21fe8a6253ba"
+                    ],
+                    "details": {}
+                  }
+                ],
+                "confinement": null,
+                "activities": [
+                  {
+                    "id": "e717daed-6ff4-476e-9c4a-204896855eb4",
+                    "code": "ACT-HIST-PE",
+                    "protocol_label": "A complete history and physical examination including performance status.",
+                    "display_name": "Complete History and Physical Exam",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 1,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "9236e4c1-9a76-4e2a-9eb6-3c867c5c4d57"
+                    ]
+                  },
+                  {
+                    "id": "1d9c9582-c4bb-4fd6-b9a5-bd66ca349eb4",
+                    "code": "ACT-CBC-PRETX",
+                    "protocol_label": "CBC, platelet count and differential, total bilirubin, SGPT (or SGOT), and creatinine.",
+                    "display_name": "CBC, Platelets, Differential, Chemistry",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 2,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "84119274-f7af-4fba-8289-dacda39386d4"
+                    ]
+                  },
+                  {
+                    "id": "cd947eaa-52fd-4d12-b05b-e6a9fc2ecc88",
+                    "code": "ACT-BM-PRETX",
+                    "protocol_label": "Bone marrow aspirate for morphology; cytogenetics or FISH",
+                    "display_name": "Bone Marrow Aspirate",
+                    "activity_type": "PROCEDURE",
+                    "requiredness": "CONDITIONAL",
+                    "sequence_number": 3,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "0036708c-70af-457e-a9aa-71f6a82f2ade"
+                    ]
+                  },
+                  {
+                    "id": "450bae0b-2a83-4ea9-91ab-7a6f44404dcb",
+                    "code": "ACT-PREG-PRETX",
+                    "protocol_label": "Pregnancy test for female patients of childbearing potential",
+                    "display_name": "Pregnancy Test",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "CONDITIONAL",
+                    "sequence_number": 4,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "caeea45c-aade-48b5-8c2a-c65cc7ea42e4",
+                      "d734863b-7063-4658-8fa4-98e99dddb9e0"
+                    ]
+                  },
+                  {
+                    "id": "d9ddf5a0-2c99-429e-ac02-1197d44bf5d7",
+                    "code": "ACT-ABL-PRETX",
+                    "protocol_label": "Peripheral blood and bone marrow for Abl mutations.",
+                    "display_name": "Abl Mutation Analysis",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 5,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "9d9a7925-03ec-4f1c-94cf-45d50428da60"
+                    ]
+                  },
+                  {
+                    "id": "6cc16a55-e91a-4a5d-8d67-a2661a6530ea",
+                    "code": "ACT-EKG-PRETX",
+                    "protocol_label": "Pretreatment EKG.",
+                    "display_name": "Pretreatment EKG",
+                    "activity_type": "PROCEDURE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 6,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "a8e5f126-bc3d-4625-a685-4549dd499a18"
+                    ]
+                  },
+                  {
+                    "id": "df61eb0d-e92f-4907-9a01-2645c61a04f9",
+                    "code": "ACT-MDASI-PRETX",
+                    "protocol_label": "MDASI-CML and single item quality of life (QOL) rating completed by patient, and ECOG performance status (optional)",
+                    "display_name": "MDASI-CML and Single Item QOL",
+                    "activity_type": "QUESTIONNAIRE",
+                    "requiredness": "OPTIONAL",
+                    "sequence_number": 7,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "9afc2a69-d236-464b-8190-e0f348be8feb"
+                    ]
+                  },
+                  {
+                    "id": "3ba31a65-08c9-4f90-bb5c-e3653db64dc0",
+                    "code": "ACT-MIRNA-PRETX",
+                    "protocol_label": "miRNA analysis (optional)",
+                    "display_name": "miRNA Analysis",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "OPTIONAL",
+                    "sequence_number": 8,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "93e07fd5-90c0-430e-876a-657b03bd75ad"
+                    ]
+                  }
+                ],
+                "evidence_refs": [
+                  "caeea45c-aade-48b5-8c2a-c65cc7ea42e4",
+                  "4cfe1eee-eff7-4a8d-84bb-97d04706268f",
+                  "d7ad40f7-a404-41bc-aae8-ba5accfe6819",
+                  "9236e4c1-9a76-4e2a-9eb6-3c867c5c4d57",
+                  "84119274-f7af-4fba-8289-dacda39386d4",
+                  "0036708c-70af-457e-a9aa-71f6a82f2ade",
+                  "d734863b-7063-4658-8fa4-98e99dddb9e0",
+                  "9d9a7925-03ec-4f1c-94cf-45d50428da60",
+                  "a8e5f126-bc3d-4625-a685-4549dd499a18",
+                  "9afc2a69-d236-464b-8190-e0f348be8feb",
+                  "93e07fd5-90c0-430e-876a-657b03bd75ad"
+                ],
+                "interpretation_status": "EXTRACTED",
+                "requires_review": false,
+                "metadata": {}
+              },
+              {
+                "id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "code": "VISIT-STUDY-EVAL",
+                "protocol_label": "Evaluation During Study",
+                "display_name": "Evaluation During Study",
+                "normalized_name": null,
+                "event_type": "SITE_VISIT",
+                "epoch_id": null,
+                "sequence_number": 2,
+                "timing": {
+                  "type": "UNRESOLVED",
+                  "reason": "Evaluation during study contains multiple staggered sub-schedules for different procedures (e.g., CBC every 1-2 weeks, physical exam every 3-4 months, EKG at day 5, 6 weeks, 3 months), rather than a single visit timing.",
+                  "source_reference": {},
+                  "requires_review": true
+                },
+                "applicability": [],
+                "conditions": [],
+                "dependencies": [],
+                "dependency_mode": null,
+                "visit_mode": null,
+                "allowed_visit_modes": [],
+                "activation": "SCHEDULED",
+                "recurrence": null,
+                "conditional_actions": [],
+                "qualifiers": [],
+                "confinement": null,
+                "activities": [
+                  {
+                    "id": "5f08646a-f3d8-4cc6-ab33-b50891f8d2c3",
+                    "code": "ACT-PE-STUDY",
+                    "protocol_label": "Physical exam / Toxicity assessment",
+                    "display_name": "Physical Exam and Toxicity Assessment",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 1,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "1e4769f3-44e6-41a9-befd-7bc6d39d8814"
+                    ]
+                  },
+                  {
+                    "id": "a2ac5a94-844e-4d38-a7f8-31d06c066be9",
+                    "code": "ACT-CBC-STUDY",
+                    "protocol_label": "CBC, platelet, differential",
+                    "display_name": "CBC, Platelets, Differential",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 2,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "3f822861-e96f-46d7-a031-4e22a81adbb3"
+                    ]
+                  },
+                  {
+                    "id": "a5f291ec-38b8-473a-9649-3ba5234b1119",
+                    "code": "ACT-BM-STUDY",
+                    "protocol_label": "Bone marrow aspirate with cytogenetics or FISH",
+                    "display_name": "Bone Marrow Aspirate / Cytogenetics / FISH",
+                    "activity_type": "PROCEDURE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 3,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                      "6e68f6a2-e37d-4d35-a2f6-5473d93c07a9"
+                    ]
+                  },
+                  {
+                    "id": "976722c1-e68f-408f-8431-a95a9a357f44",
+                    "code": "ACT-CHEM-STUDY",
+                    "protocol_label": "Total bilirubin, SGPT or SGOT, and creatinine",
+                    "display_name": "Chemistry Panel",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 4,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "b4988429-31ec-4ae5-9211-a531f826b415"
+                    ]
+                  },
+                  {
+                    "id": "01ab1ce3-cb50-4490-b221-a85774dda606",
+                    "code": "ACT-DIARY-STUDY",
+                    "protocol_label": "Diaries / Treatment compliance verification",
+                    "display_name": "Diaries and Compliance Verification",
+                    "activity_type": "ADMINISTRATIVE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 5,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "e2f28b17-76a1-4938-a431-f20d1c6f9b89"
+                    ]
+                  },
+                  {
+                    "id": "42f0ed28-781b-4be6-b8c2-3c371ab3e72e",
+                    "code": "ACT-QPCR-STUDY",
+                    "protocol_label": "Peripheral blood or bone marrow for quantitative PCR (QPCR)",
+                    "display_name": "Quantitative PCR (QPCR)",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 6,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                      "c3d9e244-35c6-4a19-94a2-0bc49fb5f0f4"
+                    ]
+                  },
+                  {
+                    "id": "6ed794a7-f081-4b70-862a-1d42f167b883",
+                    "code": "ACT-EKG-STUDY",
+                    "protocol_label": "EKG",
+                    "display_name": "EKG Assessment",
+                    "activity_type": "PROCEDURE",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": 7,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "bf2bbd7d-d4d3-40dd-be2e-ec43050dd8f9"
+                    ]
+                  },
+                  {
+                    "id": "1f2237ee-c1ae-45dd-b2e6-ec618b413345",
+                    "code": "ACT-MIRNA-STUDY",
+                    "protocol_label": "miRNA analysis (optional)",
+                    "display_name": "miRNA Analysis",
+                    "activity_type": "SAMPLE",
+                    "requiredness": "OPTIONAL",
+                    "sequence_number": 8,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "aed67934-9866-408f-b8b6-e6ac3461af62"
+                    ]
+                  },
+                  {
+                    "id": "44f5fb0a-6ba9-44b5-a9b3-743da1f82ea9",
+                    "code": "ACT-MDASI-STUDY",
+                    "protocol_label": "MDASI-CML (optional)",
+                    "display_name": "MDASI-CML Assessment",
+                    "activity_type": "QUESTIONNAIRE",
+                    "requiredness": "OPTIONAL",
+                    "sequence_number": 9,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "9c3bf3ac-9006-4f8f-8477-70f96d1ef9dd"
+                    ]
+                  },
+                  {
+                    "id": "2d874b2e-bd3c-4abc-9d79-d29660026590",
+                    "code": "ACT-QOL-STUDY",
+                    "protocol_label": "Single item QOL at each clinic visit during study (optional*)",
+                    "display_name": "Single Item QOL",
+                    "activity_type": "QUESTIONNAIRE",
+                    "requiredness": "OPTIONAL",
+                    "sequence_number": 10,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "6aefdf4d-85be-47f6-ac6f-e45ec0015463"
+                    ]
+                  }
+                ],
+                "evidence_refs": [
+                  "5903f422-37bc-4dcd-9d6b-7cd69768960f",
+                  "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                  "1e4769f3-44e6-41a9-befd-7bc6d39d8814",
+                  "950f49aa-43f4-4ca8-b4f4-6e854f088b2d",
+                  "3f822861-e96f-46d7-a031-4e22a81adbb3",
+                  "73a9d7ce-6dda-409a-8778-d18a1d4d6690",
+                  "6e68f6a2-e37d-4d35-a2f6-5473d93c07a9",
+                  "f5b92197-7172-4dfb-a34e-84fd9e307f6b",
+                  "b4988429-31ec-4ae5-9211-a531f826b415",
+                  "2c8a81d2-31ab-4c6d-96cd-3771c450b68c",
+                  "e2f28b17-76a1-4938-a431-f20d1c6f9b89",
+                  "c3d9e244-35c6-4a19-94a2-0bc49fb5f0f4",
+                  "3eea612e-dcfa-4692-ba57-eadd4cb35c86",
+                  "bf2bbd7d-d4d3-40dd-be2e-ec43050dd8f9",
+                  "a7f0d1f1-df3e-4bc4-b0d3-bde6de18484e",
+                  "aed67934-9866-408f-b8b6-e6ac3461af62",
+                  "9c3bf3ac-9006-4f8f-8477-70f96d1ef9dd",
+                  "84fb2340-6366-4e9c-9c96-9f8d8a0865bc",
+                  "6aefdf4d-85be-47f6-ac6f-e45ec0015463",
+                  "53849991-e6d2-4c4e-9611-849513ab9e86"
+                ],
+                "interpretation_status": "EXTRACTED",
+                "requires_review": false,
+                "metadata": {}
+              }
+            ],
+            "conditional_definitions": [
+              {
+                "id": "ccb35e44-b2e3-432c-b944-1bdfdb5a7ce2",
+                "code": "RULE-CARDIAC-SCAN-PRETX",
+                "protocol_label": "Pretreatment EKG / Echocardiogram / Cardiac scan",
+                "display_name": "Echocardiogram or cardiac scan for NYHA Class I/II",
+                "condition": {
+                  "type": "MEMBERSHIP",
+                  "operator": "IN",
+                  "value": {
+                    "source": "FIELD",
+                    "field": "patient.nyha_class"
+                  },
+                  "values": [
+                    "Class I",
+                    "Class II"
+                  ]
+                },
+                "trigger_event_code": null,
+                "applicability": [],
+                "actions": [
+                  {
+                    "action_type": "ADD_EVENT",
+                    "target_code": "ACT-EKG-PRETX",
+                    "condition": {
+                      "type": "MEMBERSHIP",
+                      "operator": "IN",
+                      "value": {
+                        "source": "FIELD",
+                        "field": "patient.nyha_class"
+                      },
+                      "values": [
+                        "Class I",
+                        "Class II"
+                      ]
+                    },
+                    "parameters": {},
+                    "evidence_refs": []
+                  }
+                ],
+                "resolution_condition": null,
+                "recurrence": null,
+                "evidence_refs": [
+                  "a8e5f126-bc3d-4625-a685-4549dd499a18"
+                ],
+                "interpretation_status": "EXTRACTED",
+                "requires_review": false
+              }
+            ],
+            "repeat_blocks": [],
+            "confinement_episodes": [],
+            "evidence": [
+              {
+                "id": "11a03551-876e-4b69-939b-fe5ada38a1bf",
+                "evidence_type": "SECTION",
+                "page_number": 12,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "3.5 Biomarkers\nIn Philadelphia-chromosome positive leukemias (CML-CP, CML-AP, CML-BC, Ph+ ALL), the following assays of Bcr-Abl activity will be performed to examine the ability of nilotinib to down-regulate Bcr-Abl and its downstream effectors: Bcr-Abl phosphorylation, STAT 1, STAT 5 signaling, AKT phosphorylation and Q-RT-PCR to detect the presence of Bcr-Abl transcripts. An attempt will be made to correlate the effects on the various biomarkers with plasma drug levels obtained at similar timepoints. Mutational analysis of Bcr-Abl will be conducted at baseline and at the time of disease progression.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "05db9919-6368-4e89-9720-2dbfc0a2deb0",
+                "evidence_type": "SECTION",
+                "page_number": 13,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.1",
+                "column_identifier": null,
+                "source_text": "4.1 Diagnosis of Ph-positive or Bcr-positive CML in early chronic phase CML (i.e., time from diagnosis 12 months). Except for hydroxyurea, patients must have received no or minimal prior therapy, defined as <1 month (30 days) of prior interferon-alpha (with or without cytarabine) and/or an FDA-approved TKI. Patients with de novo accelerated phase will be treated but analyzed separately.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "743a08a3-181e-4d26-ab1d-68442c4ab264",
+                "evidence_type": "SECTION",
+                "page_number": 13,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.2",
+                "column_identifier": null,
+                "source_text": "4.2 Age >= 16 years (Age > 18 years to participate in optional symptom burden assessment)",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "77f00fbd-b026-4bb6-b241-0ba6aed8bfc4",
+                "evidence_type": "SECTION",
+                "page_number": 13,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.3",
+                "column_identifier": null,
+                "source_text": "4.3 ECOG performance of 0-2.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "7387b1f9-059a-4591-ac97-9d87de6bb2d4",
+                "evidence_type": "SECTION",
+                "page_number": 13,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.4",
+                "column_identifier": null,
+                "source_text": "4.4 Adequate end organ function, defined as the following: total bilirubin < 1.5 x ULN, SGPT < 2.5 x ULN, creatinine < 1.5 x ULN.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "cfe86ed0-a513-41fe-8b38-8ef978413d17",
+                "evidence_type": "SECTION",
+                "page_number": 13,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.5",
+                "column_identifier": null,
+                "source_text": "4.5 Patients must sign an informed consent indicating they are aware of the investigational nature of this study, in keeping with the policies of the hospital.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "8630db69-91f7-45e7-8bab-24bec9d10094",
+                "evidence_type": "SECTION",
+                "page_number": 13,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.6",
+                "column_identifier": null,
+                "source_text": "4.6 Reliable telephone access to receive calls from an interactive voice response system (IVR) (only applicable to patients who will participate in optional symptom burden assessment).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "61d1acb1-4005-455b-9c52-d0e116fe81c0",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.7.a",
+                "column_identifier": null,
+                "source_text": "Exclusion: NYHA cardiac class 3-4 heart disease as well as impaired cardiac function defined as: LVEF < 45% as determined by MUGA scan or electrocardiogram; Complete left bundle branch block; Use of cardiac pacemaker; ST depression of > 1 mm in 2 or more leads and/or T wave inversions in 2 or more continuous leads; Congenital long QT syndrome; History of, or presence of significant ventricular or atrial tachyarrhythmia's; Clinically significant resting bradycardia (< 50 bpm); QTc > 450 msec on screening ECG (using the QTcF formula); Right bundle branch block plus left anterior hemiblock, bifascicular block; Myocardial infarction within 12 months prior to starting nilotinib; Unstable angina diagnosed or treated within the past 12 months; Other clinically significant heart disease (e.g. congestive heart failure, uncontrolled hypertension, history of labile hypertension, or history of poor compliance with an antihypertensive regimen).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "741b15a0-0e06-4ed7-8558-6c1cde87ea5a",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.7.b",
+                "column_identifier": null,
+                "source_text": "Exclusion: Patients with active, uncontrolled psychiatric disorders including: psychosis, major depression, and bipolar disorders.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "caeea45c-aade-48b5-8c2a-c65cc7ea42e4",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.7.c",
+                "column_identifier": null,
+                "source_text": "Female patients of childbearing potential must have negative pregnancy test within 7 days before initiation of study drug dosing.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "c4a56776-072e-4fed-93dd-9b2cada3b52a",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.7.d",
+                "column_identifier": null,
+                "source_text": "Exclusion: Patients with severe and/or uncontrolled medial disease (i.e., uncontrolled diabetes, chronic renal disease, or active uncontrolled infection [persistent fever and worsening clinical condition]).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b49e0553-0dfc-4e25-be35-6a4c73db58b7",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.7.e",
+                "column_identifier": null,
+                "source_text": "Exclusion: Patient with known chronic liver disease (i.e., chronic active hepatitis, and cirrhosis).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "1b86cf93-1233-4246-86f0-cdc4ac4977a7",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.7.f",
+                "column_identifier": null,
+                "source_text": "Exclusion: Patient with known diagnosis of human immunodeficiency virus (HIV) infection.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "fbaa79ef-0c54-451e-98d9-a3637f186cb4",
+                "evidence_type": "SECTION",
+                "page_number": 14,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "4.8",
+                "column_identifier": null,
+                "source_text": "Patients in late chronic phase (i.e., time from diagnosis to treatment >12 months) or blastic phase are excluded.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "cd229a5e-89b8-4c63-8fb0-93e2b57697e1",
+                "evidence_type": "SECTION",
+                "page_number": 15,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "5.2 Treatment Plan\nPatients will receive nilotinib therapy according to the suggested guidelines below.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "332b7e29-b0c5-4952-8e1c-6b308cf77f7e",
+                "evidence_type": "SECTION",
+                "page_number": 15,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "5.2.1 CML debulking: patients may receive hydroxyurea for debulking before and during the first 6 weeks of therapy. Patients who cannot take hydroxyurea may receive other agents such as 6-mercaptopurine and 6-thioguanine.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "6dd88f13-9cf0-4ab2-9fa2-d3ce71270ba4",
+                "evidence_type": "SECTION",
+                "page_number": 15,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "5.2.2 Therapy: nilotinib 400 mg orally twice daily.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b5dcdfd4-ce5f-445f-ba2c-23214ef6a826",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": "Dose Modifications",
+                "row_identifier": "Dose Level 0",
+                "column_identifier": "Nilotinib",
+                "source_text": "Dose Level 0: Nilotinib 400 mg BID",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "f497ac08-863a-4bbd-a3b1-122f86a8a221",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": "Dose Modifications",
+                "row_identifier": "Dose Level -1",
+                "column_identifier": "Nilotinib",
+                "source_text": "Dose Level -1: Nilotinib 200 mg BID",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "afcd0329-fb04-41db-8bc3-14b24c17bb47",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": "Dose Modifications",
+                "row_identifier": "Dose Level -2",
+                "column_identifier": "Nilotinib",
+                "source_text": "Dose Level -2: Nilotinib 200 mg daily",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "4cfe1eee-eff7-4a8d-84bb-97d04706268f",
+                "evidence_type": "SECTION",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "Pretreatment",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "5903f422-37bc-4dcd-9d6b-7cd69768960f",
+                "evidence_type": "SECTION",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "Every 3-4 months in year one then every 6-12 months as indicated",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "d7ad40f7-a404-41bc-aae8-ba5accfe6819",
+                "evidence_type": "SECTION",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "a) Cytogenetic (or FISH) pretreatment",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                "evidence_type": "SECTION",
+                "page_number": 16,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "b) Cytogenetic (or FISH), and PCR quantification every 3-4 months as indicated in year one then every 6-12 months as indicated (e.g., PCR not mandated when patient not with major cytogenetic response)",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "ec0c6d17-d277-482b-9aab-cc07d919fe57",
+                "evidence_type": "SECTION",
+                "page_number": 17,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "Total duration of therapy will be 8-10 years.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b327cc95-0a09-4403-aea8-fb8d5e739a72",
+                "evidence_type": "SECTION",
+                "page_number": 17,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "Novartis will supply nilotinib as 200 mg, 150 mg and 50 mg capsules or tablets for the core trial period of 6 years.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "9236e4c1-9a76-4e2a-9eb6-3c867c5c4d57",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.1",
+                "column_identifier": null,
+                "source_text": "A complete history and physical examination including performance status.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "84119274-f7af-4fba-8289-dacda39386d4",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.2",
+                "column_identifier": null,
+                "source_text": "CBC, platelet count and differential, total bilirubin, SGPT (or SGOT), and creatinine. (Differential not required if WBC < 0.5 x 109/L).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "0036708c-70af-457e-a9aa-71f6a82f2ade",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.3",
+                "column_identifier": null,
+                "source_text": "Bone marrow aspirate for morphology; cytogenetics or FISH (if not done within 3 months).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "d734863b-7063-4658-8fa4-98e99dddb9e0",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.4",
+                "column_identifier": null,
+                "source_text": "Pregnancy test for female patients of childbearing potential within 7 days before initiation of study drug dosing",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "9d9a7925-03ec-4f1c-94cf-45d50428da60",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.5",
+                "column_identifier": null,
+                "source_text": "Peripheral blood and bone marrow for Abl mutations.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "a8e5f126-bc3d-4625-a685-4549dd499a18",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.6",
+                "column_identifier": null,
+                "source_text": "Pretreatment EKG. Patients with NYHA cardiac class I or II will have an echocardiogram or cardiac scan performed before start of therapy.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "9afc2a69-d236-464b-8190-e0f348be8feb",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.7",
+                "column_identifier": null,
+                "source_text": "MDASI-CML and single item quality of life (QOL) rating completed by patient, and ECOG performance status (optional)",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "93e07fd5-90c0-430e-876a-657b03bd75ad",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "6.8",
+                "column_identifier": null,
+                "source_text": "miRNA analysis (optional): one single blood sample (5cc) will be collected only by EDTA or citrate (Dr. Calin\u2019s lab at MD Anderson Cancer Center).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b2b7f508-c005-4ea9-a7e0-6a4429ede287",
+                "evidence_type": "FOOTNOTE",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "* Missed collection of any of the optional procedures will not be considered a protocol deviation or violation.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "1e4769f3-44e6-41a9-befd-7bc6d39d8814",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.1",
+                "column_identifier": null,
+                "source_text": "Physical exam every 3-4 months. After the first year, physical exams will be recommended once every year. Toxicity will be assessed at every leukemia physician clinic visit. Patients will be instructed to notify the research nurse for any toxicities.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "950f49aa-43f4-4ca8-b4f4-6e854f088b2d",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.1",
+                "column_identifier": null,
+                "source_text": "Physical exam every 3-4 months. After the first year, physical exams will be recommended once every year.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "3f822861-e96f-46d7-a031-4e22a81adbb3",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.2",
+                "column_identifier": null,
+                "source_text": "CBC, platelet, differential every 1-2 weeks for 4 weeks, every 4-8 weeks until 6 months from the start of therapy, then every 3-6 months until 2 years on therapy then at the discretion of the treating physician. (Differential not required if WBC < 0.5 x 109/L).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "73a9d7ce-6dda-409a-8778-d18a1d4d6690",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.2",
+                "column_identifier": null,
+                "source_text": "every 1-2 weeks for 4 weeks, every 4-8 weeks until 6 months from the start of therapy, then every 3-6 months until 2 years on therapy then at the discretion of the treating physician.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "6e68f6a2-e37d-4d35-a2f6-5473d93c07a9",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.3",
+                "column_identifier": null,
+                "source_text": "Bone marrow aspirate with cytogenetics or FISH every 3-4 months in year 1, then every 6-12 months in year 2, then every 2-3 years. For patients in complete cytogenetic remission, bone marrow will be at the discretion of the treating physician after year 2. Peripheral blood FISH for BCR/ABL may be substituted for bone marrow cytogenetic every 1-3 years.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "f5b92197-7172-4dfb-a34e-84fd9e307f6b",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.3",
+                "column_identifier": null,
+                "source_text": "every 3-4 months in year 1, then every 6-12 months in year 2, then every 2-3 years.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b4988429-31ec-4ae5-9211-a531f826b415",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.4",
+                "column_identifier": null,
+                "source_text": "Total bilirubin, SGPT or SGOT, and creatinine every 2-4 weeks for 1 month then every 4-8 weeks until 6 months from the start of therapy, then every 3-6 months until 2 years on therapy then at the discretion of the treating physician.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "2c8a81d2-31ab-4c6d-96cd-3771c450b68c",
+                "evidence_type": "SECTION",
+                "page_number": 19,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.4",
+                "column_identifier": null,
+                "source_text": "every 2-4 weeks for 1 month then every 4-8 weeks until 6 months from the start of therapy, then every 3-6 months until 2 years on therapy then at the discretion of the treating physician.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "e2f28b17-76a1-4938-a431-f20d1c6f9b89",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.5",
+                "column_identifier": null,
+                "source_text": "Diaries may be returned on every visit to MD Anderson Cancer Center for bone marrow aspiration. Compliance to the treatment schedule may also be verified verbally with the patient at the clinic visit.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "c3d9e244-35c6-4a19-94a2-0bc49fb5f0f4",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.6",
+                "column_identifier": null,
+                "source_text": "Peripheral blood or bone marrow for quantitative PCR (QPCR) every 3-4 months for 1 year then every 6-12 months in year 2 then once per year (+/- 3 months).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "3eea612e-dcfa-4692-ba57-eadd4cb35c86",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.6",
+                "column_identifier": null,
+                "source_text": "every 3-4 months for 1 year then every 6-12 months in year 2 then once per year (+/- 3 months).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "bf2bbd7d-d4d3-40dd-be2e-ec43050dd8f9",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.7",
+                "column_identifier": null,
+                "source_text": "EKG on day 5 +/- 3 days of therapy, then at 6 weeks +/- 2 weeks, and 3 months",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "a7f0d1f1-df3e-4bc4-b0d3-bde6de18484e",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.7",
+                "column_identifier": null,
+                "source_text": "day 5 +/- 3 days of therapy, then at 6 weeks +/- 2 weeks, and 3 months",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "aed67934-9866-408f-b8b6-e6ac3461af62",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.8",
+                "column_identifier": null,
+                "source_text": "miRNA analysis (optional): one single blood sample (5cc \u2013 only by EDTA or citrate) will be collected at the time of any or all scheduled blood collections when PCR is scheduled (Dr. Calin\u2019s lab at MD Anderson Cancer Center).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "9c3bf3ac-9006-4f8f-8477-70f96d1ef9dd",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.9",
+                "column_identifier": null,
+                "source_text": "MDASI\u2013CML weekly during the first three months of treatment, then every other week for the remainder of the study. MDASI-CML will be collected by paper, computer, or IVR system. Patients will be instructed during the first visit on the use of the Interactive Voice Response (IVR) system (optional*).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "84fb2340-6366-4e9c-9c96-9f8d8a0865bc",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.9",
+                "column_identifier": null,
+                "source_text": "weekly during the first three months of treatment, then every other week for the remainder of the study.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "6aefdf4d-85be-47f6-ac6f-e45ec0015463",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.10",
+                "column_identifier": null,
+                "source_text": "Single item QOL at each clinic visit during study (optional*).",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "53849991-e6d2-4c4e-9611-849513ab9e86",
+                "evidence_type": "SECTION",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": "7.10",
+                "column_identifier": null,
+                "source_text": "at each clinic visit during study",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "6a6bb071-eba2-4f44-bc30-21fe8a6253ba",
+                "evidence_type": "FOOTNOTE",
+                "page_number": 20,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "* Every effort will be made to collect optional procedures at all time points for all patients; however, missing collection in one or more of these time points in occasional patients will not be considered a protocol deviation/violation.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "3bcebc47-b1da-4d0a-8c0d-fb92badaf894",
+                "evidence_type": "SECTION",
+                "page_number": 21,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "10.0 Statistical Considerations\n10.1 This is a single-arm, phase II study of oral nilotinib to patients with Ph-positive or Bcr-positive CML in early chronic phase CML. The primary outcomes will be molecular response (MR) after 12 months of therapy (defined in protocol section 8.3) and grade 3-4 therapy related toxicity. Major cytogenetic response at 6 months is a secondary end point. A maximum of 125 patients, 100 chronic phase and 25 accelerated phase, will be recruited for the study.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "326cce2e-b7c8-4ae4-a961-f31798c85283",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 21,
+                "section_title": null,
+                "table_title": "Stopping boundaries for molecular response (MR) at 12 months",
+                "row_identifier": "Recommend Stopping if <= # of MR Observed: 0",
+                "column_identifier": "Number of Patients Evaluated: 7",
+                "source_text": "0 MR observed in 7 patients evaluated",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b60176cf-4173-4476-aeb3-05a3d0ace6a8",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 21,
+                "section_title": null,
+                "table_title": "Stopping boundaries for molecular response (MR) at 12 months",
+                "row_identifier": "Recommend Stopping if <= # of MR Observed: 1",
+                "column_identifier": "Number of Patients Evaluated: 19",
+                "source_text": "1 MR observed in 19 patients evaluated",
+                "source_locator": {},
+                "extraction_context": {}
+              }
+            ],
+            "claim_evidence": [
+              {
+                "evidence_id": "caeea45c-aade-48b5-8c2a-c65cc7ea42e4",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "4cfe1eee-eff7-4a8d-84bb-97d04706268f",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "d7ad40f7-a404-41bc-aae8-ba5accfe6819",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9236e4c1-9a76-4e2a-9eb6-3c867c5c4d57",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "84119274-f7af-4fba-8289-dacda39386d4",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "0036708c-70af-457e-a9aa-71f6a82f2ade",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "d734863b-7063-4658-8fa4-98e99dddb9e0",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9d9a7925-03ec-4f1c-94cf-45d50428da60",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "a8e5f126-bc3d-4625-a685-4549dd499a18",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9afc2a69-d236-464b-8190-e0f348be8feb",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "93e07fd5-90c0-430e-876a-657b03bd75ad",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "5903f422-37bc-4dcd-9d6b-7cd69768960f",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "1e4769f3-44e6-41a9-befd-7bc6d39d8814",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "950f49aa-43f4-4ca8-b4f4-6e854f088b2d",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "3f822861-e96f-46d7-a031-4e22a81adbb3",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "73a9d7ce-6dda-409a-8778-d18a1d4d6690",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6e68f6a2-e37d-4d35-a2f6-5473d93c07a9",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "f5b92197-7172-4dfb-a34e-84fd9e307f6b",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b4988429-31ec-4ae5-9211-a531f826b415",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "2c8a81d2-31ab-4c6d-96cd-3771c450b68c",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "e2f28b17-76a1-4938-a431-f20d1c6f9b89",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "c3d9e244-35c6-4a19-94a2-0bc49fb5f0f4",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "3eea612e-dcfa-4692-ba57-eadd4cb35c86",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "bf2bbd7d-d4d3-40dd-be2e-ec43050dd8f9",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "a7f0d1f1-df3e-4bc4-b0d3-bde6de18484e",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "aed67934-9866-408f-b8b6-e6ac3461af62",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9c3bf3ac-9006-4f8f-8477-70f96d1ef9dd",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "84fb2340-6366-4e9c-9c96-9f8d8a0865bc",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6aefdf4d-85be-47f6-ac6f-e45ec0015463",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "53849991-e6d2-4c4e-9611-849513ab9e86",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "4cfe1eee-eff7-4a8d-84bb-97d04706268f",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "9236e4c1-9a76-4e2a-9eb6-3c867c5c4d57",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "5903f422-37bc-4dcd-9d6b-7cd69768960f",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "1e4769f3-44e6-41a9-befd-7bc6d39d8814",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "caeea45c-aade-48b5-8c2a-c65cc7ea42e4",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "4cfe1eee-eff7-4a8d-84bb-97d04706268f",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "d734863b-7063-4658-8fa4-98e99dddb9e0",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "5903f422-37bc-4dcd-9d6b-7cd69768960f",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "1e4769f3-44e6-41a9-befd-7bc6d39d8814",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "950f49aa-43f4-4ca8-b4f4-6e854f088b2d",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "3f822861-e96f-46d7-a031-4e22a81adbb3",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "73a9d7ce-6dda-409a-8778-d18a1d4d6690",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "6e68f6a2-e37d-4d35-a2f6-5473d93c07a9",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "f5b92197-7172-4dfb-a34e-84fd9e307f6b",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "b4988429-31ec-4ae5-9211-a531f826b415",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "2c8a81d2-31ab-4c6d-96cd-3771c450b68c",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "c3d9e244-35c6-4a19-94a2-0bc49fb5f0f4",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "3eea612e-dcfa-4692-ba57-eadd4cb35c86",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "bf2bbd7d-d4d3-40dd-be2e-ec43050dd8f9",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "a7f0d1f1-df3e-4bc4-b0d3-bde6de18484e",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "9c3bf3ac-9006-4f8f-8477-70f96d1ef9dd",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "84fb2340-6366-4e9c-9c96-9f8d8a0865bc",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "9236e4c1-9a76-4e2a-9eb6-3c867c5c4d57",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "e717daed-6ff4-476e-9c4a-204896855eb4",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "84119274-f7af-4fba-8289-dacda39386d4",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "1d9c9582-c4bb-4fd6-b9a5-bd66ca349eb4",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "0036708c-70af-457e-a9aa-71f6a82f2ade",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "cd947eaa-52fd-4d12-b05b-e6a9fc2ecc88",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "caeea45c-aade-48b5-8c2a-c65cc7ea42e4",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "450bae0b-2a83-4ea9-91ab-7a6f44404dcb",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "d734863b-7063-4658-8fa4-98e99dddb9e0",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "450bae0b-2a83-4ea9-91ab-7a6f44404dcb",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9d9a7925-03ec-4f1c-94cf-45d50428da60",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "d9ddf5a0-2c99-429e-ac02-1197d44bf5d7",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "a8e5f126-bc3d-4625-a685-4549dd499a18",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "6cc16a55-e91a-4a5d-8d67-a2661a6530ea",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9afc2a69-d236-464b-8190-e0f348be8feb",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "df61eb0d-e92f-4907-9a01-2645c61a04f9",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "93e07fd5-90c0-430e-876a-657b03bd75ad",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "3ba31a65-08c9-4f90-bb5c-e3653db64dc0",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "1e4769f3-44e6-41a9-befd-7bc6d39d8814",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "5f08646a-f3d8-4cc6-ab33-b50891f8d2c3",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "3f822861-e96f-46d7-a031-4e22a81adbb3",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "a2ac5a94-844e-4d38-a7f8-31d06c066be9",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "a5f291ec-38b8-473a-9649-3ba5234b1119",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6e68f6a2-e37d-4d35-a2f6-5473d93c07a9",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "a5f291ec-38b8-473a-9649-3ba5234b1119",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b4988429-31ec-4ae5-9211-a531f826b415",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "976722c1-e68f-408f-8431-a95a9a357f44",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "e2f28b17-76a1-4938-a431-f20d1c6f9b89",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "01ab1ce3-cb50-4490-b221-a85774dda606",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6d102d99-3c35-4d1e-b61a-59d0e9715756",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "42f0ed28-781b-4be6-b8c2-3c371ab3e72e",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "c3d9e244-35c6-4a19-94a2-0bc49fb5f0f4",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "42f0ed28-781b-4be6-b8c2-3c371ab3e72e",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "bf2bbd7d-d4d3-40dd-be2e-ec43050dd8f9",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "6ed794a7-f081-4b70-862a-1d42f167b883",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "aed67934-9866-408f-b8b6-e6ac3461af62",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "1f2237ee-c1ae-45dd-b2e6-ec618b413345",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "9c3bf3ac-9006-4f8f-8477-70f96d1ef9dd",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "44f5fb0a-6ba9-44b5-a9b3-743da1f82ea9",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6aefdf4d-85be-47f6-ac6f-e45ec0015463",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "2d874b2e-bd3c-4abc-9d79-d29660026590",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2b7f508-c005-4ea9-a7e0-6a4429ede287",
+                "claim_type": "QUALIFIER",
+                "claim_entity_type": "QUALIFIER",
+                "claim_entity_id": "b680dd60-96c6-4491-b8cf-3f894f823d19",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "6a6bb071-eba2-4f44-bc30-21fe8a6253ba",
+                "claim_type": "QUALIFIER",
+                "claim_entity_type": "QUALIFIER",
+                "claim_entity_id": "b680dd60-96c6-4491-b8cf-3f894f823d19",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "a8e5f126-bc3d-4625-a685-4549dd499a18",
+                "claim_type": "CONDITION",
+                "claim_entity_type": "CONDITION",
+                "claim_entity_id": "ccb35e44-b2e3-432c-b944-1bdfdb5a7ce2",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 0.95
+              },
+              {
+                "evidence_id": "a8e5f126-bc3d-4625-a685-4549dd499a18",
+                "claim_type": "CONDITIONAL_ACTION",
+                "claim_entity_type": "CONDITION",
+                "claim_entity_id": "ccb35e44-b2e3-432c-b944-1bdfdb5a7ce2",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 0.95
+              }
+            ],
+            "validation_issues": [],
+            "created_at": "2026-09-11T03:45:54.150968Z"
+          },
+          "issues": [
+            {
+              "id": "6704bfd6-cc3a-478b-a67f-e73413ba14b8",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-12-1",
+                "page_number": 12,
+                "source_text": "3.5 Biomarkers\nIn Philadelphia-chromosome positive leukemias (CML-CP, CML-AP, CML-BC, Ph+ ALL), the following assays of Bcr-Abl activity will be performed to examine the ability of nilotinib to down-regulate Bcr-Abl and its downstream effectors: Bcr-Abl phosphorylation, STAT 1, STAT 5 signaling, AKT phosphorylation and Q-RT-PCR to detect the presence of Bcr-Abl transcripts. An attempt will be made to correlate the effects on the various biomarkers with plasma drug levels obtained at similar timepoints. Mutational analysis of Bcr-Abl will be conducted at baseline and at the time of disease progression.",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "2e12ee3e-a031-4bf1-8e87-713f1e65d96b",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-13-3",
+                "page_number": 13,
+                "source_text": "4.2 Age >= 16 years (Age > 18 years to participate in optional symptom burden assessment)",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "b4c6119b-874a-4e16-a5e4-feec2a0ddc75",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-14-8",
+                "page_number": 14,
+                "source_text": "Exclusion: NYHA cardiac class 3-4 heart disease as well as impaired cardiac function defined as: LVEF < 45% as determined by MUGA scan or electrocardiogram; Complete left bundle branch block; Use of cardiac pacemaker; ST depression of > 1 mm in 2 or more leads and/or T wave inversions in 2 or more continuous leads; Congenital long QT syndrome; History of, or presence of significant ventricular or atrial tachyarrhythmia's; Clinically significant resting bradycardia (< 50 bpm); QTc > 450 msec on screening ECG (using the QTcF formula); Right bundle branch block plus left anterior hemiblock, bifascicular block; Myocardial infarction within 12 months prior to starting nilotinib; Unstable angina diagnosed or treated within the past 12 months; Other clinically significant heart disease (e.g. congestive heart failure, uncontrolled hypertension, history of labile hypertension, or history of poor compliance with an antihypertensive regimen).",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "1e8ce8cd-7cbf-4dcf-9226-94eaa9ec754d",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-14-9",
+                "page_number": 14,
+                "source_text": "Exclusion: Patients with active, uncontrolled psychiatric disorders including: psychosis, major depression, and bipolar disorders.",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "7009c92d-3a47-4c7d-8cb0-b25c7fd10ab9",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-14-11",
+                "page_number": 14,
+                "source_text": "Exclusion: Patients with severe and/or uncontrolled medial disease (i.e., uncontrolled diabetes, chronic renal disease, or active uncontrolled infection [persistent fever and worsening clinical condition]).",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "ef802ddd-4a7a-44bc-8b14-eb5b8265b890",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-14-12",
+                "page_number": 14,
+                "source_text": "Exclusion: Patient with known chronic liver disease (i.e., chronic active hepatitis, and cirrhosis).",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "c198eefc-905d-4dee-b1a4-2b976b49773a",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-14-13",
+                "page_number": 14,
+                "source_text": "Exclusion: Patient with known diagnosis of human immunodeficiency virus (HIV) infection.",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "99f81d0b-252c-4ac8-97f8-94d551479aad",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-15-16",
+                "page_number": 15,
+                "source_text": "5.2.1 CML debulking: patients may receive hydroxyurea for debulking before and during the first 6 weeks of therapy. Patients who cannot take hydroxyurea may receive other agents such as 6-mercaptopurine and 6-thioguanine.",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "abc5ec8f-abda-4df0-bc20-4fecd1e7c56a",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-16-18",
+                "page_number": 16,
+                "source_text": "Dose Level 0: Nilotinib 400 mg BID",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "33ac2670-48b7-4d89-8c5c-918d56e37eb7",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-16-19",
+                "page_number": 16,
+                "source_text": "Dose Level -1: Nilotinib 200 mg BID",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "5171a4b8-e15b-4e9c-b789-a8a6ba12aa68",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-16-20",
+                "page_number": 16,
+                "source_text": "Dose Level -2: Nilotinib 200 mg daily",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "34079cdf-9c2f-44e2-8777-8633c8dc1451",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-16-22",
+                "page_number": 16,
+                "source_text": "Every 3-4 months in year one then every 6-12 months as indicated",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "8767c088-0a6e-4bfa-92be-7c9e9b864595",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-21-56",
+                "page_number": 21,
+                "source_text": "0 MR observed in 7 patients evaluated",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "6521119f-a9bb-4d92-b1d4-14d93ef5513c",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNVERIFIED_SOURCE_QUOTE",
+              "severity": "ERROR",
+              "message": "A quoted passage could not be verified on its cited page. Check the original table.",
+              "details": {
+                "ref": "source-21-57",
+                "page_number": 21,
+                "source_text": "1 MR observed in 19 patients evaluated",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "c0ad51d9-0bc6-497a-aef2-edf8eaaf07d7",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "AMBIGUOUS_TIMING",
+              "severity": "ERROR",
+              "message": "no timing rule was extracted for 'Evaluation During Study'; a reviewer must supply it before any patient can be scheduled",
+              "details": {
+                "event_code": "VISIT-STUDY-EVAL",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "f3693c07-1b95-41dd-b508-b2649afe2d22",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "ORPHAN_QUALIFIER",
+              "severity": "ERROR",
+              "message": "Footnote definitions were found with no matching table marker or qualifier",
+              "details": {
+                "markers": [
+                  "1",
+                  "2",
+                  "3",
+                  "4",
+                  "5",
+                  "6",
+                  "7",
+                  "8",
+                  "9",
+                  "a",
+                  "b",
+                  "c",
+                  "d",
+                  "e",
+                  "f",
+                  "r"
+                ],
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "d0ecc8cb-dc7e-4a67-8225-c954c67719a1",
+              "entity_type": "EVENT",
+              "entity_id": "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a",
+              "issue_code": "UNKNOWN_ANCHOR",
+              "severity": "ERROR",
+              "message": "Unknown anchor 'FIRST_DOSE'",
+              "details": {},
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "db00fb8b-f8e4-4b2e-a49c-15c6ff502ad6",
+              "entity_type": "EVENT",
+              "entity_id": "aa22fe9b-3c47-445b-9429-76854b423246",
+              "issue_code": "AMBIGUOUS_TIMING",
+              "severity": "ERROR",
+              "message": "Evaluation during study contains multiple staggered sub-schedules for different procedures (e.g., CBC every 1-2 weeks, physical exam every 3-4 months, EKG at day 5, 6 weeks, 3 months), rather than a single visit timing.",
+              "details": {},
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "62b53af6-8dac-4b34-ac2f-818d459619e2",
+              "entity_type": "CONDITION",
+              "entity_id": "ccb35e44-b2e3-432c-b944-1bdfdb5a7ce2",
+              "issue_code": "UNRESOLVED_REFERENCE",
+              "severity": "ERROR",
+              "message": "Conditional action ADD_EVENT targets unknown 'ACT-EKG-PRETX'",
+              "details": {},
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "81ce63ec-8d0f-4742-a5a8-60116642114d",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_MAP_UNCERTAIN",
+              "severity": "ERROR",
+              "message": "Appendix B is referenced in the text for Pretreatment and Evaluation During Study sections, but Appendix B itself (which typically contains a tabular schedule of events) is not included in the provided PDF pages.",
+              "details": {
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "2cb7a1fd-6def-4aaf-96bf-03ba8fa64312",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-12-1",
+                "page": 12
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "1a093e2e-839c-4d2c-8810-bc1013413a13",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-13-3",
+                "page": 13
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "1015bd97-f40e-4fce-9f78-54e985475856",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-14-8",
+                "page": 14
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "d49a2d5a-615b-4f5f-b12f-7cae2b2af8f7",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-14-9",
+                "page": 14
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "2d3817c6-0ef8-4fc8-a937-1abf5e70435c",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-14-11",
+                "page": 14
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "7876b6a4-e94f-41cf-b796-a1b9723cbe2d",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-14-12",
+                "page": 14
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "b834fd8f-9c20-4c4f-92b6-fbdbb4c7b105",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-14-13",
+                "page": 14
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "f24e0771-ce7c-4b0a-8400-17391423098e",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-15-16",
+                "page": 15
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "436f9840-8ed0-4ec2-b876-b9b1c352a90c",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-16-18",
+                "page": 16
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "693687ae-c683-4d11-a4f6-e0cf8deff491",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-16-19",
+                "page": 16
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "dae5dccd-d17d-4f6e-ab38-693f035170f0",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-16-20",
+                "page": 16
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "92ed2346-4a89-475f-a985-a08afbf2344e",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-16-22",
+                "page": 16
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "1112b783-a461-462e-9e3a-51f9f4354485",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-21-56",
+                "page": 21
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "2622be90-9bb5-41fc-8ea1-12b00f351c4d",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_QUOTE_UNVERIFIED",
+              "severity": "ERROR",
+              "message": "A reconstructed passage does not match its page text.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-21-57",
+                "page": 21
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "d5968c43-d1d0-4b7f-acd1-fc568f296604",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source assessment on page 16 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-16-23",
+                "text": "a) Cytogenetic (or FISH) pretreatment",
+                "row": null,
+                "column": null
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "ede5807d-9b14-4265-a1e0-62652d8fd648",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 17 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-17-25",
+                "text": "Total duration of therapy will be 8-10 years.",
+                "row": null,
+                "column": null
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "262cbbcd-38e2-40cf-aff2-dab498bd9cf0",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 17 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-17-26",
+                "text": "Novartis will supply nilotinib as 200 mg, 150 mg and 50 mg capsules or tablets for the core trial period of 6 years.",
+                "row": null,
+                "column": null
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "9d6d2dbb-62df-4306-8d52-49d7e7a31fb6",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 20 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-20-53",
+                "text": "at each clinic visit during study",
+                "row": "7.10",
+                "column": null
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "56a4e69f-ad80-48a6-b3f3-21293ad9e3e4",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source assessment on page 21 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-21-56",
+                "text": "0 MR observed in 7 patients evaluated",
+                "row": "Recommend Stopping if <= # of MR Observed: 0",
+                "column": "Number of Patients Evaluated: 7"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "6f242b46-0c4e-4bff-a16e-fd65ae313561",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source assessment on page 21 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-21-57",
+                "text": "1 MR observed in 19 patients evaluated",
+                "row": "Recommend Stopping if <= # of MR Observed: 1",
+                "column": "Number of Patients Evaluated: 19"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            }
+          ],
+          "extraction_trace": [
+            {
+              "node": "SOURCE_MAP",
+              "pages": [
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21
+              ],
+              "document_pages": 32
+            },
+            {
+              "node": "SOURCE_RECONSTRUCTION",
+              "pages": [
+                12,
+                13,
+                14
+              ],
+              "units": 14
+            },
+            {
+              "node": "SOURCE_RECONSTRUCTION",
+              "pages": [
+                15,
+                16,
+                17
+              ],
+              "units": 12
+            },
+            {
+              "node": "SOURCE_RECONSTRUCTION",
+              "pages": [
+                18,
+                19,
+                20
+              ],
+              "units": 28
+            },
+            {
+              "node": "SOURCE_RECONSTRUCTION",
+              "pages": [
+                21
+              ],
+              "units": 3
+            },
+            {
+              "node": "SOURCE_RECONCILIATION",
+              "schedule": {
+                "id": "schedule-1",
+                "label": "Main Study Schedule",
+                "assignment_evidence_ids": [],
+                "source_ids": [
+                  "source-12-1",
+                  "source-13-2",
+                  "source-13-3",
+                  "source-13-4",
+                  "source-13-5",
+                  "source-13-6",
+                  "source-13-7",
+                  "source-14-8",
+                  "source-14-9",
+                  "source-14-10",
+                  "source-14-11",
+                  "source-14-12",
+                  "source-14-13",
+                  "source-14-14",
+                  "source-15-15",
+                  "source-15-16",
+                  "source-15-17",
+                  "source-16-18",
+                  "source-16-19",
+                  "source-16-20",
+                  "source-16-21",
+                  "source-16-22",
+                  "source-16-23",
+                  "source-16-24",
+                  "source-17-25",
+                  "source-17-26",
+                  "source-19-27",
+                  "source-19-28",
+                  "source-19-29",
+                  "source-19-30",
+                  "source-19-31",
+                  "source-19-32",
+                  "source-19-33",
+                  "source-19-34",
+                  "source-19-35",
+                  "source-19-36",
+                  "source-19-37",
+                  "source-19-38",
+                  "source-19-39",
+                  "source-19-40",
+                  "source-19-41",
+                  "source-19-42",
+                  "source-19-43",
+                  "source-20-44",
+                  "source-20-45",
+                  "source-20-46",
+                  "source-20-47",
+                  "source-20-48",
+                  "source-20-49",
+                  "source-20-50",
+                  "source-20-51",
+                  "source-20-52",
+                  "source-20-53",
+                  "source-20-54",
+                  "source-21-55",
+                  "source-21-56",
+                  "source-21-57"
+                ],
+                "visits": [
+                  {
+                    "code": "VISIT-PRETX",
+                    "label": "Pretreatment Evaluation",
+                    "source_ids": [
+                      "source-14-10",
+                      "source-16-21",
+                      "source-16-23",
+                      "source-19-27",
+                      "source-19-28",
+                      "source-19-29",
+                      "source-19-30",
+                      "source-19-31",
+                      "source-19-32",
+                      "source-19-33",
+                      "source-19-34"
+                    ]
+                  },
+                  {
+                    "code": "VISIT-STUDY-EVAL",
+                    "label": "Evaluation During Study",
+                    "source_ids": [
+                      "source-16-22",
+                      "source-16-24",
+                      "source-19-36",
+                      "source-19-37",
+                      "source-19-38",
+                      "source-19-39",
+                      "source-19-40",
+                      "source-19-41",
+                      "source-19-42",
+                      "source-19-43",
+                      "source-20-44",
+                      "source-20-45",
+                      "source-20-46",
+                      "source-20-47",
+                      "source-20-48",
+                      "source-20-49",
+                      "source-20-50",
+                      "source-20-51",
+                      "source-20-52",
+                      "source-20-53"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "node": "DOCUMENT_STRUCTURE",
+              "sections": 57
+            },
+            {
+              "node": "FIND_SCHEDULE_SECTIONS",
+              "evidence": 57
+            },
+            {
+              "node": "EXTRACT_PROTOCOL_METADATA",
+              "claims": 1
+            },
+            {
+              "node": "EXTRACT_EPOCHS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ARMS_COHORTS_POPULATIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ANCHORS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_EVENTS",
+              "claims": 2
+            },
+            {
+              "node": "EXTRACT_EVENT_TYPES",
+              "claims": 2
+            },
+            {
+              "node": "EXTRACT_TIMING",
+              "claims": 2
+            },
+            {
+              "node": "EXTRACT_CONDITIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_APPLICABILITY",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_DEPENDENCIES",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_DEPENDENCY_MODES",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_RECURRENCE",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_REPEAT_BLOCKS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ACTIVITIES",
+              "claims": 18
+            },
+            {
+              "node": "EXTRACT_ACTIVITY_TIMING",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ACTIVITY_CONDITIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_QUALIFIERS",
+              "claims": 1
+            },
+            {
+              "node": "EXTRACT_CONDITIONAL_ACTIONS",
+              "claims": 1
+            },
+            {
+              "node": "EXTRACT_CONDITIONAL_RESOLUTION",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_CONFINEMENT",
+              "claims": 0
+            },
+            {
+              "node": "BUILD_RELATIONSHIPS",
+              "relationships": 0
+            },
+            {
+              "node": "EVIDENCE_LINKING",
+              "issues": 0
+            },
+            {
+              "node": "COMPLETENESS_CHECK",
+              "findings": 14
+            },
+            {
+              "node": "CONSISTENCY_CHECK",
+              "findings": 1
+            },
+            {
+              "node": "SCHEDULE_ASSEMBLY"
+            },
+            {
+              "node": "FINAL_VALIDATION",
+              "valid": true,
+              "issues": 3,
+              "completeness_findings": 1
+            },
+            {
+              "node": "SOURCE_COVERAGE",
+              "items": [
+                {
+                  "source_id": "source-12-1",
+                  "page": 12,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-13-2",
+                  "page": 13,
+                  "table": null,
+                  "row": "4.1",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-13-3",
+                  "page": 13,
+                  "table": null,
+                  "row": "4.2",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-13-4",
+                  "page": 13,
+                  "table": null,
+                  "row": "4.3",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-13-5",
+                  "page": 13,
+                  "table": null,
+                  "row": "4.4",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-13-6",
+                  "page": 13,
+                  "table": null,
+                  "row": "4.5",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-13-7",
+                  "page": 13,
+                  "table": null,
+                  "row": "4.6",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-14-8",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.7.a",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-14-9",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.7.b",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-14-10",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.7.c",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a"
+                  ]
+                },
+                {
+                  "source_id": "source-14-11",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.7.d",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-14-12",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.7.e",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-14-13",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.7.f",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-14-14",
+                  "page": 14,
+                  "table": null,
+                  "row": "4.8",
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-15-15",
+                  "page": 15,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-15-16",
+                  "page": 15,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-15-17",
+                  "page": 15,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-16-18",
+                  "page": 16,
+                  "table": "Dose Modifications",
+                  "row": "Dose Level 0",
+                  "column": "Nilotinib",
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-16-19",
+                  "page": 16,
+                  "table": "Dose Modifications",
+                  "row": "Dose Level -1",
+                  "column": "Nilotinib",
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-16-20",
+                  "page": 16,
+                  "table": "Dose Modifications",
+                  "row": "Dose Level -2",
+                  "column": "Nilotinib",
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-16-21",
+                  "page": 16,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "VISIT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "8792f6a4-7d2f-4bd2-987e-a6e2e22c3c6a"
+                  ]
+                },
+                {
+                  "source_id": "source-16-22",
+                  "page": 16,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "VISIT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-16-23",
+                  "page": 16,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-16-24",
+                  "page": 16,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "42f0ed28-781b-4be6-b8c2-3c371ab3e72e",
+                    "a5f291ec-38b8-473a-9649-3ba5234b1119"
+                  ]
+                },
+                {
+                  "source_id": "source-17-25",
+                  "page": 17,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-17-26",
+                  "page": 17,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-19-27",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.1",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "e717daed-6ff4-476e-9c4a-204896855eb4"
+                  ]
+                },
+                {
+                  "source_id": "source-19-28",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.2",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "1d9c9582-c4bb-4fd6-b9a5-bd66ca349eb4"
+                  ]
+                },
+                {
+                  "source_id": "source-19-29",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.3",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "cd947eaa-52fd-4d12-b05b-e6a9fc2ecc88"
+                  ]
+                },
+                {
+                  "source_id": "source-19-30",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.4",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "450bae0b-2a83-4ea9-91ab-7a6f44404dcb"
+                  ]
+                },
+                {
+                  "source_id": "source-19-31",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.5",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "d9ddf5a0-2c99-429e-ac02-1197d44bf5d7"
+                  ]
+                },
+                {
+                  "source_id": "source-19-32",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.6",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "6cc16a55-e91a-4a5d-8d67-a2661a6530ea"
+                  ]
+                },
+                {
+                  "source_id": "source-19-33",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.7",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "df61eb0d-e92f-4907-9a01-2645c61a04f9"
+                  ]
+                },
+                {
+                  "source_id": "source-19-34",
+                  "page": 19,
+                  "table": null,
+                  "row": "6.8",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "3ba31a65-08c9-4f90-bb5c-e3653db64dc0"
+                  ]
+                },
+                {
+                  "source_id": "source-19-35",
+                  "page": 19,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "FOOTNOTE",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "b680dd60-96c6-4491-b8cf-3f894f823d19"
+                  ]
+                },
+                {
+                  "source_id": "source-19-36",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.1",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "5f08646a-f3d8-4cc6-ab33-b50891f8d2c3"
+                  ]
+                },
+                {
+                  "source_id": "source-19-37",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.1",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-19-38",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.2",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "a2ac5a94-844e-4d38-a7f8-31d06c066be9"
+                  ]
+                },
+                {
+                  "source_id": "source-19-39",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.2",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-19-40",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.3",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "a5f291ec-38b8-473a-9649-3ba5234b1119"
+                  ]
+                },
+                {
+                  "source_id": "source-19-41",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.3",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-19-42",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.4",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "976722c1-e68f-408f-8431-a95a9a357f44"
+                  ]
+                },
+                {
+                  "source_id": "source-19-43",
+                  "page": 19,
+                  "table": null,
+                  "row": "7.4",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-20-44",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.5",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "01ab1ce3-cb50-4490-b221-a85774dda606"
+                  ]
+                },
+                {
+                  "source_id": "source-20-45",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.6",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "42f0ed28-781b-4be6-b8c2-3c371ab3e72e"
+                  ]
+                },
+                {
+                  "source_id": "source-20-46",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.6",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-20-47",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.7",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "6ed794a7-f081-4b70-862a-1d42f167b883"
+                  ]
+                },
+                {
+                  "source_id": "source-20-48",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.7",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-20-49",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.8",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "1f2237ee-c1ae-45dd-b2e6-ec618b413345"
+                  ]
+                },
+                {
+                  "source_id": "source-20-50",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.9",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "44f5fb0a-6ba9-44b5-a9b3-743da1f82ea9"
+                  ]
+                },
+                {
+                  "source_id": "source-20-51",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.9",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "aa22fe9b-3c47-445b-9429-76854b423246"
+                  ]
+                },
+                {
+                  "source_id": "source-20-52",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.10",
+                  "column": null,
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "2d874b2e-bd3c-4abc-9d79-d29660026590"
+                  ]
+                },
+                {
+                  "source_id": "source-20-53",
+                  "page": 20,
+                  "table": null,
+                  "row": "7.10",
+                  "column": null,
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-20-54",
+                  "page": 20,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "FOOTNOTE",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "b680dd60-96c6-4491-b8cf-3f894f823d19"
+                  ]
+                },
+                {
+                  "source_id": "source-21-55",
+                  "page": 21,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-21-56",
+                  "page": 21,
+                  "table": "Stopping boundaries for molecular response (MR) at 12 months",
+                  "row": "Recommend Stopping if <= # of MR Observed: 0",
+                  "column": "Number of Patients Evaluated: 7",
+                  "kind": "ASSESSMENT",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-21-57",
+                  "page": 21,
+                  "table": "Stopping boundaries for molecular response (MR) at 12 months",
+                  "row": "Recommend Stopping if <= # of MR Observed: 1",
+                  "column": "Number of Patients Evaluated: 19",
+                  "kind": "ASSESSMENT",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                }
+              ]
+            },
+            {
+              "node": "SOURCE_AUDIT",
+              "findings": 0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

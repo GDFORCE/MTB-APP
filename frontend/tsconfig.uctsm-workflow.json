@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "expo-env.d.ts",
+    "app/(app)/sponsor/add-trial.tsx",
+    "app/(app)/clinical/add-patient.tsx",
+    "src/features/uctsm/ExtractionPreview.tsx",
+    "src/features/uctsm/ScheduleVersionsScreen.tsx",
+    "src/features/uctsm/ProtocolScheduleScreen.tsx",
+    "src/features/uctsm/ProtocolAssignmentFields.tsx",
+    "src/features/uctsm/ScheduleTable.tsx"
+  ],
+  "exclude": ["node_modules", "tests"]
+}

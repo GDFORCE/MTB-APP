@@ -24,6 +24,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronRight,
   Download,
   FileClock,
   FileText,
@@ -33,7 +34,6 @@ import {
   Pencil,
   Phone,
   RefreshCw,
-  Share2,
   Target,
   Upload,
   UserPlus,
@@ -44,6 +44,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
+import { getCanonicalSchedules } from "@/src/features/uctsm/api";
+import type { CanonicalScheduleRow } from "@/src/features/uctsm/api";
 import type {
   RecruitmentFunnel,
   SponsorTrialSubject,
@@ -52,8 +54,6 @@ import type {
 import { downloadFile, uploadFile, type UploadedFile } from "@/src/lib/upload";
 import {
   formatIsoCalendarDate,
-  formatVisitTiming,
-  formatVisitWindow,
 } from "@/src/lib/visit-timing";
 import { colors, fonts, shadows } from "@/src/theme/tokens";
 
@@ -98,15 +98,6 @@ type VisitTemplate = {
   window_days?: number;
   window_before?: number | null;
   window_after?: number | null;
-};
-
-type SubjectVisit = {
-  id: string;
-  visit_number?: number;
-  name: string;
-  status: string;
-  scheduled_date?: string;
-  completed_at?: string;
 };
 
 type RecruitmentPayload = {
@@ -187,6 +178,19 @@ function dateLabel(value?: string) {
 
 const scheduledDateLabel = (value?: string) => formatIsoCalendarDate(value, value || "Not recorded");
 
+const SCHEDULE_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Draft",
+  VALIDATION_REQUIRED: "Needs review",
+  IN_REVIEW: "In review",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  EXTRACTED: "Extracted",
+};
+function scheduleStatusLabel(status: string) {
+  return SCHEDULE_STATUS_LABELS[status]
+    || status.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+}
+
 function initials(value?: string) {
   return (value || "").split(/\s+/).filter(Boolean).slice(0, 2)
     .map((part) => part[0]?.toUpperCase()).join("") || "—";
@@ -206,9 +210,7 @@ export default function TrialSummary() {
   const [team, setTeam] = useState<SponsorTrialTeamMember[]>([]);
   const [documents, setDocuments] = useState<UploadedFile[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
-  const [subjectVisits, setSubjectVisits] = useState<Record<string, SubjectVisit[]>>({});
-  const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
-  const [loadingSubject, setLoadingSubject] = useState<string | null>(null);
+  const [canonicalSchedules, setCanonicalSchedules] = useState<CanonicalScheduleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -269,6 +271,14 @@ export default function TrialSummary() {
       setTeam(Array.isArray(teamRes.data) ? teamRes.data : []);
       setDocuments(Array.isArray(docsRes.data) ? docsRes.data : []);
       setVersions(Array.isArray(versionsRes.data) ? versionsRes.data : []);
+      // A trial with no protocol extracted yet has no canonical schedule -
+      // that is a normal state, not a load failure, so it is fetched and
+      // failed independently of everything else on this page.
+      try {
+        setCanonicalSchedules((await getCanonicalSchedules(id)).schedules || []);
+      } catch {
+        setCanonicalSchedules([]);
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Couldn't load this trial summary.");
     } finally {
@@ -287,34 +297,18 @@ export default function TrialSummary() {
   const sponsorLike = user?.role === "sponsor" || user?.role === "cro";
   const canAddPatient = user?.role === "pi" || user?.role === "crc";
   const canEdit = sponsorLike || (user?.role === "pi" && trial?.created_by === user.id);
-  const canShare = sponsorLike || user?.role === "pi";
   const canUpload = sponsorLike || user?.role === "pi" || user?.role === "crc";
 
-  const openSubject = async (subject: SponsorTrialSubject) => {
-    if (expandedSubject === subject.id) {
-      setExpandedSubject(null);
-      return;
-    }
-    setExpandedSubject(subject.id);
-    if (subjectVisits[subject.id] || !trial) return;
-    setLoadingSubject(subject.id);
-    try {
-      const response = await api.get(
-        `/trials/${trial.id}/subjects/${encodeURIComponent(subject.id)}/visits`,
-      );
-      setSubjectVisits((current) => ({
-        ...current,
-        [subject.id]: Array.isArray(response.data) ? response.data : [],
-      }));
-    } catch (e: any) {
-      showFeedback({
-        tone: "error",
-        message: e?.response?.data?.detail || "Couldn't load this subject's visits.",
-      });
-      setExpandedSubject(null);
-    } finally {
-      setLoadingSubject(null);
-    }
+  // Doc 9 - a subject linked to the canonical engine opens the full schedule
+  // there (activities, conditional requirements, confinement, anchor status)
+  // instead of the flat visit_instances list this used to fetch inline -
+  // same screen `clinical/visit-detail.tsx` already links to for one patient.
+  const openSubject = (subject: SponsorTrialSubject) => {
+    if (!subject.uctsm_patient_id) return;
+    router.push({
+      pathname: "/(app)/clinical/patient-schedule",
+      params: { patientId: subject.uctsm_patient_id, patientName: subject.subject_id },
+    });
   };
 
   const uploadDocument = async () => {
@@ -651,8 +645,6 @@ export default function TrialSummary() {
             ) : undefined}
           >
             {subjects.length ? subjects.map((subject) => {
-              const expanded = expandedSubject === subject.id;
-              const visits = subjectVisits[subject.id] || [];
               const subjectStatus = subject.current_visit?.status === "overdue"
                 ? "overdue"
                 : subject.status;
@@ -661,6 +653,7 @@ export default function TrialSummary() {
                   key={subject.id}
                   testID={`subject-${subject.id}`}
                   onPress={() => openSubject(subject)}
+                  disabled={!subject.uctsm_patient_id}
                   style={s.subjectCard}
                 >
                   <View style={s.between}>
@@ -705,31 +698,9 @@ export default function TrialSummary() {
                     <PatientField label="VISIT TYPE" value={subject.current_visit?.visit_type || "—"} />
                     <PatientField label="VISIT DATE" value={scheduledDateLabel(subject.current_visit?.scheduled_date)} />
                   </View>
-                  {expanded && (
+                  {subject.uctsm_patient_id && (
                     <View style={s.subjectVisits}>
-                      {loadingSubject === subject.id ? (
-                        <ActivityIndicator color={colors.primary} />
-                      ) : visits.length ? visits.map((visit) => (
-                        <View key={visit.id} style={s.subjectVisitRow}>
-                          <View style={s.visitNumber}>
-                            <Text style={s.visitNumberText}>{visit.visit_number || "—"}</Text>
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={s.visitName}>{visit.name}</Text>
-                            <Text style={s.visitMeta}>
-                              {visit.completed_at
-                                ? dateLabel(visit.completed_at)
-                                : scheduledDateLabel(visit.scheduled_date)}
-                            </Text>
-                          </View>
-                          <Text style={[
-                            s.visitStatus,
-                            visit.status === "completed" && { color: colors.success },
-                          ]}>
-                            {visit.status}
-                          </Text>
-                        </View>
-                      )) : <Empty text="No visit instances are available for this subject." />}
+                      <Text style={s.viewScheduleLink}>View protocol schedule ›</Text>
                     </View>
                   )}
                 </Pressable>
@@ -748,46 +719,47 @@ export default function TrialSummary() {
             title="Visit schedule"
             icon={CalendarDays}
             action={(
-              <View style={s.scheduleActions}>
-                {/* Screen H: which protocol/schedule version this trial's
-                    patients are on. Visible to every role that can read the
-                    trial, because a site has to be able to answer it too. */}
-                <Pressable
-                  testID="open-schedule-versions"
-                  accessibilityRole="button"
-                  accessibilityLabel="Open protocol and schedule versions"
-                  onPress={() => router.push({
-                    pathname: "/(app)/sponsor/schedule-versions",
-                    params: { id: trial.id, trialName: trial.protocol_id || trial.title || "" },
-                  })}
-                  style={s.inlineAction}
-                >
-                  <Text style={s.inlineActionText}>Versions</Text>
-                </Pressable>
-                {sponsorLike ? (
-                  <Pressable
-                    onPress={() => router.push({ pathname: "/(app)/sponsor/visit-schedule", params: { id: trial.id } })}
-                    style={s.inlineAction}
-                  >
-                    <Text style={s.inlineActionText}>Edit Schedule</Text>
-                  </Pressable>
-                ) : null}
-              </View>
+              // Screen H: which protocol/schedule version this trial's
+              // patients are on. Visible to every role that can read the
+              // trial, because a site has to be able to answer it too.
+              // The single entry point for everything schedule-related -
+              // viewing a draft, submitting it for review, approving or
+              // rejecting it - so there is one path here, not several.
+              <Pressable
+                testID="open-schedule-versions"
+                accessibilityRole="button"
+                accessibilityLabel="Open protocol and schedule versions"
+                onPress={() => router.push({
+                  pathname: "/(app)/sponsor/schedule-versions",
+                  params: { id: trial.id, trialName: trial.protocol_id || trial.title || "" },
+                })}
+                style={s.inlineAction}
+              >
+                <Text style={s.inlineActionText}>Versions</Text>
+              </Pressable>
             )}
           >
-            {(trial.visits || []).length ? (trial.visits || []).map((visit, index) => (
-              <View key={visit.id || `${visit.name}-${index}`} style={s.scheduleRow}>
-                <View style={s.visitNumber}>
-                  <Text style={s.visitNumberText}>{visit.visit_number || index + 1}</Text>
-                </View>
+            {canonicalSchedules.length ? canonicalSchedules.map((schedule) => (
+              <Pressable
+                key={schedule.schedule_version_id}
+                testID={`schedule-summary-${schedule.schedule_version_id}`}
+                onPress={() => router.push({
+                  pathname: "/(app)/sponsor/protocol-schedule",
+                  params: { id: trial.id, scheduleVersionId: schedule.schedule_version_id, trialName: trial.protocol_id || trial.title || "" },
+                })}
+                style={s.versionRow}
+              >
+                <View style={s.versionBadge}><Text style={s.versionBadgeText}>v{schedule.version_number}</Text></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.visitName}>{visit.name}</Text>
-                  <Text style={s.visitMeta}>
-                    {formatVisitTiming(visit)} · {formatVisitWindow(visit)}
+                  <Text style={s.versionTitle}>{schedule.name || "Schedule"}</Text>
+                  <Text style={s.versionMeta}>
+                    {scheduleStatusLabel(schedule.status)}
+                    {schedule.patients ? ` · ${schedule.patients} patient${schedule.patients === 1 ? "" : "s"}` : ""}
                   </Text>
                 </View>
-              </View>
-            )) : <Empty text="No visit schedule has been created." />}
+                <ChevronRight size={15} color={colors.mutedFg} />
+              </Pressable>
+            )) : <Empty text="No schedule has been built yet. Upload a protocol PDF above to build one." />}
           </Section>
         </Entrance>
 
@@ -866,19 +838,6 @@ export default function TrialSummary() {
               <Text style={s.secondaryButtonText}>Download Protocol</Text>
             </Pressable>
           </View>
-          {canShare && (
-            <Pressable
-              testID="share-schedule"
-              onPress={() => router.push({
-                pathname: "/(app)/sponsor/share-schedule",
-                params: { id: trial.id },
-              })}
-              style={s.primaryWide}
-            >
-              <Share2 size={17} color={colors.white} />
-              <Text style={s.primaryButtonText}>Share Schedule</Text>
-            </Pressable>
-          )}
         </Entrance>
       </ScrollView>
 
@@ -910,19 +869,6 @@ export default function TrialSummary() {
               <Download size={16} color={colors.mutedFg} />
               <Text style={s.actionMenuText}>Download</Text>
             </Pressable>
-            {canShare && (
-              <Pressable
-                accessibilityRole="menuitem"
-                onPress={() => {
-                  setShowActions(false);
-                  router.push({ pathname: "/(app)/sponsor/share-schedule", params: { id: trial.id } });
-                }}
-                style={s.actionMenuItem}
-              >
-                <Share2 size={16} color={colors.mutedFg} />
-                <Text style={s.actionMenuText}>Share</Text>
-              </Pressable>
-            )}
           </View>
         </View>
       </Modal>
@@ -1212,6 +1158,7 @@ const s = StyleSheet.create({
   patientFieldLabel: { fontFamily: fonts.semibold, fontSize: 7.5, letterSpacing: 0.65, color: colors.mutedFg },
   patientFieldValue: { marginTop: 2, fontFamily: fonts.medium, fontSize: 9.5, lineHeight: 12, color: colors.foreground },
   subjectVisits: { paddingTop: 9, gap: 8, borderTopWidth: 1, borderTopColor: colors.border },
+  viewScheduleLink: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 12 },
   subjectVisitRow: { flexDirection: "row", alignItems: "center", gap: 9 },
   scheduleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   visitNumber: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 11, backgroundColor: colors.secondary },

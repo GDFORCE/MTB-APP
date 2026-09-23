@@ -76,7 +76,7 @@ def _schedule(protocol_version_id) -> UniversalSchedule:
             name="Primary", protocol_version_id=protocol_version_id,
             version_number=1, status=ScheduleStatus.APPROVED,
         ),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         events=events, evidence=[evidence], claim_evidence=claims,
     )
 
@@ -179,6 +179,109 @@ def test_cutover_is_refused_while_a_difference_is_outstanding(fixture):
     assert report.passed is False
     with pytest.raises(ValueError, match="differences that need a decision"):
         cutover(session, ids)
+
+
+# --- AD-1a: an explicitly accepted difference clears the gate ----------------------
+
+def test_accepting_a_difference_lets_the_trial_cut_over(fixture):
+    """A correct-but-permanent difference (the engine won't date a visit the
+    operational store did) would otherwise block the gate forever. A human
+    signing off that specific run - with a reason - clears it."""
+    session, ids, patient, _schedule = fixture
+    report, run = check(session, ids, patient, [
+        {"name": "Screening", "scheduled_date": "2026-09-01",
+         "window_start": "2026-08-29", "window_end": "2026-09-04"},
+        {"name": "Week 4", "scheduled_date": "2026-09-30",
+         "window_start": "2026-09-28", "window_end": "2026-10-02"},
+    ])
+    session.commit()
+    assert report.passed is False
+
+    accepted = ParityService(session).accept_run(
+        run.id, organization_id=ids["organization"], actor_id=ids["actor"],
+        reason="Reviewed with the site - the one-day gap is a known legacy typo",
+    )
+    session.commit()
+
+    assert accepted.accepted_at is not None
+    assert accepted.accepted_by == ids["actor"]
+    assert accepted.verdict == "DIFFERENCES_FOUND"  # unchanged - only the sign-off is new
+
+    status = ParityService(session).readiness(
+        ids["trial"], organization_id=ids["organization"])
+    assert status["ready"] is True
+    assert status["with_differences"] == []
+    assert [item["patient_code"] for item in status["accepted"]] == ["P001"]
+
+    result = cutover(session, ids)
+    session.commit()
+    assert result["read_mode"] == READ_MODE_ENGINE
+
+
+def test_accepting_a_run_needs_a_reason(fixture):
+    session, ids, patient, _schedule = fixture
+    _report, run = check(session, ids, patient, [
+        {"name": "Screening", "scheduled_date": "2026-09-01",
+         "window_start": "2026-08-29", "window_end": "2026-09-04"},
+        {"name": "Week 4", "scheduled_date": "2026-09-30",
+         "window_start": "2026-09-28", "window_end": "2026-10-02"},
+    ])
+    session.commit()
+
+    with pytest.raises(ValueError, match="needs a reason"):
+        ParityService(session).accept_run(
+            run.id, organization_id=ids["organization"], actor_id=ids["actor"],
+            reason="   ",
+        )
+
+
+def test_a_matching_run_cannot_be_accepted(fixture):
+    """Accepting is for signing off a difference. A MATCH needs no sign-off."""
+    session, ids, patient, _schedule = fixture
+    _report, run = check(session, ids, patient, matching_legacy_visits())
+    session.commit()
+
+    with pytest.raises(ValueError, match="only a run with differences"):
+        ParityService(session).accept_run(
+            run.id, organization_id=ids["organization"], actor_id=ids["actor"],
+            reason="Looks fine",
+        )
+
+
+def test_accepting_one_patients_run_does_not_clear_another(fixture):
+    """No bulk accept: accepting P001's run must not touch P002's."""
+    session, ids, patient, schedule = fixture
+    _report, run = check(session, ids, patient, [
+        {"name": "Screening", "scheduled_date": "2026-09-01",
+         "window_start": "2026-08-29", "window_end": "2026-09-04"},
+        {"name": "Week 4", "scheduled_date": "2026-09-30",
+         "window_start": "2026-09-28", "window_end": "2026-10-02"},
+    ])
+    other = db.Patient(
+        organization_id=ids["organization"], trial_id=ids["trial"],
+        patient_code="P002", current_schedule_version_id=schedule.schedule_version_id,
+    )
+    session.add(other)
+    session.flush()
+    ParityService(session).compare_patient(
+        other.id, organization_id=ids["organization"], legacy_visits=[
+            {"name": "Screening", "scheduled_date": "2026-09-15",
+             "window_start": "2026-09-13", "window_end": "2026-09-18"},
+        ], horizon=HORIZON, actor_id=ids["actor"],
+    )
+    session.commit()
+
+    ParityService(session).accept_run(
+        run.id, organization_id=ids["organization"], actor_id=ids["actor"],
+        reason="P001's gap is a known legacy typo",
+    )
+    session.commit()
+
+    status = ParityService(session).readiness(
+        ids["trial"], organization_id=ids["organization"])
+    assert status["ready"] is False
+    assert [item["patient_code"] for item in status["accepted"]] == ["P001"]
+    assert [item["patient_code"] for item in status["with_differences"]] == ["P002"]
 
 
 def test_a_second_patient_nobody_checked_blocks_the_whole_trial(fixture):
@@ -313,6 +416,21 @@ def test_a_patient_with_no_approved_version_is_not_comparable(fixture):
 
     assert report.verdict == ParityVerdict.NOT_COMPARABLE
     assert report.passed is False
+
+
+def test_running_a_parity_check_never_persists_a_schedule_evaluation(fixture):
+    """AD-10: a comparison must never move dates as a side effect of checking
+    them. Before this was fixed, compare_patient called the persisting
+    evaluate() and committed it - running a parity check would silently
+    write a ScheduleEvaluation/PatientEvent row nobody asked for.
+    """
+    session, ids, patient, _schedule = fixture
+
+    before = len(list(session.scalars(select(db.ScheduleEvaluation))))
+    check(session, ids, patient, matching_legacy_visits())
+    after = len(list(session.scalars(select(db.ScheduleEvaluation))))
+
+    assert before == after == 0
 
 
 # --- the read overlay: dates move, nothing else does --------------------------------

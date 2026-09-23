@@ -147,6 +147,27 @@ export async function submitScheduleReview(scheduleVersionId: string) {
   return response.data;
 }
 
+export type PendingScheduleReview = {
+  trial_id: string;
+  trial_name: string;
+  schedule_definition_id: string;
+  schedule_name: string;
+  schedule_version_id: string;
+  version_number: number;
+  protocol_version_label: string | null;
+  submitted_at: string | null;
+};
+
+/**
+ * Every IN_REVIEW schedule version across this org's trials - the canonical
+ * replacement for the legacy `schedule_reviews` inbox.
+ */
+export async function getPendingScheduleReviews() {
+  const response = await api.get<{ pending: PendingScheduleReview[] }>(
+    `${root}/schedule-versions/pending-review`);
+  return response.data.pending;
+}
+
 export async function decideSchedule(
   scheduleVersionId: string,
   decision: "APPROVE" | "REJECT",
@@ -491,6 +512,16 @@ export async function runParityCheck(
   return response.data;
 }
 
+export type ReadModePatientRun = {
+  patient_code: string;
+  parity_run_id: string;
+  verdict?: string;
+  differences?: number;
+  accepted_by?: string | null;
+  accepted_reason?: string | null;
+  accepted_at?: string;
+};
+
 export type ReadModeStatus = {
   trial_id: string;
   read_mode: "LEGACY" | "ENGINE";
@@ -498,7 +529,12 @@ export type ReadModeStatus = {
   patients: number;
   checked: number;
   unchecked: string[];
-  with_differences: string[];
+  /** Still blocking the gate - a DIFFERENCES_FOUND (or NOT_COMPARABLE) run
+   * nobody has accepted yet. */
+  with_differences: ReadModePatientRun[];
+  /** AD-1a: a DIFFERENCES_FOUND run someone explicitly signed off - counts
+   * toward `ready` the same as a MATCH. */
+  accepted: ReadModePatientRun[];
   reasons: string[];
 };
 
@@ -517,6 +553,20 @@ export async function setReadMode(
 ) {
   const response = await api.post<{ trial_id: string; read_mode: string; previous: string }>(
     `${root}/trials/${trialId}/read-mode`, { mode, reason });
+  return response.data;
+}
+
+/**
+ * AD-1a: sign off one DIFFERENCES_FOUND parity run so it counts toward
+ * readiness - for a difference that is correct and permanent (the engine
+ * won't date a visit the operational store did) rather than something to fix
+ * and re-check. One run, one reason; never bulk.
+ */
+export async function acceptParityRun(trialId: string, runId: string, reason: string) {
+  const response = await api.post<{
+    parity_run_id: string; accepted_at: string | null;
+    accepted_by: string | null; accepted_reason: string | null;
+  }>(`${root}/trials/${trialId}/parity-runs/${runId}/accept`, { reason });
   return response.data;
 }
 
@@ -557,6 +607,15 @@ export type CanonicalScheduleBuild = {
 export async function buildCanonicalSchedule(trialId: string) {
   const response = await api.post<CanonicalScheduleBuild>(`/trials/${trialId}/uctsm-schedule`);
   return response.data;
+}
+
+export async function approveReviewedTable(scheduleVersionId: string, reason: string) {
+  const response = await api.post(`${root}/schedule-versions/${scheduleVersionId}/approve-table`, { reason });
+  return response.data;
+}
+
+export async function resolveExtractionIssue(versionId: string, issueId: string, reason: string) {
+  await api.post(`/uctsm/schedule-versions/${versionId}/extraction-issues/${issueId}/resolve`, { reason });
 }
 
 export type CanonicalScheduleIndex = {

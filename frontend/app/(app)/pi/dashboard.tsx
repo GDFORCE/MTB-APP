@@ -261,6 +261,24 @@ export default function PiDashboard() {
             <QA icon={ListTodo} bg={C.accent} iconColor="#FFFFFF" label="Needs Attention" onPress={() => router.push("/(app)/clinical/action-board")} testID="qa-action-board" />
           </View>
 
+          {/* Remote audits — the site side of the module whose sponsor entry
+              point replaced the Notifs tab. Listed separately from Quick
+              Actions because an audit is a thing you're assigned to, not an
+              action you start. */}
+          <Section label="REMOTE AUDITS" />
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <QA
+              icon={ClipboardCheck}
+              bg={C.info}
+              iconColor="#FFFFFF"
+              label="My Audits"
+              // Cast because expo-router's generated route types only refresh
+              // when the dev server runs; the route file exists.
+              onPress={() => router.push("/(app)/site/remote-audit" as never)}
+              testID="qa-remote-audits"
+            />
+          </View>
+
           <Section label="THIS WEEK" action={
             <Pressable onPress={() => router.push({ pathname: "/(app)/clinical/team-calendar", params: { role: "pi" } } as any)}>
               <Text style={{ color: C.info, fontSize: 13, fontWeight: "700" }}>View week</Text>

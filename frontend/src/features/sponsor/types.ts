@@ -53,6 +53,7 @@ export type SponsorTrialSubject = {
     window_start?: string;
     window_end?: string;
   } | null;
+  uctsm_patient_id?: string | null;
   deidentified: true;
 };
 

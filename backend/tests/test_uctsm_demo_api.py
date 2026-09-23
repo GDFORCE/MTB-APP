@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -114,12 +114,34 @@ def test_demo_screen_workflow_from_seed_through_patient_evaluation(monkeypatch):
     )
     assert confirmation.status_code == 200, confirmation.text
 
-    evaluated = client.post(
+    # AD-10: this chokepoint commits real date moves, so a reason is mandatory.
+    missing_reason = client.post(
         f"/api/uctsm/patients/{patient_id}/schedule/evaluate",
         json={"horizon": "2028-12-31"},
+        headers={"Idempotency-Key": "demo-api-test-missing-reason"},
+    )
+    assert missing_reason.status_code == 422, missing_reason.text
+
+    evaluated = client.post(
+        f"/api/uctsm/patients/{patient_id}/schedule/evaluate",
+        json={"horizon": "2028-12-31", "reason": "Re-evaluate after the confirmed anchor change."},
         headers={"Idempotency-Key": "demo-api-test-1"},
     )
     assert evaluated.status_code == 200, evaluated.text
     events = evaluated.json()["events"]
     assert any(event["status"] == "RESOLVED" for event in events)
     assert any(event["status"] in {"WAITING_FOR_ANCHOR", "WAITING_FOR_CONDITION"} for event in events)
+
+    # AD-10: every date move writes an AuditEvent with before/after - one from
+    # the anchor-confirm's own evaluate() (via impact_service.confirm()) and
+    # one from this explicit re-evaluation, both now attributed with an actor
+    # and a reason instead of the anonymous, reason-less row this used to be.
+    with factory() as session:
+        audits = list(session.scalars(
+            select(_models.AuditEvent)
+            .where(_models.AuditEvent.action == "PATIENT_SCHEDULE_EVALUATED")
+            .order_by(_models.AuditEvent.created_at)))
+        assert len(audits) == 2
+        assert all(item.actor_id is not None and item.reason for item in audits)
+        assert audits[-1].reason == "Re-evaluate after the confirmed anchor change."
+        assert audits[-1].after["reconciliation"]

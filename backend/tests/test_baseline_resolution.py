@@ -318,6 +318,100 @@ def test_ambiguous_baseline_blocks_approval_even_after_the_symptom_is_patched():
             service.approve(row.schedule_version_id, reviewer_id=journey.REVIEWER)
 
 
+# --- the native (LLM) extraction pipeline: same guarantee, different route ---
+#
+# The tests above exercise the legacy adapter (``canonical_import.py``), which
+# already stated its origin's derivation_rule on every path. The native
+# pipeline (``claude_provider.py``) used to have no equivalent at all - it
+# never populated ``day_numbering`` and ``schedule_origin_anchor()`` fell back
+# to matching an anchor's literal name, the exact inference AD-2 forbids.
+# These pin the fix: the model is asked directly which anchor is the origin.
+
+from test_uctsm_llm_extraction import ScriptedClient, extract, script  # noqa: E402
+
+
+def test_native_pipeline_resolves_the_origin_the_model_names_as_day_zero():
+    schedule, _issues, _trace = extract(ScriptedClient(script(**{
+        "Extract the reference dates": {"claims": [{
+            "claim_id": "a1", "evidence_ids": ["e1"], "confidence": 0.95,
+            "candidate": {
+                "code": "FIRST_DOSE", "display_name": "First Dose",
+                "anchor_type": "FIRST_DOSE", "is_schedule_origin": True,
+            },
+        }]},
+    })))
+
+    assert schedule is not None
+    origin = schedule_origin_anchor(schedule)
+    assert origin is not None and origin.code == "FIRST_DOSE"
+    assert schedule.schedule_metadata.day_numbering.day_1_anchor.code == "FIRST_DOSE"
+    assert origin.derivation_rule["role"] == "SCHEDULE_ORIGIN"
+
+
+def test_native_pipeline_never_infers_the_origin_from_the_anchor_name():
+    """A schedule whose only anchor happens to be named 'Baseline' must still
+    require the model to say it is the origin - the name alone is never
+    enough, or a renamed origin (First Dose, Randomisation) would silently
+    stop resolving while this one silently kept working for the wrong reason.
+    """
+    schedule, _issues, _trace = extract(ScriptedClient(script(**{
+        "Extract the reference dates": {"claims": [{
+            "claim_id": "a1", "evidence_ids": ["e1"], "confidence": 0.95,
+            "candidate": {
+                "code": "BASELINE", "display_name": "Baseline",
+                "anchor_type": "BASELINE",
+            },
+        }]},
+    })))
+
+    assert schedule is not None
+    assert schedule.schedule_metadata.day_numbering is None
+    assert schedule_origin_anchor(schedule) is None
+
+
+def test_an_unclaimed_origin_is_a_durable_blocking_issue_not_a_one_time_note():
+    """No anchor was ever claimed as the origin. This must reach the reviewer
+    every time the schedule is (re)validated, not just once at import - the
+    same durability guarantee ``AMBIGUOUS_BASELINE`` already has.
+    """
+    schedule, issues, _trace = extract(ScriptedClient(script()))
+
+    assert schedule is not None
+    assert any(item.issue_code == "UNRESOLVED_SCHEDULE_ORIGIN" for item in issues)
+
+    revalidated = ScheduleValidator().validate(schedule)
+    assert any(item.issue_code == "UNRESOLVED_SCHEDULE_ORIGIN" for item in revalidated)
+    assert any(
+        item.issue_code == "UNRESOLVED_SCHEDULE_ORIGIN"
+        for item in ScheduleValidator.blocking(revalidated)
+    )
+
+
+def test_two_anchors_both_claimed_as_origin_is_reported_ambiguous():
+    schedule, issues, _trace = extract(ScriptedClient(script(**{
+        "Extract the reference dates": {"claims": [
+            {
+                "claim_id": "a1", "evidence_ids": ["e1"], "confidence": 0.9,
+                "candidate": {
+                    "code": "FIRST_DOSE", "display_name": "First Dose",
+                    "anchor_type": "FIRST_DOSE", "is_schedule_origin": True,
+                },
+            },
+            {
+                "claim_id": "a2", "evidence_ids": ["e1"], "confidence": 0.9,
+                "candidate": {
+                    "code": "RANDOMISATION", "display_name": "Randomisation",
+                    "anchor_type": "RANDOMIZATION", "is_schedule_origin": True,
+                },
+            },
+        ]},
+    })))
+
+    assert schedule is not None
+    assert any(item.issue_code == "AMBIGUOUS_BASELINE" for item in issues)
+    assert schedule.schedule_metadata.day_numbering is None
+
+
 def test_a_plan_with_no_anchors_states_its_origin_explicitly():
     """The live product counts from the patient's baseline date; say so."""
     plan = plan_with([], events=[{

@@ -20,7 +20,10 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
       ]
     },
     "androidNavigationBar": {
@@ -62,6 +65,19 @@
         {
           "photosPermission": "Allow My Trial Board to access your photos to set a profile picture.",
           "cameraPermission": "Allow My Trial Board to access your camera to take a profile picture."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow My Trial Board to use the camera to capture audit evidence at your site.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow My Trial Board to record where audit evidence was captured, so a reviewer can verify it came from your site."
         }
       ]
     ],

@@ -126,7 +126,7 @@ class RangeTiming(StrictModel):
 
 class NominalWindowTiming(StrictModel):
     type: Literal["NOMINAL_WITH_WINDOW"] = "NOMINAL_WITH_WINDOW"
-    nominal: OffsetTiming | AbsoluteTiming
+    nominal: OffsetTiming | AbsoluteTiming | ProtocolDayTiming
     window: Window
 
 

@@ -17,7 +17,10 @@ from app.domain.schedule.projection import project_schedule
 from app.domain.schedule.models import (
     ConditionState, Event, PatientConditionStatus, RollingHorizon,
 )
-from app.services.schedule_service import PatientScheduleService, ScheduleReviewService
+from app.services.schedule_service import (
+    PatientScheduleService, ScheduleReviewService,
+    current_protocol_approved_versions, in_force_today,
+)
 from app.domain.schedule.enrolment import enrolment_options
 from app.services.anchor_status_service import AnchorStatusService
 from app.services.parity_service import ParityService
@@ -97,6 +100,13 @@ class ReadModeIn(BaseModel):
     reason: str = Field(min_length=1)
 
 
+class AcceptParityRunIn(BaseModel):
+    """AD-1a: signing off one DIFFERENCES_FOUND run. Reason is mandatory - the
+    same "why" requirement every other reviewed decision in this file carries."""
+
+    reason: str = Field(min_length=1)
+
+
 class UnscheduledVisitIn(BaseModel):
     event_code: str = Field(min_length=1)
     occurred_on: date
@@ -112,6 +122,11 @@ class EvaluateIn(BaseModel):
     # carries the repeat rules that continue past it.
     upcoming_limit: int | None = Field(default=None, gt=0)
     as_of: date | None = None
+    # AD-10: this endpoint commits real date moves. A reason is mandatory so
+    # every evaluation this chokepoint performs is attributable, the same
+    # discipline the impact-preview/confirm gate already holds every other
+    # schedule-changing action to.
+    reason: str = Field(min_length=1)
 
     def rolling(self) -> RollingHorizon | None:
         if self.upcoming_limit is None:
@@ -424,17 +439,11 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         ))
         if trial is None:
             raise HTTPException(404, "Trial not found")
-        query = (
-            select(db.ScheduleVersion)
-            .join(db.ScheduleDefinition, db.ScheduleDefinition.id == db.ScheduleVersion.schedule_definition_id)
-            .join(db.ProtocolVersion, db.ProtocolVersion.id == db.ScheduleDefinition.protocol_version_id)
-            .join(db.Protocol, db.Protocol.id == db.ProtocolVersion.protocol_id)
-            .where(
-                db.Protocol.trial_id == trial_id,
-                db.Protocol.current_version_id == db.ProtocolVersion.id,
-                db.ScheduleVersion.status == "APPROVED",
-            )
-        )
+        # AD-4d: built from the one shared "current enrollable schedule
+        # version" query every entry point now uses (see schedule_service.py),
+        # instead of a copy that could silently drift from the operational
+        # bridge's. ScheduleDefinition is already joined by the helper.
+        query = current_protocol_approved_versions(trial_id)
         if body.schedule_definition_id:
             query = query.where(db.ScheduleDefinition.id == body.schedule_definition_id)
         else:
@@ -443,11 +452,7 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         # Doc 9 s8: a version approved but not yet effective must not take new
         # enrolments. Falling back to the newest IN-FORCE version is what a site
         # expects; silently enrolling onto a future amendment is not.
-        today = date.today()
-        schedules = [
-            item for item in approved
-            if item.effective_from is None or item.effective_from <= today
-        ]
+        schedules = in_force_today(approved)
         if not schedules:
             if approved:
                 soonest = min(
@@ -571,11 +576,32 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         ))
         if run is None:
             raise HTTPException(404, "Extraction run not found")
+        # A run can now produce more than one schedule version - one per
+        # independent Schedule of Assessments the document printed - so the
+        # poller needs the whole list, not a single guessed id.
+        version_ids = session.scalars(select(db.ScheduleVersion.id).where(
+            db.ScheduleVersion.extraction_run_id == run.id,
+        )).all()
         return {
             "id": str(run.id), "status": run.status, "protocol_version_id": str(run.protocol_version_id),
             "schema_version": run.schema_version, "prompt_version": run.prompt_version,
             "model": {"provider": run.provider, "name": run.model_name, "version": run.model_version},
             "trace": run.trace, "error_details": run.error_details,
+            "schedule_version_ids": [str(item) for item in version_ids],
+        }
+
+    @router.get("/schedule-versions/pending-review")
+    def list_pending_schedule_reviews(user: User, session: Db):
+        """Every IN_REVIEW schedule version across this org's trials, newest
+        decision-needed first - the canonical replacement for the legacy
+        `schedule_reviews` inbox. Registered ahead of the
+        `/schedule-versions/{schedule_version_id}` route below so this literal
+        path is matched first, not swallowed as an invalid UUID.
+        """
+        _, organization_id = _identity(user)
+        return {
+            "pending": ScheduleReviewService(session).list_pending_review(
+                organization_id=organization_id),
         }
 
     @router.get("/schedule-versions/{schedule_version_id}")
@@ -611,6 +637,20 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             raise HTTPException(409, str(error)) from error
         return {"id": str(row.id), "decision": row.decision}
 
+    @router.post("/schedule-versions/{schedule_version_id}/extraction-issues/{issue_id}/resolve")
+    def resolve_extraction_issue(schedule_version_id: UUID, issue_id: UUID,
+                                 body: BulkConfirmIn, user: User, session: Db):
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        try:
+            ScheduleReviewService(session).resolve_extraction_issue(
+                schedule_version_id, issue_id, reviewer_id=actor_id, reason=body.reason)
+            session.commit()
+        except (KeyError, ValueError, ImmutableScheduleError) as error:
+            session.rollback()
+            raise HTTPException(409, str(error)) from error
+        return {"status": "RESOLVED"}
+
     @router.post("/schedule-versions/{schedule_version_id}/bulk-confirm", status_code=201)
     def bulk_confirm(schedule_version_id: UUID, body: BulkConfirmIn, user: User, session: Db):
         """Confirm every required field with one action, and record it as one
@@ -629,6 +669,19 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             session.rollback()
             raise HTTPException(409, str(error)) from error
         return {"fields_confirmed": confirmed, "action": "SCHEDULE_BULK_CONFIRMED"}
+
+    @router.post("/schedule-versions/{schedule_version_id}/approve-table")
+    def approve_table(schedule_version_id: UUID, body: BulkConfirmIn, user: User, session: Db):
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        try:
+            ScheduleReviewService(session).approve_reviewed_table(
+                schedule_version_id, reviewer_id=actor_id, reason=body.reason)
+            session.commit()
+        except (KeyError, ValueError, ImmutableScheduleError) as error:
+            session.rollback()
+            raise HTTPException(409, str(error)) from error
+        return {"status": "APPROVED"}
 
     @router.put("/schedule-versions/{schedule_version_id}/events/{event_id}")
     def correct_event(
@@ -835,12 +888,27 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         patient_id: UUID, body: EvaluateIn, user: User, session: Db,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     ):
-        _, organization_id = _identity(user)
+        actor_id, organization_id = _identity(user)
         try:
+            # AD-4d: the server does not let a caller pick an arbitrary
+            # version to evaluate against -- it resolves the patient's pinned
+            # version once, here, and threads it through explicitly rather
+            # than letting evaluate() re-derive it internally.
+            patient = session.scalar(select(db.Patient).where(
+                db.Patient.id == patient_id, db.Patient.organization_id == organization_id,
+            ))
+            if patient is None:
+                raise HTTPException(404, "Patient not found")
+            # AD-10: every date move writes an AuditEvent with before/after.
+            # evaluate() already writes one (action PATIENT_SCHEDULE_EVALUATED,
+            # with the reconciliation it computes internally) - actor_id/reason
+            # thread through to that write rather than this endpoint adding a
+            # second, redundant one.
             evaluation, events = PatientScheduleService(session).evaluate(
                 patient_id, organization_id=organization_id,
+                schedule_version_id=patient.current_schedule_version_id,
                 horizon=body.horizon, idempotency_key=idempotency_key,
-                rolling=body.rolling(),
+                rolling=body.rolling(), actor_id=actor_id, reason=body.reason,
             )
             session.commit()
         except KeyError as error:
@@ -968,14 +1036,18 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             return {"patient_id": str(patient_id), "reminders": [], "calendar": [], "suppressed": []}
 
         rows = session.execute(
-            select(db.PatientEvent, db.Event.code, db.Event.event_type, db.Event.display_name)
+            select(
+                db.PatientEvent, db.Event.code, db.Event.event_type,
+                db.Event.visit_mode, db.Event.display_name,
+            )
             .join(db.Event, db.Event.id == db.PatientEvent.event_definition_id)
             .where(db.PatientEvent.schedule_evaluation_id == patient_schedule.current_evaluation_id)
         ).all()
         projected = [
             ProjectedEvent(
                 logical_key=row.PatientEvent.logical_key, event_code=row.code,
-                event_type=row.event_type, display_name=row.display_name,
+                event_type=row.event_type, visit_mode=row.visit_mode,
+                display_name=row.display_name,
                 status=row.PatientEvent.status,
                 nominal_date=row.PatientEvent.nominal_start_date,
                 earliest_date=row.PatientEvent.earliest_date,
@@ -1157,6 +1229,41 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             session.rollback()
             raise HTTPException(409, str(error)) from error
         return result
+
+    @router.post("/trials/{trial_id}/parity-runs/{run_id}/accept")
+    def accept_parity_run(
+        trial_id: UUID, run_id: UUID, body: AcceptParityRunIn, user: User, session: Db,
+    ):
+        """Sign off one DIFFERENCES_FOUND parity run (AD-1a).
+
+        Lets readiness() pass on this patient without the underlying difference
+        changing - for the case where the engine is correctly right and the
+        operational schedule is what's wrong (e.g. ENGINE_UNDATED), which would
+        otherwise leave the gate permanently unclearable. One run, one reason,
+        no bulk accept.
+        """
+        actor_id, organization_id = _identity(user)
+        try:
+            run = ParityService(session).accept_run(
+                run_id, organization_id=organization_id,
+                actor_id=actor_id, reason=body.reason,
+            )
+            if run.trial_id != trial_id:
+                session.rollback()
+                raise HTTPException(404, "parity run not found for this trial")
+            session.commit()
+        except KeyError as error:
+            session.rollback()
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            session.rollback()
+            raise HTTPException(409, str(error)) from error
+        return {
+            "parity_run_id": str(run.id),
+            "accepted_at": run.accepted_at.isoformat() if run.accepted_at else None,
+            "accepted_by": str(run.accepted_by) if run.accepted_by else None,
+            "accepted_reason": run.accepted_reason,
+        }
 
     @router.get("/patients/{patient_id}/anchors")
     def get_patient_anchor_statuses(patient_id: UUID, user: User, session: Db):

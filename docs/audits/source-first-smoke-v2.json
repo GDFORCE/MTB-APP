@@ -1,0 +1,1891 @@
+{
+  "document": "workflow-smoke-protocol.txt",
+  "pages": 1,
+  "runs": {
+    "source_first": {
+      "calls": 8,
+      "seconds": 47.28,
+      "results": [
+        {
+          "option": {
+            "id": "schedule-1",
+            "label": "Main Schedule of Assessments",
+            "description": "Reconciled source tables"
+          },
+          "schedule": {
+            "schema_version": "uctsm.v1",
+            "schedule_version_id": "804f740e-71f7-4a34-b993-2a86bd75cf78",
+            "schedule_metadata": {
+              "name": "Main Schedule of Assessments",
+              "description": "Schedule workflow test. Phase 1. Indication: software validation.",
+              "schedule_type": "MAIN",
+              "protocol_version_id": null,
+              "version_number": 1,
+              "status": "DRAFT",
+              "effective_from": null,
+              "day_numbering": {
+                "day_1_anchor": {
+                  "kind": "ANCHOR",
+                  "code": "FIRST_DOSE"
+                },
+                "counting_convention": "CLINICAL_DAY"
+              },
+              "extensions": [
+                {
+                  "type": "source_coverage.v1",
+                  "items": [
+                    {
+                      "source_id": "source-1-1",
+                      "page": 1,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-2",
+                      "page": 1,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-3",
+                      "page": 1,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-4",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": null,
+                      "column": "C1D1",
+                      "kind": "VISIT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-5",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": null,
+                      "column": "W4",
+                      "kind": "VISIT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "50f81b8c-a474-4584-a146-83db883ff592"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-6",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Timing",
+                      "column": "C1D1",
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-7",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Timing",
+                      "column": "W4",
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-8",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Visit window",
+                      "column": "C1D1",
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-9",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Visit window",
+                      "column": "W4",
+                      "kind": "TIMING",
+                      "status": "UNRESOLVED",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-10",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Attendance",
+                      "column": "C1D1",
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-11",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Attendance",
+                      "column": "W4",
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-12",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Vitals",
+                      "column": "C1D1",
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "a4f2e713-f355-45e0-bd86-23a68a5d563d"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-13",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "Vitals",
+                      "column": "W4",
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "526240ac-7f7d-4b8e-87a6-86cb50f7fccb"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-14",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "ECG",
+                      "column": "C1D1",
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "81776349-7bfe-4225-8553-04032e0b9dad"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-15",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": "ECG",
+                      "column": "W4",
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "9b69bba4-5f2d-44c6-b7da-48d26896724f"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-16",
+                      "page": 1,
+                      "table": "Table 1. Schedule of Assessments: treatment visits.",
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-17",
+                      "page": 1,
+                      "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                      "row": null,
+                      "column": "FU",
+                      "kind": "VISIT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "c74f9468-d9c9-493d-b0f0-2292302f33c5"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-18",
+                      "page": 1,
+                      "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                      "row": "Timing",
+                      "column": "FU",
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                        "dd883c9e-db03-466e-b1f4-9b88f688afe1"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-19",
+                      "page": 1,
+                      "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                      "row": "Visit window",
+                      "column": "FU",
+                      "kind": "TIMING",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "c74f9468-d9c9-493d-b0f0-2292302f33c5"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-20",
+                      "page": 1,
+                      "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                      "row": "Attendance",
+                      "column": "FU",
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-21",
+                      "page": 1,
+                      "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                      "row": "Adverse event review",
+                      "column": "FU",
+                      "kind": "ASSESSMENT",
+                      "status": "RETAINED",
+                      "entity_ids": [
+                        "0beb7766-2aaf-47e4-b0f2-f0f6d8d8e67a"
+                      ]
+                    },
+                    {
+                      "source_id": "source-1-22",
+                      "page": 1,
+                      "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    },
+                    {
+                      "source_id": "source-1-23",
+                      "page": 1,
+                      "table": null,
+                      "row": null,
+                      "column": null,
+                      "kind": "CONTEXT",
+                      "status": "CONTEXT",
+                      "entity_ids": []
+                    }
+                  ]
+                }
+              ]
+            },
+            "epochs": [],
+            "arms": [],
+            "cohorts": [],
+            "populations": [],
+            "dimensions": [],
+            "anchors": [
+              {
+                "id": "6fc3d437-7075-4b8e-bf0b-2f20a8db70f1",
+                "code": "FIRST_DOSE",
+                "protocol_label": null,
+                "display_name": "First Dose",
+                "anchor_type": "FIRST_DOSE",
+                "derivation_rule": {
+                  "role": "SCHEDULE_ORIGIN"
+                },
+                "source_event_code": "C1D1",
+                "source_condition_code": null,
+                "status": "RESOLVED",
+                "evidence_refs": [
+                  "f554469a-b6c8-4696-adfe-965f78bdcd08"
+                ]
+              },
+              {
+                "id": "dd883c9e-db03-466e-b1f4-9b88f688afe1",
+                "code": "LAST_DOSE",
+                "protocol_label": null,
+                "display_name": "Last Dose",
+                "anchor_type": "LAST_DOSE",
+                "derivation_rule": null,
+                "source_event_code": null,
+                "source_condition_code": null,
+                "status": "RESOLVED",
+                "evidence_refs": [
+                  "f554469a-b6c8-4696-adfe-965f78bdcd08",
+                  "bf7f26b6-6676-46fe-b5f3-eb13d969de38"
+                ]
+              }
+            ],
+            "events": [
+              {
+                "id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "code": "C1D1",
+                "protocol_label": "C1D1",
+                "display_name": "C1D1",
+                "normalized_name": null,
+                "event_type": "SITE_VISIT",
+                "epoch_id": null,
+                "sequence_number": 1,
+                "timing": {
+                  "type": "UNRESOLVED",
+                  "reason": "no timing rule was extracted for this visit",
+                  "source_reference": {},
+                  "requires_review": true
+                },
+                "applicability": [],
+                "conditions": [],
+                "dependencies": [],
+                "dependency_mode": null,
+                "visit_mode": "CLINIC",
+                "allowed_visit_modes": [],
+                "activation": "SCHEDULED",
+                "recurrence": null,
+                "conditional_actions": [],
+                "qualifiers": [],
+                "confinement": null,
+                "activities": [
+                  {
+                    "id": "a4f2e713-f355-45e0-bd86-23a68a5d563d",
+                    "code": "VITALS",
+                    "protocol_label": "Vitals",
+                    "display_name": "Vitals",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": null,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "73181a1d-1fe1-4069-b34a-99537490d9e4",
+                      "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c"
+                    ]
+                  },
+                  {
+                    "id": "81776349-7bfe-4225-8553-04032e0b9dad",
+                    "code": "ECG",
+                    "protocol_label": "ECG",
+                    "display_name": "ECG",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": null,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "848ed42c-2675-4397-93c1-487128118fe9",
+                      "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c"
+                    ]
+                  }
+                ],
+                "evidence_refs": [
+                  "2152e00b-53a8-40c3-bbc5-d92d67521dd5",
+                  "69611d90-f967-452c-9a5d-32c7ffec54db",
+                  "d4f5cedd-2dcb-4bd7-833c-57c6b96a63da",
+                  "d1af8d60-d4f0-4dc2-9baf-e24de4a4d380",
+                  "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c"
+                ],
+                "interpretation_status": "EXTRACTED",
+                "requires_review": false,
+                "metadata": {}
+              },
+              {
+                "id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "code": "W4",
+                "protocol_label": "W4",
+                "display_name": "W4",
+                "normalized_name": null,
+                "event_type": "SITE_VISIT",
+                "epoch_id": null,
+                "sequence_number": 2,
+                "timing": {
+                  "type": "UNRESOLVED",
+                  "reason": "no timing rule was extracted for this visit",
+                  "source_reference": {},
+                  "requires_review": true
+                },
+                "applicability": [],
+                "conditions": [],
+                "dependencies": [],
+                "dependency_mode": null,
+                "visit_mode": "CLINIC",
+                "allowed_visit_modes": [],
+                "activation": "SCHEDULED",
+                "recurrence": null,
+                "conditional_actions": [],
+                "qualifiers": [],
+                "confinement": null,
+                "activities": [
+                  {
+                    "id": "526240ac-7f7d-4b8e-87a6-86cb50f7fccb",
+                    "code": "VITALS",
+                    "protocol_label": "Vitals",
+                    "display_name": "Vitals",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": null,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "7f109136-b021-45f9-9ade-a5c5f9fd6670",
+                      "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c"
+                    ]
+                  },
+                  {
+                    "id": "9b69bba4-5f2d-44c6-b7da-48d26896724f",
+                    "code": "ECG",
+                    "protocol_label": "ECG",
+                    "display_name": "ECG",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": null,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "cd96aa25-298f-47e5-aeb7-e9cc0ae542d0",
+                      "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c"
+                    ]
+                  }
+                ],
+                "evidence_refs": [
+                  "aa0e2bad-fcf9-400a-bc70-65764c56cd83",
+                  "29ff21ba-75c9-4d88-98d6-5bb3662755d3",
+                  "bf951b0c-cd7b-4ad3-aba8-7ed12eabf9f4",
+                  "7ba345d1-df50-49eb-89c7-e68717e3f78e",
+                  "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c"
+                ],
+                "interpretation_status": "EXTRACTED",
+                "requires_review": false,
+                "metadata": {}
+              },
+              {
+                "id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "code": "FU",
+                "protocol_label": "FU",
+                "display_name": "FU",
+                "normalized_name": null,
+                "event_type": "TELEPHONE_CONTACT",
+                "epoch_id": null,
+                "sequence_number": 3,
+                "timing": {
+                  "type": "NOMINAL_WITH_WINDOW",
+                  "nominal": {
+                    "type": "OFFSET",
+                    "reference": {
+                      "kind": "ANCHOR",
+                      "code": "LAST_DOSE"
+                    },
+                    "offset": {
+                      "value": 30,
+                      "unit": "DAY"
+                    }
+                  },
+                  "window": {
+                    "before": {
+                      "value": 2,
+                      "unit": "DAY"
+                    },
+                    "after": {
+                      "value": 2,
+                      "unit": "DAY"
+                    }
+                  }
+                },
+                "applicability": [],
+                "conditions": [],
+                "dependencies": [],
+                "dependency_mode": null,
+                "visit_mode": "TELEPHONE",
+                "allowed_visit_modes": [],
+                "activation": "SCHEDULED",
+                "recurrence": null,
+                "conditional_actions": [],
+                "qualifiers": [],
+                "confinement": null,
+                "activities": [
+                  {
+                    "id": "0beb7766-2aaf-47e4-b0f2-f0f6d8d8e67a",
+                    "code": "ADVERSE_EVENT_REVIEW",
+                    "protocol_label": "Adverse event review",
+                    "display_name": "Adverse event review",
+                    "activity_type": "ASSESSMENT",
+                    "requiredness": "REQUIRED",
+                    "sequence_number": null,
+                    "timing": null,
+                    "conditions": [],
+                    "applicability": [],
+                    "qualifiers": [],
+                    "metadata": {},
+                    "interpretation_status": "EXTRACTED",
+                    "requires_review": false,
+                    "evidence_refs": [
+                      "f608f954-36fd-416c-bb4b-aeba17ef629f",
+                      "22487eaa-d929-4ec8-90e5-fb441b0efca1"
+                    ]
+                  }
+                ],
+                "evidence_refs": [
+                  "62534a6d-f0b6-4685-a95b-4e2ed60d34a6",
+                  "bf7f26b6-6676-46fe-b5f3-eb13d969de38",
+                  "1ebc982e-dae7-4c61-8b1c-4cd75879cef6",
+                  "0400add7-26aa-4fed-8b3b-6ea07e06a581",
+                  "22487eaa-d929-4ec8-90e5-fb441b0efca1"
+                ],
+                "interpretation_status": "EXTRACTED",
+                "requires_review": false,
+                "metadata": {}
+              }
+            ],
+            "conditional_definitions": [],
+            "repeat_blocks": [],
+            "confinement_episodes": [],
+            "evidence": [
+              {
+                "id": "e4a491ae-51e7-4dd0-807b-d3f91c155056",
+                "evidence_type": "SECTION",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "SYNTHETIC SOFTWARE TEST PROTOCOL WF-001. Not a clinical treatment protocol. Title: Schedule workflow test. Phase 1. Indication: software validation.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "356e5f51-f41a-48d1-9a17-e6a68dac95da",
+                "evidence_type": "SECTION",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "This protocol has one Schedule of Assessments, divided across two tables for readability. Both tables apply to all the same enrolled participants; there are no separately assigned substudies, cohorts or treatment arms.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "f554469a-b6c8-4696-adfe-965f78bdcd08",
+                "evidence_type": "SECTION",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "Day 1 is the date of first dose (FIRST_DOSE). Clinical days have no Day 0. The site records the actual LAST_DOSE date separately.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "2152e00b-53a8-40c3-bbc5-d92d67521dd5",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": null,
+                "column_identifier": "C1D1",
+                "source_text": "C1D1",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "aa0e2bad-fcf9-400a-bc70-65764c56cd83",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": null,
+                "column_identifier": "W4",
+                "source_text": "W4",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "69611d90-f967-452c-9a5d-32c7ffec54db",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Timing",
+                "column_identifier": "C1D1",
+                "source_text": "Day 1",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "29ff21ba-75c9-4d88-98d6-5bb3662755d3",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Timing",
+                "column_identifier": "W4",
+                "source_text": "Day 29",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "d4f5cedd-2dcb-4bd7-833c-57c6b96a63da",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Visit window",
+                "column_identifier": "C1D1",
+                "source_text": "+/- 0 days",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "bf951b0c-cd7b-4ad3-aba8-7ed12eabf9f4",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Visit window",
+                "column_identifier": "W4",
+                "source_text": "+/- 3 days",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "d1af8d60-d4f0-4dc2-9baf-e24de4a4d380",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Attendance",
+                "column_identifier": "C1D1",
+                "source_text": "Clinic",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "7ba345d1-df50-49eb-89c7-e68717e3f78e",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Attendance",
+                "column_identifier": "W4",
+                "source_text": "Clinic",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "73181a1d-1fe1-4069-b34a-99537490d9e4",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Vitals",
+                "column_identifier": "C1D1",
+                "source_text": "X",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "7f109136-b021-45f9-9ade-a5c5f9fd6670",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "Vitals",
+                "column_identifier": "W4",
+                "source_text": "X",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "848ed42c-2675-4397-93c1-487128118fe9",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "ECG",
+                "column_identifier": "C1D1",
+                "source_text": "X",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "cd96aa25-298f-47e5-aeb7-e9cc0ae542d0",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": "ECG",
+                "column_identifier": "W4",
+                "source_text": "X",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 1. Schedule of Assessments: treatment visits.",
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "All marked assessments are required. C1D1 and W4 are single visits.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "62534a6d-f0b6-4685-a95b-4e2ed60d34a6",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                "row_identifier": null,
+                "column_identifier": "FU",
+                "source_text": "FU",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "bf7f26b6-6676-46fe-b5f3-eb13d969de38",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                "row_identifier": "Timing",
+                "column_identifier": "FU",
+                "source_text": "30 days after LAST_DOSE",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "1ebc982e-dae7-4c61-8b1c-4cd75879cef6",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                "row_identifier": "Visit window",
+                "column_identifier": "FU",
+                "source_text": "+/- 2 days",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "0400add7-26aa-4fed-8b3b-6ea07e06a581",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                "row_identifier": "Attendance",
+                "column_identifier": "FU",
+                "source_text": "Telephone",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "f608f954-36fd-416c-bb4b-aeba17ef629f",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                "row_identifier": "Adverse event review",
+                "column_identifier": "FU",
+                "source_text": "X",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "22487eaa-d929-4ec8-90e5-fb441b0efca1",
+                "evidence_type": "TABLE_CELL",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "FU is a single required follow-up contact.",
+                "source_locator": {},
+                "extraction_context": {}
+              },
+              {
+                "id": "47c41b27-d225-445b-bc9a-51c5355f3223",
+                "evidence_type": "SECTION",
+                "page_number": 1,
+                "section_title": null,
+                "table_title": null,
+                "row_identifier": null,
+                "column_identifier": null,
+                "source_text": "No other visits, repeating blocks, inpatient stays or conditional assessments are required by this synthetic protocol.",
+                "source_locator": {},
+                "extraction_context": {}
+              }
+            ],
+            "claim_evidence": [
+              {
+                "evidence_id": "f554469a-b6c8-4696-adfe-965f78bdcd08",
+                "claim_type": "ANCHOR",
+                "claim_entity_type": "ANCHOR",
+                "claim_entity_id": "6fc3d437-7075-4b8e-bf0b-2f20a8db70f1",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "f554469a-b6c8-4696-adfe-965f78bdcd08",
+                "claim_type": "ANCHOR",
+                "claim_entity_type": "ANCHOR",
+                "claim_entity_id": "dd883c9e-db03-466e-b1f4-9b88f688afe1",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "bf7f26b6-6676-46fe-b5f3-eb13d969de38",
+                "claim_type": "ANCHOR",
+                "claim_entity_type": "ANCHOR",
+                "claim_entity_id": "dd883c9e-db03-466e-b1f4-9b88f688afe1",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "2152e00b-53a8-40c3-bbc5-d92d67521dd5",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "69611d90-f967-452c-9a5d-32c7ffec54db",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "d4f5cedd-2dcb-4bd7-833c-57c6b96a63da",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "d1af8d60-d4f0-4dc2-9baf-e24de4a4d380",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "aa0e2bad-fcf9-400a-bc70-65764c56cd83",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "29ff21ba-75c9-4d88-98d6-5bb3662755d3",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "bf951b0c-cd7b-4ad3-aba8-7ed12eabf9f4",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "7ba345d1-df50-49eb-89c7-e68717e3f78e",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "62534a6d-f0b6-4685-a95b-4e2ed60d34a6",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "bf7f26b6-6676-46fe-b5f3-eb13d969de38",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "1ebc982e-dae7-4c61-8b1c-4cd75879cef6",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "0400add7-26aa-4fed-8b3b-6ea07e06a581",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "22487eaa-d929-4ec8-90e5-fb441b0efca1",
+                "claim_type": "EVENT_NAME",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "display_name",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "d1af8d60-d4f0-4dc2-9baf-e24de4a4d380",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "7ba345d1-df50-49eb-89c7-e68717e3f78e",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "0400add7-26aa-4fed-8b3b-6ea07e06a581",
+                "claim_type": "EVENT_TYPE",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "visit_mode",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "bf7f26b6-6676-46fe-b5f3-eb13d969de38",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "1ebc982e-dae7-4c61-8b1c-4cd75879cef6",
+                "claim_type": "TIMING",
+                "claim_entity_type": "EVENT",
+                "claim_entity_id": "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                "claim_path": "timing",
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "73181a1d-1fe1-4069-b34a-99537490d9e4",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "a4f2e713-f355-45e0-bd86-23a68a5d563d",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "a4f2e713-f355-45e0-bd86-23a68a5d563d",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "848ed42c-2675-4397-93c1-487128118fe9",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "81776349-7bfe-4225-8553-04032e0b9dad",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "81776349-7bfe-4225-8553-04032e0b9dad",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "7f109136-b021-45f9-9ade-a5c5f9fd6670",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "526240ac-7f7d-4b8e-87a6-86cb50f7fccb",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "526240ac-7f7d-4b8e-87a6-86cb50f7fccb",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "cd96aa25-298f-47e5-aeb7-e9cc0ae542d0",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "9b69bba4-5f2d-44c6-b7da-48d26896724f",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "b2bb01ea-06e2-4480-b0a9-8f5cc288a16c",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "9b69bba4-5f2d-44c6-b7da-48d26896724f",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "f608f954-36fd-416c-bb4b-aeba17ef629f",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "0beb7766-2aaf-47e4-b0f2-f0f6d8d8e67a",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              },
+              {
+                "evidence_id": "22487eaa-d929-4ec8-90e5-fb441b0efca1",
+                "claim_type": "ACTIVITY",
+                "claim_entity_type": "ACTIVITY",
+                "claim_entity_id": "0beb7766-2aaf-47e4-b0f2-f0f6d8d8e67a",
+                "claim_path": null,
+                "interpretation": {},
+                "confidence": 1.0
+              }
+            ],
+            "validation_issues": [],
+            "created_at": "2026-09-10T22:35:32.985529Z"
+          },
+          "issues": [
+            {
+              "id": "9916af5a-2206-4431-9776-fbcc017d967c",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNSUPPORTED_PROTOCOL_CONSTRUCT",
+              "severity": "ERROR",
+              "message": "a timing claim did not describe something the schedule model can represent",
+              "details": {
+                "category": "timing",
+                "claim": "timing-c1d1",
+                "detail": [
+                  {
+                    "type": "literal_error",
+                    "loc": [
+                      "NOMINAL_WITH_WINDOW",
+                      "nominal",
+                      "OffsetTiming",
+                      "type"
+                    ],
+                    "msg": "Input should be 'OFFSET'",
+                    "input": "PROTOCOL_DAY",
+                    "ctx": {
+                      "expected": "'OFFSET'"
+                    },
+                    "url": "https://errors.pydantic.dev/2.13/v/literal_error"
+                  },
+                  {
+                    "type": "missing",
+                    "loc": [
+                      "NOMINAL_WITH_WINDOW",
+                      "nominal",
+                      "OffsetTiming",
+                      "offset"
+                    ],
+                    "msg": "Field required",
+                    "input": {
+                      "type": "PROTOCOL_DAY",
+                      "reference": {
+                        "kind": "ANCHOR",
+                        "code": "FIRST_DOSE"
+                      },
+                      "day": 1
+                    },
+                    "url": "https://errors.pydantic.dev/2.13/v/missing"
+                  }
+                ],
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "7fabe004-1756-4ebe-bb6e-ad193881eef4",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "UNSUPPORTED_PROTOCOL_CONSTRUCT",
+              "severity": "ERROR",
+              "message": "a timing claim did not describe something the schedule model can represent",
+              "details": {
+                "category": "timing",
+                "claim": "timing-w4",
+                "detail": [
+                  {
+                    "type": "literal_error",
+                    "loc": [
+                      "NOMINAL_WITH_WINDOW",
+                      "nominal",
+                      "OffsetTiming",
+                      "type"
+                    ],
+                    "msg": "Input should be 'OFFSET'",
+                    "input": "PROTOCOL_DAY",
+                    "ctx": {
+                      "expected": "'OFFSET'"
+                    },
+                    "url": "https://errors.pydantic.dev/2.13/v/literal_error"
+                  },
+                  {
+                    "type": "missing",
+                    "loc": [
+                      "NOMINAL_WITH_WINDOW",
+                      "nominal",
+                      "OffsetTiming",
+                      "offset"
+                    ],
+                    "msg": "Field required",
+                    "input": {
+                      "type": "PROTOCOL_DAY",
+                      "reference": {
+                        "kind": "ANCHOR",
+                        "code": "FIRST_DOSE"
+                      },
+                      "day": 29
+                    },
+                    "url": "https://errors.pydantic.dev/2.13/v/missing"
+                  }
+                ],
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "ec35c2d6-4492-4428-912f-41e200ae91c4",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "AMBIGUOUS_TIMING",
+              "severity": "ERROR",
+              "message": "no timing rule was extracted for 'C1D1'; a reviewer must supply it before any patient can be scheduled",
+              "details": {
+                "event_code": "C1D1",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "78f6e368-d5b4-4aab-a411-d09b62b39a12",
+              "entity_type": "SCHEDULE",
+              "entity_id": null,
+              "issue_code": "AMBIGUOUS_TIMING",
+              "severity": "ERROR",
+              "message": "no timing rule was extracted for 'W4'; a reviewer must supply it before any patient can be scheduled",
+              "details": {
+                "event_code": "W4",
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "519f6e8d-4cb2-437c-a627-081cd277b4a0",
+              "entity_type": "EVENT",
+              "entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+              "issue_code": "MISSING_EVIDENCE",
+              "severity": "ERROR",
+              "message": "Event identity and timing require linked protocol evidence",
+              "details": {
+                "missing_reference_ids": [],
+                "event_name_claim": true,
+                "timing_claim": false
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "cf17c77c-c205-4387-896f-af62c5f70871",
+              "entity_type": "EVENT",
+              "entity_id": "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579",
+              "issue_code": "AMBIGUOUS_TIMING",
+              "severity": "ERROR",
+              "message": "no timing rule was extracted for this visit",
+              "details": {},
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "71cbd125-0629-4b64-bb87-e609c0197d2f",
+              "entity_type": "EVENT",
+              "entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+              "issue_code": "MISSING_EVIDENCE",
+              "severity": "ERROR",
+              "message": "Event identity and timing require linked protocol evidence",
+              "details": {
+                "missing_reference_ids": [],
+                "event_name_claim": true,
+                "timing_claim": false
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "c9991b17-bc5f-4a36-9632-bab293333af7",
+              "entity_type": "EVENT",
+              "entity_id": "50f81b8c-a474-4584-a146-83db883ff592",
+              "issue_code": "AMBIGUOUS_TIMING",
+              "severity": "ERROR",
+              "message": "no timing rule was extracted for this visit",
+              "details": {},
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "1e4edb11-94d2-40ae-b063-afe7856c531b",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 1 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-1-6",
+                "text": "Day 1",
+                "row": "Timing",
+                "column": "C1D1"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "608341b2-5b49-41e9-9262-d473533c1f9e",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 1 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-1-7",
+                "text": "Day 29",
+                "row": "Timing",
+                "column": "W4"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "7c14b8c6-2712-4c8f-acfe-6da0f2bb5023",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 1 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-1-8",
+                "text": "+/- 0 days",
+                "row": "Visit window",
+                "column": "C1D1"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "792b2d0f-2a6a-407f-8fe0-1bc11d7bb427",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_CONTENT_UNMAPPED",
+              "severity": "ERROR",
+              "message": "Source timing on page 1 has no retained schedule rule.",
+              "details": {
+                "origin": "EXTRACTION",
+                "source_id": "source-1-9",
+                "text": "+/- 3 days",
+                "row": "Visit window",
+                "column": "W4"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "c101f9c9-97bd-43de-80ab-41fc6f29cb55",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_AUDIT_DISCREPANCY",
+              "severity": "ERROR",
+              "message": "Page 1, C1D1: Visit timing (Day 1, window +/- 0 days) is marked as unresolved/omitted in the extracted JSON despite being defined in Table 1.",
+              "details": {
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "60173487-76de-4ec5-b007-93cbe7f93a28",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_AUDIT_DISCREPANCY",
+              "severity": "ERROR",
+              "message": "Page 1, W4: Visit timing (Day 29, window +/- 3 days) is marked as unresolved/omitted in the extracted JSON despite being defined in Table 1.",
+              "details": {
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            }
+          ],
+          "extraction_trace": [
+            {
+              "node": "SOURCE_MAP",
+              "pages": [
+                1
+              ],
+              "document_pages": 1
+            },
+            {
+              "node": "SOURCE_RECONSTRUCTION",
+              "pages": [
+                1
+              ],
+              "units": 23
+            },
+            {
+              "node": "SOURCE_RECONCILIATION",
+              "schedule": {
+                "id": "schedule-1",
+                "label": "Main Schedule of Assessments",
+                "assignment_evidence_ids": [],
+                "source_ids": [
+                  "source-1-1",
+                  "source-1-2",
+                  "source-1-3",
+                  "source-1-4",
+                  "source-1-5",
+                  "source-1-6",
+                  "source-1-7",
+                  "source-1-8",
+                  "source-1-9",
+                  "source-1-10",
+                  "source-1-11",
+                  "source-1-12",
+                  "source-1-13",
+                  "source-1-14",
+                  "source-1-15",
+                  "source-1-16",
+                  "source-1-17",
+                  "source-1-18",
+                  "source-1-19",
+                  "source-1-20",
+                  "source-1-21",
+                  "source-1-22",
+                  "source-1-23"
+                ],
+                "visits": [
+                  {
+                    "code": "C1D1",
+                    "label": "C1D1",
+                    "source_ids": [
+                      "source-1-4",
+                      "source-1-6",
+                      "source-1-8",
+                      "source-1-10",
+                      "source-1-12",
+                      "source-1-14"
+                    ]
+                  },
+                  {
+                    "code": "W4",
+                    "label": "W4",
+                    "source_ids": [
+                      "source-1-5",
+                      "source-1-7",
+                      "source-1-9",
+                      "source-1-11",
+                      "source-1-13",
+                      "source-1-15"
+                    ]
+                  },
+                  {
+                    "code": "FU",
+                    "label": "FU",
+                    "source_ids": [
+                      "source-1-17",
+                      "source-1-18",
+                      "source-1-19",
+                      "source-1-20",
+                      "source-1-21"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "node": "DOCUMENT_STRUCTURE",
+              "sections": 23
+            },
+            {
+              "node": "FIND_SCHEDULE_SECTIONS",
+              "evidence": 23
+            },
+            {
+              "node": "EXTRACT_PROTOCOL_METADATA",
+              "claims": 1
+            },
+            {
+              "node": "EXTRACT_EPOCHS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ARMS_COHORTS_POPULATIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ANCHORS",
+              "claims": 2
+            },
+            {
+              "node": "EXTRACT_EVENTS",
+              "claims": 3
+            },
+            {
+              "node": "EXTRACT_EVENT_TYPES",
+              "claims": 3
+            },
+            {
+              "node": "EXTRACT_TIMING",
+              "claims": 3
+            },
+            {
+              "node": "EXTRACT_CONDITIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_APPLICABILITY",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_DEPENDENCIES",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_DEPENDENCY_MODES",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_RECURRENCE",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_REPEAT_BLOCKS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ACTIVITIES",
+              "claims": 5
+            },
+            {
+              "node": "EXTRACT_ACTIVITY_TIMING",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_ACTIVITY_CONDITIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_QUALIFIERS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_CONDITIONAL_ACTIONS",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_CONDITIONAL_RESOLUTION",
+              "claims": 0
+            },
+            {
+              "node": "EXTRACT_CONFINEMENT",
+              "claims": 0
+            },
+            {
+              "node": "BUILD_RELATIONSHIPS",
+              "relationships": 0
+            },
+            {
+              "node": "EVIDENCE_LINKING",
+              "issues": 0
+            },
+            {
+              "node": "COMPLETENESS_CHECK",
+              "findings": 0
+            },
+            {
+              "node": "CONSISTENCY_CHECK",
+              "findings": 4
+            },
+            {
+              "node": "SCHEDULE_ASSEMBLY"
+            },
+            {
+              "node": "FINAL_VALIDATION",
+              "valid": true,
+              "issues": 4,
+              "completeness_findings": 0
+            },
+            {
+              "node": "SOURCE_COVERAGE",
+              "items": [
+                {
+                  "source_id": "source-1-1",
+                  "page": 1,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-2",
+                  "page": 1,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-3",
+                  "page": 1,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-4",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": null,
+                  "column": "C1D1",
+                  "kind": "VISIT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "fa8ada05-6b55-4ffe-9fbf-3ca1fa224579"
+                  ]
+                },
+                {
+                  "source_id": "source-1-5",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": null,
+                  "column": "W4",
+                  "kind": "VISIT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "50f81b8c-a474-4584-a146-83db883ff592"
+                  ]
+                },
+                {
+                  "source_id": "source-1-6",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Timing",
+                  "column": "C1D1",
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-7",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Timing",
+                  "column": "W4",
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-8",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Visit window",
+                  "column": "C1D1",
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-9",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Visit window",
+                  "column": "W4",
+                  "kind": "TIMING",
+                  "status": "UNRESOLVED",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-10",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Attendance",
+                  "column": "C1D1",
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-11",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Attendance",
+                  "column": "W4",
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-12",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Vitals",
+                  "column": "C1D1",
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "a4f2e713-f355-45e0-bd86-23a68a5d563d"
+                  ]
+                },
+                {
+                  "source_id": "source-1-13",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "Vitals",
+                  "column": "W4",
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "526240ac-7f7d-4b8e-87a6-86cb50f7fccb"
+                  ]
+                },
+                {
+                  "source_id": "source-1-14",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "ECG",
+                  "column": "C1D1",
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "81776349-7bfe-4225-8553-04032e0b9dad"
+                  ]
+                },
+                {
+                  "source_id": "source-1-15",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": "ECG",
+                  "column": "W4",
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "9b69bba4-5f2d-44c6-b7da-48d26896724f"
+                  ]
+                },
+                {
+                  "source_id": "source-1-16",
+                  "page": 1,
+                  "table": "Table 1. Schedule of Assessments: treatment visits.",
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-17",
+                  "page": 1,
+                  "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                  "row": null,
+                  "column": "FU",
+                  "kind": "VISIT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "c74f9468-d9c9-493d-b0f0-2292302f33c5"
+                  ]
+                },
+                {
+                  "source_id": "source-1-18",
+                  "page": 1,
+                  "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                  "row": "Timing",
+                  "column": "FU",
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "c74f9468-d9c9-493d-b0f0-2292302f33c5",
+                    "dd883c9e-db03-466e-b1f4-9b88f688afe1"
+                  ]
+                },
+                {
+                  "source_id": "source-1-19",
+                  "page": 1,
+                  "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                  "row": "Visit window",
+                  "column": "FU",
+                  "kind": "TIMING",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "c74f9468-d9c9-493d-b0f0-2292302f33c5"
+                  ]
+                },
+                {
+                  "source_id": "source-1-20",
+                  "page": 1,
+                  "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                  "row": "Attendance",
+                  "column": "FU",
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-21",
+                  "page": 1,
+                  "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                  "row": "Adverse event review",
+                  "column": "FU",
+                  "kind": "ASSESSMENT",
+                  "status": "RETAINED",
+                  "entity_ids": [
+                    "0beb7766-2aaf-47e4-b0f2-f0f6d8d8e67a"
+                  ]
+                },
+                {
+                  "source_id": "source-1-22",
+                  "page": 1,
+                  "table": "Table 2. Schedule of Assessments continued: follow-up for the same participants.",
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                },
+                {
+                  "source_id": "source-1-23",
+                  "page": 1,
+                  "table": null,
+                  "row": null,
+                  "column": null,
+                  "kind": "CONTEXT",
+                  "status": "CONTEXT",
+                  "entity_ids": []
+                }
+              ]
+            },
+            {
+              "node": "SOURCE_AUDIT",
+              "findings": 2
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

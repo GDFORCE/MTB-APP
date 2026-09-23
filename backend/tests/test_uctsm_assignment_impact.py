@@ -76,7 +76,7 @@ def _schedule(protocol_version_id) -> UniversalSchedule:
             name="Primary", protocol_version_id=protocol_version_id,
             version_number=1, status=ScheduleStatus.APPROVED,
         ),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         arms=[
             StudyDimension(code="ARM_A", protocol_label="Arm A", display_name="Arm A"),
             StudyDimension(code="ARM_B", protocol_label="Arm B", display_name="Arm B"),

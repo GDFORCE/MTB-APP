@@ -1,0 +1,47 @@
+{
+  "document": "30. GCP checklist.pdf",
+  "pages": 10,
+  "runs": {
+    "source_first": {
+      "calls": 1,
+      "reused_responses": 0,
+      "measurement": "fresh",
+      "seconds": 11.25,
+      "results": [
+        {
+          "option": null,
+          "schedule": null,
+          "issues": [
+            {
+              "id": "2a7c35be-d11b-4207-9580-f33bb3c15e2a",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_MAP_UNCERTAIN",
+              "severity": "ERROR",
+              "message": "The provided document is a general GCP Inspection Checklist from the Central Drugs Standard Control Organization and does not contain a clinical protocol schedule of activities or procedures.",
+              "details": {
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            },
+            {
+              "id": "4686d383-99e1-4126-ad1f-31f6ce3b6009",
+              "entity_type": null,
+              "entity_id": null,
+              "issue_code": "SOURCE_SCHEDULE_NOT_FOUND",
+              "severity": "ERROR",
+              "message": "No schedule source was located in this document.",
+              "details": {
+                "origin": "EXTRACTION"
+              },
+              "blocking": true,
+              "status": "OPEN"
+            }
+          ],
+          "extraction_trace": []
+        }
+      ]
+    }
+  }
+}

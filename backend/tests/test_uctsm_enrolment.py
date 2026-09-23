@@ -38,7 +38,7 @@ def schedule() -> UniversalSchedule:
     """Two parts, each with its own cohorts, plus an unnested substudy."""
     return UniversalSchedule(
         schedule_metadata=ScheduleMetadata(name="Primary"),
-        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE")],
+        anchors=[Anchor(code="BASELINE", display_name="Baseline", anchor_type="BASELINE", status="RESOLVED")],
         cohorts=[
             dimension("C1", "Cohort 1", parent_dimension_type="PART", parent_code="A"),
             dimension("C2", "Cohort 2", parent_dimension_type="PART", parent_code="A"),

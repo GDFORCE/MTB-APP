@@ -192,6 +192,10 @@ def test_extraction_without_a_configured_model_fails_visibly(
     client: TestClient, monkeypatch,
 ):
     """A run that cannot start must say so, not sit QUEUED forever."""
+    # Pin the provider: a developer's real .env (loaded by server.py on
+    # import, even in tests) may set UCTSM_EXTRACTION_PROVIDER to something
+    # else, in which case only ANTHROPIC_API_KEY missing would not matter.
+    monkeypatch.setenv("UCTSM_EXTRACTION_PROVIDER", "anthropic")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     workspace = client.post(f"{API}/demo/seed").json()
     trial_id = workspace["trial_id"]
