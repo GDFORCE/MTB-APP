@@ -74,7 +74,7 @@ from app.domain.schedule.timing import (
     Window,
     WithinTiming,
 )
-from app.extraction.graph import ExtractionResult
+from app.extraction.contracts import ExtractionResult
 from schedule_schema import select_baseline_anchor
 
 # The live extractor writes lower-case singular units; the canonical model uses

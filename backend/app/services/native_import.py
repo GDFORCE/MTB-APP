@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models as db
 from app.domain.schedule.models import UniversalSchedule, ValidationIssue
-from app.extraction.graph import ExtractionResult
+from app.extraction.contracts import ExtractionResult
 from app.services.canonical_bridge import _protocol, _trial
 from app.services.extraction_service import ExtractionService
 
@@ -117,7 +117,7 @@ def import_native_schedules(
     version - counterpart to ``canonical_bridge.import_schedule_definitions``
     for definitions carrying an already-computed ``native_schedule``/
     ``native_issues`` payload (produced once, synchronously, by
-    ``runner.run_extraction_for_all_options`` at upload time - see
+    ``runner.extract_schedules`` at upload time - see
     ``server.py``'s ``/protocols/extract``) instead of a legacy
     ``CanonicalSchedulePlan`` to translate. No model call happens here.
 

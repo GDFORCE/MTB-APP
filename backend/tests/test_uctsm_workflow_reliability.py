@@ -8,10 +8,6 @@ from sqlalchemy import func, select
 
 from app.db import models as db
 from app.db.repositories import ScheduleRepository
-from app.domain.schedule.validator import ScheduleValidator
-from app.extraction import runner
-from app.extraction.claude_provider import _label_similarity
-from app.extraction.graph import ExtractionResult
 from app.extraction.llm_client import ExtractionModelError
 from app.services.enrolment_preview import preview_enrolment
 from app.services.operational_bridge import OperationalBridgeService
@@ -19,16 +15,6 @@ from app.services.schedule_service import ScheduleReviewService
 from test_canonical_journey import (
     session, imported, approve, ORG, REVIEWER, BASELINE, HORIZON,
 )
-from test_uctsm_llm_extraction import ScriptedClient, script, extract, PAGES, TWO_OPTIONS_ANSWER
-
-
-def test_prompt_schemas_are_generated_from_the_validated_domain_contracts():
-    from pydantic import TypeAdapter
-    from app.domain.schedule.timing import TimingExpression
-    from app.domain.schedule.condition import ConditionExpression
-    from app.extraction.prompts import _TIMING_EXPRESSION_SCHEMA, _CONDITION_EXPRESSION_SCHEMA
-    assert json.loads(_TIMING_EXPRESSION_SCHEMA) == TypeAdapter(TimingExpression).json_schema()
-    assert json.loads(_CONDITION_EXPRESSION_SCHEMA) == TypeAdapter(ConditionExpression).json_schema()
 
 
 def test_a_repeat_preserves_its_delayed_first_visit_and_window():
@@ -54,21 +40,6 @@ def test_a_repeat_preserves_its_delayed_first_visit_and_window():
     assert result.events[0].timing.latest == date(2026, 2, 1)
 
 
-def test_native_assembly_derives_repeat_start_from_the_explicit_first_timing():
-    schedule, _, _ = extract(ScriptedClient(script(**{
-        "state WHEN it occurs": {"claims": [{"claim_id": "t", "evidence_ids": ["e1"],
-            "candidate": {"event_code": "C1D1", "timing": {"type": "OFFSET",
-                "reference": {"kind": "ANCHOR", "code": "FIRST_DOSE"},
-                "offset": {"value": 42, "unit": "DAY"}}}}]},
-        "Extract visits that repeat": {"claims": [{"claim_id": "r", "evidence_ids": ["e1"],
-            "candidate": {"event_code": "C1D1", "recurrence": {
-                "interval": {"value": 28, "unit": "DAY"},
-                "start_reference": {"kind": "ANCHOR", "code": "FIRST_DOSE"},
-                "termination": {"type": "COUNT", "count": 4}}}}]},
-    })))
-    assert schedule.events[0].recurrence.start_offset.value == 42
-
-
 def test_missing_json_lists_and_invalid_entries_cannot_look_like_no_findings():
     from app.extraction.llm_client import parse_json_list
     for answer in ['{}', '{"claims": [42]}']:
@@ -81,50 +52,6 @@ def preview(session, trial, row, **kwargs):
         session, organization_id=ORG, trial_id=trial.id,
         definition_id=row.schedule_definition_id, baseline=BASELINE, horizon=HORIZON,
         expected_version_id=row.schedule_version_id, **kwargs)
-
-
-def test_timing_and_activity_calls_receive_the_established_identifiers():
-    client = ScriptedClient(script())
-    extract(client)
-    timing = next(prompt for prompt in client.prompts if "state WHEN it occurs" in prompt)
-    context = json.loads(timing.split("Established identifiers from earlier extraction stages:\n")[1].split("\nUse these exact codes")[0])
-    assert context["events"][0]["code"] == "C1D1"
-    assert context["anchors"][0]["code"] == "FIRST_DOSE"
-    activity_timing = next(prompt for prompt in client.prompts if "Established identifiers" in prompt and '"activities":' in prompt)
-    assert '"code": "ECG"' in activity_timing
-
-
-@pytest.mark.parametrize("left,right", [("Cycle 1 Day 2", "Cycle 2 Day 1"), ("Week 4", "Week 40"), ("Week", "Week 4")])
-def test_numeric_visit_identity_is_never_lost_in_label_matching(left, right):
-    assert _label_similarity(left, right) == 0
-
-
-def test_a_failed_option_is_returned_and_blocks_the_surviving_schedule(monkeypatch):
-    client = ScriptedClient(script(**{"Decide whether this document prints more than one": TWO_OPTIONS_ANSWER}))
-    real = runner.run_extraction
-    calls = 0
-    def failing(provider, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise ExtractionModelError("provider interrupted")
-        return real(provider, **kwargs)
-    monkeypatch.setattr(runner, "run_extraction", failing)
-    results = runner.run_extraction_for_all_options(client, PAGES, document_hash="a" * 64)
-    assert len(results) == 2
-    assert results[1][1].schedule is None
-    assert results[0][1].schedule.schedule_metadata.name == TWO_OPTIONS_ANSWER["options"][0]["label"]
-    assert any(issue.issue_code == "SCHEDULE_OPTION_FAILED" and issue.blocking for issue in results[0][1].issues)
-
-
-def test_failed_schedule_discovery_is_a_durable_approval_block():
-    results = runner.run_extraction_for_all_options(ScriptedClient(script(**{
-        "Decide whether this document prints more than one": "broken json",
-    })), PAGES, document_hash="a" * 64)
-    result = results[0][1]
-    result.schedule.validation_issues = result.issues
-    assert any(issue.issue_code == "SCHEDULE_DISCOVERY_FAILED" and issue.blocking
-               for issue in ScheduleValidator().validate(result.schedule))
 
 
 def test_canonical_preview_is_read_only_and_matches_enrollment_with_additional_anchors(session):

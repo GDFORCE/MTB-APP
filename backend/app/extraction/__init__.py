@@ -1,2 +1,1 @@
-"""Claim-based protocol schedule extraction. Never used by patient evaluation."""
-
+"""Protocol schedule extraction seam. Never used by patient evaluation."""

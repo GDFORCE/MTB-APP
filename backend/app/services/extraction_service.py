@@ -10,9 +10,7 @@ from sqlalchemy.orm import Session
 from app.db import models as db
 from app.db.repositories import ScheduleRepository
 from app.domain.schedule.models import ScheduleStatus
-from app.extraction.graph import (
-    DocumentPage, ExtractionProvider, ExtractionResult, run_extraction,
-)
+from app.extraction.contracts import ExtractionResult
 
 
 def utc_now() -> datetime:
@@ -113,7 +111,7 @@ class ExtractionService:
     ) -> list[UUID]:
         """Persist every schedule one run produced - one per independent
         Schedule of Assessments the document printed (see
-        runner.run_extraction_for_all_options) - as its own draft version,
+        runner.extract_schedules) - as its own draft version,
         then mark the run COMPLETED once.
 
         A run that produced no usable schedule at all (every option failed)
@@ -186,24 +184,3 @@ class ExtractionService:
             run.status = "FAILED"
             run.completed_at = utc_now()
             run.error_details = {"type": type(error).__name__, "message": str(error)}
-
-    def execute(
-        self,
-        run_id: UUID,
-        *,
-        provider: ExtractionProvider,
-        pages: list[DocumentPage],
-    ) -> UUID:
-        """Worker entry point from parsed private document pages to persisted
-        draft, for a single already-built provider (the ungated, one-schedule
-        case) - kept for callers that only ever produce one schedule per run.
-        """
-        self.start(run_id)
-        run = self.session.get(db.ExtractionRun, run_id)
-        assert run is not None
-        try:
-            result = run_extraction(provider, document_hash=run.document_hash, pages=pages)
-            return self.complete(run_id, result)
-        except Exception as error:
-            self.fail(run_id, error)
-            raise

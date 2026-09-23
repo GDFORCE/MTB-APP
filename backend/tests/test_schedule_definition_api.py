@@ -168,30 +168,18 @@ def _extracted_schedule() -> pe.ExtractedSchedule:
 
 @pytest.fixture(scope="module")
 def extracted(headers, trial_id):
-    """Run extraction once; the persistence assertions all read this result."""
+    """Persist one draft through the same path an extraction feeds; the
+    persistence assertions all read this result."""
     async def exercise():
-        async with client() as cli:
-            return await cli.post(
-                f"/api/trials/{trial_id}/extract-schedule",
-                headers=headers,
-                files={"file": ("protocol.pdf", b"%PDF-test", "application/pdf")},
-            )
+        schedule = _extracted_schedule()
+        definition_id = await server._persist_schedule_definition(
+            trial_id, schedule, {"id": USER_IDS[0]},
+            source_extraction_id="fixture-source",
+        )
+        return server._schedule_extraction_payload(
+            schedule, schedule_definition_id=definition_id)
 
-    class _Extractor:
-        async def extract(self, data):
-            return _extracted_schedule()
-
-        async def extract_all(self, data):
-            return [(None, _extracted_schedule())]
-
-    original = pe.get_extractor
-    pe.get_extractor = lambda: _Extractor()
-    try:
-        response = run(exercise())
-    finally:
-        pe.get_extractor = original
-    assert response.status_code == 200, response.text
-    return response.json()
+    return run(exercise())
 
 
 def test_procedure_timing_never_becomes_a_visit_window(extracted):

@@ -10,7 +10,6 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 import httpx  # noqa: E402
-import protocol_extraction as pe  # noqa: E402
 import server  # noqa: E402
 
 RUN_ID = uuid.uuid4().hex[:8]
@@ -127,35 +126,9 @@ def test_lookup_found_and_not_found(headers):
     run(exercise())
 
 
-def test_precreation_pdf_extraction(headers, monkeypatch):
-    monkeypatch.setenv("UCTSM_NATIVE_ADD_TRIAL", "false")
-    calls = []
-
-    async def fake_bundle_all(data):
-        calls.append(data)
-        return (
-            pe.ExtractedTrialDetails(
-                ctri_number="CTRI/2026/07/654321",
-                title="Extracted study",
-                phase="Phase II",
-                indications=["Oncology"],
-                drug="Compound Y",
-                duration="12 months",
-                target_enrollment=80,
-                total_visits=12,
-                status="active",
-            ),
-            [(None, pe.ExtractedSchedule.model_validate({
-                "schedule_kind": "linear",
-                "visits": [{"name": "Baseline", "day_offset": 0}],
-                "verification_status": "verified",
-                "verification_confidence": 0.98,
-                "verification_scores": {"overall_schedule": 0.97},
-            }))],
-        )
-
-    monkeypatch.setattr(pe, "extract_protocol_bundle_all", fake_bundle_all)
-
+def test_precreation_extraction_reports_the_engine_is_unavailable(headers):
+    """Extraction was removed ahead of the adaptive rebuild: a valid upload
+    must get a clear 503 so the sponsor falls back to manual entry."""
     async def exercise():
         async with client() as cli:
             response = await cli.post(
@@ -163,124 +136,8 @@ def test_precreation_pdf_extraction(headers, monkeypatch):
                 headers=headers,
                 files={"file": ("protocol.pdf", b"%PDF-test", "application/pdf")},
             )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        details = body["details"]
-        assert details["title"] == "Extracted study"
-        assert details["target_enrollment"] == 80
-        assert details["total_visits"] == 12
-        assert body["schedule_visit_count"] == 1
-        assert body["extraction_id"]
-
-        async with client() as cli:
-            created = await cli.post("/api/trials", headers=headers, json={
-                "title": details["title"],
-                "protocol_id": f"COMBINED-{RUN_ID}",
-                "phase": details["phase"],
-                "condition": "Oncology",
-            })
-            assert created.status_code == 200, created.text
-            trial_id = created.json()["id"]
-            TRIAL_IDS.append(trial_id)
-            consumed = await cli.post(
-                f"/api/trials/{trial_id}/protocol-extractions/"
-                f"{body['extraction_id']}/consume",
-                headers=headers,
-            )
-        assert consumed.status_code == 200, consumed.text
-        assert consumed.json()["visits"][0]["name"] == "Baseline"
-        assert consumed.json()["verification"]["status"] == "verified"
-        assert calls == [b"%PDF-test"], "consuming must not call AI again"
-    run(exercise())
-
-
-@pytest.mark.parametrize("upload_name,upload_bytes,mime", [
-    ("native-protocol.pdf", b"%PDF-native", "application/pdf"),
-    ("native-protocol.txt", b"A synthetic protocol with a schedule of assessments.", "text/plain"),
-])
-def test_precreation_pdf_extraction_native_pipeline(headers, monkeypatch, upload_name, upload_bytes, mime):
-    """Phase 2 cutover: with UCTSM_NATIVE_ADD_TRIAL on, the same three-step
-    Add Trial flow (extract -> create trial -> consume) must work end to end
-    through the native pipeline instead of the legacy one - no frontend
-    change needed, since the request/response shapes stay identical.
-    """
-    from app.domain.schedule.models import UniversalSchedule
-    from app.extraction.graph import DocumentPage, ExtractionResult
-    from app.extraction import runner as extraction_runner
-
-    from test_native_import import native_schedule
-
-    monkeypatch.setenv("UCTSM_NATIVE_ADD_TRIAL", "1")
-    # The fake upload bytes below are not a real PDF - only pages_from_pdf's
-    # real PDFium parsing cares about that, and this test is about the
-    # cutover wiring, not PDF parsing (already covered elsewhere).
-    monkeypatch.setattr(
-        extraction_runner, "pages_from_pdf",
-        lambda data: [DocumentPage(page_number=1, text="stub schedule text")])
-
-    class FakeNativeClient:
-        def complete(self, **kwargs):
-            return pe.ExtractedTrialDetails(
-                ctri_number="CTRI/2026/07/111111", title="Native-extracted study",
-                phase="Phase II", indications=["Oncology"], drug="Compound Z",
-                duration="12 months", target_enrollment=60, total_visits=6,
-                status="active",
-            ).model_dump_json()
-    monkeypatch.setattr(extraction_runner, "build_client", lambda **kwargs: FakeNativeClient())
-
-    calls = []
-
-    def fake_run_extraction_for_all_options(client, pages, *, document_hash, schedule_name):
-        calls.append(document_hash)
-        return [(None, ExtractionResult(
-            schedule=UniversalSchedule.model_validate(
-                native_schedule(event_code="NATIVE_C1D1")),
-            issues=[], extraction_trace=[],
-        ))]
-
-    monkeypatch.setattr(
-        extraction_runner, "run_extraction_for_all_options",
-        fake_run_extraction_for_all_options)
-
-    async def exercise():
-        async with client() as cli:
-            response = await cli.post(
-                "/api/protocols/extract",
-                headers=headers,
-                files={"file": (upload_name, upload_bytes, mime)},
-            )
-        assert response.status_code == 200, response.text
-        body = response.json()
-        details = body["details"]
-        assert details["title"] == "Native-extracted study"
-        assert body["preview"]["schedule"]["events"][0]["code"] == "NATIVE_C1D1"
-        assert body["preview"]["projections"][0]["title"]
-        assert body["schedule_visit_count"] == 1
-        assert body["extraction_id"]
-
-        async with client() as cli:
-            created = await cli.post("/api/trials", headers=headers, json={
-                "title": details["title"],
-                "protocol_id": f"NATIVE-{RUN_ID}",
-                "phase": details["phase"],
-                "condition": "Oncology",
-            })
-            assert created.status_code == 200, created.text
-            trial_id = created.json()["id"]
-            TRIAL_IDS.append(trial_id)
-            consumed = await cli.post(
-                f"/api/trials/{trial_id}/protocol-extractions/"
-                f"{body['extraction_id']}/consume",
-                headers=headers,
-            )
-            assert consumed.status_code == 200, consumed.text
-            assert consumed.json()["schedule_definition_id"]
-
-            built = await cli.post(
-                f"/api/trials/{trial_id}/uctsm-schedule", headers=headers)
-        assert built.status_code == 200, built.text
-        assert built.json()["schedules"], "native import must produce a canonical draft"
-        assert len(calls) == 1, "the pipeline must run exactly once per upload"
+        assert response.status_code == 503, response.text
+        assert "manually" in response.json()["detail"]
     run(exercise())
 
 

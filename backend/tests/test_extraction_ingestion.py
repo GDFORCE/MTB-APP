@@ -8,8 +8,7 @@ does not need a separate pypdfium2-rendering pipeline the way the legacy
 Ollama path does. It needs three things wired together: per-page text-status
 classification (pages_from_pdf), an explicit marker so the model knows which
 pages to fall back to the image for (document_text), and the native PDF
-attached only when at least one page actually needs it (build_provider /
-AnthropicClient).
+attached only when at least one page actually needs it (AnthropicClient).
 """
 
 from pathlib import Path
@@ -19,9 +18,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.extraction.graph import DocumentPage
+from app.extraction.contracts import DocumentPage
+from app.extraction.documents import document_text, load_pages, pages_from_pdf
 from app.extraction.llm_client import AnthropicClient
-from app.extraction.runner import build_provider, document_text, load_pages, pages_from_pdf
 
 
 def page(number: int, text: str, status: str = "text") -> DocumentPage:
@@ -81,35 +80,6 @@ def test_document_text_marks_only_pages_with_no_usable_text():
     assert "scanned or image-only page" in page_3_block
 
 
-# --- build_provider only attaches the PDF when a page actually needs it ------
-
-def test_build_provider_skips_the_pdf_when_every_page_has_real_text():
-    provider = build_provider(
-        [page(1, "text", "text"), page(2, "more text", "text")],
-        pdf_bytes=b"the-actual-pdf-bytes",
-    )
-
-    assert provider.client._pdf_bytes is None
-
-
-def test_build_provider_attaches_the_pdf_when_a_page_has_no_usable_text():
-    provider = build_provider(
-        [page(1, "text", "text"), page(2, "", "image_or_empty")],
-        pdf_bytes=b"the-actual-pdf-bytes",
-    )
-
-    assert provider.client._pdf_bytes == b"the-actual-pdf-bytes"
-
-
-def test_build_provider_with_no_pdf_bytes_available_never_attaches_one():
-    """A plain-text upload (no PDF at all) has nothing to fall back to."""
-    provider = build_provider(
-        [page(1, "", "image_or_empty")], pdf_bytes=None,
-    )
-
-    assert provider.client._pdf_bytes is None
-
-
 # --- AnthropicClient: the document block actually reaches the model call -----
 
 class _RecordingMessages:
@@ -159,12 +129,6 @@ def test_the_document_block_carries_the_real_pdf_bytes_when_attached(monkeypatch
     assert document_block["source"]["data"] == base64.standard_b64encode(pdf_bytes).decode("ascii")
     # The document must be readable before the prompt text that references it.
     assert content[0] is document_block
-
-
-def test_the_system_prompt_tells_the_model_about_the_image_fallback():
-    from app.extraction.prompts import SYSTEM
-
-    assert "page images" in SYSTEM or "page image" in SYSTEM
 
 
 # --- GeminiClient: a second LLMClient behind the identical contract ----------
@@ -260,46 +224,6 @@ def test_gemini_client_without_a_key_raises_extraction_not_configured(monkeypatc
 
     with pytest.raises(ExtractionNotConfigured):
         client.complete(system="sys", prompt="prompt")
-
-
-# --- provider selection: which LLMClient answers extraction calls -----------
-
-def test_build_client_defaults_to_anthropic(monkeypatch):
-    from app.extraction.runner import build_client
-
-    monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
-
-    assert isinstance(build_client(), AnthropicClient)
-
-
-def test_build_client_switches_to_gemini_when_selected(monkeypatch):
-    from app.extraction.llm_client import GeminiClient
-    from app.extraction.runner import build_client
-
-    monkeypatch.setenv("UCTSM_EXTRACTION_PROVIDER", "gemini")
-
-    assert isinstance(build_client(), GeminiClient)
-
-
-def test_build_client_selection_is_case_insensitive(monkeypatch):
-    from app.extraction.llm_client import GeminiClient
-    from app.extraction.runner import build_client
-
-    monkeypatch.setenv("UCTSM_EXTRACTION_PROVIDER", "GEMINI")
-
-    assert isinstance(build_client(), GeminiClient)
-
-
-def test_provider_configured_checks_the_key_for_the_selected_provider(monkeypatch):
-    from app.extraction.runner import provider_configured
-
-    monkeypatch.setenv("UCTSM_EXTRACTION_PROVIDER", "gemini")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "present-but-irrelevant")
-    assert provider_configured() is False
-
-    monkeypatch.setenv("GEMINI_API_KEY", "now-present")
-    assert provider_configured() is True
 
 
 # --- load_pages: the raw PDF bytes survive the fetch, once ------------------

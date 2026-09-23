@@ -102,7 +102,7 @@ class AnthropicClient(DocumentContextClient):
         self._model = model or os.getenv("UCTSM_EXTRACTION_MODEL") or DEFAULT_MODEL
         self._document_text = document_text
         # AD-2a: the native PDF, attached only when at least one page has no
-        # usable embedded text (runner.py's build_provider decides this) - a
+        # usable embedded text (the caller decides this) - a
         # scanned page's own image, which Claude reads natively, is the only
         # ingestion path for it; pypdfium2's text layer has nothing to offer.
         self._pdf_bytes = pdf_bytes
@@ -166,10 +166,9 @@ class GeminiClient(DocumentContextClient):
     provider sitting behind the same interface, not a second pipeline.
 
     Gemini's own native PDF understanding covers the AD-2a image fallback the
-    same way Claude's does (``types.Part.from_bytes``), so
-    ``build_provider``'s "attach the PDF only when a page needs it" decision
-    (runner.py) applies unchanged no matter which client ends up handling
-    the call.
+    same way Claude's does (``types.Part.from_bytes``), so a caller's
+    "attach the PDF only when a page needs it" decision applies unchanged no
+    matter which client ends up handling the call.
     """
 
     def __init__(

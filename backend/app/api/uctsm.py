@@ -30,7 +30,7 @@ from app.services.impact_service import PatientScheduleImpactService
 from app.services.schedule_projection import (
     ProjectedConfinement, ProjectedEvent, project,
 )
-from app.extraction.runner import execute_run, provider_configured
+from app.extraction.runner import ENGINE_UNAVAILABLE_MESSAGE, engine_available, execute_run
 from app.services.extraction_service import ExtractionService
 from app.services.demo_service import DemoService
 
@@ -553,14 +553,14 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         # Reading a full protocol takes minutes, so the run executes in the
         # background and the caller polls GET /extraction-runs/{id}. A run that
         # cannot start says so now rather than sitting QUEUED forever.
-        configured = provider_configured()
+        configured = engine_available()
         if configured:
             background.add_task(_run_extraction_task, run.id)
         else:
             run.status = "FAILED"
             run.error_details = {
                 "type": "ExtractionNotConfigured",
-                "message": "ANTHROPIC_API_KEY is not set on the server",
+                "message": ENGINE_UNAVAILABLE_MESSAGE,
             }
             session.commit()
         return {

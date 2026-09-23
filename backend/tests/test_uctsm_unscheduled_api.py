@@ -188,15 +188,8 @@ def test_an_unknown_event_code_is_a_not_found(
     assert response.status_code == 404
 
 
-def test_extraction_without_a_configured_model_fails_visibly(
-    client: TestClient, monkeypatch,
-):
+def test_extraction_without_an_engine_fails_visibly(client: TestClient):
     """A run that cannot start must say so, not sit QUEUED forever."""
-    # Pin the provider: a developer's real .env (loaded by server.py on
-    # import, even in tests) may set UCTSM_EXTRACTION_PROVIDER to something
-    # else, in which case only ANTHROPIC_API_KEY missing would not matter.
-    monkeypatch.setenv("UCTSM_EXTRACTION_PROVIDER", "anthropic")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     workspace = client.post(f"{API}/demo/seed").json()
     trial_id = workspace["trial_id"]
 
@@ -227,7 +220,7 @@ def test_extraction_without_a_configured_model_fails_visibly(
 
     run = client.get(f"{API}/extraction-runs/{body['extraction_run_id']}").json()
     assert run["status"] == "FAILED"
-    assert "ANTHROPIC_API_KEY" in str(run.get("error_details"))
+    assert "being rebuilt" in str(run.get("error_details"))
 
 
 # --- the cutover gate, over the API -------------------------------------------------
