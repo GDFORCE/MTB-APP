@@ -8,7 +8,12 @@ from .timing import (
     NominalWindowTiming, OffsetTiming, ProtocolDefinedTiming, RangeTiming,
     ProtocolDayTiming, TemporalAmount, TriggeredTiming, UnresolvedTiming, WithinTiming,
 )
-from .timing import StrictModel
+from .timing import (
+    ActivityValue, AllConstraint, AnchorValue, AnyConstraint, AtConstraint, ConstraintTiming,
+    EventValue, LiteralDateValue, LowerBoundConstraint, ProcessBoundaryValue, ShiftValue,
+    StrictModel,
+    UnsupportedConstraint, UpperBoundConstraint,
+)
 
 
 def _amount(value: TemporalAmount) -> str:
@@ -22,8 +27,102 @@ def _reference(value: object) -> str:
     return str(code).replace("_", " ").title() if code else "reference event"
 
 
+def _value_display(value: object) -> str:
+    if isinstance(value, AnchorValue):
+        suffix = "" if value.accepts.value == "ACTUAL" else " (planned or actual)"
+        return f"{_reference(value)}{suffix}"
+    if isinstance(value, EventValue):
+        selector = value.occurrence
+        which = (f"occurrence {selector.number}" if selector.type == "NUMBER"
+                 else f"{selector.type.lower()} occurrence")
+        suffix = "" if value.accepts.value == "ACTUAL" else ", planned or actual"
+        edge = f"{value.boundary.lower()} of " if value.boundary else ""
+        return f"{edge}{_reference(value)} ({which}{suffix})"
+    if isinstance(value, ProcessBoundaryValue):
+        edge = "start" if value.boundary == "START" else "end"
+        return f"actual {edge} of {value.process_code.replace('_', ' ').lower()}"
+    if isinstance(value, ActivityValue):
+        return f"actual {value.activity_code.replace('_', ' ').lower()} time"
+    if isinstance(value, LiteralDateValue):
+        return value.value.isoformat()
+    if isinstance(value, ShiftValue):
+        sign = "+" if value.amount.value >= 0 else "-"
+        amount = value.amount.model_copy(update={"value": abs(value.amount.value)})
+        return f"{_value_display(value.reference)} {sign} {_amount(amount)}"
+    return "unknown value"
+
+
+def constraint_display(node: object) -> str:
+    """Plain-language rendering of a constraint tree (every restriction shown)."""
+    if isinstance(node, LowerBoundConstraint):
+        return f"{'on or after' if node.inclusive else 'after'} {_value_display(node.value)}"
+    if isinstance(node, UpperBoundConstraint):
+        return f"{'on or before' if node.inclusive else 'before'} {_value_display(node.value)}"
+    if isinstance(node, AtConstraint):
+        return f"at {_value_display(node.value)}"
+    if isinstance(node, AllConstraint):
+        return " and ".join(
+            f"({constraint_display(item)})" if isinstance(item, AnyConstraint) else constraint_display(item)
+            for item in node.items)
+    if isinstance(node, AnyConstraint):
+        return " or ".join(
+            f"({constraint_display(item)})" if isinstance(item, AllConstraint) else constraint_display(item)
+            for item in node.items)
+    if isinstance(node, UnsupportedConstraint):
+        return f"Not yet executable: {node.source_operator}"
+    return "Unrecognised restriction"
+
+
+def _references_of(value: object) -> list[dict[str, object]]:
+    output: list[dict[str, object]] = []
+    while isinstance(value, ShiftValue):
+        value = value.reference
+    if isinstance(value, AnchorValue):
+        output.append({"kind": "ANCHOR", "code": value.code, "accepts": value.accepts.value})
+    elif isinstance(value, EventValue):
+        output.append({"kind": "EVENT", "code": value.event_code,
+                       "occurrence": value.occurrence.model_dump(mode="json"),
+                       "accepts": value.accepts.value})
+    elif isinstance(value, ActivityValue):
+        output.append({"kind": "ACTIVITY", "code": value.activity_code, "accepts": "ACTUAL"})
+    elif isinstance(value, ProcessBoundaryValue):
+        output.append({"kind": "PROCESS", "code": value.process_code,
+                       "boundary": value.boundary, "accepts": "ACTUAL"})
+    return output
+
+
+def constraint_view(node: object, path: str) -> dict[str, object]:
+    """Formatter-friendly tree: every node carries ``summary`` (plain words),
+    its effective id (explicit id or structural path) and its children, so a
+    generic reviewer UI can show each restriction without knowing the AST."""
+    value = getattr(node, "value", None)
+    view: dict[str, object] = {
+        "id": getattr(node, "id", None) or path,
+        "path": path,
+        "type": getattr(node, "type", type(node).__name__),
+        "summary": constraint_display(node),
+    }
+    if hasattr(node, "inclusive"):
+        view["inclusive"] = node.inclusive
+    if value is not None:
+        view["value_summary"] = _value_display(value)
+        view["references"] = _references_of(value)
+    if isinstance(node, UnsupportedConstraint):
+        view.update(family=node.family, source_operator=node.source_operator,
+                    source_text=node.source_text, executable=False)
+    view["evidence_refs"] = list(getattr(node, "evidence_refs", []) or [])
+    view["items"] = [
+        constraint_view(child, f"{path}/items/{index}")
+        for index, child in enumerate(getattr(node, "items", None) or [])
+    ]
+    return view
+
+
 def timing_display(event: Event) -> tuple[str, str | None]:
     timing = event.timing
+    if isinstance(timing, ConstraintTiming):
+        text = constraint_display(timing.constraint)
+        return text[:1].upper() + text[1:], None
     if isinstance(timing, AbsoluteTiming):
         return str(timing.value), None
     if isinstance(timing, OffsetTiming):
@@ -67,6 +166,8 @@ class ScheduleDisplayProjection(StrictModel):
     event_type_display: str
     activities_display: list[str] = Field(default_factory=list)
     condition_display: str | None = None
+    #: Every composable restriction on the event, in words (None when none).
+    constraints_display: str | None = None
     status: str
     requires_review: bool
     evidence_refs: list[str] = Field(default_factory=list)
@@ -88,6 +189,8 @@ def project_schedule(schedule: UniversalSchedule) -> list[ScheduleDisplayProject
             event_type_display=event.event_type.replace("_", " ").title(),
             activities_display=[item.display_name for item in event.activities],
             condition_display="Conditional" if event.conditions else None,
+            constraints_display=(
+                constraint_display(event.constraints) if event.constraints is not None else None),
             status=event.interpretation_status.value,
             requires_review=event.requires_review,
             evidence_refs=[str(item) for item in evidence_refs],

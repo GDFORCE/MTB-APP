@@ -232,6 +232,90 @@ class GeminiClient(DocumentContextClient):
         return response.text or ""
 
 
+#: Matches the model the schedule prototype was tuned against
+#: (prototypes/visit_schedule). Override with UCTSM_EXTRACTION_MODEL.
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
+
+
+class OpenAIClient(DocumentContextClient):
+    """OpenAI, via the Chat Completions API - the same ``LLMClient`` contract
+    as the Anthropic and Gemini clients.
+
+    The reply is requested as a JSON object: every reader prompt asks for one,
+    and constraining the output removes a whole class of unparseable replies.
+    A scanned page is read from the attached PDF itself, sent as a file part.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        document_text: str = "",
+        pdf_bytes: bytes | None = None,
+    ):
+        self._api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self._model = model or os.getenv("UCTSM_EXTRACTION_MODEL") or DEFAULT_OPENAI_MODEL
+        self._document_text = document_text
+        self._pdf_bytes = pdf_bytes
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._api_key)
+
+    def _client(self):
+        if not self._api_key:
+            raise ExtractionNotConfigured(
+                "OPENAI_API_KEY is not set; extraction cannot run"
+            )
+        import openai  # lazy so the app boots without the dependency or key
+
+        return openai.OpenAI(api_key=self._api_key)
+
+    def complete(
+        self, *, system: str, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> str:
+        client = self._client()
+        content: list[dict[str, Any]] = []
+        if self._pdf_bytes:
+            content.append({
+                "type": "file",
+                "file": {
+                    "filename": "protocol.pdf",
+                    "file_data": "data:application/pdf;base64,"
+                                 + base64.standard_b64encode(self._pdf_bytes).decode("ascii"),
+                },
+            })
+        if self._document_text:
+            content.append({
+                "type": "text",
+                "text": f"<protocol_document>\n{self._document_text}\n</protocol_document>",
+            })
+        content.append({"type": "text", "text": prompt})
+        try:
+            response = client.chat.completions.create(
+                model=self._model,
+                max_completion_tokens=max_tokens,
+                temperature=0.1,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": content},
+                ],
+            )
+        except Exception as error:  # noqa: BLE001 - re-raised as our own type
+            raise ExtractionModelError(f"model request failed: {error}") from error
+        choice = (response.choices or [None])[0]
+        if choice is None:
+            raise ExtractionModelError("model returned no choices")
+        if getattr(choice.message, "refusal", None):
+            raise ExtractionModelError(f"model refused: {choice.message.refusal}")
+        if choice.finish_reason == "length":
+            # Truncated JSON is unrecoverable; say so rather than failing to parse.
+            raise ExtractionModelError("model reply was cut off at the output token limit")
+        return choice.message.content or ""
+
+
 _FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
 
 

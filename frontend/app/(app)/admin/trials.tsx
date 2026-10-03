@@ -46,9 +46,9 @@ const STATUS_FILTERS = [
 
 function statusMeta(status?: string): { fg: string; bg: string; Icon: any } {
   switch ((status || "").toLowerCase()) {
-    case "active": return { fg: C.success, bg: "rgba(92,154,110,0.15)", Icon: Activity };
-    case "completed": return { fg: C.info, bg: "rgba(123,107,184,0.12)", Icon: CheckCircle2 };
-    case "suspended": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)", Icon: XCircle };
+    case "active": return { fg: C.success, bg: "rgba(30,122,70,0.15)", Icon: Activity };
+    case "completed": return { fg: C.info, bg: "rgba(45,108,181,0.12)", Icon: CheckCircle2 };
+    case "suspended": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)", Icon: XCircle };
     default: return { fg: C.mutedFg, bg: C.surface, Icon: Clock };
   }
 }
@@ -202,7 +202,7 @@ export default function AdminTrials() {
                         <View style={tr.visitPill}><Clock size={12} color={C.info} /><RNText style={tr.visitTxt}>{t.visits?.upcoming || 0}</RNText></View>
                         <View style={tr.visitPill}><XCircle size={12} color={C.destructive} /><RNText style={tr.visitTxt}>{t.visits?.missed || 0}</RNText></View>
                         <View style={{ flex: 1 }} />
-                        <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                        <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                       </View>
                     </Pressable>
                   );
@@ -371,7 +371,7 @@ function Stat({ label, value, fg }: { label: string; value: number | string; fg:
 }
 
 const tr = StyleSheet.create({
-  banner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(216,154,60,0.08)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(216,154,60,0.3)", padding: 12, marginTop: 14 },
+  banner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(178,106,0,0.08)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(178,106,0,0.3)", padding: 12, marginTop: 14 },
   bannerTxt: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: C.foreground },
   iconWrap: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" },
   title: { fontFamily: fonts.semibold, fontSize: 14, color: C.foreground, lineHeight: 19 },
@@ -401,7 +401,7 @@ const tr = StyleSheet.create({
   stat: { flex: 1, backgroundColor: C.card, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingVertical: 12, alignItems: "center" },
   statValue: { fontFamily: fonts.display, fontSize: 20, fontVariant: ["tabular-nums"] },
   statLabel: { fontFamily: fonts.regular, fontSize: 10, color: C.mutedFg, marginTop: 2 },
-  maskPill: { paddingHorizontal: 8, height: 18, borderRadius: 9, backgroundColor: "rgba(216,154,60,0.15)", alignItems: "center", justifyContent: "center", marginBottom: 6 },
+  maskPill: { paddingHorizontal: 8, height: 18, borderRadius: 9, backgroundColor: "rgba(178,106,0,0.15)", alignItems: "center", justifyContent: "center", marginBottom: 6 },
   maskPillTxt: { fontFamily: fonts.bold, fontSize: 9, letterSpacing: 0.8, color: C.warning },
   subjectRow: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: C.surface, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
   subjectAvatar: { width: 30, height: 30, borderRadius: 10, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" },

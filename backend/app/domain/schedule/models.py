@@ -4,17 +4,20 @@ from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, model_validator
 
 from .condition import ConditionExpression
 from .timing import (
     AnchorReference,
+    Constraint,
     PositiveTemporalAmount,
     StrictModel,
     TemporalReference,
     TemporalAmount,
     TimingExpression,
+    Window,
 )
 
 
@@ -132,6 +135,38 @@ class DependencyMode(StrEnum):
     UNCLEAR = "UNCLEAR"
 
 
+class CycleDependencyMode(StrEnum):
+    """How each treatment cycle's start is dated (doc F1-F3).
+
+    NOMINAL: every cycle sits on the grid counted from Cycle 1 Day 1, so a
+    delayed Cycle 2 does not move Cycle 3. ACTUAL_PREVIOUS_CYCLE_START: each
+    cycle starts one cycle length after the day the previous cycle ACTUALLY
+    started, so a later cycle cannot be dated until the one before it happened.
+    MANUAL: a person enters each cycle start. UNCLEAR: the protocol does not
+    say, which blocks approval - the engine never picks one.
+    """
+
+    NOMINAL = "NOMINAL"
+    ACTUAL_PREVIOUS_CYCLE_START = "ACTUAL_PREVIOUS_CYCLE_START"
+    MANUAL = "MANUAL"
+    UNCLEAR = "UNCLEAR"
+
+
+#: The repeat-block mode that states the same thing as each cycle mode. A cycle
+#: block carries both; disagreement is two readings of one protocol rule.
+CYCLE_BLOCK_DEPENDENCY_MODES: dict[CycleDependencyMode, DependencyMode] = {
+    CycleDependencyMode.NOMINAL: DependencyMode.NOMINAL,
+    CycleDependencyMode.ACTUAL_PREVIOUS_CYCLE_START: DependencyMode.ACTUAL_PREVIOUS_EVENT,
+    CycleDependencyMode.MANUAL: DependencyMode.MANUAL,
+    CycleDependencyMode.UNCLEAR: DependencyMode.UNCLEAR,
+}
+
+
+def cycle_start_anchor_code(plan_code: str, number: int) -> str:
+    """The addressable anchor for one cycle's start, e.g. ``CYCLE_3_START``."""
+    return f"{plan_code}_{number}_START"
+
+
 class QualifierScope(StrEnum):
     CELL = "CELL"
     ROW = "ROW"
@@ -226,7 +261,7 @@ class BlockState(StrEnum):
 #: PROTOCOL-LOGIC members are computed by ScheduleEvaluator from the schedule
 #: definition and previously recorded facts - no code outside the evaluator
 #: writes them: RESOLVED, AVAILABLE_ON_DEMAND, WAITING_FOR_ANCHOR,
-#: WAITING_FOR_CONDITION, NOT_APPLICABLE, BLOCKED, PAUSED, UNRESOLVED,
+#: WAITING_FOR_CONDITION, WAITING_FOR_ASSIGNMENT, NOT_APPLICABLE, BLOCKED, PAUSED, UNRESOLVED,
 #: CANCELLED, UPCOMING, IN_CONFINEMENT, EXTENDED, DISCHARGE_PLANNED.
 #:
 #: OPERATIONAL-REALITY members are facts a human/site recorded - the evaluator
@@ -280,6 +315,13 @@ class PatientEventStatus(StrEnum):
     AVAILABLE_ON_DEMAND = "AVAILABLE_ON_DEMAND"
     WAITING_FOR_ANCHOR = "WAITING_FOR_ANCHOR"
     WAITING_FOR_CONDITION = "WAITING_FOR_CONDITION"
+    # Doc H2: the visit depends only on an assignment the patient does not have
+    # yet (arm, cohort, population, or another study dimension - e.g. before a
+    # late randomisation). Like every WAITING_* status it has no date, no
+    # reminder and can never be overdue; it is kept apart from
+    # WAITING_FOR_CONDITION because the action it needs is a randomisation or
+    # assignment, not a clinical event.
+    WAITING_FOR_ASSIGNMENT = "WAITING_FOR_ASSIGNMENT"
     NOT_APPLICABLE = "NOT_APPLICABLE"
     BLOCKED = "BLOCKED"
     PAUSED = "PAUSED"
@@ -469,6 +511,10 @@ class ConditionalAction(StrictModel):
     action_type: Literal[
         "ADD_EVENT", "REPEAT_EVENT", "STOP_BLOCK", "PAUSE_BLOCK",
         "RESUME_BLOCK", "EXTEND_CONFINEMENT", "CANCEL_EVENT", "MANUAL_REVIEW",
+        # WP3 (RL-10/RL-11): transitions of ONE intervention/pathway process
+        # (``ProcessDefinition.code``). Only obligations linked to that process
+        # change; other interventions and follow-up continue.
+        "HOLD_PROCESS", "RESUME_PROCESS", "STOP_PROCESS", "COMPLETE_PROCESS",
     ]
     target_code: str = Field(min_length=1)
     condition: ConditionExpression
@@ -484,11 +530,37 @@ class ConfinementDefinition(StrictModel):
     evidence_refs: list[UUID] = Field(default_factory=list)
 
 
+class RuleScope(StrEnum):
+    """Whose situation a protocol rule is about (doc I8).
+
+    "Grade 3 toxicity: hold treatment" is about one patient. "Fatal toxicity:
+    accrual is suspended and the DSMC reviews" is about the trial. Only the
+    first kind may change a patient's visits; SITE/COUNTRY/TRIAL rules belong
+    to a trial-level workflow and the patient engine refuses to act on them.
+    """
+
+    PATIENT = "PATIENT"
+    ARM = "ARM"
+    COHORT = "COHORT"
+    SITE = "SITE"
+    COUNTRY = "COUNTRY"
+    TRIAL = "TRIAL"
+
+
+#: Scopes whose rules act on an individual patient's schedule. ARM and COHORT
+#: rules still describe each patient in that group; which patients is said by
+#: the rule's applicability, exactly as for a PATIENT rule.
+PATIENT_RULE_SCOPES = frozenset({RuleScope.PATIENT, RuleScope.ARM, RuleScope.COHORT})
+
+
 class ConditionalDefinition(StrictModel):
     id: UUID = Field(default_factory=uuid4)
     code: str = Field(min_length=1)
     protocol_label: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
+    # Default PATIENT keeps every stored conditional definition behaving exactly
+    # as before; it was the only kind the engine ever had.
+    scope: RuleScope = RuleScope.PATIENT
     condition: ConditionExpression
     trigger_event_code: str | None = None
     applicability: list[ApplicabilityRule] = Field(default_factory=list)
@@ -508,6 +580,17 @@ class RepeatBlock(StrictModel):
     event_codes: list[str] = Field(min_length=1)
     dependency_mode: DependencyMode
     resume_mode: Literal["NOMINAL", "ACTUAL_RESUME", "MANUAL", "UNCLEAR"] = "UNCLEAR"
+    #: What ends a pause. ``None`` (every stored block) and EXPLICIT_RESUME both
+    #: mean only an explicit RESUME_BLOCK transition resumes the block: marking
+    #: the pausing condition RESOLVED ends that condition EPISODE but does not
+    #: silently un-pause (the WP3 fix of the I1 hazard). CONDITION_RESOLUTION
+    #: is the protocol stating that resolution itself resumes treatment, on the
+    #: recorded resolution date.
+    resume_trigger: Literal["EXPLICIT_RESUME", "CONDITION_RESOLUTION"] | None = None
+    # Doc F1-F5: a treatment-cycle block states its cycles here - length, how
+    # each start is dated, and what ends them. None keeps a plain repeat block.
+    # Stored inside the block's existing JSON, so no schema change is needed.
+    cycle_plan: CyclePlan | None = None
     evidence_refs: list[UUID] = Field(default_factory=list)
 
 
@@ -572,6 +655,183 @@ class RecurrenceRule(StrictModel):
     start_offset: TemporalAmount | None = None
     termination: RecurrenceTermination
     include_start: bool = True
+    #: AT-19: the versioned month-end semantics a MONTH/YEAR cadence relies on
+    #: (``MONTH_END_CLAMP.v1``). ``None`` keeps the engine's existing clamp so
+    #: approved schedules date exactly as before (NF-08), but every clamped
+    #: occurrence then says the policy was not stated, so the gap stays visible.
+    calendar_policy_ref: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# WP3 - calendar (weekday) recurrence (RL-07, RL-08, RL-09, AT-05, AT-19)
+# ---------------------------------------------------------------------------
+
+
+class Weekday(StrEnum):
+    MON = "MON"
+    TUE = "TUE"
+    WED = "WED"
+    THU = "THU"
+    FRI = "FRI"
+    SAT = "SAT"
+    SUN = "SUN"
+
+
+#: ``date.weekday()`` value of each member.
+WEEKDAY_INDEX: dict[Weekday, int] = {day: index for index, day in enumerate(Weekday)}
+
+#: The only weekday-grid semantics the engine executes (registry-declared).
+WEEKDAY_GRID_POLICY = "WEEKDAY_GRID.v1"
+
+
+class HolidayCalendar(StrictModel):
+    """Non-treatment dates supplied as DATA, per schedule or per site.
+
+    A calendar is never inferred from a locale or a library: which days a site
+    treats on is an operational fact. ``business_weekdays`` is required because
+    "next business day" means nothing until the site's working week is stated.
+    """
+
+    code: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_.-]*$")
+    version: str = Field(min_length=1)
+    business_weekdays: list[Weekday] = Field(min_length=1)
+    dates: list[date] = Field(default_factory=list)
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def unique_weekdays(self) -> "HolidayCalendar":
+        if len(set(self.business_weekdays)) != len(self.business_weekdays):
+            raise ValueError("business weekdays must not repeat")
+        return self
+
+
+class HolidayPolicy(StrEnum):
+    #: A holiday is not a slot; the series continues on the next slot.
+    SKIP = "SKIP"
+    #: The slot keeps its identity and moves to the next business day that is
+    #: not a holiday; if that day already holds a slot the move needs review.
+    SHIFT_NEXT_BUSINESS_DAY = "SHIFT_NEXT_BUSINESS_DAY"
+    #: The protocol does not say. A slot landing on a known holiday is
+    #: UNRESOLVED (blocking only that slot and what depends on it - RL-09).
+    NONE_STATED = "NONE_STATED"
+
+
+class MissedOccurrencePolicy(StrEnum):
+    APPEND_REPLACEMENT = "APPEND_REPLACEMENT"
+    NO_REPLACEMENT = "NO_REPLACEMENT"
+    NONE_STATED = "NONE_STATED"
+
+
+class CountBasis(StrEnum):
+    """What a COUNT termination counts (RL-08): "30 slots" is not "30
+    delivered fractions". The two only differ once a session is missed or
+    held, which is exactly when an unstated basis blocks (and only then)."""
+
+    SLOTS = "SLOTS"
+    DELIVERED = "DELIVERED"
+
+
+class CalendarRecurrence(StrictModel):
+    """Recurrence on named weekdays ("Monday to Friday", "every other Tuesday").
+
+    Occurrence identity is the SLOT ordinal (session 1, 2, ...), independent of
+    the date a slot lands on: a missed or moved session keeps its number, and a
+    replacement is a new ordinal linked to the session it replaces.
+    """
+
+    type: Literal["CALENDAR"] = "CALENDAR"
+    start_reference: TemporalReference
+    start_offset: TemporalAmount | None = None
+    weekdays: list[Weekday] = Field(min_length=1)
+    #: Every n-th week, counted from the week (Mon-Sun) containing the start.
+    interval_weeks: int = Field(default=1, gt=0)
+    termination: RecurrenceTermination
+    #: Required in meaning for COUNT termination; ``None`` = not stated.
+    count_basis: CountBasis | None = None
+    holiday_policy: HolidayPolicy = HolidayPolicy.NONE_STATED
+    #: Code of a ``HolidayCalendar`` on the schedule or supplied for the site.
+    holiday_calendar_ref: str | None = None
+    missed_policy: MissedOccurrencePolicy = MissedOccurrencePolicy.NONE_STATED
+    calendar_policy_ref: Literal["WEEKDAY_GRID.v1"] = WEEKDAY_GRID_POLICY
+
+    @model_validator(mode="after")
+    def coherent(self) -> "CalendarRecurrence":
+        if len(set(self.weekdays)) != len(self.weekdays):
+            raise ValueError("recurrence weekdays must not repeat")
+        if self.count_basis is not None and self.termination.type != "COUNT":
+            raise ValueError("a count basis only qualifies a COUNT termination")
+        return self
+
+
+class RecurrenceSegment(StrictModel):
+    """One cadence of a phased follow-up plan (doc E9).
+
+    A segment ends either at ``end_offset`` measured from the PLAN's start
+    reference ("to year 2" is +24 months from end of therapy), or after
+    ``count`` visits, or - final segment only - where the plan's termination
+    says. ``end_inclusive`` decides which segment owns a visit falling exactly
+    on the boundary; it is never defaulted, because guessing it either
+    duplicates or drops the boundary visit (doc E4). The validator blocks an
+    unset flag.
+    """
+
+    interval: PositiveTemporalAmount
+    end_offset: TemporalAmount | None = None
+    end_inclusive: bool | None = None
+    count: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def one_end(self) -> "RecurrenceSegment":
+        if self.end_offset is not None and self.count is not None:
+            raise ValueError("a segment ends at a boundary or after a count, not both")
+        if self.end_offset is None and self.end_inclusive is not None:
+            raise ValueError("end_inclusive describes an end_offset boundary")
+        return self
+
+
+class RecurrencePlan(StrictModel):
+    """A follow-up plan whose cadence changes over time, as ONE rule (doc E9).
+
+    "Every 3 months for 2 years, then every 6 months to year 5, then yearly."
+    Each segment starts where the previous one ended, every occurrence is
+    counted from its segment's start (no drift), and the whole series is one
+    visit with continuous occurrence numbering - not chained visits a reviewer
+    has to keep consistent by hand.
+    """
+
+    type: Literal["SEGMENTED"] = "SEGMENTED"
+    start_reference: TemporalReference
+    start_offset: TemporalAmount | None = None
+    # Whether a visit falls ON the plan start itself (e.g. on the end-of-therapy
+    # date). Never assumed; the validator blocks an unset value.
+    include_start: bool | None = None
+    segments: list[RecurrenceSegment] = Field(min_length=1)
+    # What ends the plan overall - and the final segment when it states no end
+    # of its own. HORIZON is the explicit "continues while on study".
+    termination: RecurrenceTermination | None = None
+
+
+class CyclePlan(StrictModel):
+    """Treatment cycles as addressable starts (doc F1-F5).
+
+    Cycle n's start is published as anchor ``<code>_<n>_START`` (CYCLE_2_START,
+    ...): actual once it happened, planned before, so any rule can count from a
+    specific cycle with the usual ACTUAL / PLANNED_OR_ACTUAL safety (doc C6).
+    An actual cycle start is a person-recorded ``<code>_<n>_START`` anchor, or
+    else the n-th recorded actual date of ``start_event_code`` (the Day-1 visit)
+    in date order - cycles are given in sequence, so the k-th Day 1 given is
+    Cycle k. Cycle 1 starts at ``start_reference``.
+    """
+
+    code: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_]*$")
+    start_reference: AnchorReference
+    length: PositiveTemporalAmount
+    dependency_mode: CycleDependencyMode
+    start_event_code: str | None = None
+    # How many cycles, or what ends them: COUNT, CONDITION, EVENT, DATE,
+    # RELATIVE, or an explicit HORIZON for protocols that treat until
+    # progression or toxicity with no stated maximum.
+    termination: RecurrenceTermination
 
 
 class Activity(StrictModel):
@@ -583,6 +843,8 @@ class Activity(StrictModel):
     requiredness: Requiredness = Requiredness.REQUIRED
     sequence_number: int | None = None
     timing: TimingExpression | None = None
+    #: Composable constraint set (see Event.constraints). None = none stated.
+    constraints: Constraint | None = None
     conditions: list[ConditionExpression] = Field(default_factory=list)
     applicability: list[ApplicabilityRule] = Field(default_factory=list)
     qualifiers: list[Qualifier] = Field(default_factory=list)
@@ -602,6 +864,17 @@ class Event(StrictModel):
     epoch_id: UUID | None = None
     sequence_number: int | None = None
     timing: TimingExpression
+    # Doc B2/B3: the allowed window is its own rule, not a kind of timing, so it
+    # survives on any target date - including every occurrence of a repeat - and
+    # may be one-sided (-0/+3). None means the protocol states no window; it is
+    # never defaulted (doc B4). NOMINAL_WITH_WINDOW timing keeps working; a
+    # schedule carrying both must state the same window (validator).
+    window: Window | None = None
+    #: RL-04/RL-05: additional composable restrictions on WHEN this event may
+    #: happen, from any number of anchors. The effective feasible set is the
+    #: intersection of ``timing``'s resolved window and this set. None (every
+    #: legacy schedule) evaluates exactly as before.
+    constraints: Constraint | None = None
     applicability: list[ApplicabilityRule] = Field(default_factory=list)
     conditions: list[ConditionExpression] = Field(default_factory=list)
     dependencies: list[Dependency] = Field(default_factory=list)
@@ -614,6 +887,11 @@ class Event(StrictModel):
     allowed_visit_modes: list[str] = Field(default_factory=list)
     activation: Literal["SCHEDULED", "ON_DEMAND"] = "SCHEDULED"
     recurrence: RecurrenceRule | None = None
+    # Doc E9: a repeat whose cadence changes over time. Mutually exclusive with
+    # ``recurrence`` - a visit repeats by one rule.
+    recurrence_plan: RecurrencePlan | None = None
+    #: WP3: weekday recurrence. Mutually exclusive with the two above.
+    calendar_recurrence: CalendarRecurrence | None = None
     conditional_actions: list[ConditionalAction] = Field(default_factory=list)
     qualifiers: list[Qualifier] = Field(default_factory=list)
     confinement: ConfinementDefinition | None = None
@@ -622,6 +900,21 @@ class Event(StrictModel):
     interpretation_status: InterpretationStatus = InterpretationStatus.EXTRACTED
     requires_review: bool = False
     metadata: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def one_repeat_rule(self) -> "Event":
+        stated = [item for item in (self.recurrence, self.recurrence_plan, self.calendar_recurrence)
+                  if item is not None]
+        if len(stated) > 1:
+            raise ValueError(
+                "an event repeats by one rule: a recurrence, a recurrence plan or a "
+                "calendar recurrence")
+        return self
+
+    @property
+    def repeats(self) -> bool:
+        return (self.recurrence is not None or self.recurrence_plan is not None
+                or self.calendar_recurrence is not None)
 
 
 class Evidence(StrictModel):
@@ -659,6 +952,199 @@ class ValidationIssue(StrictModel):
     status: IssueStatus = IssueStatus.OPEN
 
 
+# ---------------------------------------------------------------------------
+# WP3 - scoped process states (RL-10, RL-11, AT-06, AT-07)
+# ---------------------------------------------------------------------------
+
+
+class ProcessKind(StrEnum):
+    """What a process is. Participation decisions act by kind, never by name:
+    withdrawal from treatment stops INTERVENTION processes, end of follow-up
+    completes FOLLOW_UP ones, withdrawal of consent stops everything."""
+
+    INTERVENTION = "INTERVENTION"
+    FOLLOW_UP = "FOLLOW_UP"
+    ASSESSMENT = "ASSESSMENT"
+
+
+class ProcessState(StrEnum):
+    ACTIVE = "ACTIVE"
+    HELD = "HELD"
+    STOPPED = "STOPPED"
+    COMPLETED = "COMPLETED"
+
+
+TERMINAL_PROCESS_STATES = frozenset({ProcessState.STOPPED, ProcessState.COMPLETED})
+
+
+class HoldResumePolicy(StrEnum):
+    """What a held process's remaining obligations do once it resumes
+    (design s5). Never inferred from the word "resume"."""
+
+    #: The grid never moved; obligations inside the hold are not made up.
+    NOMINAL = "NOMINAL"
+    #: Every obligation from the hold start moves later by the hold duration.
+    SHIFT_BY_HOLD = "SHIFT_BY_HOLD"
+    #: The first held obligation is placed on the actual resume date and the
+    #: rest keep their spacing from it.
+    RESTART_FROM_RESUME = "RESTART_FROM_RESUME"
+    #: A person decides; the resume transition must carry the chosen policy.
+    WAIT_FOR_DECISION = "WAIT_FOR_DECISION"
+    #: The protocol does not say; obligations after the hold wait for review.
+    NONE_STATED = "NONE_STATED"
+
+
+#: Policies a resume DECISION may choose.
+DECIDABLE_RESUME_POLICIES = frozenset({
+    HoldResumePolicy.NOMINAL, HoldResumePolicy.SHIFT_BY_HOLD,
+    HoldResumePolicy.RESTART_FROM_RESUME,
+})
+
+
+class ProcessDefinition(StrictModel):
+    """One intervention or pathway with its own state (design s5)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    code: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_]*$")
+    display_name: str = Field(min_length=1)
+    kind: ProcessKind
+    #: Obligations linked to this process. An event belongs to at most one.
+    event_codes: list[str] = Field(default_factory=list)
+    hold_resume_policy: HoldResumePolicy = HoldResumePolicy.NONE_STATED
+    #: As RepeatBlock.resume_trigger: None/EXPLICIT_RESUME mean resolving the
+    #: holding condition does not resume the process by itself.
+    resume_trigger: Literal["EXPLICIT_RESUME", "CONDITION_RESOLUTION"] | None = None
+    evidence_refs: list[UUID] = Field(default_factory=list)
+
+
+class ProcessTransitionReason(StrEnum):
+    DECISION = "DECISION"
+    CONDITION = "CONDITION"
+    PROTOCOL_COMPLETION = "PROTOCOL_COMPLETION"
+    WITHDRAWAL_FROM_TREATMENT = "WITHDRAWAL_FROM_TREATMENT"
+    WITHDRAWAL_OF_CONSENT = "WITHDRAWAL_OF_CONSENT"
+    END_OF_FOLLOW_UP = "END_OF_FOLLOW_UP"
+
+
+class ProcessTarget(StrictModel):
+    """Which processes a transition changes: one process, every process of a
+    kind, or the patient's whole participation (consent withdrawal)."""
+
+    type: Literal["PROCESS", "PROCESS_KIND", "PATIENT"]
+    process_code: str | None = None
+    kind: ProcessKind | None = None
+
+    @model_validator(mode="after")
+    def matching_value(self) -> "ProcessTarget":
+        if (self.type == "PROCESS") != (self.process_code is not None):
+            raise ValueError("a PROCESS target names exactly one process code")
+        if (self.type == "PROCESS_KIND") != (self.kind is not None):
+            raise ValueError("a PROCESS_KIND target names exactly one kind")
+        return self
+
+
+class ProcessTransition(StrictModel):
+    """A dated, attributable change of process state (a patient fact).
+
+    Only CONFIRMED transitions act. ``effective_at`` is when it takes effect
+    clinically, ``recorded_at`` when it entered the system; a late entry with
+    an earlier effective time re-evaluates the affected period.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid4()), min_length=1)
+    target: ProcessTarget
+    to_state: ProcessState
+    effective_at: date | datetime
+    recorded_at: datetime = Field(default_factory=utc_now)
+    status: Literal["CONFIRMED", "PENDING_CONFIRMATION", "CANCELLED"]
+    reason: ProcessTransitionReason
+    #: DECISION (a person) or CONDITION (a confirmed protocol condition).
+    source: Literal["DECISION", "CONDITION"] = "DECISION"
+    source_ref: str | None = None
+    authority: str | None = None
+    #: A resume decision's chosen policy (WAIT_FOR_DECISION / NONE_STATED).
+    resume_policy: HoldResumePolicy | None = None
+    supersedes: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def coherent(self) -> "ProcessTransition":
+        if self.reason == ProcessTransitionReason.WITHDRAWAL_OF_CONSENT and (
+                self.target.type != "PATIENT" or self.to_state != ProcessState.STOPPED):
+            raise ValueError("withdrawal of consent stops the patient's whole participation")
+        if self.target.type == "PATIENT" and self.to_state != ProcessState.STOPPED:
+            raise ValueError("a patient-level transition can only stop participation")
+        if self.reason == ProcessTransitionReason.WITHDRAWAL_FROM_TREATMENT and (
+                self.target.type == "PATIENT" or self.to_state != ProcessState.STOPPED):
+            raise ValueError(
+                "withdrawal from treatment stops intervention processes, not participation")
+        if self.reason == ProcessTransitionReason.END_OF_FOLLOW_UP and (
+                self.to_state != ProcessState.COMPLETED or self.target.type == "PATIENT"):
+            raise ValueError("end of follow-up completes a follow-up process")
+        if self.resume_policy is not None and (
+                self.to_state != ProcessState.ACTIVE
+                or self.resume_policy not in DECIDABLE_RESUME_POLICIES):
+            raise ValueError(
+                "a resume policy is chosen by a resume (ACTIVE) transition and must be "
+                "NOMINAL, SHIFT_BY_HOLD or RESTART_FROM_RESUME")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# WP3 - dated patient facts (PT-01, PT-02, PT-04, PT-07, RL-11, AT-08, AT-11)
+# ---------------------------------------------------------------------------
+
+
+class OccurrenceFactKind(StrEnum):
+    #: The occurrence happened (``value`` = performed date/time).
+    PERFORMED = "PERFORMED"
+    #: The occurrence did not happen and will not (identity kept).
+    MISSED = "MISSED"
+    #: An appointment was booked (``value`` = booked date/time). A booking is
+    #: never a performed time and never moves the protocol rule.
+    BOOKED = "BOOKED"
+
+
+class OccurrenceFact(StrictModel):
+    """One recorded fact about one logical occurrence (event code + index)."""
+
+    id: str = Field(min_length=1)
+    event_code: str = Field(min_length=1)
+    occurrence_index: int = Field(ge=0)
+    kind: OccurrenceFactKind
+    value: date | datetime | None = None
+    #: End of the performed occurrence, when recorded (END boundary selector).
+    end_value: date | datetime | None = None
+    effective_at: date | datetime | None = None
+    recorded_at: datetime
+    #: The fact this one corrects; the superseded fact stays in history.
+    supersedes: str | None = None
+    source: str | None = None
+
+    @model_validator(mode="after")
+    def valued(self) -> "OccurrenceFact":
+        if self.kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED} and self.value is None:
+            raise ValueError(f"a {self.kind.value} fact needs its date")
+        return self
+
+
+class AssignmentFact(StrictModel):
+    """A dated assignment (arm, sequence, cohort ...) with its recorded time.
+
+    ``effective_from`` None means "from the start of participation" (the
+    assignment in force before any dated change). Later facts never rewrite
+    earlier ones; a correction supersedes by id and both stay in history.
+    """
+
+    id: str = Field(min_length=1)
+    dimension: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_]*$")
+    value: str | None = None
+    effective_from: date | None = None
+    recorded_at: datetime
+    source: str | None = None
+    supersedes: str | None = None
+
+
 class UniversalSchedule(StrictModel):
     schema_version: Literal["uctsm.v1"] = "uctsm.v1"
     schedule_version_id: UUID = Field(default_factory=uuid4)
@@ -673,6 +1159,10 @@ class UniversalSchedule(StrictModel):
     conditional_definitions: list[ConditionalDefinition] = Field(default_factory=list)
     repeat_blocks: list[RepeatBlock] = Field(default_factory=list)
     confinement_episodes: list[ConfinementEpisodeDefinition] = Field(default_factory=list)
+    #: WP3: interventions/pathways with independent state (RL-10/RL-11).
+    processes: list[ProcessDefinition] = Field(default_factory=list)
+    #: WP3: schedule-level holiday calendars (a site may supply its own).
+    holiday_calendars: list[HolidayCalendar] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claim_evidence: list[ClaimEvidence] = Field(default_factory=list)
     validation_issues: list[ValidationIssue] = Field(default_factory=list)
@@ -682,7 +1172,13 @@ class UniversalSchedule(StrictModel):
 class PatientContext(StrictModel):
     patient_id: UUID
     schedule_version_id: UUID
+    #: Anchor values that record something that actually happened (or that a
+    #: human confirmed as the real date). Every anchor reference may use these.
     anchors: dict[str, date | datetime] = Field(default_factory=dict)
+    #: Expected dates only - a planned surgery, a projected last dose. Kept apart
+    #: from ``anchors`` so that only a reference declaring PLANNED_OR_ACTUAL can
+    #: count from one; an actual value for the same anchor always wins (doc C6).
+    planned_anchors: dict[str, date | datetime] = Field(default_factory=dict)
     event_values: dict[str, list[date | datetime]] = Field(default_factory=dict)
     actual_event_values: dict[str, list[date | datetime]] = Field(default_factory=dict)
     activity_actuals: dict[str, date | datetime] = Field(default_factory=dict)
@@ -696,6 +1192,31 @@ class PatientContext(StrictModel):
     cohort_code: str | None = None
     population_code: str | None = None
     dimension_values: dict[str, list[str]] = Field(default_factory=dict)
+    # Doc K2/K3: the IANA zone of the patient's SITE (Europe/London,
+    # Asia/Kolkata). It lives on the patient context, not the schedule, because
+    # one approved schedule runs at sites in different zones. When set, naive
+    # recorded date-times are read as local site time and timed activities are
+    # calculated in elapsed (UTC) time; dates stay dates. None keeps the
+    # previous naive arithmetic.
+    time_zone: str | None = None
+    #: WP3 facts. All default empty, which evaluates exactly as before (NF-08).
+    #: Per-occurrence performed / missed / booked facts with supersession.
+    occurrence_facts: list[OccurrenceFact] = Field(default_factory=list)
+    #: Confirmed-or-not process transitions recorded for the patient.
+    process_transitions: list[ProcessTransition] = Field(default_factory=list)
+    #: Dated assignment history; empty = the columns above apply throughout.
+    assignment_history: list[AssignmentFact] = Field(default_factory=list)
+    #: Site-supplied holiday calendars (override schedule ones by code).
+    holiday_calendars: list[HolidayCalendar] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def known_time_zone(self) -> "PatientContext":
+        if self.time_zone is not None:
+            try:
+                ZoneInfo(self.time_zone)
+            except (ZoneInfoNotFoundError, ValueError) as error:
+                raise ValueError(f"unknown IANA time zone {self.time_zone!r}") from error
+        return self
 
 
 class PatientConditionStatus(StrictModel):
@@ -734,6 +1255,75 @@ class ResolvedTiming(StrictModel):
     constraints: list[dict[str, object]] = Field(default_factory=list)
 
 
+class FeasibilityStatus(StrEnum):
+    """Outcome of evaluating a constraint set for one occurrence.
+
+    FEASIBLE: every input is known and the permitted set is non-empty.
+    INCOMPLETE: an input is missing; ``feasible_intervals`` hold the KNOWN
+    bounds (a superset of the final set). Never operationally ready.
+    INFEASIBLE: the known inputs already leave no permitted time.
+    """
+
+    FEASIBLE = "FEASIBLE"
+    INCOMPLETE = "INCOMPLETE"
+    INFEASIBLE = "INFEASIBLE"
+
+
+class FeasibleBound(StrictModel):
+    #: None = unbounded on this side (a legitimately one-sided requirement
+    #: unless ``provisional`` says a missing input may still tighten it).
+    value: date | datetime | None = None
+    inclusive: bool = True
+    #: Constraint ids that produced this bound (several when they coincide,
+    #: e.g. a deduplicated restriction). ``timing`` ids name the legacy timing.
+    sources: list[str] = Field(default_factory=list)
+    #: True when a missing input could still move this side (INCOMPLETE only).
+    provisional: bool = False
+
+
+class FeasibleInterval(StrictModel):
+    lower: FeasibleBound
+    upper: FeasibleBound
+
+
+class MissingInput(StrictModel):
+    #: ANCHOR, EVENT, ACTIVITY, LITERAL_DATE, TIMING or CALENDAR_POLICY.
+    kind: str
+    code: str | None = None
+    occurrence: str | None = None
+    accepts: str | None = None
+    #: NOT_RECORDED, PLANNED_ONLY, NO_PLANNED_TARGET, LAST_NOT_FINAL,
+    #: OCCURRENCE_NOT_AVAILABLE, TIME_PRECISION, DATE_PRECISION,
+    #: CALENDAR_POLICY_REQUIRED or TIMING_REFERENCE_MISSING.
+    reason: str
+    constraint_ids: list[str] = Field(default_factory=list)
+
+
+class ConstraintTraceEntry(StrictModel):
+    """NF-03: how one leaf constraint was evaluated for this occurrence."""
+
+    constraint_id: str
+    type: str
+    status: Literal["RESOLVED", "MISSING"]
+    value: date | datetime | None = None
+    inclusive: bool | None = None
+    #: Facts used: ``{"kind", "code", "occurrence", "value", "basis"}`` where
+    #: basis is ACTUAL or PLANNED.
+    inputs: list[dict[str, object]] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    #: Whether this leaf produced a bound of the final set (a less restrictive
+    #: restriction is kept here for audit with ``binding`` False - RL-04).
+    binding: bool = False
+
+
+class ConstraintRelation(StrictModel):
+    """A semantic relation found while normalising a constraint set."""
+
+    relation: Literal["DUPLICATE"]
+    constraint_ids: list[str]
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
 class EvaluatedActivity(StrictModel):
     activity_definition_id: UUID
     activity_code: str | None = None
@@ -745,6 +1335,14 @@ class EvaluatedActivity(StrictModel):
     actual_time: date | datetime | None = None
     applicability_result: str | None = None
     condition_result: str | None = None
+    #: Constraint-set evaluation (None when the rule carries no constraints,
+    #: i.e. every legacy schedule - which then evaluates exactly as before).
+    feasibility: FeasibilityStatus | None = None
+    feasible_intervals: list[FeasibleInterval] = Field(default_factory=list)
+    missing_inputs: list[MissingInput] = Field(default_factory=list)
+    conflicting_constraints: list[str] = Field(default_factory=list)
+    constraint_trace: list[ConstraintTraceEntry] = Field(default_factory=list)
+    constraint_relations: list[ConstraintRelation] = Field(default_factory=list)
     explanation: dict[str, object] = Field(default_factory=dict)
 
 
@@ -761,6 +1359,21 @@ class EvaluatedEvent(StrictModel):
     condition_result: str | None = None
     dependency_result: dict[str, object] = Field(default_factory=dict)
     activities: list[EvaluatedActivity] = Field(default_factory=list)
+    #: Constraint-set evaluation (None when the rule carries no constraints,
+    #: i.e. every legacy schedule - which then evaluates exactly as before).
+    feasibility: FeasibilityStatus | None = None
+    feasible_intervals: list[FeasibleInterval] = Field(default_factory=list)
+    missing_inputs: list[MissingInput] = Field(default_factory=list)
+    conflicting_constraints: list[str] = Field(default_factory=list)
+    constraint_trace: list[ConstraintTraceEntry] = Field(default_factory=list)
+    constraint_relations: list[ConstraintRelation] = Field(default_factory=list)
+    #: PT-04: kept apart from the protocol target (``timing``), the permitted
+    #: set (``feasible_intervals``) and each other. None = not recorded.
+    booked_time: date | datetime | None = None
+    #: True when the booked slot lies outside the permitted dates. The rule
+    #: is never changed to make a booking compliant.
+    booked_outside_permitted: bool | None = None
+    actual_time: date | datetime | None = None
     explanation: dict[str, object] = Field(default_factory=dict)
 
 
@@ -815,6 +1428,9 @@ class RepeatSummary(StrictModel):
     materialized_count: int
     continues: bool
     next_unmaterialized: date | datetime | None = None
+    # Doc E9: one entry per cadence of a phased plan, in order ("every 3 months
+    # to year 2"). Empty for a single-cadence repeat.
+    segments: list[str] = Field(default_factory=list)
 
 
 class EvaluationResult(StrictModel):
@@ -826,3 +1442,13 @@ class EvaluationResult(StrictModel):
     events: list[EvaluatedEvent]
     confinements: list[EvaluatedConfinement] = Field(default_factory=list)
     repeat_summaries: list[RepeatSummary] = Field(default_factory=list)
+
+
+# Models that name a type defined further down (e.g. RecurrenceRule) are built
+# lazily by pydantic. Nested validation inside UniversalSchedule does not finish
+# that build, so serialising such a model directly then failed with a
+# MockValSer TypeError. Resolve every forward reference once, at import.
+for _model in [value for value in list(globals().values())
+               if isinstance(value, type) and issubclass(value, StrictModel)
+               and not getattr(value, "__pydantic_complete__", True)]:
+    _model.model_rebuild()

@@ -34,7 +34,7 @@ export default function Root({ children }: PropsWithChildren) {
                 caret-color: #A6213F !important;
                 transition: background-color 9999s ease-out 0s;
               }
-              input::selection { background: rgba(166, 33, 63, 0.22); }
+              input::selection { background: rgba(27,95,193,0.22); }
             `,
           }}
         />

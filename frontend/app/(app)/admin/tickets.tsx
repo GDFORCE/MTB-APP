@@ -44,9 +44,9 @@ const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
 
 function statusColors(status?: string): { fg: string; bg: string } {
   switch (status) {
-    case "Open": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
-    case "In Progress": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
-    case "Resolved": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
+    case "Open": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
+    case "In Progress": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
+    case "Resolved": return { fg: C.success, bg: "rgba(30,122,70,0.15)" };
     case "Closed": return { fg: C.mutedFg, bg: C.surface };
     default: return { fg: C.mutedFg, bg: C.surface };
   }
@@ -196,7 +196,7 @@ export default function AdminTickets() {
                         <View style={[st.badge, { backgroundColor: sc.bg }]}>
                           <RNText style={[st.badgeTxt, { color: sc.fg }]}>{t.status || "Open"}</RNText>
                         </View>
-                        <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                        <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                       </View>
                     </Pressable>
                   );
@@ -281,7 +281,7 @@ function TicketSheet({ ticket, busy, onClose, onChangeStatus, onAddNote }: {
                 <RNText style={ts.activityTime}>{fmtDateTime(ticket.created_at)}</RNText>
               </View>
               {(ticket.notes || []).map((n, i) => (
-                <View key={i} style={[ts.activityRow, { backgroundColor: "rgba(123,107,184,0.08)" }]}>
+                <View key={i} style={[ts.activityRow, { backgroundColor: "rgba(45,108,181,0.08)" }]}>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <RNText style={ts.activityTxt}><RNText style={{ fontFamily: fonts.semibold, color: C.primary }}>{n.by || "Admin"}</RNText>: {n.text}</RNText>
                     <RNText style={ts.activityTime}>{fmtDateTime(n.at)}</RNText>
@@ -308,7 +308,7 @@ function TicketSheet({ ticket, busy, onClose, onChangeStatus, onAddNote }: {
               <RNText style={ts.sectionLabel}>Add a response or note</RNText>
               <TextInput
                 value={reply} onChangeText={setReply}
-                placeholder="Reply to the reporter…" placeholderTextColor="rgba(123,95,115,0.5)"
+                placeholder="Reply to the reporter…" placeholderTextColor="rgba(85,98,117,0.5)"
                 multiline style={[st.input, { height: 84, textAlignVertical: "top" }]}
               />
               <Pressable
@@ -347,7 +347,7 @@ function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () 
 }
 
 const st2 = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  overlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, maxHeight: "88%" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   sheetTitle: { fontFamily: fonts.display, fontSize: 20, color: C.foreground },

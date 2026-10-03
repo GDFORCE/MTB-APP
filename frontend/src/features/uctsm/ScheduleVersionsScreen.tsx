@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 13,
     borderTopWidth: 1, borderTopColor: colors.border,
   },
-  altRow: { backgroundColor: "#FBF7F1" },
+  altRow: { backgroundColor: "#F3F5F9" },
   currentRow: { borderLeftWidth: 3, borderLeftColor: colors.primary },
   value: { fontFamily: fonts.regular, fontSize: 12, color: colors.foreground },
   name: { fontFamily: fonts.semibold },

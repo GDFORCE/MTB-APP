@@ -26,10 +26,10 @@ import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 
 const C = {
-  bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
-  primary: "#A6213F", primaryDeep: "#6B1437", primaryFg: "#FBF2E8",
-  accent: "#E69B5C", info: "#7B6BB8", violet: "#8E5BB4", warning: "#D89A3C", success: "#5C9A6E",
-  dawnFrom: "#F5C57A", dawnMid: "#E07A4B", dawnTo: "#A6213F",
+  bg: "#F4F6F9", surface: "#EDF1F6", card: "#FFFFFF", fg: "#0F1B2D", muted: "#556275", border: "#DDE3EA",
+  primary: "#1B5FC1", primaryDeep: "#0D2A4F", primaryFg: "#FFFFFF",
+  accent: "#0B8074", info: "#2D6CB5", violet: "#5E4DB2", warning: "#B26A00", success: "#1E7A46",
+  dawnFrom: "#2A6FD0", dawnMid: "#1B5FC1", dawnTo: "#0D2A4F",
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 type SourceKey = "visits" | "notifications" | "adherence" | "trial";
@@ -322,7 +322,7 @@ export default function PatientDashboard() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                     <Text style={{ color: C.accent, fontSize: 11, fontWeight: "700", letterSpacing: 1.4 }}>{daysToNext === 0 ? "TODAY" : `IN ${daysToNext} DAYS`}</Text>
-                    <View style={{ paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(216,154,60,0.15)" }}>
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(178,106,0,0.15)" }}>
                       <Text style={{ color: C.warning, fontSize: 11, fontWeight: "700" }}>Upcoming</Text>
                     </View>
                   </View>
@@ -383,7 +383,7 @@ export default function PatientDashboard() {
               <View style={{ flexDirection: "row", marginBottom: 4 }}>
                 {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
                   <View key={i} style={{ flex: 1, alignItems: "center", paddingVertical: 4 }}>
-                    <Text style={{ fontSize: 11, fontWeight: "700", color: "rgba(123,95,115,0.70)" }}>{d}</Text>
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: "rgba(85,98,117,0.70)" }}>{d}</Text>
                   </View>
                 ))}
               </View>
@@ -392,7 +392,7 @@ export default function PatientDashboard() {
                   {cells.slice(row * 7, row * 7 + 7).map((day, i) => {
                     const status = day ? monthVisits[day] : undefined;
                     const isToday = day === today && calendarMonth.getMonth() === new Date().getMonth() && calendarMonth.getFullYear() === new Date().getFullYear();
-                    const bg = status === "completed" ? "rgba(230,155,92,0.12)" : status === "upcoming" ? "rgba(216,154,60,0.15)" : status === "scheduled" ? "rgba(123,107,184,0.10)" : "transparent";
+                    const bg = status === "completed" ? "rgba(11,128,116,0.12)" : status === "upcoming" ? "rgba(178,106,0,0.15)" : status === "scheduled" ? "rgba(45,108,181,0.10)" : "transparent";
                     const fg = status === "completed" ? C.accent : status === "upcoming" ? C.warning : status === "scheduled" ? C.info : isToday ? C.info : C.fg;
                     const dot = status === "completed" ? C.accent : status === "upcoming" ? C.warning : status === "scheduled" ? C.info : "transparent";
                     return (
@@ -445,9 +445,9 @@ export default function PatientDashboard() {
                         {!n.read && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.accent, marginLeft: 8 }} />}
                       </View>
                       <Text style={{ color: C.muted, fontSize: 14, marginTop: 2 }} numberOfLines={2}>{n.body}</Text>
-                      {!!timeAgo(n.created_at) && <Text style={{ color: "rgba(123,95,115,0.70)", fontSize: 11, marginTop: 4 }}>{timeAgo(n.created_at)}</Text>}
+                      {!!timeAgo(n.created_at) && <Text style={{ color: "rgba(85,98,117,0.70)", fontSize: 11, marginTop: 4 }}>{timeAgo(n.created_at)}</Text>}
                     </View>
-                    <ChevronRight size={16} color="rgba(123,95,115,0.40)" style={{ marginTop: 4 }} />
+                    <ChevronRight size={16} color="rgba(85,98,117,0.40)" style={{ marginTop: 4 }} />
                   </View>
                 </Pressable>
               );
@@ -468,7 +468,7 @@ export default function PatientDashboard() {
             {!loading && sources.visits === "ready" && visits.filter(v => v.status === "completed").slice(-2).reverse().map((v, i) => (
               <View key={v.id} style={[{ padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, i > 0 && { borderTopWidth: 1, borderTopColor: C.border }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(92,154,110,0.15)", alignItems: "center", justifyContent: "center" }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(30,122,70,0.15)", alignItems: "center", justifyContent: "center" }}>
                     <Check size={16} color={C.success} strokeWidth={2.5} />
                   </View>
                   <View>
@@ -478,7 +478,7 @@ export default function PatientDashboard() {
                     </Text>
                   </View>
                 </View>
-                <View style={{ paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
+                <View style={{ paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(30,122,70,0.15)" }}>
                   <Text style={{ color: C.success, fontSize: 12, fontWeight: "600" }}>Done</Text>
                 </View>
               </View>
@@ -527,7 +527,7 @@ function StatePanel({
   onAction: () => void;
   destructive?: boolean;
 }) {
-  const tone = destructive ? "#C0392B" : C.warning;
+  const tone = destructive ? "#C23030" : C.warning;
   return (
     <View style={[pst.statePanel, { borderColor: `${tone}55` }]}>
       <View style={[pst.stateIcon, { backgroundColor: `${tone}18` }]}>
@@ -674,11 +674,11 @@ function Legend({ color, label }: any) {
 
 const pst = StyleSheet.create({
   iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
-  bellBadge: { position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: "#C0392B", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.primary },
+  bellBadge: { position: "absolute", top: -2, right: -2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: "#C23030", alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: C.primary },
   bellBadgeText: { color: C.primaryFg, fontSize: 10, fontWeight: "700" },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.20)" },
   chipText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
-  card: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  card: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   loadingCard: { alignItems: "center", justifyContent: "center", paddingVertical: 28 },
   ringLoading: {
     width: 72,

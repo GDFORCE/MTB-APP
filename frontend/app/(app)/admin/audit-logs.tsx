@@ -66,12 +66,12 @@ function fmtDateTime(iso?: string): string {
 }
 function catColors(cat?: string): { fg: string; bg: string } {
   switch ((cat || "").toLowerCase()) {
-    case "login": return { fg: C.info, bg: "rgba(123,107,184,0.12)" };
-    case "emergency": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
+    case "login": return { fg: C.info, bg: "rgba(45,108,181,0.12)" };
+    case "emergency": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
     case "account":
-    case "admin": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
+    case "admin": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
     case "system": return { fg: C.mutedFg, bg: C.surface };
-    default: return { fg: C.info, bg: "rgba(123,107,184,0.10)" };
+    default: return { fg: C.info, bg: "rgba(45,108,181,0.10)" };
   }
 }
 
@@ -279,7 +279,7 @@ export default function AdminAuditLogs() {
                             const cc = catColors(r.category);
                             const failed = r.status === "failure";
                             return (
-                              <Pressable key={r.id} onPress={() => setSelected(r)} style={[au.entry, failed && { backgroundColor: "rgba(192,57,43,0.05)" }]}>
+                              <Pressable key={r.id} onPress={() => setSelected(r)} style={[au.entry, failed && { backgroundColor: "rgba(194,48,48,0.05)" }]}>
                                 <View style={[au.catBadge, { backgroundColor: cc.bg }]}>
                                   <RNText style={[au.catBadgeTxt, { color: cc.fg }]} numberOfLines={1}>{r.category || "other"}</RNText>
                                 </View>
@@ -400,7 +400,7 @@ function KV({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 }
 
 const au = StyleSheet.create({
-  secCard: { backgroundColor: "rgba(216,154,60,0.08)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(216,154,60,0.3)", padding: 12, marginTop: 14 },
+  secCard: { backgroundColor: "rgba(178,106,0,0.08)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(178,106,0,0.3)", padding: 12, marginTop: 14 },
   secTitle: { fontFamily: fonts.semibold, fontSize: 13, color: C.foreground, flex: 1 },
   secLine: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, lineHeight: 16 },
   groupHeader: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14 },
@@ -412,7 +412,7 @@ const au = StyleSheet.create({
   catBadgeTxt: { fontFamily: fonts.medium, fontSize: 10, textTransform: "uppercase" },
   entryDetail: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: C.foreground },
   entryTime: { fontFamily: fonts.mono, fontSize: 11, color: C.mutedFg },
-  overlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  overlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, maxHeight: "85%" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   sheetClose: { width: 34, height: 34, borderRadius: 17, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },

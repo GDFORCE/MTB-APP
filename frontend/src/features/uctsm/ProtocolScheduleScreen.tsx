@@ -1,350 +1,308 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, FlaskConical, RefreshCw, ShieldCheck } from "lucide-react-native";
+import {
+  AlertTriangle, CheckCircle2, FlaskConical, ShieldCheck,
+} from "lucide-react-native";
 
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Body, Button, Card, Small } from "@/src/components/ui";
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import {
-  decideSchedule, getApprovedSchedules, getScheduleProjection,
-  getUniversalSchedule, submitScheduleReview, validateSchedule, resolveExtractionIssue,
-  approveReviewedTable,
+  addScheduleVisit, approveScheduleVersion, buildCanonicalSchedule, decideSchedule,
+  editScheduleVisit, exportScheduleVersion, getApprovedSchedules, getReviewView,
+  resolveReviewQuestion, submitScheduleReview,
 } from "./api";
-import { toProtocolScheduleRows, UNSTATED_VISIT_MODE, type ProtocolScheduleRow } from "./presentation";
-import { SimpleScheduleTable } from "./SimpleScheduleTable";
-import type { Evidence, ScheduleProjection, UniversalSchedule } from "./types";
+import {
+  DocumentIssues, FilterChips, SharedQuestionsPanel, SourceCoveragePanel, VisitScheduleSummary, VisitTable,
+  type QuestionDraft,
+} from "./VisitScheduleReview";
+import { AddVisitSheet, EditVisitSheet } from "./VisitScheduleSheets";
+import {
+  approvalState, buildQuestionRequest, exportFileName, isStaleRevision, recoveryNotice,
+  reviewErrorMessage, type ReviewRow, type ReviewView, type RowFilter, type SharedQuestion,
+} from "./visitSchedule";
 
 const first = (value?: string | string[]) => Array.isArray(value) ? value[0] : value;
-const errorText = (error: any) => error?.response?.data?.detail || error?.message || "The schedule could not be loaded.";
+const EDITABLE = ["DRAFT", "EXTRACTED", "VALIDATION_REQUIRED", "REJECTED", "IN_REVIEW"];
 
+/**
+ * The draft Visit Schedule (design doc "Required user-facing output").
+ *
+ * Reached after Add Trial and from the trial's Protocol & Schedule Versions.
+ * Everything shown comes from the backend review view: row status, timing and
+ * window text, shared questions and - crucially - whether approval is allowed.
+ * Every write carries the revision the reviewer saw, so a concurrent change is
+ * refused and the screen reloads instead of approving something unseen.
+ */
 export default function ProtocolScheduleScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
-    id?: string; scheduleVersionId?: string; schedule_version_id?: string;
-    trialName?: string; protocolVersion?: string;
+    id?: string; scheduleVersionId?: string; schedule_version_id?: string; trialName?: string;
   }>();
-  const [schedule, setSchedule] = useState<UniversalSchedule | null>(null);
-  const [projections, setProjections] = useState<ScheduleProjection[]>([]);
+  const trialId = first(params.id);
+  const [versionId, setVersionId] = useState<string | null>(null);
+  const [view, setView] = useState<ReviewView | null>(null);
   const [busy, setBusy] = useState("load");
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [bulkReason, setBulkReason] = useState("");
+  const [message, setMessage] = useState("");
+  const [filter, setFilter] = useState<RowFilter>("ALL");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<ReviewRow | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [approvalNote, setApprovalNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
-  const [sourceText, setSourceText] = useState<string | null>(null);
-  const [issueReasons, setIssueReasons] = useState<Record<string, string>>({});
-  const [showChecks, setShowChecks] = useState(false);
-  const [showApproval, setShowApproval] = useState(false);
-  const [showReject, setShowReject] = useState(false);
+  const [showOther, setShowOther] = useState(false);
 
-  const loadVersion = async (versionId: string) => {
-    const [nextSchedule, nextProjections] = await Promise.all([
-      getUniversalSchedule(versionId), getScheduleProjection(versionId),
-    ]);
-    setSchedule(nextSchedule);
-    setProjections(nextProjections);
-  };
+  const load = useCallback(async (id: string) => {
+    setView(await getReviewView(id));
+  }, []);
 
-  const resolveVersion = async () => {
-    setBusy("load");
-    setError("");
+  const resolveVersion = useCallback(async () => {
+    setBusy("load"); setError("");
     try {
-      let versionId = first(params.scheduleVersionId) || first(params.schedule_version_id);
-      const trialId = first(params.id);
-      if (!versionId && trialId) {
-        try {
-          const approved = await getApprovedSchedules(trialId);
-          versionId = approved[0]?.schedule_version_id;
-        } catch {
-          // A legacy trial identifier has no UCTSM schedule mapping yet.
-        }
+      let id = first(params.scheduleVersionId) || first(params.schedule_version_id);
+      if (!id && trialId) {
+        try { id = (await getApprovedSchedules(trialId))[0]?.schedule_version_id; }
+        catch { /* A legacy trial has no canonical schedule mapping yet. */ }
       }
-      if (!versionId && __DEV__) versionId = await AsyncStorage.getItem("uctsm:last_schedule_version_id") || undefined;
-      if (!versionId) throw new Error("No UCTSM schedule version is linked to this trial yet.");
-      await loadVersion(versionId);
+      if (!id && __DEV__) id = await AsyncStorage.getItem("uctsm:last_schedule_version_id") || undefined;
+      if (!id) throw new Error("No schedule version is linked to this trial yet.");
+      setVersionId(id);
+      await load(id);
     } catch (nextError) {
-      setError(errorText(nextError));
-    } finally {
-      setBusy("");
-    }
-  };
+      setError(reviewErrorMessage(nextError, "The Visit Schedule could not be loaded."));
+    } finally { setBusy(""); }
+  }, [params.scheduleVersionId, params.schedule_version_id, trialId, load]);
 
-  useEffect(() => { void resolveVersion(); }, [params.id, params.scheduleVersionId, params.schedule_version_id]);
+  useEffect(() => { void resolveVersion(); }, [resolveVersion]);
 
-  const rows = useMemo(
-    () => schedule ? toProtocolScheduleRows(schedule, projections) : [],
-    [schedule, projections],
-  );
-  const openIssues = schedule?.validation_issues.filter((issue) => issue.status === "OPEN") || [];
-  const blocking = openIssues.filter((issue) => issue.blocking).length;
-  const canReview = !!schedule && ["DRAFT", "EXTRACTED", "VALIDATION_REQUIRED", "REJECTED", "IN_REVIEW"]
-    .includes(schedule.schedule_metadata.status);
-  const statusLabel = schedule?.schedule_metadata.status.toLowerCase().replace(/_/g, " ");
-  // Doc 10 s18/s33: never let an unstated visit mode reach a patient. It is
-  // not a validation issue (extraction is not wrong for leaving it unstated -
-  // the protocol just did not say), so it needs its own reviewer-visible
-  // count rather than hiding inside "openIssues", matching the existing
-  // pendingCount/AlertTriangle pattern the legacy visit-schedule screen uses.
-  const unstatedModeCount = rows.filter((row) => row.visitMode === UNSTATED_VISIT_MODE).length;
-
-  const run = async (label: string, action: () => Promise<void>) => {
-    if (!schedule || busy) return;
+  /** Runs one write; a stale revision reloads the draft and says so. */
+  const write = async (label: string, action: () => Promise<string | void>): Promise<boolean> => {
+    if (!versionId || busy) return false;
     setBusy(label); setError(""); setMessage("");
-    try { await action(); await loadVersion(schedule.schedule_version_id); }
-    catch (nextError) { setError(errorText(nextError)); }
-    finally { setBusy(""); }
+    try {
+      const done = await action();
+      if (done) setMessage(done);
+      await load(versionId);
+      return true;
+    } catch (nextError) {
+      setError(reviewErrorMessage(nextError));
+      if (isStaleRevision(nextError)) await load(versionId).catch(() => undefined);
+      return false;
+    } finally { setBusy(""); }
   };
 
-  const validate = () => run("validate", async () => {
-    const result = await validateSchedule(schedule!.schedule_version_id);
-    setMessage(result.blocking_issues ? `${result.blocking_issues} item(s) require correction.` : "Schedule structure is valid.");
+  const onEdit = (row: ReviewRow, body: Record<string, unknown>) => write("edit", async () => {
+    const result = await editScheduleVisit(versionId!, row.id, body);
+    return `${row.visit_name} saved and revalidated · ${result.changed_row_ids.length} row(s) changed.`;
   });
-  const submit = () => run("submit", async () => {
-    await submitScheduleReview(schedule!.schedule_version_id);
-    setMessage("Schedule submitted for clinical review.");
+  const onAdd = (body: Record<string, unknown>) => write("add", async () => {
+    await addScheduleVisit(versionId!, body);
+    return "Visit added as a manual entry and revalidated.";
   });
-  const approve = () => run("approve", async () => {
-    await approveReviewedTable(schedule!.schedule_version_id, bulkReason.trim());
-    setShowApproval(false);
-    setMessage("Schedule approved. It can now be used to calculate patient visits.");
+  const onResolve = (question: SharedQuestion, draft: QuestionDraft) => {
+    const built = buildQuestionRequest(question, draft, view!.revision);
+    if (built.error) { setError(built.error); return; }
+    void write("resolve", async () => {
+      await resolveReviewQuestion(versionId!, question.id, built.body!);
+      return `Answered once for ${question.affected_rows.length} visit(s).`;
+    });
+  };
+  const onApprove = () => write("approve", async () => {
+    await approveScheduleVersion(versionId!, view!.revision, approvalNote.trim());
+    setApprovalNote("");
+    return "Schedule approved. Patients can now be enrolled onto this version.";
   });
-  // The PI-facing sibling of `approve`: the reviewer who now reaches this
-  // screen from the pending-review inbox needs a way to say no, not just yes.
-  const reject = () => run("reject", async () => {
-    const reason = rejectReason.trim();
-    if (!reason) {
-      throw new Error("Say why this schedule is being rejected before saving it.");
-    }
-    await decideSchedule(schedule!.schedule_version_id, "REJECT", reason);
+  const onSubmitForReview = () => write("submit", async () => {
+    await submitScheduleReview(versionId!);
+    return "Schedule sent for review.";
+  });
+  const onReject = () => write("reject", async () => {
+    if (!rejectReason.trim()) throw new Error("Say why this schedule is being rejected.");
+    await decideSchedule(versionId!, "REJECT", rejectReason.trim());
     setRejectReason("");
-    setMessage("Schedule rejected. It stays editable for a new extraction or correction.");
+    return "Schedule rejected. It stays editable for correction or re-extraction.";
+  });
+  const onRetryBuild = () => write("build", async () => {
+    if (!trialId) throw new Error("Open this schedule from its trial to retry the build.");
+    const built = await buildCanonicalSchedule(trialId);
+    const next = built.schedules[0]?.schedule_version_id;
+    if (next && next !== versionId) { setVersionId(next); await load(next); }
+    return "Schedule rebuilt from the extracted protocol.";
   });
 
-  const openEvidence = (row: ProtocolScheduleRow) => {
-    const evidence = schedule?.evidence.filter((item) => row.evidenceRefs.includes(item.id)) || [];
-    if (!evidence.length) return setSourceText("No linked evidence is available for this event.");
-    const text = evidence.map(formatEvidence).join("\n\n──────────\n\n");
-    setSourceText(`${row.visit} · ${row.visitName}\n\n${text}`);
+  const onExport = async (format: "json" | "csv") => {
+    if (!versionId || !view || busy) return;
+    setBusy(`export-${format}`); setError(""); setMessage("");
+    try {
+      const text = await exportScheduleVersion(versionId, format);
+      const filename = exportFileName(view, format);
+      const mime = format === "json" ? "application/json" : "text/csv";
+      if (Platform.OS === "web") {
+        const g: any = globalThis;
+        const url = g.URL.createObjectURL(new g.Blob([text], { type: mime }));
+        const anchor = g.document.createElement("a");
+        anchor.href = url; anchor.download = filename; anchor.click();
+        g.URL.revokeObjectURL(url);
+      } else {
+        const uri = `${FileSystem.cacheDirectory}${filename}`;
+        await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
+        if (!await Sharing.isAvailableAsync()) throw new Error("Sharing is not available on this device.");
+        await Sharing.shareAsync(uri, { mimeType: mime, dialogTitle: `Share ${filename}` });
+      }
+      setMessage(`Exported ${filename}.`);
+    } catch (nextError) {
+      setError(reviewErrorMessage(nextError, "The export could not be created."));
+    } finally { setBusy(""); }
   };
 
-  if (busy === "load") return <ScreenContainer><ScreenHeader eyebrow="Protocol" title="Schedule" /><View style={styles.center}><ActivityIndicator color={colors.primary} /><Small style={{ marginTop: 10 }}>Loading approved schedule…</Small></View></ScreenContainer>;
+  const showRow = (rowId: string) => {
+    setFilter("ALL");
+    setExpanded((current) => ({ ...current, [rowId]: true }));
+  };
+
+  if (busy === "load") {
+    return <ScreenContainer><ScreenHeader eyebrow="Protocol" title="Visit Schedule" />
+      <View style={styles.center}><ActivityIndicator color={colors.primary} /><Small style={{ marginTop: 10 }}>Loading the Visit Schedule…</Small></View>
+    </ScreenContainer>;
+  }
+
+  const editable = !!view && EDITABLE.includes(view.status);
+  const approval = view ? approvalState(view) : { enabled: false, reason: "" };
+  const recovery = view ? recoveryNotice(view) : null;
 
   return (
     <ScreenContainer>
-      <ScreenHeader eyebrow="Protocol schedule" title="Visit Schedule" />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {error && !schedule ? (
+      <ScreenHeader eyebrow={first(params.trialName) || "Protocol schedule"} title="Visit Schedule" />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {!view ? (
           <Card style={styles.emptyCard}>
             <AlertTriangle size={30} color={colors.warning} />
-            <Body weight="700" style={styles.emptyTitle}>Schedule not available</Body>
+            <Body weight="700" style={{ marginTop: 10 }}>Visit Schedule not available</Body>
             <Small style={styles.centerText}>{error}</Small>
-            <Button onPress={resolveVersion} variant="secondary" style={styles.wideButton}>Try again</Button>
-            {__DEV__ && <Pressable onPress={() => router.push("/(app)/dev/uctsm-workbench" as never)} style={styles.devLink}><FlaskConical size={14} color={colors.primary} /><Text style={styles.devText}>Open development workbench</Text></Pressable>}
+            <Button onPress={resolveVersion} variant="secondary" style={styles.wide}>Try again</Button>
+            {!!trialId && <Button variant="secondary" style={styles.wide} onPress={() => router.push({
+              pathname: "/(app)/sponsor/schedule-versions", params: { id: trialId },
+            } as never)}>Open Protocol & Schedule Versions</Button>}
+            {__DEV__ && <Pressable onPress={() => router.push("/(app)/dev/uctsm-workbench" as never)} style={styles.devLink}>
+              <FlaskConical size={14} color={colors.primary} /><Text style={styles.devText}>Open development workbench</Text>
+            </Pressable>}
           </Card>
-        ) : schedule ? (
-          <>
-            <View style={styles.summaryRow}>
-              <View style={{ flex: 1 }}>
-                <Body weight="700" style={styles.summaryTitle}>{first(params.trialName) || schedule.schedule_metadata.name}</Body>
-                <Small>{rows.length} visits · {first(params.protocolVersion) || `Version ${schedule.schedule_metadata.version_number}`}</Small>
-              </View>
-              <View>
-                <View style={[styles.statusPill, schedule.schedule_metadata.status === "APPROVED" && styles.approvedPill]}>
-                  {schedule.schedule_metadata.status === "APPROVED" ? <ShieldCheck size={14} color={colors.success} /> : <RefreshCw size={14} color={colors.warning} />}
-                  <Text style={[styles.statusText, schedule.schedule_metadata.status === "APPROVED" && styles.approvedText]}>{statusLabel ? statusLabel[0].toUpperCase() + statusLabel.slice(1) : ""}</Text>
-                </View>
-              </View>
+        ) : <>
+          <VisitScheduleSummary view={view} />
+          {!!error && <Notice error text={error} />}
+          {!!message && <Notice text={message} />}
+          {!!recovery && <Card style={styles.recovery}>
+            <View style={styles.recoveryHead}>
+              <AlertTriangle size={20} color={colors.warning} />
+              <Body weight="700" style={{ flex: 1 }}>Extraction needs attention</Body>
             </View>
+            <Small>{recovery}</Small>
+            {view.extraction_status.retry_available && <View style={styles.buttonRow}>
+              {!!trialId && <Button variant="secondary" onPress={onRetryBuild} loading={busy === "build"} style={styles.grow}>
+                Retry schedule build
+              </Button>}
+              {!!trialId && <Button variant="secondary" style={styles.grow} onPress={() => router.push({
+                pathname: "/(app)/sponsor/schedule-versions", params: { id: trialId },
+              } as never)}>Upload the protocol again</Button>}
+            </View>}
+          </Card>}
 
-            {!!error && <Notice error text={error} />}
-            {!!message && <Notice text={message} />}
+          <SourceCoveragePanel coverage={view.source_coverage} />
+          <DocumentIssues issues={view.document_level_issues} />
+          <SharedQuestionsPanel questions={view.shared_review_questions} onResolve={onResolve}
+            onShowRow={showRow} busy={!!busy} editable={editable} />
 
-            <Small>Tap a visit for activities, notes and source details.</Small>
-            <SimpleScheduleTable rows={rows} onEvidence={openEvidence} />
-            <Pressable accessibilityRole="button" accessibilityState={{ expanded: showChecks }}
-              onPress={() => setShowChecks((value) => !value)} style={{ paddingVertical: 12 }}>
-              <Small color={blocking ? "#87591F" : colors.primary}>
-                {showChecks ? "Hide" : "Show"} schedule checks{openIssues.length ? ` (${openIssues.length})` : ""}
-              </Small>
-            </Pressable>
-            {showChecks && <>
-            <Card style={styles.validationCard}>
-              <View style={styles.validationHead}>
-                {blocking ? <AlertTriangle size={21} color={colors.warning} /> : <CheckCircle2 size={21} color={colors.success} />}
-                <View style={{ flex: 1 }}>
-                  <Body weight="700">Validation</Body>
-                  <Small>{openIssues.length ? `${openIssues.length} item(s) require attention; ${blocking} block approval.` : "No open validation issues."}</Small>
-                </View>
-              </View>
-              {openIssues.map((issue) => <View key={issue.id} style={styles.issue}>
-                <Text style={styles.issueText}>{issue.blocking ? "Blocks approval: " : "Review: "}{issue.message}</Text>
-                {issue.details.origin === "EXTRACTION" && !["SCHEDULE_OPTION_FAILED", "SCHEDULE_DISCOVERY_FAILED"].includes(issue.issue_code) && canReview && <>
-                  <TextInput value={issueReasons[issue.id] || ""}
-                    onChangeText={(value) => setIssueReasons((current) => ({ ...current, [issue.id]: value }))}
-                    placeholder="Describe the source review or correction that resolves this finding"
-                    placeholderTextColor={colors.mutedFg} style={styles.bulkConfirmInput} />
-                  <Button variant="secondary" disabled={!issueReasons[issue.id]?.trim() || !!busy}
-                    onPress={() => run("resolve", async () => {
-                      await resolveExtractionIssue(schedule.schedule_version_id, issue.id, issueReasons[issue.id].trim());
-                      setMessage("Source review recorded. Structural errors still need correction before approval.");
-                    })}>Record source resolution</Button>
-                </>}
-              </View>)}
-            </Card>
+          <FilterChips rows={view.rows} value={filter} onChange={setFilter} />
+          <VisitTable view={view} filter={filter} expanded={expanded}
+            onToggle={(rowId) => setExpanded((current) => ({ ...current, [rowId]: !current[rowId] }))}
+            onEdit={(row) => setEditing(row)} editable={editable} />
 
-            {!!unstatedModeCount && (
-              <Card style={styles.validationCard}>
-                <View style={styles.validationHead}>
-                  <AlertTriangle size={21} color={colors.warning} />
-                  <View style={{ flex: 1 }}>
-                    <Body weight="700">Visit mode needs review</Body>
-                    <Small>
-                      {unstatedModeCount} visit{unstatedModeCount === 1 ? "" : "s"} do
-                      not state how the patient attends - resolve these before
-                      approval so a reminder never guesses.
-                    </Small>
-                  </View>
-                </View>
-              </Card>
-            )}
-
-            <View style={styles.sectionHead}>
-              <View><Body weight="700" style={styles.sectionTitle}>Protocol Schedule</Body><Small>{rows.length} visits and protocol events</Small></View>
-              {canReview && <Button onPress={validate} loading={busy === "validate"} variant="secondary" style={styles.smallButton}>Validate</Button>}
-              {/* Doc 4 s7 and doc 8 s33. The decisions that block approval live
-                  on their own screen, because they need explanation rather than
-                  a row in a table. */}
-              <Button
-                variant="secondary"
-                style={styles.smallButton}
-                onPress={() => router.push({
-                  pathname: "/(app)/clinical/protocol-review",
-                  params: { scheduleVersionId: schedule.schedule_version_id },
-                } as never)}>
-                Review rules
-              </Button>
-            </View>
-            </>}
-
-            {canReview && <Button
-              onPress={() => { setShowApproval((value) => !value); if (blocking) setShowChecks(true); }}>
-              {showApproval ? "Close approval" : blocking ? "Resolve items before approval" : "Review and approve"}
+          <View style={styles.buttonRow}>
+            {editable && <Button variant="secondary" onPress={() => setAdding(true)} style={styles.grow}>
+              + Add Visit
             </Button>}
+            <Button variant="secondary" onPress={() => onExport("json")} loading={busy === "export-json"} style={styles.grow}>
+              Export JSON
+            </Button>
+            <Button variant="secondary" onPress={() => onExport("csv")} loading={busy === "export-csv"} style={styles.grow}>
+              Export CSV
+            </Button>
+          </View>
+          <Pressable accessibilityRole="link" style={styles.linkRow} onPress={() => router.push({
+            pathname: "/(app)/clinical/protocol-review", params: { scheduleVersionId: versionId! },
+          } as never)}>
+            <Text style={styles.link}>Review footnotes and dependency rules</Text>
+          </Pressable>
 
-            {showApproval && canReview && (
-              <Card style={styles.reviewCard}>
-                <View style={styles.reviewTitle}><ClipboardCheck size={20} color={colors.primary} /><View style={{ flex: 1 }}><Body weight="700">Review and approval</Body><Small>Review the table and evidence before approving this version.</Small></View></View>
-                <View style={styles.actions}>
-                <View style={styles.bulkConfirmBlock}>
-                  <Small style={styles.bulkConfirmLabel}>
-                    This confirms the whole table in one action. Check the visits, activities and source notes first.
-                  </Small>
-                  <TextInput
-                    value={bulkReason}
-                    onChangeText={setBulkReason}
-                    placeholder="Add a short note about your review"
-                    placeholderTextColor={colors.mutedFg}
-                    style={styles.bulkConfirmInput}
-                  />
-                  <Button
-                    onPress={approve}
-                    loading={busy === "approve"}
-                    disabled={blocking > 0 || !bulkReason.trim() || !!busy}
-                    style={styles.actionButton}>
-                    Confirm table and approve
-                  </Button>
-                </View>
-                </View>
-                <Pressable accessibilityRole="button" onPress={() => setShowReject((value) => !value)} style={{ paddingVertical: 10 }}>
-                  <Small color={colors.primary}>{showReject ? "Hide" : "Show"} other review options</Small>
-                </Pressable>
-                {showReject && <>
-                  {["DRAFT", "EXTRACTED", "VALIDATION_REQUIRED", "REJECTED"].includes(schedule.schedule_metadata.status) && <Button onPress={submit} loading={busy === "submit"} variant="secondary">Send for review</Button>}
-                {schedule.schedule_metadata.status === "IN_REVIEW" && (
-                  <View style={styles.bulkConfirmBlock}>
-                    <Small style={styles.bulkConfirmLabel}>Reject instead</Small>
-                    <TextInput
-                      value={rejectReason}
-                      onChangeText={setRejectReason}
-                      placeholder="Why is this schedule being rejected? (recorded in the audit trail)"
-                      placeholderTextColor={colors.mutedFg}
-                      style={styles.bulkConfirmInput}
-                    />
-                    <Button
-                      onPress={reject}
-                      loading={busy === "reject"}
-                      variant="secondary"
-                      style={styles.actionButton}>
-                      Reject schedule
-                    </Button>
-                  </View>
-                )}
-                </>}
-              </Card>
-            )}
-          </>
-        ) : null}
+          {view.status === "APPROVED" ? (
+            <View style={styles.approved}><ShieldCheck size={18} color={colors.success} />
+              <Small color={colors.success} style={{ flex: 1 }}>This version is approved and can no longer be edited.</Small>
+            </View>
+          ) : editable && <Card style={styles.approval}>
+            <Body weight="700">Approve this version</Body>
+            <Small>Approval covers the whole schedule at the revision shown here. MTB rechecks every gate before approving.</Small>
+            <TextInput value={approvalNote} onChangeText={setApprovalNote} accessibilityLabel="Approval note"
+              placeholder="Add a short note about your review (recorded)" placeholderTextColor={colors.mutedFg}
+              style={styles.input} multiline />
+            <Button onPress={onApprove} loading={busy === "approve"}
+              disabled={!approval.enabled || !approvalNote.trim() || !!busy}>Approve schedule</Button>
+            {!approval.enabled && <View style={styles.blocked} accessibilityLiveRegion="polite">
+              <AlertTriangle size={15} color={colors.warning} />
+              <Small style={{ flex: 1 }}>Approval unavailable: {approval.reason}</Small>
+            </View>}
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: showOther }}
+              onPress={() => setShowOther((value) => !value)} style={styles.linkRow}>
+              <Text style={styles.link}>{showOther ? "Hide" : "Show"} other review options</Text>
+            </Pressable>
+            {showOther && <View style={{ gap: 8 }}>
+              {view.status !== "IN_REVIEW" && <Button variant="secondary" onPress={onSubmitForReview} loading={busy === "submit"}>Send for review</Button>}
+              {view.status === "IN_REVIEW" && <>
+                <TextInput value={rejectReason} onChangeText={setRejectReason} accessibilityLabel="Rejection reason"
+                  placeholder="Why is this schedule being rejected? (recorded)" placeholderTextColor={colors.mutedFg} style={styles.input} />
+                <Button variant="secondary" onPress={onReject} loading={busy === "reject"}>Reject schedule</Button>
+              </>}
+            </View>}
+          </Card>}
+        </>}
       </ScrollView>
-      <Modal visible={sourceText !== null} transparent onRequestClose={() => setSourceText(null)}>
-        <View style={{ flex: 1, padding: 24, justifyContent: "center", backgroundColor: "rgba(0,0,0,0.4)" }}>
-          <Card style={{ maxHeight: "80%" }}>
-            <Body weight="700">Protocol evidence</Body>
-            <ScrollView><Text style={{ color: colors.foreground, paddingVertical: 16 }}>{sourceText}</Text></ScrollView>
-            <Button onPress={() => setSourceText(null)}>Close</Button>
-          </Card>
-        </View>
-      </Modal>
+      {!!view && <EditVisitSheet row={editing} view={view} busy={busy === "edit"} onClose={() => setEditing(null)} onSubmit={onEdit} />}
+      {!!view && <AddVisitSheet visible={adding} view={view} busy={busy === "add"} onClose={() => setAdding(false)} onSubmit={onAdd} />}
     </ScreenContainer>
   );
 }
 
-function formatEvidence(item: Evidence) {
-  return [
-    item.page_number ? `Page ${item.page_number}` : null,
-    item.section_title ? `Section: ${item.section_title}` : null,
-    item.table_title ? `Table: ${item.table_title}` : null,
-    item.source_text || null,
-  ].filter(Boolean).join("\n");
+function Notice({ text, error = false }: { text: string; error?: boolean }) {
+  return <View style={[styles.notice, error && styles.errorNotice]} accessibilityLiveRegion="polite">
+    {error ? <AlertTriangle size={16} color={colors.destructive} /> : <CheckCircle2 size={16} color={colors.success} />}
+    <Small color={error ? colors.destructive : colors.success} style={{ flex: 1 }}>{text}</Small>
+  </View>;
 }
-function Notice({ text, error = false }: { text: string; error?: boolean }) { return <View style={[styles.notice, error && styles.errorNotice]}>{error ? <AlertTriangle size={16} color={colors.destructive} /> : <CheckCircle2 size={16} color={colors.success} />}<Small color={error ? colors.destructive : colors.success} style={{ flex: 1 }}>{text}</Small></View>; }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.md, paddingBottom: 50, gap: 14 },
+  content: { padding: spacing.md, paddingBottom: 60, gap: 14 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   centerText: { textAlign: "center", marginTop: 6 },
-  emptyCard: { alignItems: "center", paddingVertical: 30 },
-  emptyTitle: { marginTop: 10 },
-  wideButton: { width: "100%", marginTop: 18 },
+  emptyCard: { alignItems: "center", paddingVertical: 30, gap: 4 },
+  wide: { width: "100%", marginTop: 12 },
   devLink: { flexDirection: "row", gap: 6, alignItems: "center", marginTop: 18 },
   devText: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 12 },
-  summaryRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  summaryMain: { flex: 1, minWidth: 230 },
-  summaryTitle: { marginVertical: 4, fontSize: 18 },
-  statusCard: { minWidth: 175 },
-  statusPill: { marginTop: 8, paddingHorizontal: 10, paddingVertical: 7, borderRadius: radii.pill, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FFF0D6", alignSelf: "flex-start" },
-  approvedPill: { backgroundColor: "#E7F4EA" },
-  statusText: { color: "#855416", fontFamily: fonts.semibold, fontSize: 11 },
-  approvedText: { color: "#326A43" },
-  validationCard: { gap: 9 },
-  validationHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  issue: { padding: 9, borderRadius: radii.sm, backgroundColor: "#FFF7E8" },
-  issueText: { color: "#754A16", fontFamily: fonts.regular, fontSize: 12 },
-  sectionHead: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 5 },
-  sectionTitle: { fontSize: 20 },
-  smallButton: { minWidth: 110, paddingHorizontal: 12 },
-  reviewCard: { gap: 13 },
-  reviewTitle: { flexDirection: "row", alignItems: "center", gap: 10 },
-  actions: { gap: 10 },
-  actionButton: { minWidth: 180, flexGrow: 1 },
-  bulkConfirmBlock: { gap: 8, marginTop: 4, minWidth: 0, width: "100%" },
-  bulkConfirmLabel: { fontStyle: "italic" },
-  bulkConfirmInput: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: radii.md,
-    padding: 10, color: colors.foreground,
-  },
+  recovery: { gap: 8, borderColor: "#EBCB95" },
+  recoveryHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  grow: { flexGrow: 1, minWidth: 140 },
+  linkRow: { minHeight: 44, justifyContent: "center" },
+  link: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 13 },
+  approval: { gap: 10 },
+  approved: { flexDirection: "row", gap: 8, alignItems: "center", padding: 12, borderRadius: radii.md, backgroundColor: "#E7F4EA" },
+  blocked: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: 10, borderRadius: radii.md, backgroundColor: "#FDF3E1" },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, padding: 10, color: colors.foreground, minHeight: 44 },
   notice: { flexDirection: "row", alignItems: "center", gap: 8, padding: 11, borderWidth: 1, borderColor: "#BFDCC6", backgroundColor: "#EFF8F1", borderRadius: radii.md },
-  errorNotice: { borderColor: "#EBC0BB", backgroundColor: "#FFF1EF" },
+  errorNotice: { borderColor: "#F2C9C9", backgroundColor: "#FDECEC" },
 });

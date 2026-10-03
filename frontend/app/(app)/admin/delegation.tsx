@@ -61,12 +61,12 @@ function fmtDate(iso?: string | null): string {
 }
 function statusColors(s?: string): { fg: string; bg: string } {
   switch (s) {
-    case "active": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
-    case "approved": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
-    case "suspended": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
-    case "pending": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
-    case "revoked": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
-    case "rejected": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
+    case "active": return { fg: C.success, bg: "rgba(30,122,70,0.15)" };
+    case "approved": return { fg: C.success, bg: "rgba(30,122,70,0.15)" };
+    case "suspended": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
+    case "pending": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
+    case "revoked": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
+    case "rejected": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
     default: return { fg: C.mutedFg, bg: C.surface };
   }
 }
@@ -223,7 +223,7 @@ export default function AdminDelegation() {
                         <View style={[st.badge, { backgroundColor: sc.bg }]}>
                           <RNText style={[st.badgeTxt, { color: sc.fg }]}>{d.status || "active"}</RNText>
                         </View>
-                        <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                        <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                       </View>
                     </Pressable>
                   );
@@ -237,7 +237,7 @@ export default function AdminDelegation() {
                   const sc = statusColors(request.status);
                   return (
                     <Pressable key={request.id} testID={`org-delegation-request-${request.id}`} onPress={() => setSelectedRequest(request)} style={st.row}>
-                      <View style={[st.avatar, { backgroundColor: "rgba(166,33,63,0.10)" }]}>
+                      <View style={[st.avatar, { backgroundColor: "rgba(27,95,193,0.10)" }]}>
                         <Building2 size={19} color={C.primary} />
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
@@ -249,7 +249,7 @@ export default function AdminDelegation() {
                         <View style={[st.badge, { backgroundColor: sc.bg }]}>
                           <RNText style={[st.badgeTxt, { color: sc.fg }]}>{request.status || "pending"}</RNText>
                         </View>
-                        <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                        <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                       </View>
                     </Pressable>
                   );
@@ -432,7 +432,7 @@ function AddSheet({ open, onClose, onDone }: { open: boolean; onClose: () => voi
           <FormField label="Find staff member">
             <View style={st.searchBar}>
               <Search size={17} color={C.mutedFg} />
-              <TextInput value={query} onChangeText={setQuery} placeholder="Search name, email or org…" placeholderTextColor="rgba(123,95,115,0.5)" autoCapitalize="none" style={st.searchInput} />
+              <TextInput value={query} onChangeText={setQuery} placeholder="Search name, email or org…" placeholderTextColor="rgba(85,98,117,0.5)" autoCapitalize="none" style={st.searchInput} />
               {searching && <ActivityIndicator size="small" color={C.primary} />}
             </View>
             {query.trim().length >= 2 && (
@@ -535,7 +535,7 @@ function OrgRequestSheet({ request, busy, onClose, onDecision }: {
       {request ? (
         <View style={{ gap: 14 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <View style={[st.avatar, { width: 52, height: 52, borderRadius: 17, backgroundColor: "rgba(166,33,63,0.10)" }]}>
+            <View style={[st.avatar, { width: 52, height: 52, borderRadius: 17, backgroundColor: "rgba(27,95,193,0.10)" }]}>
               <Building2 size={22} color={C.primary} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -574,7 +574,7 @@ function OrgRequestSheet({ request, busy, onClose, onDecision }: {
                   testID="org-delegation-reject"
                   disabled={busy || reason.trim().length < 5}
                   onPress={() => onDecision(request, "reject", reason.trim())}
-                  style={[st.decisionBtn, { borderColor: "rgba(192,57,43,0.35)" }, (busy || reason.trim().length < 5) && st.disabled]}
+                  style={[st.decisionBtn, { borderColor: "rgba(194,48,48,0.35)" }, (busy || reason.trim().length < 5) && st.disabled]}
                 >
                   <XCircle size={16} color={C.destructive} />
                   <RNText style={[st.decisionBtnTxt, { color: C.destructive }]}>Reject</RNText>
@@ -645,7 +645,7 @@ function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () 
   );
 }
 function Input(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor="rgba(123,95,115,0.5)" {...props} style={[st.input, props.multiline && { height: 90, textAlignVertical: "top" }, props.style]} />;
+  return <TextInput placeholderTextColor="rgba(85,98,117,0.5)" {...props} style={[st.input, props.multiline && { height: 90, textAlignVertical: "top" }, props.style]} />;
 }
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return <View style={{ gap: 6 }}><RNText style={st.fieldLabel}>{label}</RNText>{children}</View>;
@@ -696,7 +696,7 @@ function Loading({ label }: { label: string }) {
 function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <View style={{ padding: 16, marginTop: 12 }}>
-      <View style={[st.card, { borderColor: "rgba(192,57,43,0.30)" }]}>
+      <View style={[st.card, { borderColor: "rgba(194,48,48,0.30)" }]}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <View style={st.errIcon}><AlertTriangle size={20} color={C.destructive} /></View>
           <RNText style={{ flex: 1, color: C.foreground, fontFamily: fonts.semibold, fontSize: 13 }}>{message}</RNText>
@@ -758,10 +758,10 @@ const st = StyleSheet.create({
   card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingHorizontal: 16, paddingVertical: 16 },
   emptyText: { fontFamily: fonts.regular, fontSize: 13, color: C.mutedFg, paddingVertical: 20, textAlign: "center" },
   loadingTxt: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 13, marginTop: 12 },
-  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface },
 
-  sheetOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  sheetOverlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, maxHeight: "88%" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   sheetTitle: { fontFamily: fonts.display, fontSize: 20, color: C.foreground },

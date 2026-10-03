@@ -169,7 +169,10 @@ def import_native_schedules(
 
         schedule = UniversalSchedule.model_validate(native_schedule)
         issues = [ValidationIssue.model_validate(item) for item in definition.get("native_issues") or []]
-        result = ExtractionResult(schedule=schedule, issues=issues, extraction_trace=[])
+        # The ledgers computed at upload travel with the draft onto its run.
+        accountability = definition.get("native_accountability")
+        result = ExtractionResult(schedule=schedule, issues=issues, extraction_trace=[],
+                                  accountability=accountability if isinstance(accountability, dict) else None)
         schedule_version_id = service.complete_many(run.id, [(None, result)])[0]
         version = session.get(db.ScheduleVersion, schedule_version_id)
         assert version is not None

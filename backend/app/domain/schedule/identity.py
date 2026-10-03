@@ -26,3 +26,25 @@ def activity_logical_key(event_code: str, occurrence_index: int, activity_code: 
     this value directly.
     """
     return f"{event_code}#{occurrence_index}#{activity_code}"
+
+
+#: AT-10: occurrence indexes of condition episode ``e`` start at ``e * STRIDE``.
+#: Episode 0 therefore keeps exactly the historical numbering (NF-08), and a
+#: recurrence can never reuse - and so overwrite - an earlier episode's
+#: identities. A conditional repeat materializes at most 1000 occurrences.
+EPISODE_INDEX_STRIDE = 1000
+
+
+def episode_occurrence_index(episode_index: int, ordinal: int) -> int:
+    """Stable occurrence index of the ``ordinal``-th occurrence of an episode."""
+    if ordinal >= EPISODE_INDEX_STRIDE:
+        raise ValueError("an episode materializes at most EPISODE_INDEX_STRIDE occurrences")
+    return episode_index * EPISODE_INDEX_STRIDE + ordinal
+
+
+def occurrence_identity(occurrence_index: int) -> dict[str, int]:
+    """The (episode, ordinal) pair an occurrence index encodes."""
+    return {
+        "episode": occurrence_index // EPISODE_INDEX_STRIDE,
+        "ordinal": occurrence_index % EPISODE_INDEX_STRIDE,
+    }

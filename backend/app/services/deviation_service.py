@@ -18,7 +18,8 @@ from app.domain.schedule.deviation import (
     ConfinementDeviation, DeviationReport, assess_activity, assess_confinement,
     assess_visit,
 )
-from app.services.schedule_service import PatientScheduleService
+from app.services.schedule_projection import feasibility_from_explanation
+from app.services.schedule_service import PatientScheduleService, SUPERSEDES_KEY
 
 
 class DeviationService:
@@ -60,6 +61,7 @@ class DeviationService:
 
         for row in rows:
             event = row.PatientEvent
+            feasibility, windows = feasibility_from_explanation(event.generation_reason)
             report.visits.append(assess_visit(
                 logical_key=event.logical_key, event_code=row.code,
                 display_name=row.display_name, status=event.status,
@@ -67,6 +69,8 @@ class DeviationService:
                 earliest_date=event.earliest_date, latest_date=event.latest_date,
                 actual_date=actual_by_logical.get(event.logical_occurrence_id),
                 today=today,
+                feasibility=feasibility,
+                feasible_windows=[(item.start, item.end) for item in windows] or None,
             ))
             for activity in self.session.scalars(select(db.PatientActivity).where(
                 db.PatientActivity.patient_event_id == event.id,
@@ -88,7 +92,7 @@ class DeviationService:
             return {}
         actuals: dict[UUID, date] = {}
         rows = self.session.execute(
-            select(db.PatientEvent.logical_occurrence_id, db.PatientEventOccurrence.actual_date)
+            select(db.PatientEvent.logical_occurrence_id, db.PatientEventOccurrence)
             .join(db.PatientEventOccurrence,
                   db.PatientEventOccurrence.patient_event_id == db.PatientEvent.id)
             .where(
@@ -97,9 +101,16 @@ class DeviationService:
                 db.PatientEventOccurrence.actual_date.is_not(None),
             )
             .order_by(db.PatientEventOccurrence.recorded_at)
-        )
-        for logical_id, actual_date in rows:
-            actuals[logical_id] = actual_date
+        ).all()
+        # PT-02: a corrected record no longer acts; its correction does.
+        superseded = {
+            str((row.metadata_json or {}).get(SUPERSEDES_KEY))
+            for _, row in rows if (row.metadata_json or {}).get(SUPERSEDES_KEY)
+        }
+        for logical_id, row in rows:
+            if str(row.id) in superseded:
+                continue
+            actuals[logical_id] = row.actual_date
         return actuals
 
     def _confinements(self, patient: db.Patient, today: date) -> list[ConfinementDeviation]:

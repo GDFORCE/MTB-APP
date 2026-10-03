@@ -15,7 +15,7 @@
       "package": "com.gdforce.mytrialboard",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/mtb-adaptive-icon.png",
-        "backgroundColor": "#FBF2E8"
+        "backgroundColor": "#F4F6F9"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
@@ -27,7 +27,7 @@
       ]
     },
     "androidNavigationBar": {
-      "backgroundColor": "#FEFAF1",
+      "backgroundColor": "#FFFFFF",
       "barStyle": "dark-content",
       "enforceContrast": false
     },
@@ -51,7 +51,7 @@
           "image": "./assets/images/mtb-splash.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#FBF2E8"
+          "backgroundColor": "#F4F6F9"
         }
       ],
       [

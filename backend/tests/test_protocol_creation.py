@@ -126,9 +126,11 @@ def test_lookup_found_and_not_found(headers):
     run(exercise())
 
 
-def test_precreation_extraction_reports_the_engine_is_unavailable(headers):
-    """Extraction was removed ahead of the adaptive rebuild: a valid upload
-    must get a clear 503 so the sponsor falls back to manual entry."""
+def test_precreation_extraction_reports_the_engine_is_unavailable(headers, monkeypatch):
+    """With no extraction provider configured, a valid upload must get a
+    clear 503 so the sponsor falls back to manual entry."""
+    monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
+
     async def exercise():
         async with client() as cli:
             response = await cli.post(

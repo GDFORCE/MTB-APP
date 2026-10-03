@@ -15,9 +15,9 @@ import {
 import type { QualifierRow } from "./api";
 import {
   DEPENDENCY_MODE_CHOICES, toApplicabilityReviewRows, toDependencyReviewRows,
-  toVersionContext,
+  toCyclePlanRows, toProtocolConditionalRows, toVersionContext,
 } from "./presentation";
-import { VersionContextHeader } from "./ScheduleTable";
+import { ConditionalRequirementsTable, VersionContextHeader } from "./ScheduleTable";
 import type { ScheduleEvent, UniversalSchedule } from "./types";
 
 /**
@@ -101,6 +101,9 @@ export default function ProtocolReviewScreen() {
   const dependencyRows = useMemo(() => toDependencyReviewRows(schedule ?? undefined), [schedule]);
   const applicabilityRows = useMemo(
     () => toApplicabilityReviewRows(schedule ?? undefined), [schedule]);
+  const cyclePlanRows = useMemo(() => toCyclePlanRows(schedule ?? undefined), [schedule]);
+  const conditionalRows = useMemo(
+    () => toProtocolConditionalRows(schedule ?? undefined), [schedule]);
   const unresolvedQualifiers = useMemo(
     () => qualifiers.filter((item) => !item.resolved), [qualifiers]);
   const versionContext = useMemo(
@@ -235,6 +238,27 @@ export default function ProtocolReviewScreen() {
             </Card>
           ))}
 
+          {/* Doc F1-F5. How each treatment cycle is dated. An unstated mode
+              blocks approval: grid and follow-the-actual-cycle differ from
+              Cycle 3 on, and the engine never picks one. */}
+          {!!cyclePlanRows.length && (
+            <>
+              <View>
+                <Body weight="700" style={styles.sectionTitle}>Treatment Cycles</Body>
+                <Small>Cycle length, how each cycle start is dated, and how the cycles end</Small>
+              </View>
+              {cyclePlanRows.map((row) => (
+                <Card key={row.id}>
+                  <Body weight="700">{row.block} · {row.length} per cycle</Body>
+                  <Small color={row.modeUnstated ? colors.warning : undefined}>{row.mode}</Small>
+                  <Small>{row.startsFrom}</Small>
+                  <Small>Ends: {row.ends}</Small>
+                  {row.dayOneVisit !== "—" && <Small>{row.dayOneVisit}</Small>}
+                </Card>
+              ))}
+            </>
+          )}
+
           {/* Doc 6. Extraction never decides what a footnote MEANS; it carries
               the marker and its evidence and marks it unresolved, which blocks
               approval. This is where a reviewer states that meaning - the only
@@ -321,6 +345,15 @@ export default function ProtocolReviewScreen() {
               </View>
             </Card>
           ))}
+
+          {/* Doc I8. Trial/site/country-level rules are legitimate protocol
+              content but the patient engine refuses them; the badge says so
+              before approval rather than after accrual is suspended. */}
+          <ConditionalRequirementsTable
+            rows={conditionalRows}
+            title="Conditional Rules"
+            subtitle="Rules that change visits when a condition occurs. Trial-, site- and country-level rules are shown for completeness and never change a patient's schedule."
+          />
 
           {/* Doc 8 s33. */}
           <View>

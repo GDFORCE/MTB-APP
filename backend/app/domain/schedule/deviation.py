@@ -37,6 +37,8 @@ ASSESSABLE_STATUSES = {"RESOLVED", "COMPLETED", "MISSED", "DUE", "OVERDUE"}
 # Statuses that mean the protocol never required this of this patient.
 NOT_A_REQUIREMENT = {
     "WAITING_FOR_CONDITION": "the protocol condition was never activated for this patient",
+    # Doc H2: before randomisation/assignment no arm visit was ever required.
+    "WAITING_FOR_ASSIGNMENT": "the patient had not been assigned to the group this visit belongs to",
     "NOT_APPLICABLE": "not applicable to this patient",
     "CANCELLED": "cancelled before it became due",
     "PAUSED": "the schedule block was paused",
@@ -136,6 +138,8 @@ def assess_visit(
     latest_date: date | None,
     actual_date: date | None,
     today: date,
+    feasibility: str | None = None,
+    feasible_windows: list[tuple[date | None, date | None]] | None = None,
 ) -> VisitDeviation:
     """Classify one occurrence against the window it is currently expected in.
 
@@ -154,7 +158,18 @@ def assess_visit(
             deviation_type=DeviationType.NOT_ASSESSABLE,
             reason=NOT_A_REQUIREMENT[status], **base,
         )
-    if planned_date is None:
+    if feasibility in {"INCOMPLETE", "INFEASIBLE"}:
+        # A constrained visit whose permitted set is not known (or is empty)
+        # has nothing to be early, late or missed against.
+        return VisitDeviation(
+            deviation_type=DeviationType.NOT_ASSESSABLE,
+            reason=("its restrictions cannot be evaluated yet" if feasibility == "INCOMPLETE"
+                    else "its restrictions leave no permitted date; needs review"),
+            **base,
+        )
+    if feasible_windows and len(feasible_windows) > 1:
+        return _assess_disjoint(base, planned_date, actual_date, today, feasible_windows)
+    if planned_date is None and earliest_date is None and latest_date is None:
         return VisitDeviation(
             deviation_type=DeviationType.NOT_ASSESSABLE,
             reason="no protocol-expected date to compare against", **base,
@@ -163,7 +178,7 @@ def assess_visit(
         # Only a window that has fully elapsed can be called missed; a visit still
         # inside its window is simply not done yet.
         deadline = latest_date or planned_date
-        if today > deadline:
+        if deadline is not None and today > deadline:
             return VisitDeviation(
                 deviation_type=DeviationType.MISSED, within_window=False,
                 outside_window_days=(today - deadline).days,
@@ -175,18 +190,25 @@ def assess_visit(
             reason="not yet due", **base,
         )
 
-    delta = (actual_date - planned_date).days
+    # Doc A8/D2: a window-only rule ("within 14 days before surgery") has no
+    # single target day, but its window is still a protocol requirement - a
+    # pre-op done after the surgery must be reported, not "not assessable".
+    delta = (actual_date - planned_date).days if planned_date is not None else None
     breach = _window_breach(actual_date, earliest_date, latest_date)
     within = breach == 0
     if within:
-        detail = "on the protocol-expected date" if delta == 0 else (
-            f"{abs(delta)} day(s) {'early' if delta < 0 else 'late'} but inside the allowed window")
+        if delta is None:
+            detail = "inside the allowed window"
+        else:
+            detail = "on the protocol-expected date" if delta == 0 else (
+                f"{abs(delta)} day(s) {'early' if delta < 0 else 'late'} but inside the allowed window")
         return VisitDeviation(
             deviation_type=DeviationType.NONE, delta_from_planned_days=delta,
             outside_window_days=0, within_window=True,
             reason=f"completed {detail}", **base,
         )
-    early = actual_date < (earliest_date or planned_date)
+    lower = earliest_date or planned_date
+    early = lower is not None and actual_date < lower
     return VisitDeviation(
         deviation_type=DeviationType.EARLY if early else DeviationType.LATE,
         delta_from_planned_days=delta, outside_window_days=breach, within_window=False,
@@ -194,6 +216,55 @@ def assess_visit(
             f"outside the protocol window: {breach} day(s) "
             f"{'before' if early else 'after'} the allowed window"
         ),
+        **base,
+    )
+
+
+def _assess_disjoint(
+    base: dict[str, object],
+    planned_date: date | None,
+    actual_date: date | None,
+    today: date,
+    windows: list[tuple[date | None, date | None]],
+) -> VisitDeviation:
+    """RL-05/AT-18: several disjoint permitted intervals. A date in the gap
+    between two intervals is outside the permitted set - never inside a
+    window stretched over both."""
+    ordered = sorted(windows, key=lambda item: item[0] or date.min)
+    last_end = ordered[-1][1]
+    if actual_date is None:
+        if last_end is not None and today > last_end:
+            return VisitDeviation(
+                deviation_type=DeviationType.MISSED, within_window=False,
+                outside_window_days=(today - last_end).days,
+                reason=("no actual date recorded and the last permitted interval "
+                        f"closed on {last_end.isoformat()}"),
+                **base,
+            )
+        return VisitDeviation(
+            deviation_type=DeviationType.NONE, within_window=None, reason="not yet due", **base)
+    delta = (actual_date - planned_date).days if planned_date is not None else None
+    for start, end in ordered:
+        if (start is None or actual_date >= start) and (end is None or actual_date <= end):
+            return VisitDeviation(
+                deviation_type=DeviationType.NONE, delta_from_planned_days=delta,
+                outside_window_days=0, within_window=True,
+                reason="completed inside a permitted interval", **base,
+            )
+    first_start = ordered[0][0]
+    if first_start is not None and actual_date < first_start:
+        return VisitDeviation(
+            deviation_type=DeviationType.EARLY, delta_from_planned_days=delta,
+            outside_window_days=(first_start - actual_date).days, within_window=False,
+            reason="outside the permitted intervals: before the first one opens", **base,
+        )
+    previous_end = max(end for _, end in ordered if end is not None and end < actual_date)
+    in_gap = last_end is None or actual_date < last_end
+    return VisitDeviation(
+        deviation_type=DeviationType.LATE, delta_from_planned_days=delta,
+        outside_window_days=(actual_date - previous_end).days, within_window=False,
+        reason=("outside the permitted intervals: in the excluded gap between two of them"
+                if in_gap else "outside the permitted intervals: after the last one closed"),
         **base,
     )
 

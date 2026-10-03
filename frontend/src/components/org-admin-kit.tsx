@@ -45,9 +45,9 @@ export const initialsOf = (n: string): string => {
   return ((p[0]?.[0] || "") + (p[1]?.[0] || "")).toUpperCase() || "?";
 };
 const AVATAR_TONES: { bg: string; fg: string }[] = [
-  { bg: "rgba(123,107,184,0.15)", fg: C.info }, { bg: "rgba(230,155,92,0.15)", fg: C.accent },
-  { bg: "rgba(142,91,180,0.15)", fg: C.violet }, { bg: "rgba(92,154,110,0.15)", fg: C.success },
-  { bg: "rgba(216,154,60,0.20)", fg: C.warning }, { bg: "rgba(166,33,63,0.12)", fg: C.primary },
+  { bg: "rgba(45,108,181,0.15)", fg: C.info }, { bg: "rgba(11,128,116,0.15)", fg: C.accent },
+  { bg: "rgba(94,77,178,0.15)", fg: C.violet }, { bg: "rgba(30,122,70,0.15)", fg: C.success },
+  { bg: "rgba(178,106,0,0.20)", fg: C.warning }, { bg: "rgba(27,95,193,0.12)", fg: C.primary },
 ];
 export const avatarTone = (n: string) => {
   let h = 0;
@@ -246,7 +246,7 @@ export function Field({ label, required, children }: { label: string; required?:
 }
 
 export function KitInput(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor="rgba(123,95,115,0.5)" {...props} style={[k.input, props.multiline && { height: 78, textAlignVertical: "top" }, props.style]} />;
+  return <TextInput placeholderTextColor="rgba(85,98,117,0.5)" {...props} style={[k.input, props.multiline && { height: 78, textAlignVertical: "top" }, props.style]} />;
 }
 
 export function PrimaryButton({ label, onPress, disabled, loading, gradient = true, bg }: { label: string; onPress: () => void; disabled?: boolean; loading?: boolean; gradient?: boolean; bg?: string }) {
@@ -270,7 +270,7 @@ export function Loading({ label }: { label?: string }) {
 }
 export function ErrorCard({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <View style={[k.card, { borderColor: "rgba(192,57,43,0.30)", marginTop: 12 }]}>
+    <View style={[k.card, { borderColor: "rgba(194,48,48,0.30)", marginTop: 12 }]}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <View style={k.errIcon}><AlertTriangle size={20} color={C.destructive} /></View>
         <RNText style={{ flex: 1, color: C.foreground, fontFamily: fonts.semibold, fontSize: 13 }}>{message}</RNText>
@@ -298,7 +298,7 @@ export function ConfirmDialog({ confirm, onCancel, busy }: { confirm: ConfirmSta
         <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
         {confirm && (
           <View style={k.dialog}>
-            <View style={[k.dialogIcon, { backgroundColor: "rgba(192,57,43,0.10)" }]}><Trash2 size={22} color={C.destructive} /></View>
+            <View style={[k.dialogIcon, { backgroundColor: "rgba(194,48,48,0.10)" }]}><Trash2 size={22} color={C.destructive} /></View>
             <RNText style={k.dialogTitle}>{confirm.title}</RNText>
             <RNText style={k.dialogBody}>{confirm.body}</RNText>
             <View style={{ marginTop: 18, gap: 10, width: "100%" }}>
@@ -321,7 +321,7 @@ export function ConsoleHeader({ eyebrow, org, roleLabel, note, glow, pulse, onBa
 }) {
   return (
     <LinearGradient colors={[C.primary, C.primaryDeep] as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={k.header}>
-      <View pointerEvents="none" style={[k.headerGlow, { backgroundColor: glow || "rgba(230,155,92,0.30)" }]} />
+      <View pointerEvents="none" style={[k.headerGlow, { backgroundColor: glow || "rgba(11,128,116,0.30)" }]} />
       <SafeAreaView edges={["top"]}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
           <Pressable onPress={onBack} hitSlop={8} style={k.iconBtn}><ChevronLeft size={22} color={C.primaryFg} /></Pressable>
@@ -364,8 +364,8 @@ export function DeckTabs({ tabs, active, onChange, activeColor = C.primary }: {
 
 // ── MemberStatusPill ─────────────────────────────────────────────────────────
 const STATUS_STYLE: Record<MemberStatus, { bg: string; fg: string; label: string }> = {
-  active: { bg: "rgba(92,154,110,0.14)", fg: C.success, label: "Active" },
-  invited: { bg: "rgba(216,154,60,0.16)", fg: C.warning, label: "Invited" },
+  active: { bg: "rgba(30,122,70,0.14)", fg: C.success, label: "Active" },
+  invited: { bg: "rgba(178,106,0,0.16)", fg: C.warning, label: "Invited" },
   deactivated: { bg: C.surface, fg: C.mutedFg, label: "Deactivated" },
   rejected: { bg: C.surface, fg: C.mutedFg, label: "Declined" },
 };
@@ -383,14 +383,14 @@ export function MemberStatusPill({ status }: { status: MemberStatus }) {
 const ORG_GROUP = "__org__";
 function auditVisual(kind: string): { icon: any; bg: string; fg: string } {
   const kd = (kind || "").toLowerCase();
-  if (kd.includes("invite")) return { icon: Send, bg: "rgba(123,107,184,0.14)", fg: C.info };
-  if (kd.includes("remove") || kd.includes("delete")) return { icon: UserMinus, bg: "rgba(192,57,43,0.10)", fg: C.destructive };
-  if (kd.includes("make_admin") || kd.includes("admin")) return { icon: ShieldCheck, bg: "rgba(230,155,92,0.16)", fg: C.accent };
-  if (kd.includes("transfer")) return { icon: ArrowRightLeft, bg: "rgba(142,91,180,0.14)", fg: C.violet };
-  if (kd.includes("access")) return { icon: KeyRound, bg: "rgba(216,154,60,0.16)", fg: C.warning };
-  if (kd.includes("site")) return { icon: Building2, bg: "rgba(166,33,63,0.10)", fg: C.primary };
-  if (kd.includes("delegation")) return { icon: Landmark, bg: "rgba(216,154,60,0.16)", fg: C.warning };
-  return { icon: FlaskConical, bg: "rgba(92,154,110,0.14)", fg: C.success };
+  if (kd.includes("invite")) return { icon: Send, bg: "rgba(45,108,181,0.14)", fg: C.info };
+  if (kd.includes("remove") || kd.includes("delete")) return { icon: UserMinus, bg: "rgba(194,48,48,0.10)", fg: C.destructive };
+  if (kd.includes("make_admin") || kd.includes("admin")) return { icon: ShieldCheck, bg: "rgba(11,128,116,0.16)", fg: C.accent };
+  if (kd.includes("transfer")) return { icon: ArrowRightLeft, bg: "rgba(94,77,178,0.14)", fg: C.violet };
+  if (kd.includes("access")) return { icon: KeyRound, bg: "rgba(178,106,0,0.16)", fg: C.warning };
+  if (kd.includes("site")) return { icon: Building2, bg: "rgba(27,95,193,0.10)", fg: C.primary };
+  if (kd.includes("delegation")) return { icon: Landmark, bg: "rgba(178,106,0,0.16)", fg: C.warning };
+  return { icon: FlaskConical, bg: "rgba(30,122,70,0.14)", fg: C.success };
 }
 function relTime(iso: string): string {
   const d = new Date(iso);
@@ -458,7 +458,7 @@ export function AuditTrail({ entries, loading, error, onRetry }: { entries: Audi
             return (
               <View key={key} style={k.auditGroup}>
                 <Pressable onPress={() => toggle(key)} style={k.auditGroupHead}>
-                  <View style={[k.auditGroupIcon, { backgroundColor: isOrg ? "rgba(166,33,63,0.10)" : "rgba(230,155,92,0.14)" }]}>
+                  <View style={[k.auditGroupIcon, { backgroundColor: isOrg ? "rgba(27,95,193,0.10)" : "rgba(11,128,116,0.14)" }]}>
                     {isOrg ? <Building2 size={17} color={C.primary} /> : <FlaskConical size={17} color={C.accent} />}
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
@@ -495,7 +495,7 @@ export function DelegationGate({ open, delegated, onClose, onRequest, onProceed,
       <View style={k.centerOverlay}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={k.dialog}>
-          <View style={[k.dialogIcon, { backgroundColor: delegated ? "rgba(92,154,110,0.14)" : "rgba(216,154,60,0.16)" }]}>
+          <View style={[k.dialogIcon, { backgroundColor: delegated ? "rgba(30,122,70,0.14)" : "rgba(178,106,0,0.16)" }]}>
             <Landmark size={22} color={delegated ? C.success : C.warning} />
           </View>
           <RNText style={k.dialogTitle}>{delegated ? "You're cleared to create trials" : "Delegation required"}</RNText>
@@ -505,7 +505,7 @@ export function DelegationGate({ open, delegated, onClose, onRequest, onProceed,
           <View style={{ marginTop: 14, gap: 8, width: "100%" }}>
             {rows.map((r) => (
               <View key={r.label} style={k.gateRow}>
-                <View style={[k.gateRowIcon, { backgroundColor: r.ok ? "rgba(92,154,110,0.14)" : C.surface }]}>
+                <View style={[k.gateRowIcon, { backgroundColor: r.ok ? "rgba(30,122,70,0.14)" : C.surface }]}>
                   <r.icon size={16} color={r.ok ? C.success : C.mutedFg} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -585,7 +585,7 @@ export function TransferOwnershipSheet({ open, members, fromName, preset, onClos
           {eligible.map((m) => {
             const on = pick?.id === m.id; const tone = avatarTone(m.name);
             return (
-              <Pressable key={m.id} onPress={() => setPick(m)} style={[k.pickRow, on && { borderColor: C.accent, backgroundColor: "rgba(230,155,92,0.08)" }]}>
+              <Pressable key={m.id} onPress={() => setPick(m)} style={[k.pickRow, on && { borderColor: C.accent, backgroundColor: "rgba(11,128,116,0.08)" }]}>
                 <View style={[k.avatar, { backgroundColor: tone.bg }]}><RNText style={[k.avatarTxt, { color: tone.fg }]}>{initialsOf(m.name)}</RNText></View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <RNText style={k.rowName} numberOfLines={1}>{stripTitle(m.name)}</RNText>
@@ -625,8 +625,8 @@ export function TransferOwnershipSheet({ open, members, fromName, preset, onClos
           ] as const).map((o) => {
             const on = handover === o.key;
             return (
-              <Pressable key={o.key} onPress={() => setHandover(o.key)} style={[k.pickRow, on && { borderColor: C.accent, backgroundColor: "rgba(230,155,92,0.08)" }]}>
-                <View style={[k.avatar, { backgroundColor: on ? "rgba(230,155,92,0.16)" : C.surface, borderRadius: 12 }]}><UserMinus size={18} color={on ? C.accent : C.mutedFg} /></View>
+              <Pressable key={o.key} onPress={() => setHandover(o.key)} style={[k.pickRow, on && { borderColor: C.accent, backgroundColor: "rgba(11,128,116,0.08)" }]}>
+                <View style={[k.avatar, { backgroundColor: on ? "rgba(11,128,116,0.16)" : C.surface, borderRadius: 12 }]}><UserMinus size={18} color={on ? C.accent : C.mutedFg} /></View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <RNText style={k.rowName}>{o.title}</RNText>
                   <RNText style={k.rowSub}>{o.sub}</RNText>
@@ -1105,7 +1105,7 @@ export function TrialAdminActions({ trial, orgId, showToast, onChanged }: {
                 const on = form.status === s;
                 return (
                   <Pressable key={s} onPress={() => setForm({ ...form, status: s })}
-                    style={{ paddingHorizontal: 12, height: 32, borderRadius: 999, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: on ? C.primary : C.border, backgroundColor: on ? "rgba(166,33,63,0.08)" : C.card }}>
+                    style={{ paddingHorizontal: 12, height: 32, borderRadius: 999, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: on ? C.primary : C.border, backgroundColor: on ? "rgba(27,95,193,0.08)" : C.card }}>
                     <RNText style={{ fontFamily: fonts.semibold, fontSize: 12, color: on ? C.primary : C.mutedFg, textTransform: "capitalize" }}>{s}</RNText>
                   </Pressable>
                 );
@@ -1126,7 +1126,7 @@ export const k = StyleSheet.create({
   toast: { position: "absolute", left: 16, right: 16, bottom: 28, backgroundColor: C.foreground, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16 },
   toastTxt: { color: C.primaryFg, fontFamily: fonts.medium, fontSize: 13, textAlign: "center" },
 
-  sheetOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  sheetOverlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, maxHeight: "88%" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   sheetTitle: { fontFamily: fonts.display, fontSize: 20, color: C.foreground },
@@ -1145,7 +1145,7 @@ export const k = StyleSheet.create({
 
   card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingHorizontal: 16, paddingVertical: 16 },
   loadingTxt: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 13, marginTop: 12 },
-  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface },
   emptyIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.surface, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   emptyTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.foreground },
@@ -1156,7 +1156,7 @@ export const k = StyleSheet.create({
   transferCardTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.primaryFg },
   transferCardSub: { fontFamily: fonts.regular, fontSize: 11, color: W.w70, marginTop: 2, lineHeight: 15 },
 
-  centerOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.50)", alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
+  centerOverlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.50)", alignItems: "center", justifyContent: "center", paddingHorizontal: 28 },
   dialog: { width: "100%", maxWidth: 340, backgroundColor: C.background, borderRadius: 24, padding: 20, alignItems: "center" },
   dialogIcon: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center", marginBottom: 12 },
   dialogTitle: { fontFamily: fonts.heading, fontSize: 18, color: C.foreground, textAlign: "center" },
@@ -1218,7 +1218,7 @@ export const k = StyleSheet.create({
   chipTxt: { fontFamily: fonts.medium, fontSize: 12, color: C.mutedFg },
   chipTxtActive: { color: C.primaryFg },
 
-  recordCard: { borderRadius: 12, borderWidth: 1, borderColor: "rgba(230,155,92,0.40)", borderStyle: "dashed", backgroundColor: "rgba(230,155,92,0.06)", padding: 12 },
+  recordCard: { borderRadius: 12, borderWidth: 1, borderColor: "rgba(11,128,116,0.40)", borderStyle: "dashed", backgroundColor: "rgba(11,128,116,0.06)", padding: 12 },
   recordEyebrow: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1.2, color: C.accent },
   recordTxt: { fontFamily: fonts.regular, fontSize: 13, color: C.foreground, fontStyle: "italic", marginTop: 4, lineHeight: 18 },
 
@@ -1242,7 +1242,7 @@ export const k = StyleSheet.create({
   memberRow: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 12 },
   youPill: { paddingHorizontal: 7, height: 18, borderRadius: 9, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" },
   youPillTxt: { fontFamily: fonts.semibold, fontSize: 9, color: C.mutedFg },
-  adminPill: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, height: 18, borderRadius: 9, backgroundColor: "rgba(230,155,92,0.16)", justifyContent: "center" },
+  adminPill: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, height: 18, borderRadius: 9, backgroundColor: "rgba(11,128,116,0.16)", justifyContent: "center" },
   adminPillTxt: { fontFamily: fonts.semibold, fontSize: 9, color: C.accent },
   rowIconBtn: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
 });

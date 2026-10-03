@@ -41,9 +41,9 @@ const STATUS_FILTERS = [
 
 function statusColors(status?: string): { fg: string; bg: string } {
   switch (status) {
-    case "approved": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
-    case "rejected": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
-    default: return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
+    case "approved": return { fg: C.success, bg: "rgba(30,122,70,0.15)" };
+    case "rejected": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
+    default: return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
   }
 }
 function fmtDate(iso?: string): string {
@@ -215,7 +215,7 @@ export default function AdminMasterData() {
                           <RNText style={md.meta}>Date: {fmtDate(item.dateSubmitted)}</RNText>
 
                           {!pending && (
-                            <View style={[md.result, { backgroundColor: item.status === "approved" ? "rgba(92,154,110,0.10)" : "rgba(192,57,43,0.06)" }]}>
+                            <View style={[md.result, { backgroundColor: item.status === "approved" ? "rgba(30,122,70,0.10)" : "rgba(194,48,48,0.06)" }]}>
                               <RNText style={{ fontFamily: fonts.medium, fontSize: 12, color: sc.fg }}>
                                 {cap(item.status)} by {item.actionBy || "Admin"}{item.actioned_at ? ` on ${fmtDate(item.actioned_at)}` : ""}
                               </RNText>
@@ -379,7 +379,7 @@ const md = StyleSheet.create({
   tabActive: { backgroundColor: C.card },
   tabTxt: { fontFamily: fonts.medium, fontSize: 13, color: C.mutedFg },
   tabTxtActive: { color: C.primary, fontFamily: fonts.bold },
-  banner: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "rgba(123,107,184,0.08)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(123,107,184,0.25)", padding: 12, marginTop: 14 },
+  banner: { flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "rgba(45,108,181,0.08)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(45,108,181,0.25)", padding: 12, marginTop: 14 },
   bannerTxt: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: C.foreground, lineHeight: 17 },
   typeBadge: { paddingHorizontal: 10, height: 22, borderRadius: 11, backgroundColor: C.surface, alignItems: "center", justifyContent: "center", maxWidth: 200 },
   typeBadgeTxt: { fontFamily: fonts.medium, fontSize: 11, color: C.mutedFg },

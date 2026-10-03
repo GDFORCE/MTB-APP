@@ -188,16 +188,25 @@ export async function evaluatePatientSchedule(patientId: string, horizon: string
   return response.data;
 }
 
+/**
+ * Records a candidate anchor value (confirmed later through impact preview).
+ *
+ * `sourceType` is required on purpose (doc C6): it is what tells the engine
+ * whether the date is an expectation (e.g. PLANNED_PROCEDURE, see
+ * anchor_status.PLANNED_SOURCE_TYPES) or a fact (e.g. ACTUAL_EVENT). Use
+ * `anchorSourceType()` from presentation.ts rather than a literal.
+ */
 export async function recordPatientAnchor(
   patientId: string,
   anchorDefinitionId: string,
   valueDate: string,
+  sourceType: string,
 ) {
   const response = await api.post(`${root}/patients/${patientId}/anchors`, {
     anchor_definition_id: anchorDefinitionId,
     value_date: valueDate,
     status: "PENDING_CONFIRMATION",
-    source_type: "DEMO_UI",
+    source_type: sourceType,
   });
   return response.data;
 }
@@ -441,10 +450,27 @@ export async function previewAssignmentImpact(
   assignment: Record<string, string | null>,
   horizon: string,
   reason: string,
+  assignmentEffectiveFrom?: string,
 ) {
   const response = await api.post<ScheduleImpact>(
     `${root}/patients/${patientId}/assignment/impact-preview`,
-    { assignment, horizon, reason });
+    { assignment, horizon, reason,
+      ...(assignmentEffectiveFrom ? { assignment_effective_from: assignmentEffectiveFrom } : {}) });
+  return response.data;
+}
+
+/** WP3: preview a process hold / resume / stop / completion. Applied only on confirm. */
+export async function previewProcessTransition(patientId: string, body: Record<string, unknown>) {
+  const response = await api.post<{ proposal_id: string; status: string; expires_at: string; impact: ScheduleImpact["impact"] }>(
+    `${root}/patients/${patientId}/schedule/impact-preview`, body);
+  const data = response.data;
+  return { id: data.proposal_id, status: data.status, expires_at: data.expires_at, impact: data.impact } as ScheduleImpact;
+}
+
+/** WP3: record (or correct) a booked / performed / missed fact; the schedule is re-evaluated. */
+export async function recordOccurrenceFact(patientId: string, body: Record<string, unknown>) {
+  const response = await api.post<{ occurrence_id: string; status: string; evaluation_id: string }>(
+    `${root}/patients/${patientId}/occurrence-facts`, body);
   return response.data;
 }
 
@@ -629,5 +655,66 @@ export type CanonicalScheduleIndex = {
 /** Every protocol/schedule version this trial has, superseded ones included. */
 export async function getCanonicalSchedules(trialId: string) {
   const response = await api.get<CanonicalScheduleIndex>(`/trials/${trialId}/uctsm-schedule`);
+  return response.data;
+}
+
+// --- Visit Schedule review (review view, semantic edits, export, approval) ----------
+
+/** The backend ScheduleReviewView - rows, shared questions, approval eligibility. */
+export async function getReviewView(scheduleVersionId: string) {
+  const response = await api.get<import("./visitSchedule").ReviewView>(
+    `${root}/schedule-versions/${scheduleVersionId}/review-view`);
+  return response.data;
+}
+
+type ReviewWriteResult = {
+  revision: string;
+  changed_row_ids: string[];
+  view: import("./visitSchedule").ReviewView;
+  event_id?: string;
+};
+
+export async function editScheduleVisit(scheduleVersionId: string, eventId: string, body: Record<string, unknown>) {
+  const response = await api.patch<ReviewWriteResult>(
+    `${root}/schedule-versions/${scheduleVersionId}/events/${eventId}`, body);
+  return response.data;
+}
+
+export async function addScheduleVisit(scheduleVersionId: string, body: Record<string, unknown>) {
+  const response = await api.post<ReviewWriteResult>(`${root}/schedule-versions/${scheduleVersionId}/events`, body);
+  return response.data;
+}
+
+export async function resolveReviewQuestion(scheduleVersionId: string, questionId: string, body: Record<string, unknown>) {
+  const response = await api.post<ReviewWriteResult>(
+    `${root}/schedule-versions/${scheduleVersionId}/review-questions/${encodeURIComponent(questionId)}/resolve`, body);
+  return response.data;
+}
+
+/** Whole-version approval at the revision the reviewer saw (UI-08, RV-05). */
+export async function approveScheduleVersion(scheduleVersionId: string, expectedRevision: string, reason: string) {
+  const response = await api.post<{ status: string; revision: string; semantic_fingerprint: string }>(
+    `${root}/schedule-versions/${scheduleVersionId}/approve-version`,
+    { expected_revision: expectedRevision, reason });
+  return response.data;
+}
+
+/** The export as text (JSON pretty-printed, or CSV). */
+export async function exportScheduleVersion(scheduleVersionId: string, format: "json" | "csv") {
+  const response = await api.get(`${root}/schedule-versions/${scheduleVersionId}/export`, {
+    params: { format }, responseType: "text", transformResponse: (data) => data,
+  });
+  const text = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
+  return format === "json" ? JSON.stringify(JSON.parse(text), null, 2) : text;
+}
+
+/** Attach (or replace by code) a reviewed holiday calendar on a draft version. */
+export async function attachHolidayCalendar(
+  scheduleVersionId: string, expectedRevision: string, rationale: string,
+  calendar: { code: string; version: string; business_weekdays: string[]; dates?: string[]; description?: string },
+) {
+  const response = await api.post<ReviewWriteResult>(
+    `${root}/schedule-versions/${scheduleVersionId}/holiday-calendars`,
+    { expected_revision: expectedRevision, rationale, calendar });
   return response.data;
 }

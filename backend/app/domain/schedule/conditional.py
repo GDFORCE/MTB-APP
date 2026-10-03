@@ -16,11 +16,13 @@ Safety rules encoded here:
   * A condition that is merely PENDING_CONFIRMATION does not act. Clinically
     significant pathway changes require confirmation first.
   * Resolution stops further repeats but never deletes what already happened.
+  * Only PATIENT/ARM/COHORT-scoped rules act on a patient. A SITE, COUNTRY or
+    TRIAL rule is refused here, whatever its condition state (doc I8).
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from pydantic import Field
 
@@ -30,7 +32,12 @@ from .models import (
     BlockState,
     ConditionalDefinition,
     ConditionState,
+    PATIENT_RULE_SCOPES,
     PatientConditionStatus,
+    ProcessState,
+    ProcessTarget,
+    ProcessTransition,
+    ProcessTransitionReason,
     UniversalSchedule,
 )
 from .timing import PositiveTemporalAmount, StrictModel
@@ -55,6 +62,10 @@ class EventActivation(StrictModel):
     resolution_date: date | datetime | None = None
     repeat_interval: PositiveTemporalAmount | None = None
     repeat_until_resolved: bool = False
+    #: AT-10: which episode of the condition this activation belongs to (the
+    #: condition's ``occurrence_index``). Episode 0 keeps the historical
+    #: occurrence numbering; a later episode gets its own identities.
+    episode_index: int = 0
 
 
 class BlockStateChange(StrictModel):
@@ -123,6 +134,17 @@ class ConditionalPlan(StrictModel):
     block_directives: dict[str, BlockDirective] = Field(default_factory=dict)
     confinement_extensions: list[ConfinementExtension] = Field(default_factory=list)
     condition_anchors: dict[str, date | datetime] = Field(default_factory=dict)
+    #: Conditional definitions this patient's engine refused because they are
+    #: not patient-scoped (doc I8), by code, with the scope they declared.
+    refused_rules: dict[str, str] = Field(default_factory=dict)
+    #: Targets those refused rules name, mapped to the refusing rule's code, so
+    #: a visit can explain why a recorded condition did not move it.
+    refused_event_codes: dict[str, str] = Field(default_factory=dict)
+    #: WP3: process transitions enacted by confirmed conditions (RL-10/11).
+    process_transitions: list[ProcessTransition] = Field(default_factory=list)
+    #: Blocks/processes a RESOLVED condition keeps held, with the condition
+    #: code (the I1 fix: resolution is not an implicit resume).
+    held_after_resolution: dict[str, str] = Field(default_factory=dict)
 
     def is_conditional(self, event_code: str) -> bool:
         return event_code in self.conditional_event_codes
@@ -173,6 +195,18 @@ def build_conditional_plan(schedule: UniversalSchedule, context: object) -> Cond
             if action.action_type in {"ADD_EVENT", "REPEAT_EVENT"}:
                 plan.conditional_event_codes.add(action.target_code)
 
+        if definition.scope not in PATIENT_RULE_SCOPES:
+            # Doc I8: a SITE/COUNTRY/TRIAL rule ("accrual suspended, DSMC
+            # reviews") is not about this patient and must never add, cancel,
+            # pause or stop their visits - even when its condition is recorded
+            # as active. The events it names stay registered as conditional
+            # above, so they remain undated rather than turning into ordinary
+            # scheduled visits; the rule itself goes to a trial-level workflow.
+            plan.refused_rules[definition.code] = definition.scope.value
+            for action in definition.actions:
+                plan.refused_event_codes.setdefault(action.target_code, definition.code)
+            continue
+
         if _applies(definition.applicability, context) != TruthValue.TRUE:
             # Not this patient's arm/cohort: the condition is not even offered.
             continue
@@ -180,13 +214,25 @@ def build_conditional_plan(schedule: UniversalSchedule, context: object) -> Cond
         status = _status(definition, conditions)
         if status.occurrence_date is not None and status.state in DATED_STATES:
             plan.condition_anchors[definition.code] = status.occurrence_date
+        if status.state == ConditionState.RESOLVED:
+            # Resolution ends the condition EPISODE; it does not silently
+            # un-pause or revive anything (WP3 fix of the I1 hazard). A hold or
+            # stop the condition enacted stays in force until an explicit
+            # resume - or until the block/process states that resolution itself
+            # resumes (``resume_trigger == CONDITION_RESOLUTION``).
+            _persisting_after_resolution(plan, definition, status, schedule)
+            continue
         if status.state not in ACTING_STATES:
             continue
 
         assert status.occurrence_date is not None  # guaranteed by PatientConditionStatus
         for action in definition.actions:
             parameters = dict(action.parameters)
-            if action.action_type in {"ADD_EVENT", "REPEAT_EVENT"}:
+            if action.action_type in _PROCESS_ACTION_STATES:
+                plan.process_transitions.append(_condition_transition(
+                    definition, action.action_type, action.target_code,
+                    status.occurrence_date, parameters, status.occurrence_index))
+            elif action.action_type in {"ADD_EVENT", "REPEAT_EVENT"}:
                 plan.activations[action.target_code] = EventActivation(
                     event_code=action.target_code,
                     condition_code=definition.code,
@@ -197,6 +243,7 @@ def build_conditional_plan(schedule: UniversalSchedule, context: object) -> Cond
                         if action.action_type == "REPEAT_EVENT" else None
                     ),
                     repeat_until_resolved=action.action_type == "REPEAT_EVENT",
+                    episode_index=status.occurrence_index,
                 )
             elif action.action_type == "CANCEL_EVENT":
                 plan.cancelled_event_codes[action.target_code] = definition.code
@@ -208,35 +255,10 @@ def build_conditional_plan(schedule: UniversalSchedule, context: object) -> Cond
                     "PAUSE_BLOCK": BlockState.PAUSED,
                     "RESUME_BLOCK": BlockState.ACTIVE,
                 }[action.action_type]
-                existing = plan.block_directives.get(action.target_code)
-                # A stop is terminal: a later pause or resume cannot revive a branch
-                # the protocol has ended.
-                if existing is not None and existing.state == BlockState.STOPPED:
-                    continue
-                change = BlockStateChange(
+                _add_block_change(plan, action.target_code, BlockStateChange(
                     state=state, condition_code=definition.code,
                     effective_date=status.occurrence_date,
-                )
-                # Transitions are kept in protocol order, so a pause followed by a
-                # resume stays legible as a pause interval rather than collapsing
-                # into a bare "ACTIVE".
-                history = list(existing.changes) if existing is not None else []
-                history.append(change)
-                history.sort(key=lambda item: (
-                    item.effective_date is None,
-                    _sort_key(item.effective_date),
                 ))
-                trimmed: list[BlockStateChange] = []
-                for item in history:
-                    trimmed.append(item)
-                    if item.state == BlockState.STOPPED:
-                        break
-                plan.block_directives[action.target_code] = BlockDirective(
-                    block_code=action.target_code, state=trimmed[-1].state,
-                    condition_code=trimmed[-1].condition_code,
-                    effective_date=trimmed[-1].effective_date,
-                    changes=trimmed,
-                )
             elif action.action_type == "EXTEND_CONFINEMENT":
                 extension = _repeat_interval({"interval": parameters.get("duration")})
                 if extension is not None:
@@ -246,6 +268,136 @@ def build_conditional_plan(schedule: UniversalSchedule, context: object) -> Cond
                         extension=extension,
                     ))
     return plan
+
+
+def _add_block_change(plan: ConditionalPlan, block_code: str, change: BlockStateChange) -> None:
+    """Merge one dated block transition into the block's history.
+
+    Transitions are kept in DATE order, so a pause followed by a resume stays
+    legible as a pause interval rather than collapsing into a bare "ACTIVE". A
+    stop is terminal: everything dated after it is trimmed below, so a later
+    pause or resume cannot revive a branch the protocol has ended.
+
+    Doc I7: the result must not depend on the order the conditional
+    definitions happen to be listed in. Earlier, a stop processed first
+    discarded every pause processed after it - including one dated BEFORE the
+    stop - so listing order changed which visits were held. Same-day
+    transitions now have one fixed order (pause, then resume, then stop; then
+    by condition code).
+    """
+    existing = plan.block_directives.get(block_code)
+    history = list(existing.changes) if existing is not None else []
+    history.append(change)
+    history.sort(key=lambda item: (
+        item.effective_date is None,
+        _sort_key(item.effective_date),
+        _SAME_DAY_ORDER[item.state],
+        item.condition_code,
+    ))
+    trimmed: list[BlockStateChange] = []
+    for item in history:
+        trimmed.append(item)
+        if item.state == BlockState.STOPPED:
+            break
+    plan.block_directives[block_code] = BlockDirective(
+        block_code=block_code, state=trimmed[-1].state,
+        condition_code=trimmed[-1].condition_code,
+        effective_date=trimmed[-1].effective_date,
+        changes=trimmed,
+    )
+
+
+_PROCESS_ACTION_STATES = {
+    "HOLD_PROCESS": ProcessState.HELD,
+    "RESUME_PROCESS": ProcessState.ACTIVE,
+    "STOP_PROCESS": ProcessState.STOPPED,
+    "COMPLETE_PROCESS": ProcessState.COMPLETED,
+}
+
+
+def _stable_instant(value: date | datetime) -> datetime:
+    """A deterministic recording time for an engine-derived transition (the
+    evaluation must not depend on the wall clock - NF-01)."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+
+
+def _condition_transition(
+    definition: ConditionalDefinition, action_type: str, process_code: str,
+    effective: date | datetime, parameters: dict[str, object], episode: int,
+    *, suffix: str = "",
+) -> ProcessTransition:
+    from .processes import validate_resume_policy
+
+    to_state = _PROCESS_ACTION_STATES[action_type]
+    return ProcessTransition(
+        id=f"condition:{definition.code}:{episode}:{action_type}:{process_code}{suffix}",
+        target=ProcessTarget(type="PROCESS", process_code=process_code),
+        to_state=to_state, effective_at=effective,
+        recorded_at=_stable_instant(effective), status="CONFIRMED",
+        reason=ProcessTransitionReason.CONDITION, source="CONDITION",
+        source_ref=definition.code,
+        resume_policy=(
+            validate_resume_policy(parameters.get("resume_policy"))
+            if to_state == ProcessState.ACTIVE else None),
+    )
+
+
+def _persisting_after_resolution(
+    plan: ConditionalPlan,
+    definition: ConditionalDefinition,
+    status: PatientConditionStatus,
+    schedule: UniversalSchedule,
+) -> None:
+    """Every block/process transition a now-RESOLVED condition enacted stays
+    a dated fact: a hold stays in force until an explicit resume, a stop stays
+    terminal, a resume stays a resume."""
+    if status.occurrence_date is None:
+        return
+    blocks = {item.code: item for item in schedule.repeat_blocks}
+    processes = {item.code: item for item in schedule.processes}
+    for action in definition.actions:
+        if action.action_type in {"PAUSE_BLOCK", "STOP_BLOCK", "RESUME_BLOCK"}:
+            # Every block transition the condition enacted is a dated fact.
+            state = {
+                "STOP_BLOCK": BlockState.STOPPED, "PAUSE_BLOCK": BlockState.PAUSED,
+                "RESUME_BLOCK": BlockState.ACTIVE,
+            }[action.action_type]
+            _add_block_change(plan, action.target_code, BlockStateChange(
+                state=state, condition_code=definition.code,
+                effective_date=status.occurrence_date))
+            if action.action_type != "PAUSE_BLOCK":
+                continue
+            block = blocks.get(action.target_code)
+            if (block is not None and block.resume_trigger == "CONDITION_RESOLUTION"
+                    and status.resolution_date is not None):
+                _add_block_change(plan, action.target_code, BlockStateChange(
+                    state=BlockState.ACTIVE, condition_code=definition.code,
+                    effective_date=status.resolution_date))
+            else:
+                plan.held_after_resolution[action.target_code] = definition.code
+        elif action.action_type in _PROCESS_ACTION_STATES:
+            plan.process_transitions.append(_condition_transition(
+                definition, action.action_type, action.target_code,
+                status.occurrence_date, dict(action.parameters), status.occurrence_index))
+            if action.action_type != "HOLD_PROCESS":
+                continue
+            process = processes.get(action.target_code)
+            if (process is not None and process.resume_trigger == "CONDITION_RESOLUTION"
+                    and status.resolution_date is not None):
+                plan.process_transitions.append(_condition_transition(
+                    definition, "RESUME_PROCESS", action.target_code,
+                    status.resolution_date, {}, status.occurrence_index,
+                    suffix=":resolution"))
+            else:
+                plan.held_after_resolution[action.target_code] = definition.code
+
+
+#: How transitions recorded for the same day are ordered (doc I7). A pause
+#: comes first so a visit on that day is held rather than left due; a stop
+#: comes last, so it ends the block after the day's other transitions.
+_SAME_DAY_ORDER = {BlockState.PAUSED: 0, BlockState.ACTIVE: 1, BlockState.STOPPED: 2}
 
 
 def _sort_key(value: date | datetime | None) -> datetime:

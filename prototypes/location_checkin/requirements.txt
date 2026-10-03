@@ -1,0 +1,9 @@
+streamlit>=1.40
+streamlit-folium>=0.22
+streamlit-js-eval>=0.1.7
+folium>=0.17
+openai>=1.40
+requests>=2.31
+pillow>=10
+python-dotenv>=1.0
+pytest>=8

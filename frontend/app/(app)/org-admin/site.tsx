@@ -28,10 +28,10 @@ import {
 
 function statusTone(status?: string): { bg: string; fg: string } {
   const s = (status || "active").toLowerCase();
-  if (s === "active") return { bg: "rgba(92,154,110,0.15)", fg: C.success };
-  if (s === "completed") return { bg: "rgba(123,107,184,0.15)", fg: C.info };
-  if (s === "terminated" || s === "closed") return { bg: "rgba(192,57,43,0.12)", fg: C.destructive };
-  return { bg: "rgba(123,95,115,0.12)", fg: C.mutedFg };
+  if (s === "active") return { bg: "rgba(30,122,70,0.15)", fg: C.success };
+  if (s === "completed") return { bg: "rgba(45,108,181,0.15)", fg: C.info };
+  if (s === "terminated" || s === "closed") return { bg: "rgba(194,48,48,0.12)", fg: C.destructive };
+  return { bg: "rgba(85,98,117,0.12)", fg: C.mutedFg };
 }
 
 const ADD_PATIENT_ROUTE = "/(app)/clinical/add-patient";
@@ -148,7 +148,7 @@ export default function SiteConsole() {
           eyebrow="SITE · ORGANIZATION MANAGEMENT"
           org={orgName} roleLabel="Site Admin"
           note="You're also the site administrator — manage trials, access, organization members and audit"
-          glow="rgba(123,107,184,0.34)"
+          glow="rgba(45,108,181,0.34)"
           pulse={pulse}
           onBack={() => pathname.includes("/site/dashboard")
             ? router.replace("/(app)/clinical/profile")
@@ -263,20 +263,20 @@ function TrialCard({ t, mine, requested, onOpen, onRequest, actions }: {
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
           <View style={st.protocolPill}><RNText style={st.protocolTxt}>{t.protocol_id || t.id.slice(0, 8)}</RNText></View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <View style={[st.accessPill, { backgroundColor: full ? "rgba(92,154,110,0.14)" : "rgba(216,154,60,0.16)" }]}>
+            <View style={[st.accessPill, { backgroundColor: full ? "rgba(30,122,70,0.14)" : "rgba(178,106,0,0.16)" }]}>
               {full ? <KeyRound size={11} color={C.success} /> : <Lock size={11} color={C.warning} />}
               <RNText style={[st.accessTxt, { color: full ? C.success : C.warning }]}>
                 {mine ? "Full · created by you" : full ? "Full access granted" : "Restricted"}
               </RNText>
             </View>
-            {full && <View style={st.arrowBtn}><ArrowUpRight size={14} color="rgba(123,95,115,0.7)" /></View>}
+            {full && <View style={st.arrowBtn}><ArrowUpRight size={14} color="rgba(85,98,117,0.7)" /></View>}
           </View>
         </View>
 
         <RNText style={st.trialTitle} numberOfLines={2}>{t.title || "Untitled trial"}</RNText>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {!!t.phase && <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={t.phase} />}
-          {!!t.condition && <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={t.condition} />}
+          {!!t.phase && <Tag bg="rgba(45,108,181,0.10)" fg={C.info} label={t.phase} />}
+          {!!t.condition && <Tag bg="rgba(11,128,116,0.12)" fg={C.accent} label={t.condition} />}
           <View style={[st.statusBadge, { backgroundColor: tone.bg }]}><RNText style={[st.statusTxt, { color: tone.fg }]}>{t.status || "active"}</RNText></View>
         </View>
       </Pressable>
@@ -336,7 +336,7 @@ function TrialCard({ t, mine, requested, onOpen, onRequest, actions }: {
               <View key={l.label} style={st.lockedTile}>
                 <l.icon size={14} color={C.mutedFg} />
                 <RNText style={st.lockedTxt}>{l.label}</RNText>
-                <Lock size={12} color="rgba(123,95,115,0.5)" />
+                <Lock size={12} color="rgba(85,98,117,0.5)" />
               </View>
             ))}
           </View>
@@ -370,7 +370,7 @@ const st = StyleSheet.create({
   trialTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.foreground, lineHeight: 20 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
   statusTxt: { fontFamily: fonts.semibold, fontSize: 11, textTransform: "capitalize" },
-  metaLabel: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1, color: "rgba(123,95,115,0.75)" },
+  metaLabel: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1, color: "rgba(85,98,117,0.75)" },
   metaVal: { fontFamily: fonts.bold, fontSize: 12, color: C.foreground },
   subjectBox: { marginTop: 8, backgroundColor: C.surface, borderRadius: 12, padding: 10, gap: 6 },
   subjectRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -381,11 +381,11 @@ const st = StyleSheet.create({
   openBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface },
   openBtnTxt: { fontFamily: fonts.bold, fontSize: 12 },
   scheduleBox: { marginTop: 12, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface, padding: 10 },
-  scheduleEyebrow: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1, color: "rgba(123,95,115,0.7)" },
+  scheduleEyebrow: { fontFamily: fonts.semibold, fontSize: 10, letterSpacing: 1, color: "rgba(85,98,117,0.7)" },
   visitName: { fontFamily: fonts.medium, fontSize: 11, color: C.foreground, flex: 1, minWidth: 0 },
   visitDay: { fontFamily: fonts.mono, fontSize: 10, color: C.mutedFg },
-  lockedTile: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: C.border, backgroundColor: "rgba(123,95,115,0.05)", paddingHorizontal: 10, paddingVertical: 10 },
+  lockedTile: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, borderWidth: 1, borderStyle: "dashed", borderColor: C.border, backgroundColor: "rgba(85,98,117,0.05)", paddingHorizontal: 10, paddingVertical: 10 },
   lockedTxt: { flex: 1, minWidth: 0, fontFamily: fonts.semibold, fontSize: 10, color: C.mutedFg },
-  requestBtn: { marginTop: 10, paddingVertical: 11, borderRadius: 999, borderWidth: 1, borderColor: "rgba(123,107,184,0.35)", backgroundColor: "rgba(123,107,184,0.08)", alignItems: "center" },
+  requestBtn: { marginTop: 10, paddingVertical: 11, borderRadius: 999, borderWidth: 1, borderColor: "rgba(45,108,181,0.35)", backgroundColor: "rgba(45,108,181,0.08)", alignItems: "center" },
   requestTxt: { fontFamily: fonts.bold, fontSize: 12, color: C.info },
 });

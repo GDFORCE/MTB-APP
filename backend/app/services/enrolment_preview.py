@@ -13,6 +13,21 @@ from app.services.operational_bridge import OperationalBridgeService
 from app.services.schedule_service import resolve_current_schedule_version
 
 
+def split_planned_anchors(
+    dates: dict[str, date], sources: dict[str, str] | None,
+) -> tuple[dict[str, date], dict[str, date]]:
+    """PT-01: separate dates the site marked PLANNED from actual ones.
+
+    Anything not explicitly marked PLANNED stays actual, which is the existing
+    behaviour for every caller that sends no sources.
+    """
+    planned_codes = {code for code, source in (sources or {}).items()
+                     if str(source).strip().upper() == "PLANNED"}
+    actual = {code: value for code, value in dates.items() if code not in planned_codes}
+    planned = {code: value for code, value in dates.items() if code in planned_codes}
+    return actual, planned
+
+
 def enrollment_anchors(schedule, baseline: date, additional: dict[str, date]) -> dict[str, date]:
     origin = schedule_origin_anchor(schedule)
     if origin is None:
@@ -35,6 +50,7 @@ def preview_enrolment(
     cohort_label: str | None = None, population_label: str | None = None,
     dimension_values: dict[str, list[str]] | None = None,
     expected_version_id: UUID | None = None,
+    anchor_date_sources: dict[str, str] | None = None,
 ) -> dict:
     trial = session.get(db.Trial, trial_id)
     if trial is None or trial.organization_id != organization_id:
@@ -46,9 +62,14 @@ def preview_enrolment(
     def dimension_code(values, label):
         selected = OperationalBridgeService._dimension_id(values, label)
         return next((item.code for item in values if item.id == selected), None)
+    origin = schedule_origin_anchor(schedule)
+    if origin is not None and (anchor_date_sources or {}).get(origin.code, "").upper() == "PLANNED":
+        raise ValueError("The schedule origin date is recorded as actual; it cannot be planned.")
+    actual_dates, planned_dates = split_planned_anchors(
+        enrollment_anchors(schedule, baseline, anchor_dates or {}), anchor_date_sources)
     context = PatientContext(
         patient_id=uuid4(), schedule_version_id=version.id,
-        anchors=enrollment_anchors(schedule, baseline, anchor_dates or {}),
+        anchors=actual_dates, planned_anchors=planned_dates,
         arm_code=dimension_code(schedule.arms, arm_label),
         cohort_code=dimension_code(schedule.cohorts, cohort_label),
         population_code=dimension_code(schedule.populations, population_label),

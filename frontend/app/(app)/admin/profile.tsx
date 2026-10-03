@@ -257,7 +257,7 @@ function PasswordField({ label, value, onChange, show, toggle }: { label: string
       <RNText style={st.fieldLabel}>{label}</RNText>
       <View style={pf.pwWrap}>
         <TextInput value={value} onChangeText={onChange} secureTextEntry={!show} autoCapitalize="none"
-          placeholderTextColor="rgba(123,95,115,0.5)" style={pf.pwInput} />
+          placeholderTextColor="rgba(85,98,117,0.5)" style={pf.pwInput} />
         <Pressable onPress={toggle} hitSlop={8}>{show ? <EyeOff size={16} color={C.mutedFg} /> : <Eye size={16} color={C.mutedFg} />}</Pressable>
       </View>
     </View>
@@ -427,7 +427,7 @@ const pf = StyleSheet.create({
   avatar: { width: 60, height: 60, borderRadius: 20, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" },
   avatarTxt: { fontFamily: fonts.bold, fontSize: 20, color: C.secondaryFg },
   name: { fontFamily: fonts.heading, fontSize: 18, color: C.foreground },
-  rolePill: { alignSelf: "flex-start", paddingHorizontal: 10, height: 22, borderRadius: 11, backgroundColor: "rgba(123,107,184,0.12)", alignItems: "center", justifyContent: "center", marginTop: 4 },
+  rolePill: { alignSelf: "flex-start", paddingHorizontal: 10, height: 22, borderRadius: 11, backgroundColor: "rgba(45,108,181,0.12)", alignItems: "center", justifyContent: "center", marginTop: 4 },
   rolePillTxt: { fontFamily: fonts.bold, fontSize: 11, color: C.info },
   editBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, height: 34, borderRadius: 999, backgroundColor: C.surface },
   editBtnTxt: { fontFamily: fonts.bold, fontSize: 12, color: C.primary },

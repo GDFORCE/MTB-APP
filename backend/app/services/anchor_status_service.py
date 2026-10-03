@@ -91,6 +91,11 @@ class AnchorStatusService:
             applicable_codes = {item.code for item in schedule.events}
 
         required: set[str] = set()
+        # Doc F2: a cycle-day visit counts from its cycle plan's Cycle 1 anchor.
+        cycle_starts = {
+            block.cycle_plan.code: block.cycle_plan.start_reference.code
+            for block in schedule.repeat_blocks if block.cycle_plan is not None
+        }
         for event in schedule.events:
             if event.code not in applicable_codes:
                 continue
@@ -99,6 +104,17 @@ class AnchorStatusService:
                 reference = event.recurrence.start_reference
                 if isinstance(reference, AnchorReference):
                     required.add(reference.code)
+            if event.recurrence_plan is not None:
+                reference = event.recurrence_plan.start_reference
+                if isinstance(reference, AnchorReference):
+                    required.add(reference.code)
+            if event.calendar_recurrence is not None:
+                reference = event.calendar_recurrence.start_reference
+                if isinstance(reference, AnchorReference):
+                    required.add(reference.code)
+            cycle_reference = getattr(event.timing, "cycle_reference", None)
+            if cycle_reference in cycle_starts:
+                required.add(cycle_starts[cycle_reference])
         return required
 
     def _records_by_anchor(

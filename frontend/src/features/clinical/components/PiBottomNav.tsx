@@ -8,11 +8,11 @@ type PiTab = "dashboard" | "trials" | "patients" | "messages" | "calendar" | "pr
 export type ClinicalNavRole = "pi" | "crc" | "smo" | "site";
 
 const palette = {
-  card: "#FEFAF1",
-  border: "#E6D6C5",
-  primary: "#A6213F",
-  secondary: "#F0D7DC",
-  muted: "#7B5F73",
+  card: "#FFFFFF",
+  border: "#DDE3EA",
+  primary: "#1B5FC1",
+  secondary: "#E6EEFA",
+  muted: "#556275",
 };
 
 export function PiBottomNav({
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: palette.border,
     elevation: 8,
-    shadowColor: "#2E1B33",
+    shadowColor: "#0F1B2D",
     shadowOpacity: 0.1,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: -3 },

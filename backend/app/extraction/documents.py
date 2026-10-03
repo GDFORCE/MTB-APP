@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .contracts import DocumentPage
 from .llm_client import ExtractionModelError
 
@@ -19,10 +21,32 @@ def pages_from_pdf(pdf_bytes: bytes) -> list[DocumentPage]:
     """
     from protocol_document_index import _extract_pdf_text_pages, _text_status
 
-    return [
-        DocumentPage(page_number=index + 1, text=text, text_status=_text_status(text))
-        for index, text in enumerate(_extract_pdf_text_pages(pdf_bytes))
-    ]
+    pages: list[DocumentPage] = []
+    for index, text in enumerate(_extract_pdf_text_pages(pdf_bytes)):
+        if looks_scrambled(text):
+            # A font without a usable character map extracts as nonsense
+            # ("6HOLQH[RU" for "Selinexor"). That is not text: the page must be
+            # read from its image, and the nonsense must not reach the model.
+            pages.append(DocumentPage(page_number=index + 1, text="", text_status="image_or_empty"))
+        else:
+            pages.append(DocumentPage(page_number=index + 1, text=text, text_status=_text_status(text)))
+    return pages
+
+
+_WORD = re.compile(r"[A-Za-z]{3,}")
+
+
+def looks_scrambled(text: str) -> bool:
+    """Whether a page's embedded text is unreadable character soup.
+
+    Real prose in any Latin-script language has a vowel in nearly every word;
+    text extracted through a broken font map does not.
+    """
+    words = _WORD.findall(text)
+    if len(words) < 20:
+        return False
+    without_vowel = sum(1 for word in words if not re.search(r"[aeiouyAEIOUY]", word))
+    return without_vowel / len(words) > 0.3
 
 
 def pages_from_text(text: str) -> list[DocumentPage]:

@@ -73,7 +73,7 @@ export function AvatarPickerSheet({
 }
 
 const s = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  overlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: {
     backgroundColor: colors.card,
     borderTopLeftRadius: 24,
@@ -98,7 +98,7 @@ const s = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(166,33,63,0.10)",
+    backgroundColor: "rgba(27,95,193,0.10)",
   },
   optionLabel: { flex: 1, color: colors.foreground, fontFamily: fonts.medium, fontSize: 13.5 },
 });

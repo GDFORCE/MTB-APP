@@ -60,10 +60,10 @@ const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
 
 function statusColors(status?: string): { fg: string; bg: string } {
   switch (status) {
-    case "Active": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
-    case "Pending Verification": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
-    case "Suspended": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
-    case "Locked": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
+    case "Active": return { fg: C.success, bg: "rgba(30,122,70,0.15)" };
+    case "Pending Verification": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
+    case "Suspended": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
+    case "Locked": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
     default: return { fg: C.mutedFg, bg: C.surface };
   }
 }
@@ -269,7 +269,7 @@ export default function AdminUsers() {
                           {u.status === "Locked" && <Lock size={10} color={sc.fg} />}
                           <RNText style={[st.badgeTxt, { color: sc.fg }]}>{u.status || "Active"}</RNText>
                         </View>
-                        <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                        <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                       </View>
                     </Pressable>
                   );
@@ -543,7 +543,7 @@ function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () 
 }
 
 export function Input(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor="rgba(123,95,115,0.5)" {...props} style={[st.input, props.multiline && { height: 80, textAlignVertical: "top" }, props.style]} />;
+  return <TextInput placeholderTextColor="rgba(85,98,117,0.5)" {...props} style={[st.input, props.multiline && { height: 80, textAlignVertical: "top" }, props.style]} />;
 }
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return <View style={{ gap: 6 }}><RNText style={st.fieldLabel}>{label}</RNText>{children}</View>;
@@ -583,7 +583,7 @@ export function SearchBar({ value, onChange, placeholder }: { value: string; onC
   return (
     <View style={st.searchBar}>
       <Search size={17} color={C.mutedFg} />
-      <TextInput value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor="rgba(123,95,115,0.5)" style={st.searchInput} />
+      <TextInput value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor="rgba(85,98,117,0.5)" style={st.searchInput} />
       {!!value && <Pressable onPress={() => onChange("")} hitSlop={8}><X size={16} color={C.mutedFg} /></Pressable>}
     </View>
   );
@@ -608,7 +608,7 @@ export function Loading({ label }: { label: string }) {
 export function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <View style={{ padding: 16, marginTop: 12 }}>
-      <View style={[st.card, { borderColor: "rgba(192,57,43,0.30)" }]}>
+      <View style={[st.card, { borderColor: "rgba(194,48,48,0.30)" }]}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <View style={st.errIcon}><AlertTriangle size={20} color={C.destructive} /></View>
           <RNText style={{ flex: 1, color: C.foreground, fontFamily: fonts.semibold, fontSize: 13 }}>{message}</RNText>
@@ -672,11 +672,11 @@ export const st = StyleSheet.create({
   card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingHorizontal: 16, paddingVertical: 16 },
   emptyText: { fontFamily: fonts.regular, fontSize: 13, color: C.mutedFg, paddingVertical: 20, textAlign: "center" },
   loadingTxt: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 13, marginTop: 12 },
-  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface },
 
   // Sheet
-  sheetOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  sheetOverlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, maxHeight: "88%" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   sheetTitle: { fontFamily: fonts.display, fontSize: 20, color: C.foreground },
@@ -686,9 +686,9 @@ export const st = StyleSheet.create({
   infoRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.surface, borderRadius: 12, padding: 12 },
   infoLabel: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   infoValue: { fontFamily: fonts.medium, fontSize: 14, color: C.foreground, marginTop: 1 },
-  infoBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(123,107,184,0.10)", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "rgba(123,107,184,0.25)" },
+  infoBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(45,108,181,0.10)", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "rgba(45,108,181,0.25)" },
   infoBannerTxt: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: C.foreground },
-  lockCard: { backgroundColor: "rgba(216,154,60,0.10)", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "rgba(216,154,60,0.25)", gap: 3 },
+  lockCard: { backgroundColor: "rgba(178,106,0,0.10)", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "rgba(178,106,0,0.25)", gap: 3 },
   lockTitle: { fontFamily: fonts.semibold, fontSize: 13, color: C.foreground, marginBottom: 2 },
   lockLine: { fontFamily: fonts.regular, fontSize: 12, color: C.mutedFg },
 

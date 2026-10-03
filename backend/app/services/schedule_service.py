@@ -8,16 +8,74 @@ from sqlalchemy.orm import Session
 
 from app.db import models as db
 from app.db.repositories import ScheduleRepository
+from app.domain.schedule.anchor_status import record_is_actual
 from app.domain.schedule.evaluator import ScheduleEvaluator
 from app.domain.schedule.exceptions import ImmutableScheduleError
 from app.domain.schedule.identity import activity_logical_key, event_logical_key
 from app.domain.schedule.models import (
-    ConditionState, EvaluationResult, Event, PatientConditionStatus, PatientContext,
-    QualifierCategory, QualifierScope,
+    AssignmentFact, ConditionState, EvaluationResult, Event, HolidayCalendar,
+    OccurrenceFact, OccurrenceFactKind, PatientConditionStatus, PatientContext,
+    ProcessTransition, QualifierCategory, QualifierScope,
     ScheduleStatus, UniversalSchedule, ValidationIssue,
     RollingHorizon,
     UnscheduledOccurrence,
 )
+
+#: WP3 patient facts live in the append-only ``uctsm_patient_states`` table
+#: under these reserved state codes (``state_value`` = the typed fact as JSON,
+#: ``effective_at`` = its effective time, ``created_at`` = its recorded time).
+#: They are typed inputs, never condition fields: ``_context`` keeps them out
+#: of ``PatientContext.state``.
+PROCESS_TRANSITION_STATE_CODE = "uctsm:process_transition"
+ASSIGNMENT_FACT_STATE_CODE = "uctsm:assignment_fact"
+#: A holiday calendar supplied for the patient's site (until a site store exists).
+SITE_HOLIDAY_CALENDAR_STATE_CODE = "uctsm:site_holiday_calendar"
+RESERVED_STATE_CODES = frozenset({
+    PROCESS_TRANSITION_STATE_CODE, ASSIGNMENT_FACT_STATE_CODE, SITE_HOLIDAY_CALENDAR_STATE_CODE,
+})
+
+#: ``PatientEventOccurrence.metadata`` keys for WP3 facts. A row without them
+#: keeps its previous meaning (actual_date = performed; status MISSED = missed).
+FACT_KIND_KEY = "fact_kind"
+SUPERSEDES_KEY = "supersedes_occurrence_id"
+EFFECTIVE_AT_KEY = "effective_at"
+BOOKED_KEY = "booked_date"
+END_KEY = "end_date"
+
+
+def occurrence_fact_from_row(
+    row: "db.PatientEventOccurrence", event_code: str, occurrence_index: int,
+) -> OccurrenceFact | None:
+    """The typed fact one occurrence row records, or None for a row that
+    records nothing the engine acts on."""
+    metadata = row.metadata_json or {}
+    kind = metadata.get(FACT_KIND_KEY)
+    value: date | datetime | None = row.actual_date
+    if kind == OccurrenceFactKind.BOOKED.value or row.occurrence_type == "BOOKING":
+        kind = OccurrenceFactKind.BOOKED.value
+        booked = metadata.get(BOOKED_KEY) or (row.scheduled_date.isoformat() if row.scheduled_date else None)
+        value = date.fromisoformat(str(booked)[:10]) if booked else None
+    elif kind is None:
+        if row.actual_date is not None:
+            kind = OccurrenceFactKind.PERFORMED.value
+        elif row.status == "MISSED":
+            kind = OccurrenceFactKind.MISSED.value
+        else:
+            return None
+    if kind in {OccurrenceFactKind.PERFORMED.value, OccurrenceFactKind.BOOKED.value} and value is None:
+        return None
+    end = metadata.get(END_KEY)
+    effective = metadata.get(EFFECTIVE_AT_KEY)
+    recorded = row.recorded_at or datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return OccurrenceFact(
+        id=str(row.id), event_code=event_code, occurrence_index=occurrence_index,
+        kind=OccurrenceFactKind(kind), value=value,
+        end_value=date.fromisoformat(str(end)[:10]) if end else None,
+        effective_at=date.fromisoformat(str(effective)[:10]) if effective else value,
+        recorded_at=recorded,
+        supersedes=metadata.get(SUPERSEDES_KEY),
+        source=metadata.get("source"),
+    )
 from app.domain.schedule.validator import ScheduleValidator
 
 
@@ -56,15 +114,84 @@ def in_force_today(versions: list[db.ScheduleVersion]) -> list[db.ScheduleVersio
     return [item for item in versions if item.effective_from is None or item.effective_from <= today]
 
 
+def _enrollable_protocol_version(session: Session, trial_id: UUID) -> tuple[UUID | None, list[db.ScheduleVersion]]:
+    """The protocol version new patients are enrolled under, and its approved versions.
+
+    Normally the protocol's ``current_version_id``. An amendment (a protocol
+    version uploaded after the current one) replaces it for NEW enrolments once
+    one of its schedule versions is approved AND in force today; until then the
+    current version keeps taking enrolments (doc 9 s8, PT-05). A superseded
+    (older) protocol version is never returned - AD-4d is unchanged.
+    """
+    protocol = session.scalar(select(db.Protocol).where(db.Protocol.trial_id == trial_id))
+    if protocol is None:
+        return None, []
+    current = session.get(db.ProtocolVersion, protocol.current_version_id) if protocol.current_version_id else None
+    rows = session.execute(
+        select(db.ScheduleVersion, db.ProtocolVersion)
+        .join(db.ScheduleDefinition, db.ScheduleDefinition.id == db.ScheduleVersion.schedule_definition_id)
+        .join(db.ProtocolVersion, db.ProtocolVersion.id == db.ScheduleDefinition.protocol_version_id)
+        .where(db.ProtocolVersion.protocol_id == protocol.id,
+               db.ScheduleVersion.status == ScheduleStatus.APPROVED.value)
+    ).all()
+    by_protocol_version: dict[UUID, list[db.ScheduleVersion]] = {}
+    created: dict[UUID, datetime | None] = {}
+    for version, protocol_version in rows:
+        by_protocol_version.setdefault(protocol_version.id, []).append(version)
+        created[protocol_version.id] = protocol_version.created_at
+    chosen = current.id if current is not None else None
+    chosen_rank: tuple | None = None
+    for protocol_version_id, versions in by_protocol_version.items():
+        if current is not None and protocol_version_id != current.id:
+            uploaded = created.get(protocol_version_id)
+            if uploaded is None or current.created_at is None or uploaded < current.created_at:
+                continue  # superseded, never enrollable again
+        in_force = in_force_today(versions)
+        if not in_force:
+            continue
+        rank = (created.get(protocol_version_id) or datetime.min.replace(tzinfo=timezone.utc),
+                max((item.approved_at or datetime.min.replace(tzinfo=timezone.utc)) for item in in_force))
+        rank = tuple(value.replace(tzinfo=None) if value.tzinfo else value for value in rank)
+        if chosen_rank is None or rank > chosen_rank:
+            chosen, chosen_rank = protocol_version_id, rank
+    return chosen, by_protocol_version.get(chosen, []) if chosen is not None else []
+
+
 def resolve_current_schedule_version(
     session: Session, trial_id: UUID, schedule_definition_id: UUID,
 ) -> db.ScheduleVersion:
-    """The one schedule version a new enrolment/link against this definition should use."""
-    approved = list(session.scalars(
-        current_protocol_approved_versions(trial_id)
-        .where(db.ScheduleVersion.schedule_definition_id == schedule_definition_id)
-        .order_by(db.ScheduleVersion.version_number.desc())
-    ))
+    """The one schedule version a new enrolment/link against this definition should use.
+
+    The linked definition may belong to another protocol version of the same
+    trial than the enrollable one (building an amendment draft re-points the
+    operational link at the amendment's definition before it is approved, and an
+    older link still names the original). It is then mapped to the matching
+    definition of the enrollable protocol version - same schedule type and name,
+    or the only one - never guessed between several.
+    """
+    protocol_version_id, approved_all = _enrollable_protocol_version(session, trial_id)
+    approved = [item for item in approved_all if item.schedule_definition_id == schedule_definition_id]
+    if not approved and approved_all:
+        linked = session.get(db.ScheduleDefinition, schedule_definition_id)
+        same_trial = linked is not None and session.scalar(
+            select(db.Protocol.trial_id)
+            .join(db.ProtocolVersion, db.ProtocolVersion.protocol_id == db.Protocol.id)
+            .where(db.ProtocolVersion.id == linked.protocol_version_id)) == trial_id
+        if same_trial and linked.protocol_version_id != protocol_version_id:
+            definition_ids = {item.schedule_definition_id for item in approved_all}
+            candidates = [session.get(db.ScheduleDefinition, item) for item in definition_ids]
+            matches = [item for item in candidates if item is not None
+                       and item.schedule_type == linked.schedule_type and item.name == linked.name]
+            if len(matches) != 1:
+                same_type = [item for item in candidates if item is not None and item.schedule_type == linked.schedule_type]
+                matches = same_type if len(same_type) == 1 else (candidates if len(candidates) == 1 else [])
+            if len(matches) == 1:
+                approved = [item for item in approved_all if item.schedule_definition_id == matches[0].id]
+            elif candidates:
+                raise ValueError(
+                    "the approved protocol version has several schedules and none matches the "
+                    "linked one; choose the schedule this patient is enrolled under")
+    approved.sort(key=lambda item: item.version_number, reverse=True)
     versions_in_force = in_force_today(approved)
     if versions_in_force:
         return versions_in_force[0]
@@ -165,7 +292,7 @@ class ScheduleReviewService:
                 fields.append("conditions")
             if event.applicability:
                 fields.append("applicability")
-            if event.recurrence is not None:
+            if event.repeats:
                 fields.append("recurrence")
             if event.activities:
                 fields.append("activities")
@@ -362,7 +489,8 @@ class ScheduleReviewService:
         ))
         self._audit(version, reviewer_id, "EXTRACTION_FINDING_RESOLVED", reason)
 
-    def approve_reviewed_table(self, schedule_version_id: UUID, *, reviewer_id: UUID, reason: str) -> None:
+    def approve_reviewed_table(self, schedule_version_id: UUID, *, reviewer_id: UUID, reason: str,
+                               effective_from: date | None = None) -> None:
         """One explicit table confirmation, with existing gates and bulk audit.
 
         The API commits this transaction atomically. Source findings are never
@@ -382,7 +510,8 @@ class ScheduleReviewService:
             self.submit_for_review(schedule_version_id, actor_id=reviewer_id)
         self.bulk_confirm_all_fields(schedule_version_id, reviewer_id=reviewer_id, reason=reason.strip())
         self.session.flush()
-        self.approve(schedule_version_id, reviewer_id=reviewer_id, comment=reason.strip())
+        self.approve(schedule_version_id, reviewer_id=reviewer_id, comment=reason.strip(),
+                     effective_from=effective_from)
 
     def approve(
         self,
@@ -403,6 +532,15 @@ class ScheduleReviewService:
         blocking = ScheduleValidator.blocking(issues)
         if blocking:
             raise ValueError(f"approval blocked by {len(blocking)} validation issue(s)")
+        # THE approval gate, shared by every route that ends here (approve-version,
+        # approve-table and the review decision): pending rows, source coverage
+        # and uncompiled statements block as well as validator findings (UI-08,
+        # RV-01). Imported lazily: review_view imports this module.
+        from app.services.review_view import approval_blockers
+
+        blockers = approval_blockers(self.session, schedule_version_id)
+        if blockers:
+            raise ValueError("Approval is blocked: " + " ".join(blockers))
         decisions = list(self.session.scalars(select(db.ReviewDecision).where(
             db.ReviewDecision.schedule_version_id == schedule_version_id,
             db.ReviewDecision.reviewer_id == reviewer_id,
@@ -417,7 +555,7 @@ class ScheduleReviewService:
                 required.add((event.id, "conditions"))
             if event.applicability:
                 required.add((event.id, "applicability"))
-            if event.recurrence:
+            if event.repeats:
                 required.add((event.id, "recurrence"))
         missing = required - confirmed
         if missing:
@@ -435,10 +573,24 @@ class ScheduleReviewService:
         # A replacement extraction can recover an unapproved first draft. It
         # must not remain unusable behind that old draft's protocol pointer.
         # An already-approved protocol keeps its explicit amendment lifecycle.
-        if protocol.current_version_id != protocol_version.id and self.session.scalar(
-            current_protocol_approved_versions(protocol.trial_id).limit(1)
-        ) is None:
-            protocol.current_version_id = protocol_version.id
+        if protocol.current_version_id != protocol_version.id:
+            current = self.session.get(db.ProtocolVersion, protocol.current_version_id) \
+                if protocol.current_version_id else None
+            nothing_approved = self.session.scalar(
+                current_protocol_approved_versions(protocol.trial_id).limit(1)) is None
+            # The explicit amendment step: approving a version of a LATER protocol
+            # version makes it the one new patients enrol under, once in force.
+            # Enrolled patients stay pinned to their version (PT-05). A version
+            # approved for a future date leaves the pointer; the resolver switches
+            # on the effective date.
+            is_amendment = (current is None or current.created_at is None
+                            or protocol_version.created_at is None
+                            or protocol_version.created_at >= current.created_at)
+            in_force = effective_from is None or effective_from <= date.today()
+            if nothing_approved or (is_amendment and in_force):
+                before["protocol_current_version_id"] = str(protocol.current_version_id) \
+                    if protocol.current_version_id else None
+                protocol.current_version_id = protocol_version.id
         self.session.add(db.ReviewDecision(
             schedule_version_id=version.id, decision="APPROVE",
             reviewer_id=reviewer_id, comment=comment,
@@ -581,6 +733,9 @@ class PatientScheduleService:
         anchor_overrides: dict[str, date | datetime] | None = None,
         state_overrides: dict[str, tuple[object, datetime]] | None = None,
         rolling: RollingHorizon | None = None,
+        planned_anchor_overrides: dict[str, date | datetime] | None = None,
+        process_transition_overrides: list[ProcessTransition] | None = None,
+        assignment_fact_overrides: list[AssignmentFact] | None = None,
     ) -> EvaluationResult:
         schedule = self.repository.get(schedule_version_id)
         context = self._context(
@@ -588,6 +743,9 @@ class PatientScheduleService:
             condition_overrides=condition_overrides,
             anchor_overrides=anchor_overrides,
             state_overrides=state_overrides,
+            planned_anchor_overrides=planned_anchor_overrides,
+            process_transition_overrides=process_transition_overrides,
+            assignment_fact_overrides=assignment_fact_overrides,
         )
         return ScheduleEvaluator().evaluate(
             schedule, context, horizon=horizon, rolling=rolling)
@@ -619,12 +777,21 @@ class PatientScheduleService:
         condition_overrides: dict[str, PatientConditionStatus] | None = None,
         anchor_overrides: dict[str, date | datetime] | None = None,
         state_overrides: dict[str, tuple[object, datetime]] | None = None,
+        planned_anchor_overrides: dict[str, date | datetime] | None = None,
+        process_transition_overrides: list[ProcessTransition] | None = None,
+        assignment_fact_overrides: list[AssignmentFact] | None = None,
     ) -> PatientContext:
+        # Doc C6: planned and actual anchor values are kept apart. Merging them
+        # let a planned surgery date date the post-op visits and send reminders
+        # as if surgery had happened. Which dict a record lands in is decided by
+        # the same rule the Patient Profile uses (anchor_status.record_is_actual).
         anchors: dict[str, date | datetime] = {}
+        planned_anchors: dict[str, date | datetime] = {}
         rows = self.session.execute(
             select(
                 db.Anchor.code, db.Anchor.derivation_rule,
                 db.PatientAnchor.value_date, db.PatientAnchor.value_datetime,
+                db.PatientAnchor.status, db.PatientAnchor.source_type,
             )
             .join(db.PatientAnchor, db.PatientAnchor.anchor_definition_id == db.Anchor.id)
             .where(
@@ -633,27 +800,43 @@ class PatientScheduleService:
             )
             .order_by(db.PatientAnchor.recorded_at)
         )
-        for code, derivation_rule, value_date, value_datetime in rows:
+        for code, derivation_rule, value_date, value_datetime, status, source_type in rows:
             value = value_datetime or value_date
+            target = anchors if record_is_actual(status, source_type) else planned_anchors
             selection = str((derivation_rule or {}).get("selection", "LAST")).upper()
-            if selection == "FIRST" and code in anchors:
+            if selection == "FIRST" and code in target:
                 continue
-            anchors[code] = value
+            target[code] = value
         anchors.update(anchor_overrides or {})
+        planned_anchors.update(planned_anchor_overrides or {})
         actual_event_values: dict[str, list[date | datetime]] = {}
-        actuals = self.session.execute(
-            select(db.Event.code, db.PatientEventOccurrence.actual_date)
+        occurrence_rows = self.session.execute(
+            select(db.Event.code, db.PatientEvent.occurrence_index, db.PatientEventOccurrence)
             .join(db.PatientEvent, db.PatientEvent.id == db.PatientEventOccurrence.patient_event_id)
             .join(db.PatientSchedule, db.PatientSchedule.id == db.PatientEvent.patient_schedule_id)
             .join(db.Event, db.Event.id == db.PatientEvent.event_definition_id)
-            .where(
-                db.PatientSchedule.patient_id == patient.id,
-                db.PatientEventOccurrence.actual_date.is_not(None),
-            )
-            .order_by(db.PatientEventOccurrence.actual_date)
-        )
-        for code, actual_date in actuals:
-            actual_event_values.setdefault(code, []).append(actual_date)
+            .where(db.PatientSchedule.patient_id == patient.id)
+            .order_by(db.PatientEventOccurrence.recorded_at)
+        ).all()
+        # PT-02: a correction supersedes by id. The corrected row stays in the
+        # table (history); only the acting value feeds evaluation.
+        superseded = {
+            str((row.metadata_json or {}).get(SUPERSEDES_KEY))
+            for _, _, row in occurrence_rows
+            if (row.metadata_json or {}).get(SUPERSEDES_KEY)
+        }
+        occurrence_facts: list[OccurrenceFact] = []
+        for code, occurrence_index, row in occurrence_rows:
+            fact = occurrence_fact_from_row(row, code, occurrence_index)
+            if fact is not None:
+                occurrence_facts.append(fact)
+            if row.actual_date is None or str(row.id) in superseded:
+                continue
+            if fact is not None and fact.kind != OccurrenceFactKind.PERFORMED:
+                continue
+            actual_event_values.setdefault(code, []).append(row.actual_date)
+        for values in actual_event_values.values():
+            values.sort()
         activity_actuals: dict[str, date | datetime] = {}
         activity_statuses: dict[str, str] = {}
         for record in self.session.scalars(select(db.PatientActivityRecord).where(
@@ -667,11 +850,26 @@ class PatientScheduleService:
                 activity_actuals.pop(record.logical_key, None)
         state: dict[str, object] = {}
         state_effective_at: dict[str, datetime] = {}
+        process_transitions: list[ProcessTransition] = []
+        assignment_history: list[AssignmentFact] = []
+        site_calendars: dict[str, HolidayCalendar] = {}
         for row in self.session.scalars(select(db.PatientState).where(
             db.PatientState.patient_id == patient.id,
-        ).order_by(db.PatientState.effective_at)):
+        ).order_by(db.PatientState.effective_at, db.PatientState.created_at)):
+            if row.state_code == PROCESS_TRANSITION_STATE_CODE:
+                process_transitions.append(ProcessTransition.model_validate(row.state_value))
+                continue
+            if row.state_code == ASSIGNMENT_FACT_STATE_CODE:
+                assignment_history.append(AssignmentFact.model_validate(row.state_value))
+                continue
+            if row.state_code == SITE_HOLIDAY_CALENDAR_STATE_CODE:
+                calendar = HolidayCalendar.model_validate(row.state_value)
+                site_calendars[calendar.code] = calendar
+                continue
             state[row.state_code] = row.state_value
             state_effective_at[row.state_code] = row.effective_at
+        process_transitions.extend(process_transition_overrides or [])
+        assignment_history.extend(assignment_fact_overrides or [])
         for code, (value, effective_at) in (state_overrides or {}).items():
             state[code] = value
             state_effective_at[code] = effective_at
@@ -692,7 +890,8 @@ class PatientScheduleService:
         population_code = self.session.get(db.Population, patient.population_id).code if patient.population_id else None
         return PatientContext(
             patient_id=patient.id, schedule_version_id=schedule_version_id,
-            anchors=anchors, event_values={key: list(values) for key, values in actual_event_values.items()},
+            anchors=anchors, planned_anchors=planned_anchors,
+            event_values={key: list(values) for key, values in actual_event_values.items()},
             actual_event_values=actual_event_values,
             activity_actuals=activity_actuals, activity_statuses=activity_statuses,
             conditions=self.patient_conditions(patient.id, overrides=condition_overrides),
@@ -701,6 +900,10 @@ class PatientScheduleService:
             state_effective_at=state_effective_at, arm_code=arm_code,
             cohort_code=cohort_code, population_code=population_code,
             dimension_values=patient.dimension_values or {},
+            occurrence_facts=occurrence_facts,
+            process_transitions=process_transitions,
+            assignment_history=assignment_history,
+            holiday_calendars=list(site_calendars.values()),
         )
 
     def _persist_activities(
@@ -917,6 +1120,124 @@ class PatientScheduleService:
             reason=reason,
         ))
         return record
+
+    def record_occurrence_fact(
+        self,
+        patient_id: UUID,
+        *,
+        organization_id: UUID,
+        logical_key: str,
+        kind: OccurrenceFactKind,
+        value: date | None = None,
+        end_value: date | None = None,
+        effective_at: date | None = None,
+        supersedes_occurrence_id: UUID | None = None,
+        actor_id: UUID | None = None,
+        reason: str | None = None,
+        source: str | None = None,
+    ) -> db.PatientEventOccurrence:
+        """Record a performed / missed / booked fact for one logical occurrence.
+
+        PT-02: append-only. A correction names the row it supersedes; that row
+        stays as history (its PatientEvent stays protected) and the new value is
+        what later evaluations use. PT-04: a booking never sets an actual date
+        and never changes the rule. PT-07: nothing here is derived from a date
+        passing - a performed fact is only what a person records.
+        """
+        patient = self.session.scalar(select(db.Patient).where(
+            db.Patient.id == patient_id, db.Patient.organization_id == organization_id,
+        ))
+        if patient is None:
+            raise KeyError("patient not found")
+        if patient.current_schedule_version_id is None:
+            raise ValueError("patient has no active schedule version")
+        row = next((item for item in self.current_events(
+            patient.id, patient.current_schedule_version_id) if item.logical_key == logical_key), None)
+        if row is None:
+            raise KeyError(f"occurrence {logical_key} is not in the patient's current plan")
+        if kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED} and value is None:
+            raise ValueError(f"a {kind.value.lower()} fact needs its date")
+        previous = None
+        if supersedes_occurrence_id is not None:
+            previous = self.session.get(db.PatientEventOccurrence, supersedes_occurrence_id)
+            if previous is None:
+                raise KeyError("the occurrence record being corrected does not exist")
+            previous_event = self.session.get(db.PatientEvent, previous.patient_event_id)
+            if previous_event is None or previous_event.logical_key != logical_key:
+                raise ValueError("a correction must supersede a record of the same occurrence")
+        metadata: dict[str, object] = {FACT_KIND_KEY: kind.value}
+        if supersedes_occurrence_id is not None:
+            metadata[SUPERSEDES_KEY] = str(supersedes_occurrence_id)
+        if effective_at is not None:
+            metadata[EFFECTIVE_AT_KEY] = effective_at.isoformat()
+        if end_value is not None:
+            metadata[END_KEY] = end_value.isoformat()
+        if source is not None:
+            metadata["source"] = source
+        if kind == OccurrenceFactKind.BOOKED:
+            metadata[BOOKED_KEY] = value.isoformat()
+        occurrence = db.PatientEventOccurrence(
+            patient_event_id=row.id,
+            occurrence_type="BOOKING" if kind == OccurrenceFactKind.BOOKED else "VISIT",
+            scheduled_date=row.nominal_start_date,
+            actual_date=value if kind == OccurrenceFactKind.PERFORMED else None,
+            status={
+                OccurrenceFactKind.PERFORMED: "COMPLETED",
+                OccurrenceFactKind.MISSED: "MISSED",
+                OccurrenceFactKind.BOOKED: "BOOKED",
+            }[kind],
+            recorded_by=actor_id, recorded_at=datetime.now(timezone.utc),
+            metadata_json=metadata,
+        )
+        self.session.add(occurrence)
+        if kind == OccurrenceFactKind.PERFORMED:
+            row.status = "COMPLETED"
+        elif kind == OccurrenceFactKind.MISSED:
+            row.status = "MISSED"
+        self.session.flush()
+        self.session.add(db.AuditEvent(
+            organization_id=organization_id, actor_id=actor_id,
+            action=("PATIENT_OCCURRENCE_FACT_CORRECTED" if previous is not None
+                    else "PATIENT_OCCURRENCE_FACT_RECORDED"),
+            entity_type="PATIENT_EVENT", entity_id=row.id,
+            before=({
+                "occurrence_id": str(previous.id), "actual_date": (
+                    previous.actual_date.isoformat() if previous.actual_date else None),
+                "status": previous.status, "metadata": previous.metadata_json,
+            } if previous is not None else None),
+            after={
+                "occurrence_id": str(occurrence.id), "logical_key": logical_key,
+                "kind": kind.value, "value": value.isoformat() if value else None,
+                "metadata": metadata,
+            },
+            reason=reason,
+        ))
+        return occurrence
+
+    def record_patient_fact(
+        self,
+        patient: db.Patient,
+        *,
+        state_code: str,
+        value: dict[str, object],
+        effective_at: date | datetime,
+        actor_id: UUID | None,
+        source_reference: dict[str, object] | None = None,
+    ) -> db.PatientState:
+        """Append one reserved-code WP3 fact (process transition, assignment
+        fact, site calendar) to the patient's append-only state history."""
+        if state_code not in RESERVED_STATE_CODES:
+            raise ValueError(f"{state_code!r} is not a typed WP3 fact")
+        effective = (effective_at if isinstance(effective_at, datetime)
+                     else datetime.combine(effective_at, datetime.min.time(), tzinfo=timezone.utc))
+        row = db.PatientState(
+            patient_id=patient.id, state_code=state_code, state_value=value,
+            effective_at=effective, recorded_by=actor_id,
+            source_reference=source_reference or {},
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
 
     def evaluate(
         self,

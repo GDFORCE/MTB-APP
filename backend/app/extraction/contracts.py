@@ -28,3 +28,8 @@ class ExtractionResult(BaseModel):
     schedule: UniversalSchedule | None
     issues: list[ValidationIssue]
     extraction_trace: list[dict[str, Any]]
+    #: Source coverage and statement disposition ledgers (``ledger.py``;
+    #: shape ``uctsm-extraction-accountability.v1``). Persisted with the draft
+    #: (ExtractionRun.trace, the Mongo draft) and returned in API previews.
+    #: None only for results built outside the reader/compiler pipeline.
+    accountability: dict[str, Any] | None = None

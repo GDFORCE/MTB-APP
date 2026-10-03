@@ -53,6 +53,40 @@ ACTUAL_SOURCE_TYPES = frozenset({
     "DOSE_ADMINISTRATION", "PROCEDURE_RECORD",
 })
 
+#: Source types that state outright that the value is an expectation. A record
+#: carrying one stays PLANNED even after a human confirms it: confirming a
+#: planned surgery date confirms the plan, not that the operation took place.
+PLANNED_SOURCE_TYPES = frozenset({
+    "PLANNED", "PLANNED_DATE", "PLANNED_PROCEDURE", "EXPECTED", "SCHEDULED",
+    "PROJECTED",
+})
+
+
+def _normalized_source(source_type: str | None) -> str:
+    return (source_type or "").strip().upper()
+
+
+def record_is_actual(record_status: str, source_type: str | None) -> bool:
+    """Whether a stored anchor value may date a rule that accepts ACTUAL only.
+
+    The one place the scheduler and the Patient Profile agree on "did this
+    happen":
+
+    * an explicitly planned source is never actual, confirmed or not;
+    * a CONFIRMED record is otherwise actual - a human accepted it as the real
+      date. This is what enrolment writes for registration/baseline, so those
+      anchors keep dating every schedule exactly as before;
+    * an unconfirmed (PROVISIONAL) record is actual only when its source says
+      the event happened. Anything else is an expectation, the same safe
+      direction ``resolve_anchor_status`` takes.
+    """
+    source = _normalized_source(source_type)
+    if source in PLANNED_SOURCE_TYPES:
+        return False
+    if record_status in CONFIRMED_RECORD_STATUSES:
+        return True
+    return source in ACTUAL_SOURCE_TYPES
+
 
 class AnchorRecord(StrictModel):
     """One stored value for one anchor, in the order it was recorded."""
@@ -119,12 +153,27 @@ def resolve_anchor_status(
         )
 
     current = live[-1]
+    # Only a confirmed record of the SAME kind can be corrected. A confirmed
+    # PLANNED date replaced by the actual one is the plan being fulfilled (or
+    # changed), not a correction of a recorded fact (doc D2 -> D3).
     was_confirmed_before = any(
         item.superseded and item.record_status in CONFIRMED_RECORD_STATUSES
+        and _normalized_source(item.source_type) not in PLANNED_SOURCE_TYPES
         for item in records
     )
 
-    if current.record_status in CONFIRMED_RECORD_STATUSES:
+    confirmed = current.record_status in CONFIRMED_RECORD_STATUSES
+    if _normalized_source(current.source_type) in PLANNED_SOURCE_TYPES:
+        # Doc C6/D2: the Patient Profile must say PLANNED while only a plan
+        # exists, even one a reviewer confirmed - the post-op visits it would
+        # otherwise appear to anchor are still waiting on the real date.
+        return AnchorStatusView(
+            status=AnchorStatus.PLANNED, value=current.value, confirmed=confirmed,
+            reason="an expected date; the event has not been recorded as having happened",
+            **base,
+        )
+
+    if confirmed:
         if was_confirmed_before:
             return AnchorStatusView(
                 status=AnchorStatus.CORRECTED, value=current.value, confirmed=True,

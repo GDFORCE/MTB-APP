@@ -56,9 +56,9 @@ function phaseKey(value?: string) {
 
 function tone(status: string) {
   const value = status.toLowerCase();
-  if (value === "active") return { fg: colors.success, bg: "rgba(92,154,110,0.14)" };
-  if (value === "completed") return { fg: colors.info, bg: "rgba(123,107,184,0.14)" };
-  if (value === "terminated") return { fg: colors.destructive, bg: "rgba(192,57,43,0.12)" };
+  if (value === "active") return { fg: colors.success, bg: "rgba(30,122,70,0.14)" };
+  if (value === "completed") return { fg: colors.info, bg: "rgba(45,108,181,0.14)" };
+  if (value === "terminated") return { fg: colors.destructive, bg: "rgba(194,48,48,0.12)" };
   return { fg: colors.mutedFg, bg: colors.surface };
 }
 
@@ -317,7 +317,7 @@ const s = StyleSheet.create({
   tags: { marginTop: 9, flexDirection: "row", flexWrap: "wrap", gap: 6 },
   tag: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.surface },
   tagText: { fontFamily: fonts.medium, fontSize: 9.5, color: colors.mutedFg },
-  attribution: { marginTop: 12, paddingTop: 9, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(107,20,55,0.1)" },
+  attribution: { marginTop: 12, paddingTop: 9, flexDirection: "row", alignItems: "center", gap: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "rgba(13,42,79,0.1)" },
   attributionText: { flex: 1, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
   attributionDate: { fontFamily: fonts.mono, fontSize: 10, color: colors.mutedFg },
   progressMeta: { marginTop: 10, marginBottom: 6, flexDirection: "row", justifyContent: "space-between" },

@@ -28,7 +28,10 @@ def _operational_status(status: str) -> tuple[str, str]:
     """Map canonical states without manufacturing due/overdue/completion state."""
     if status == "RESOLVED":
         return "planned", ""
-    if status in {"WAITING_FOR_ANCHOR", "WAITING_FOR_CONDITION", "UNRESOLVED", "BLOCKED"}:
+    if status in {
+        "WAITING_FOR_ANCHOR", "WAITING_FOR_CONDITION", "WAITING_FOR_ASSIGNMENT",
+        "UNRESOLVED", "BLOCKED",
+    }:
         return "manual_review", status.replace("_", " ").title()
     if status == "NOT_APPLICABLE":
         return "not_applicable", "Protocol condition does not apply"

@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { colors, radii, spacing, shadows, typography, dawnGradient, fonts, figtreeFamily } from '../theme/tokens';
 
 export const Eyebrow = ({ children, style, color }: any) => (
-  <Text style={[{ ...typography.eyebrow, color: color || colors.primary }, style]}>{children}</Text>
+  <Text style={[{ ...typography.eyebrow, color: color || colors.mutedFg }, style]}>{children}</Text>
 );
 
 export const Display = ({ children, style, color }: any) => (
@@ -24,14 +24,14 @@ export const Small = ({ children, style, color }: any) => (
 );
 
 export function Card({ children, style, padded = true }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; padded?: boolean }) {
-  return <View style={[{ backgroundColor: colors.card, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, padding: padded ? spacing.md : 0, ...shadows.sm }, style]}>{children}</View>;
+  return <View style={[{ backgroundColor: colors.card, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, padding: padded ? spacing.md : 0, ...shadows.sm }, style]}>{children}</View>;
 }
 
 interface BtnProps { children: React.ReactNode; onPress?: () => void; variant?: 'primary' | 'secondary' | 'ghost' | 'dawn'; disabled?: boolean; loading?: boolean; testID?: string; style?: ViewStyle; }
 export function Button({ children, onPress, variant = 'primary', disabled, loading, testID, style }: BtnProps) {
   const body = loading
     ? <ActivityIndicator color={variant === 'primary' || variant === 'dawn' ? colors.primaryFg : colors.primary} />
-    : <Text style={{ color: variant === 'primary' || variant === 'dawn' ? colors.primaryFg : colors.primary, fontFamily: fonts.bold, fontSize: 15 }}>{children}</Text>;
+    : <Text style={{ color: variant === 'primary' || variant === 'dawn' ? colors.primaryFg : colors.primary, fontFamily: fonts.semibold, fontSize: 15 }}>{children}</Text>;
 
   if (variant === 'dawn') {
     return (
@@ -45,20 +45,20 @@ export function Button({ children, onPress, variant = 'primary', disabled, loadi
   return (
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled: !!disabled || !!loading, busy: !!loading }}
       disabled={!!disabled || !!loading} onPress={disabled || loading ? undefined : onPress}
-      style={({ pressed }) => [btnStyles.base, { backgroundColor: bg, borderWidth: variant === 'secondary' ? 1 : 0, borderColor: colors.primary + '55', opacity: disabled ? 0.4 : pressed ? 0.85 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] }, style]}>
+      style={({ pressed }) => [btnStyles.base, { backgroundColor: bg, borderWidth: variant === 'secondary' ? 1 : 0, borderColor: colors.input, opacity: disabled ? 0.45 : pressed ? 0.88 : 1 }, style]}>
       {body}
     </Pressable>
   );
 }
 
 const btnStyles = StyleSheet.create({
-  base: { borderRadius: radii.pill, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', ...shadows.sm },
+  base: { borderRadius: radii.md, minHeight: 44, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
 });
 
 export function SectionHeader({ index, label, action }: { index: string; label: string; action?: React.ReactNode }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-      <Text style={{ color: colors.accent, fontFamily: fonts.bold, fontSize: 14, fontVariant: ['tabular-nums'] }}>{index}</Text>
+      <Text style={{ color: colors.primary, fontFamily: fonts.semibold, fontSize: 13, fontVariant: ['tabular-nums'] }}>{index}</Text>
       <Eyebrow>{label}</Eyebrow>
       <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
       {action}

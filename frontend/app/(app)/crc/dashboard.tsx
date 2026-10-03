@@ -22,16 +22,16 @@ import {
   useAnimatedProgress,
 } from "@/src/features/clinical/dashboard";
 
-// ── Dawn Rounds palette (matches /app/frontend/src/theme/tokens.ts) ──────────
+// ── Palette (mirrors src/theme/tokens.ts) ──────────
 const C = {
-  bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33",
-  muted: "#7B5F73", border: "#E6D6C5",
-  primary: "#A6213F", primaryDeep: "#6B1437", primaryFg: "#FBF2E8",
-  secondary: "#F0D7DC",
-  accent: "#E69B5C", accentFg: "#5A3318",
-  info: "#7B6BB8", violet: "#8E5BB4",
-  warning: "#D89A3C", success: "#5C9A6E", destructive: "#C0392B",
-  dawnFrom: "#F5C57A", dawnMid: "#E07A4B", dawnTo: "#A6213F",
+  bg: "#F4F6F9", surface: "#EDF1F6", card: "#FFFFFF", fg: "#0F1B2D",
+  muted: "#556275", border: "#DDE3EA",
+  primary: "#1B5FC1", primaryDeep: "#0D2A4F", primaryFg: "#FFFFFF",
+  secondary: "#E6EEFA",
+  accent: "#0B8074", accentFg: "#0B4F48",
+  info: "#2D6CB5", violet: "#5E4DB2",
+  warning: "#B26A00", success: "#1E7A46", destructive: "#C23030",
+  dawnFrom: "#2A6FD0", dawnMid: "#1B5FC1", dawnTo: "#0D2A4F",
   w10: "rgba(255,255,255,0.10)", w15: "rgba(255,255,255,0.15)", w20: "rgba(255,255,255,0.20)", w25: "rgba(255,255,255,0.25)", w55: "rgba(255,255,255,0.55)", w65: "rgba(255,255,255,0.65)", w70: "rgba(255,255,255,0.70)", w80: "rgba(255,255,255,0.80)",
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
@@ -225,7 +225,7 @@ export default function CrcDashboard() {
         {/* ── Hero with dawn gradient + concentric arcs ── */}
         <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={st.hero}>
           {/* Plum overlay top → transparent bottom for legibility */}
-          <LinearGradient colors={[C.primaryDeep, "rgba(107,20,55,0.55)", "rgba(107,20,55,0)"] as any} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[C.primaryDeep, "rgba(13,42,79,0.55)", "rgba(13,42,79,0)"] as any} style={StyleSheet.absoluteFill} />
           {/* Concentric sunrise arcs top-right */}
           <View style={{ position: "absolute", right: -48, top: -48, width: 240, height: 240, opacity: 0.85 }} pointerEvents="none">
             <Svg viewBox="0 0 200 200" width={240} height={240}>
@@ -273,7 +273,7 @@ export default function CrcDashboard() {
                 <Text style={st.heroSubtitle}>Your day at the site</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                   <View style={st.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : (dashboard?.today.pending ?? todayVisits.length)} visits pending</Text></View>
-                  <View style={[st.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
+                  <View style={[st.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(194,48,48,0.30)" }]}>
                     <AlertTriangle size={13} color={C.primaryFg} /><Text style={st.heroChipText}>{loading ? "–" : (dashboard?.today.overdue ?? overdueVisits.length)} overdue</Text>
                   </View>
                 </View>
@@ -287,9 +287,9 @@ export default function CrcDashboard() {
           {!!loadError && <DashboardError message={loadError} onRetry={loadDashboard} />}
           {/* Stat tiles */}
           <DashboardReveal delay={40} style={{ flexDirection: "row", gap: 10 }}>
-            <StatTile icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
-            <StatTile icon={Building2} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? null : sponsorCount} label="Sponsors" />
-            <StatTile icon={Stethoscope} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? null : piCount} label="PI's" />
+            <StatTile icon={FileText} iconColor={C.info} iconBg="rgba(45,108,181,0.12)" glow="rgba(45,108,181,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
+            <StatTile icon={Building2} iconColor={C.accent} iconBg="rgba(11,128,116,0.15)" glow="rgba(11,128,116,0.20)" value={loading ? null : sponsorCount} label="Sponsors" />
+            <StatTile icon={Stethoscope} iconColor={C.violet} iconBg="rgba(94,77,178,0.12)" glow="rgba(94,77,178,0.20)" value={loading ? null : piCount} label="PI's" />
           </DashboardReveal>
 
           {/* Quick Actions */}
@@ -401,18 +401,18 @@ export default function CrcDashboard() {
                         { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, zIndex: 1 },
                         { backgroundColor: C.card, borderColor: isNext ? C.info : C.border },
                       ]}>
-                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(123,95,115,0.30)" }} />
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(85,98,117,0.30)" }} />
                       </View>
                       {!last && <View style={{ width: 2, flex: 1, marginVertical: 4, borderRadius: 1, backgroundColor: C.border }} />}
                     </View>
-                    <View style={[st.visitCard, isNext && { borderColor: "rgba(123,107,184,0.40)" }]}>
+                    <View style={[st.visitCard, isNext && { borderColor: "rgba(45,108,181,0.40)" }]}>
                       <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                         <View style={{ flex: 1, minWidth: 0 }}>
                           <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                             <Text style={{ fontSize: 14, fontWeight: "700", color: C.fg }}>{v.subject_label || "Subject"}</Text>
                             {patient?.avatar_initials ? <Text style={{ fontSize: 12, color: C.muted }}>· {patient.avatar_initials}</Text> : null}
                             {isNext && (
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(45,108,181,0.10)" }}>
                                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.info }} />
                                 <Text style={{ fontSize: 10, fontWeight: "700", color: C.info }}>Up next</Text>
                               </View>
@@ -453,7 +453,7 @@ export default function CrcDashboard() {
                   <View key={v.id} style={st.overdueCard}>
                     <View style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 6, backgroundColor: C.destructive }} />
                     <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, padding: 16, paddingLeft: 20 }}>
-                      <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" }}>
+                      <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" }}>
                         <AlertTriangle size={20} color={C.destructive} />
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
@@ -677,7 +677,7 @@ function StatTile({ icon: Icon, iconColor, iconBg, glow, value, label, onPress }
         <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: iconBg, alignItems: "center", justifyContent: "center" }}>
           <Icon size={18} color={iconColor} />
         </View>
-        <ArrowUpRight size={14} color="rgba(123,95,115,0.45)" />
+        <ArrowUpRight size={14} color="rgba(85,98,117,0.45)" />
       </View>
       {value == null
         ? <Text style={{ fontSize: 30, fontWeight: "700", color: C.fg, marginTop: 8, lineHeight: 32 }}>–</Text>
@@ -716,9 +716,9 @@ function TaskCard({
   onOpen: () => void;
 }) {
   const meta = {
-    high: { fg: C.destructive, bg: "rgba(192,57,43,0.12)" },
-    medium: { fg: C.warning, bg: "rgba(216,154,60,0.15)" },
-    low: { fg: C.info, bg: "rgba(123,107,184,0.12)" },
+    high: { fg: C.destructive, bg: "rgba(194,48,48,0.12)" },
+    medium: { fg: C.warning, bg: "rgba(178,106,0,0.15)" },
+    low: { fg: C.info, bg: "rgba(45,108,181,0.12)" },
   }[task.priority];
   const isAdminTask = task.type === "admin_task";
   const isVisitAlert = task.type === "visit_today"
@@ -770,18 +770,18 @@ function TrialPanel({ tr, patientCount, onPress }: any) {
           <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{tr.protocol_id}</Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
+          <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(30,122,70,0.15)" }}>
             <Text style={{ fontSize: 11, fontWeight: "700", color: C.success }}>{status}</Text>
           </View>
           <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" }}>
-            <ArrowUpRight size={14} color="rgba(123,95,115,0.7)" />
+            <ArrowUpRight size={14} color="rgba(85,98,117,0.7)" />
           </View>
         </View>
       </View>
       <Text style={{ fontSize: 16, fontWeight: "700", color: C.fg, marginBottom: 10 }} numberOfLines={2}>{tr.title}</Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-        {tr.phase ? <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={tr.phase} /> : null}
-        {tr.condition ? <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={tr.condition} /> : null}
+        {tr.phase ? <Tag bg="rgba(45,108,181,0.10)" fg={C.info} label={tr.phase} /> : null}
+        {tr.condition ? <Tag bg="rgba(11,128,116,0.12)" fg={C.accent} label={tr.condition} /> : null}
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border }}>
         {[
@@ -789,7 +789,7 @@ function TrialPanel({ tr, patientCount, onPress }: any) {
           { label: "MY PATIENTS", val: `${patientCount} enrolled` },
         ].map(f => (
           <View key={f.label} style={{ width: "50%", marginBottom: 8 }}>
-            <Text style={{ fontSize: 9, fontWeight: "700", letterSpacing: 1.2, color: "rgba(123,95,115,0.65)" }}>{f.label}</Text>
+            <Text style={{ fontSize: 9, fontWeight: "700", letterSpacing: 1.2, color: "rgba(85,98,117,0.65)" }}>{f.label}</Text>
             <Text style={{ fontSize: 12, fontWeight: "500", color: C.fg, marginTop: 2 }} numberOfLines={1}>{f.val}</Text>
           </View>
         ))}
@@ -839,14 +839,14 @@ const st = StyleSheet.create({
   dayDeck: { flexDirection: "row", alignItems: "center", marginTop: 20 },
   heroChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: C.w15, borderWidth: 1, borderColor: C.w15 },
   heroChipText: { color: C.primaryFg, fontSize: 12, fontWeight: "700" },
-  statTile: { flex: 1, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 14, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
-  quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", position: "relative", shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  statTile: { flex: 1, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 14, overflow: "hidden", shadowColor: "#0F1B2D", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", position: "relative", shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   taskProgressRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
   taskProgressTrack: { flex: 1, flexDirection: "row", gap: 4 },
   taskProgressSegment: { height: 6, flex: 1, borderRadius: 999 },
   taskProgressCount: { color: C.muted, fontSize: 11, fontWeight: "700", fontVariant: ["tabular-nums"] },
-  taskCard: { position: "relative", overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingVertical: 12, paddingHorizontal: 14, paddingLeft: 17, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  taskCard: { position: "relative", overflow: "hidden", flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingVertical: 12, paddingHorizontal: 14, paddingLeft: 17, shadowColor: "#0F1B2D", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   taskRail: { position: "absolute", left: 0, top: 8, bottom: 8, width: 4, borderRadius: 2 },
   taskOrb: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   taskTitle: { color: C.fg, fontSize: 14, fontWeight: "600", lineHeight: 18 },
@@ -861,17 +861,17 @@ const st = StyleSheet.create({
   caughtUpIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
   caughtUpTitle: { color: C.fg, fontSize: 16, fontWeight: "700", marginTop: 10 },
   caughtUpText: { color: C.muted, fontSize: 12, marginTop: 3, textAlign: "center" },
-  taskError: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, padding: 11, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.08)", borderWidth: 1, borderColor: "rgba(192,57,43,0.22)" },
+  taskError: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, padding: 11, borderRadius: 14, backgroundColor: "rgba(194,48,48,0.08)", borderWidth: 1, borderColor: "rgba(194,48,48,0.22)" },
   taskErrorText: { flex: 1, color: C.destructive, fontSize: 12, lineHeight: 16 },
-  dashboardError: { marginBottom: 12, padding: 13, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(192,57,43,0.28)", backgroundColor: "rgba(192,57,43,0.08)" },
+  dashboardError: { marginBottom: 12, padding: 13, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(194,48,48,0.28)", backgroundColor: "rgba(194,48,48,0.08)" },
   dashboardErrorTitle: { color: C.destructive, fontSize: 13, fontWeight: "700" },
   dashboardErrorCopy: { marginTop: 2, color: C.muted, fontSize: 11 },
   dashboardRetry: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: C.destructive },
   dashboardRetryText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
-  visitCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  visitCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#0F1B2D", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   updateBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
-  overdueCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: "rgba(192,57,43,0.30)", overflow: "hidden", position: "relative", marginBottom: 12 },
-  outcomeBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(46,27,51,0.42)" },
+  overdueCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: "rgba(194,48,48,0.30)", overflow: "hidden", position: "relative", marginBottom: 12 },
+  outcomeBackdrop: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(15,27,45,0.42)" },
   outcomeSheet: { backgroundColor: C.card, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 30, borderWidth: 1, borderBottomWidth: 0, borderColor: C.border },
   outcomeHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: C.border, alignSelf: "center", marginBottom: 16 },
   outcomeHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
@@ -886,7 +886,7 @@ const st = StyleSheet.create({
   outcomeRadioSelected: { borderColor: C.primary, backgroundColor: C.primary },
   outcomeOptionText: { flex: 1, fontSize: 12, fontWeight: "700", color: C.muted },
   outcomeOptionTextSelected: { color: C.primaryDeep },
-  outcomeError: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, borderWidth: 1, borderColor: "rgba(192,57,43,0.30)", backgroundColor: "rgba(192,57,43,0.08)", padding: 11, marginTop: 14 },
+  outcomeError: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, borderWidth: 1, borderColor: "rgba(194,48,48,0.30)", backgroundColor: "rgba(194,48,48,0.08)", padding: 11, marginTop: 14 },
   outcomeErrorText: { flex: 1, fontSize: 12, fontWeight: "600", color: C.destructive },
   outcomeActions: { flexDirection: "row", gap: 10, marginTop: 20 },
   outcomeCancel: { flex: 1, height: 50, borderRadius: 16, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" },

@@ -4,7 +4,8 @@ from typing import Annotated, Any, Callable, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
-from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
+from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,7 +16,14 @@ from app.domain.schedule.diff import compare_schedule_versions
 from app.domain.schedule.exceptions import ImmutableScheduleError, ScheduleNotApprovedError
 from app.domain.schedule.projection import project_schedule
 from app.domain.schedule.models import (
-    ConditionState, Event, PatientConditionStatus, RollingHorizon,
+    ApplicabilityRule, CalendarRecurrence, ConditionState, DependencyMode, Event, HolidayCalendar,
+    OccurrenceFactKind,
+    PatientConditionStatus, ProcessTransition, RecurrencePlan, RecurrenceRule, RollingHorizon,
+)
+from app.domain.schedule.timing import TimingExpression, Window
+from app.services.review_view import (
+    ApprovalBlockedError, ReviewWorkflow, StaleRevisionError,
+    export_csv, export_json, review_revision,
 )
 from app.services.schedule_service import (
     PatientScheduleService, ScheduleReviewService,
@@ -40,6 +48,86 @@ class BulkConfirmIn(BaseModel):
     decision - it is a real reviewer action, just not a per-field one."""
 
     reason: str = Field(min_length=1)
+
+
+class ApproveTableIn(BulkConfirmIn):
+    #: Optional for existing callers; when sent, a changed draft is refused (RV-05).
+    expected_revision: str | None = None
+
+
+class _ReviewWriteIn(BaseModel):
+    """Every review write names the draft revision it was made against (RV-05)."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: str = Field(min_length=8)
+    rationale: str = Field(min_length=1)
+
+
+class EventChangesIn(BaseModel):
+    """A typed semantic patch (UI-07). Only the fields sent are changed, so a
+    label edit can never rewrite timing. ``window: null`` states "not stated"."""
+
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, min_length=1)
+    protocol_label: str | None = Field(default=None, min_length=1)
+    event_type: str | None = Field(default=None, min_length=1)
+    timing: TimingExpression | None = None
+    window: Window | None = None
+    recurrence: RecurrenceRule | None = None
+    recurrence_plan: RecurrencePlan | None = None
+    applicability: list[ApplicabilityRule] | None = None
+    visit_mode: str | None = None
+    allowed_visit_modes: list[str] | None = None
+    dependency_mode: DependencyMode | None = None
+    calendar_recurrence: CalendarRecurrence | None = None
+
+
+class HolidayCalendarIn(_ReviewWriteIn):
+    calendar: HolidayCalendar
+
+
+class EventEditIn(_ReviewWriteIn):
+    changes: EventChangesIn = Field(default_factory=EventChangesIn)
+    #: The reviewer confirms this row's interpretation (clears its review flag).
+    confirm_row: bool = False
+
+
+class AddVisitIn(_ReviewWriteIn):
+    display_name: str = Field(min_length=1)
+    code: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*$")
+    event_type: str = Field(default="VISIT", min_length=1)
+    sequence_number: int | None = None
+    timing: TimingExpression
+    window: Window | None = None
+    recurrence: RecurrenceRule | None = None
+    applicability: list[ApplicabilityRule] = Field(default_factory=list)
+    visit_mode: str | None = None
+    allowed_visit_modes: list[str] = Field(default_factory=list)
+    activities: list[str] = Field(default_factory=list)
+
+
+class QuestionResolutionIn(_ReviewWriteIn):
+    action: Literal["CHOOSE_ORIGIN", "CONFIRM_ANCHOR", "DEFINE_ANCHOR", "REMAP_ANCHOR"]
+    anchor_code: str | None = None
+    display_name: str | None = None
+    anchor_type: str | None = None
+
+
+class ApproveVersionIn(BaseModel):
+    """Whole-version approval only (RV-04): there is deliberately no row or
+    subset selector, and unknown fields are refused rather than ignored."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: str = Field(min_length=8)
+    reason: str = Field(min_length=1)
+    effective_from: date | None = None
+
+
+def _stale(error: StaleRevisionError) -> HTTPException:
+    return HTTPException(409, {
+        "code": "STALE_REVISION", "message": str(error),
+        "expected_revision": error.expected, "current_revision": error.current,
+    })
 
 
 class ReviewDecisionIn(BaseModel):
@@ -229,11 +317,57 @@ class ConditionPreviewIn(BaseModel):
     expires_in_minutes: int = Field(default=30, ge=5, le=1440)
 
 
+class ProcessTargetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["PROCESS", "PROCESS_KIND", "PATIENT"]
+    process_code: str | None = None
+    kind: str | None = None
+
+
+class ProcessTransitionIn(BaseModel):
+    """WP3: a proposed hold / resume / stop / completion of one process (or the
+    patient's whole participation). Previewed, then confirmed; never applied
+    directly."""
+
+    model_config = ConfigDict(extra="forbid")
+    target: ProcessTargetIn
+    to_state: Literal["HELD", "ACTIVE", "STOPPED", "COMPLETED"]
+    effective_at: date | datetime
+    status: Literal["PENDING_CONFIRMATION"] = "PENDING_CONFIRMATION"
+    reason: Literal["DECISION", "WITHDRAWAL_FROM_TREATMENT", "WITHDRAWAL_OF_CONSENT",
+                    "END_OF_FOLLOW_UP", "PROTOCOL_COMPLETION"]
+    authority: str | None = None
+    resume_policy: str | None = None
+    source_ref: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+
+    def to_domain(self) -> ProcessTransition:
+        return ProcessTransition.model_validate(self.model_dump(exclude_none=True))
+
+
 class ImpactPreviewIn(BaseModel):
-    target_schedule_version_id: UUID
+    #: Defaults to the patient's current version (a process transition or fact
+    #: change is previewed against the schedule the patient is on).
+    target_schedule_version_id: UUID | None = None
     horizon: date
     reason: str = Field(min_length=1)
     expires_in_minutes: int = Field(default=30, ge=5, le=1440)
+    process_transition: ProcessTransitionIn | None = None
+
+
+class OccurrenceFactIn(BaseModel):
+    """PT-02/PT-04: a performed, missed or booked fact for one occurrence.
+    A correction names the record it supersedes; history is kept."""
+
+    model_config = ConfigDict(extra="forbid")
+    logical_key: str = Field(min_length=1)
+    kind: Literal["PERFORMED", "MISSED", "BOOKED"]
+    value: date | None = None
+    end_value: date | None = None
+    effective_at: date | None = None
+    supersedes_occurrence_id: UUID | None = None
+    reason: str = Field(min_length=1)
+    horizon: date | None = None
 
 
 class ImpactConfirmIn(BaseModel):
@@ -255,6 +389,9 @@ class AssignmentPreviewIn(BaseModel):
     """
 
     assignment: dict[str, str | None] = Field(min_length=1)
+    #: RL-11: from when the new assignment applies; earlier history keeps the
+    #: previous assignment. None = the existing behaviour (applies now).
+    assignment_effective_from: date | None = None
     horizon: date
     reason: str = Field(min_length=1)
     expires_in_minutes: int = Field(default=30, ge=5, le=1440)
@@ -275,6 +412,42 @@ def _uuid(value: object, label: str) -> UUID:
         return UUID(str(value))
     except (TypeError, ValueError, AttributeError) as error:
         raise HTTPException(403, f"Authenticated user has no valid {label}") from error
+
+
+def _feasibility_fields(explanation: dict[str, Any] | None) -> dict[str, Any]:
+    feasibility = (explanation or {}).get("feasibility")
+    if not isinstance(feasibility, dict):
+        return {"feasibility": None, "feasible_intervals": [], "missing_inputs": [],
+                "conflicting_constraints": []}
+    return {
+        "feasibility": feasibility.get("status"),
+        "feasible_intervals": feasibility.get("intervals") or [],
+        "missing_inputs": feasibility.get("missing_inputs") or [],
+        "conflicting_constraints": feasibility.get("conflicting_constraints") or [],
+    }
+
+
+def _wp3_event_fields(explanation: dict[str, Any] | None) -> dict[str, Any]:
+    """Process state, booking, performed time, episode and calendar session,
+    read from the persisted evaluator explanation (WP3)."""
+    explanation = explanation or {}
+    booking = explanation.get("booking") if isinstance(explanation.get("booking"), dict) else {}
+    performed = explanation.get("performed") if isinstance(explanation.get("performed"), dict) else {}
+    calendar = explanation.get("calendar_recurrence") if isinstance(explanation.get("calendar_recurrence"), dict) else None
+    session = None
+    if calendar and calendar.get("session") is not None:
+        session = {key: calendar.get(key) for key in (
+            "session", "kind", "replaces_session", "slot_date", "candidate_date")}
+    within = booking.get("within_permitted") if booking else None
+    return {
+        "process_state": explanation.get("process_state"),
+        "booked_time": booking.get("booked") if booking else None,
+        "booked_outside_permitted": (None if within is None else not within) if booking else None,
+        "actual_time": performed.get("value") if performed else None,
+        "condition_episode": explanation.get("condition_episode"),
+        "held_after_resolution": explanation.get("held_after_resolution"),
+        "calendar_session": session,
+    }
 
 
 def _identity(user: dict[str, Any]) -> tuple[UUID, UUID]:
@@ -671,9 +844,13 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         return {"fields_confirmed": confirmed, "action": "SCHEDULE_BULK_CONFIRMED"}
 
     @router.post("/schedule-versions/{schedule_version_id}/approve-table")
-    def approve_table(schedule_version_id: UUID, body: BulkConfirmIn, user: User, session: Db):
+    def approve_table(schedule_version_id: UUID, body: ApproveTableIn, user: User, session: Db):
         actor_id, organization_id = _identity(user)
         _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        if body.expected_revision is not None:
+            current = review_revision(ScheduleRepository(session).get(schedule_version_id))
+            if current != body.expected_revision:
+                raise _stale(StaleRevisionError(body.expected_revision, current))
         try:
             ScheduleReviewService(session).approve_reviewed_table(
                 schedule_version_id, reviewer_id=actor_id, reason=body.reason)
@@ -687,11 +864,16 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
     def correct_event(
         schedule_version_id: UUID, event_id: UUID, event: Event,
         user: User, session: Db, reason: Annotated[str, Header(alias="X-Review-Reason")],
+        expected_revision: Annotated[str | None, Header(alias="X-Expected-Revision")] = None,
     ):
         actor_id, organization_id = _identity(user)
         _assert_schedule_tenant(session, schedule_version_id, organization_id)
         if event.id != event_id:
             raise HTTPException(422, "Event body ID must match the route")
+        if expected_revision is not None:
+            current = review_revision(ScheduleRepository(session).get(schedule_version_id))
+            if current != expected_revision:
+                raise _stale(StaleRevisionError(expected_revision, current))
         try:
             issues = ScheduleReviewService(session).correct_event(
                 schedule_version_id, event, reviewer_id=actor_id, reason=reason,
@@ -834,6 +1016,126 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             raise HTTPException(409, str(error)) from error
         return {"status": response_status}
 
+    # --- Visit Schedule review (design doc "Required user-facing output") ------
+
+    @router.get("/schedule-versions/{schedule_version_id}/review-view")
+    def get_review_view(schedule_version_id: UUID, user: User, session: Db):
+        """The ScheduleReviewView: rows, shared questions, document issues and
+        backend approval eligibility, derived from the canonical rules and a
+        fresh validation run. Read-only; contains no patient dates (UI-10)."""
+        _, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        return ReviewWorkflow(session).view(schedule_version_id)
+
+    def _review_write(session: Session, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        try:
+            result = action()
+            session.commit()
+            return result
+        except StaleRevisionError as error:
+            session.rollback()
+            raise _stale(error) from error
+        except ApprovalBlockedError as error:
+            session.rollback()
+            raise HTTPException(409, {
+                "code": "APPROVAL_BLOCKED", "message": str(error), "reasons": error.reasons,
+            }) from error
+        except KeyError as error:
+            session.rollback()
+            raise HTTPException(404, str(error.args[0] if error.args else error)) from error
+        except ImmutableScheduleError as error:
+            session.rollback()
+            raise HTTPException(409, {"code": "IMMUTABLE_VERSION", "message": str(error)}) from error
+        except ValueError as error:
+            session.rollback()
+            raise HTTPException(422, {"code": "INVALID_SEMANTICS", "message": str(error)}) from error
+
+    @router.patch("/schedule-versions/{schedule_version_id}/events/{event_id}")
+    def edit_event(schedule_version_id: UUID, event_id: UUID, body: EventEditIn,
+                   user: User, session: Db):
+        """Typed semantic edit of one visit rule, then revalidation (UI-07)."""
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        changes = body.changes.model_dump(mode="json", by_alias=True, exclude_unset=True)
+        return _review_write(session, lambda: ReviewWorkflow(session).edit_event(
+            schedule_version_id, event_id, reviewer_id=actor_id,
+            expected_revision=body.expected_revision, rationale=body.rationale,
+            changes=changes, confirm_row=body.confirm_row))
+
+    @router.post("/schedule-versions/{schedule_version_id}/events", status_code=201)
+    def add_visit(schedule_version_id: UUID, body: AddVisitIn, user: User, session: Db):
+        """Add Visit: a MANUAL-origin rule with rationale and review state (UI-07)."""
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        payload = body.model_dump(mode="json", by_alias=True,
+                                  exclude={"expected_revision", "rationale"})
+        return _review_write(session, lambda: ReviewWorkflow(session).add_event(
+            schedule_version_id, reviewer_id=actor_id, expected_revision=body.expected_revision,
+            rationale=body.rationale, event=payload))
+
+    @router.post("/schedule-versions/{schedule_version_id}/holiday-calendars", status_code=201)
+    def attach_holiday_calendar(schedule_version_id: UUID, body: HolidayCalendarIn, user: User, session: Db):
+        """Attach a reviewed schedule-level holiday calendar to the draft."""
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        return _review_write(session, lambda: ReviewWorkflow(session).attach_holiday_calendar(
+            schedule_version_id, reviewer_id=actor_id, expected_revision=body.expected_revision,
+            rationale=body.rationale, calendar=body.calendar.model_dump(mode="json")))
+
+    @router.post("/schedule-versions/{schedule_version_id}/review-questions/{question_id}/resolve")
+    def resolve_review_question(schedule_version_id: UUID, question_id: str,
+                                body: QuestionResolutionIn, user: User, session: Db):
+        """Answer one shared question once for every affected row (UI-06)."""
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        return _review_write(session, lambda: ReviewWorkflow(session).resolve_question(
+            schedule_version_id, question_id, reviewer_id=actor_id,
+            expected_revision=body.expected_revision, rationale=body.rationale,
+            action=body.action, anchor_code=body.anchor_code,
+            display_name=body.display_name, anchor_type=body.anchor_type))
+
+    @router.post("/schedule-versions/{schedule_version_id}/approve-version")
+    def approve_version(schedule_version_id: UUID, body: ApproveVersionIn, user: User, session: Db):
+        """Whole-version approval at a named revision (UI-08, RV-04, RV-05).
+
+        The gates are rerun server-side from the stored draft; a stale revision
+        or any blocker is refused and nothing is partially activated."""
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        return _review_write(session, lambda: ReviewWorkflow(session).approve(
+            schedule_version_id, reviewer_id=actor_id, expected_revision=body.expected_revision,
+            reason=body.reason, effective_from=body.effective_from))
+
+    @router.get("/schedule-versions/{schedule_version_id}/export")
+    def export_schedule(schedule_version_id: UUID, user: User, session: Db,
+                        format: Literal["json", "csv"] = "json"):
+        """Reviewed schedule with provenance and draft/approved label (UI-09)."""
+        _, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        workflow = ReviewWorkflow(session)
+        schedule, version, run = workflow.context(schedule_version_id)
+        view = workflow.build(schedule, version, run)
+        provenance = workflow.provenance(schedule_version_id)
+        accountability = workflow.accountability(schedule_version_id)
+        label = "approved" if view["status"] == "APPROVED" else "draft"
+        stem = f"visit-schedule-v{view['version_number']}-{label}"
+        if format == "csv":
+            return Response(
+                content=export_csv(view, provenance, accountability), media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{stem}.csv"'})
+        return export_json(schedule, view, provenance, accountability)
+
+    @router.get("/schedule-versions/{schedule_version_id}/accountability")
+    def get_accountability(schedule_version_id: UUID, user: User, session: Db):
+        """The extraction accountability ledger (coverage, statement dispositions,
+        anchor reconciliation) recorded with this draft, or 404 when none was."""
+        _, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        ledger = ReviewWorkflow(session).accountability(schedule_version_id)
+        if ledger is None:
+            raise HTTPException(404, "No extraction accountability ledger was recorded for this version")
+        return ledger
+
     @router.get("/schedule-versions/{schedule_version_id}/projection")
     def get_projection(schedule_version_id: UUID, user: User, session: Db):
         _, organization_id = _identity(user)
@@ -948,7 +1250,24 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             db.PatientEvent.schedule_evaluation_id == patient_schedule.current_evaluation_id,
         ).order_by(db.PatientEvent.nominal_start_date, db.PatientEvent.occurrence_index)))
         actual_by_logical: dict[UUID, date] = {}
+        records_by_logical: dict[UUID, list[dict[str, Any]]] = {}
         logical_ids = [item.logical_occurrence_id for item in events]
+        if logical_ids:
+            for logical_id, occurrence in session.execute(
+                select(db.PatientEvent.logical_occurrence_id, db.PatientEventOccurrence)
+                .join(db.PatientEventOccurrence, db.PatientEventOccurrence.patient_event_id == db.PatientEvent.id)
+                .where(db.PatientEvent.logical_occurrence_id.in_(logical_ids))
+                .order_by(db.PatientEventOccurrence.recorded_at)
+            ).all():
+                metadata = occurrence.metadata_json or {}
+                records_by_logical.setdefault(logical_id, []).append({
+                    "id": str(occurrence.id), "status": occurrence.status,
+                    "kind": metadata.get("fact_kind") or occurrence.status,
+                    "actual_date": occurrence.actual_date,
+                    "booked_date": metadata.get("booked_date"),
+                    "supersedes_occurrence_id": metadata.get("supersedes_occurrence_id"),
+                    "recorded_at": occurrence.recorded_at,
+                })
         if logical_ids:
             actual_rows = session.execute(
                 select(db.PatientEvent.logical_occurrence_id, db.PatientEventOccurrence.actual_date)
@@ -1009,6 +1328,12 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
                 "timing_resolution": item.timing_resolution,
                 "activities": activities_by_event.get(item.id, []),
                 "explanation": item.generation_reason,
+                # Constraint-set feasibility (WP2), persisted in the explanation.
+                # Disjoint intervals are returned as they are, never merged.
+                **_feasibility_fields(item.generation_reason),
+                **_wp3_event_fields(item.generation_reason),
+                # Newest first is what a correction supersedes; older records stay as history.
+                "occurrence_records": list(reversed(records_by_logical.get(item.logical_occurrence_id, []))),
             } for item in events],
         }
 
@@ -1145,6 +1470,40 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
                 if item.deviation_type.value not in {"NONE", "NOT_ASSESSABLE"}),
         }
         return payload
+
+    @router.post("/patients/{patient_id}/occurrence-facts", status_code=201)
+    def record_occurrence_fact(patient_id: UUID, body: OccurrenceFactIn, user: User, session: Db):
+        """Record a performed / missed / booked fact (or correct one), then
+        re-evaluate. A booking never moves the rule; a missed session keeps its
+        number. Tenant-scoped; the service writes the audit event."""
+        actor_id, organization_id = _identity(user)
+        service = PatientScheduleService(session)
+        try:
+            record = service.record_occurrence_fact(
+                patient_id, organization_id=organization_id, logical_key=body.logical_key,
+                kind=OccurrenceFactKind(body.kind), value=body.value, end_value=body.end_value,
+                effective_at=body.effective_at,
+                supersedes_occurrence_id=body.supersedes_occurrence_id,
+                actor_id=actor_id, reason=body.reason, source="SITE_ENTRY",
+            )
+            evaluation, rows = service.evaluate(
+                patient_id, organization_id=organization_id,
+                horizon=body.horizon or (date.today() + timedelta(days=365)),
+                actor_id=actor_id, reason=f"Occurrence fact recorded: {body.reason}",
+            )
+            session.commit()
+        except KeyError as error:
+            session.rollback()
+            raise HTTPException(404, str(error.args[0] if error.args else error)) from error
+        except ValueError as error:
+            session.rollback()
+            raise HTTPException(422, str(error)) from error
+        return {
+            "occurrence_id": str(record.id), "logical_key": body.logical_key, "kind": body.kind,
+            "status": record.status, "actual_date": record.actual_date,
+            "supersedes_occurrence_id": str(body.supersedes_occurrence_id) if body.supersedes_occurrence_id else None,
+            "evaluation_id": str(evaluation.id), "events": len(rows),
+        }
 
     @router.post("/patients/{patient_id}/activities", status_code=201)
     def record_patient_activity(
@@ -1425,6 +1784,7 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
                 horizon=body.horizon, actor_id=actor_id, reason=body.reason,
                 expires_in_minutes=body.expires_in_minutes,
                 assignment_change=body.assignment,
+                assignment_effective_from=body.assignment_effective_from,
             )
             session.commit()
         except KeyError as error:
@@ -1443,12 +1803,25 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         patient_id: UUID, body: ImpactPreviewIn, user: User, session: Db,
     ):
         actor_id, organization_id = _identity(user)
+        patient = session.scalar(select(db.Patient).where(
+            db.Patient.id == patient_id, db.Patient.organization_id == organization_id,
+        ))
+        if patient is None:
+            raise HTTPException(404, "Patient not found")
+        target = body.target_schedule_version_id or patient.current_schedule_version_id
+        if target is None:
+            raise HTTPException(422, "Patient is not pinned to an approved schedule")
+        try:
+            transition = body.process_transition.to_domain() if body.process_transition else None
+        except (ValueError, PydanticValidationError) as error:
+            raise HTTPException(422, str(error)) from error
         try:
             proposal = PatientScheduleImpactService(session).preview(
                 patient_id, organization_id=organization_id,
-                target_schedule_version_id=body.target_schedule_version_id,
+                target_schedule_version_id=target,
                 horizon=body.horizon, actor_id=actor_id, reason=body.reason,
                 expires_in_minutes=body.expires_in_minutes,
+                process_transition=transition,
             )
             session.commit()
         except KeyError as error:

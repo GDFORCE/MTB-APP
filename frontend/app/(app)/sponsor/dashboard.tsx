@@ -205,7 +205,7 @@ export default function SponsorDashboard() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={C.primary} />}
       >
         <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
-          <LinearGradient colors={[C.primaryDeep, "rgba(107,20,55,0.55)", "rgba(107,20,55,0)"] as any} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[C.primaryDeep, "rgba(13,42,79,0.55)", "rgba(13,42,79,0)"] as any} style={StyleSheet.absoluteFill} />
           <AmbientHeroArt reducedMotion={reducedMotion} />
 
           <SafeAreaView edges={["top"]}>
@@ -262,10 +262,10 @@ export default function SponsorDashboard() {
         <View style={styles.body}>
           <MotionItem index={0} reducedMotion={reducedMotion}>
             <View style={styles.statRow}>
-              <StatTile icon={FlaskConical} color={C.info} tint="rgba(123,107,184,0.12)" value={dashboard.totals.trials} label="Total Trials" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/trials")} />
-              <StatTile icon={MapPin} color={C.accent} tint="rgba(230,155,92,0.15)" value={dashboard.totals.sites} label="Total Sites" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
-              <StatTile icon={Users} color={C.violet} tint="rgba(142,91,180,0.12)" value={dashboard.totals.subjects} label="Total Patients" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/patients")} />
-              <StatTile icon={UserCheck} color={C.success} tint="rgba(92,154,110,0.12)" value={dashboard.totals.pis} label="Total PIs" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/principal-investigators")} />
+              <StatTile icon={FlaskConical} color={C.info} tint="rgba(45,108,181,0.12)" value={dashboard.totals.trials} label="Total Trials" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/trials")} />
+              <StatTile icon={MapPin} color={C.accent} tint="rgba(11,128,116,0.15)" value={dashboard.totals.sites} label="Total Sites" loading={loading} reducedMotion={reducedMotion} onPress={openSites} />
+              <StatTile icon={Users} color={C.violet} tint="rgba(94,77,178,0.12)" value={dashboard.totals.subjects} label="Total Patients" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/patients")} />
+              <StatTile icon={UserCheck} color={C.success} tint="rgba(30,122,70,0.12)" value={dashboard.totals.pis} label="Total PIs" loading={loading} reducedMotion={reducedMotion} onPress={() => router.push("/(app)/sponsor/principal-investigators")} />
             </View>
           </MotionItem>
 
@@ -713,10 +713,10 @@ function AnimatedProgress({
 
 function notificationTone(type: string) {
   const normalized = type.toLowerCase();
-  if (normalized.includes("milestone") || normalized.includes("recruit")) return { Icon: TrendingUp, bg: "rgba(92,154,110,0.14)", color: C.success };
-  if (normalized.includes("overdue") || normalized.includes("alert")) return { Icon: AlertTriangle, bg: "rgba(192,57,43,0.12)", color: C.destructive };
-  if (normalized.includes("site")) return { Icon: MapPin, bg: "rgba(230,155,92,0.14)", color: C.accent };
-  if (normalized.includes("trial")) return { Icon: FlaskConical, bg: "rgba(123,107,184,0.12)", color: C.info };
+  if (normalized.includes("milestone") || normalized.includes("recruit")) return { Icon: TrendingUp, bg: "rgba(30,122,70,0.14)", color: C.success };
+  if (normalized.includes("overdue") || normalized.includes("alert")) return { Icon: AlertTriangle, bg: "rgba(194,48,48,0.12)", color: C.destructive };
+  if (normalized.includes("site")) return { Icon: MapPin, bg: "rgba(11,128,116,0.14)", color: C.accent };
+  if (normalized.includes("trial")) return { Icon: FlaskConical, bg: "rgba(45,108,181,0.12)", color: C.info };
   return { Icon: Info, bg: C.surface, color: C.mutedFg };
 }
 
@@ -789,7 +789,7 @@ const styles = StyleSheet.create({
   portfolioTitle: { color: C.primaryFg, fontFamily: fonts.heading, fontSize: 20, marginTop: 2 },
   heroChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   heroChip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, height: 24, borderRadius: 999, backgroundColor: W.w15, borderWidth: 1, borderColor: W.w15 },
-  heroChipDanger: { backgroundColor: "rgba(192,57,43,0.28)" },
+  heroChipDanger: { backgroundColor: "rgba(194,48,48,0.28)" },
   heroChipText: { color: C.primaryFg, fontFamily: fonts.semibold, fontSize: 9 },
   ring: { width: 76, height: 76, alignItems: "center", justifyContent: "center" },
   ringSvg: { position: "absolute", transform: [{ rotate: "-90deg" }] },
@@ -819,7 +819,7 @@ const styles = StyleSheet.create({
   protocolPill: { maxWidth: "56%", paddingHorizontal: 9, height: 24, borderRadius: 999, backgroundColor: "rgba(240,215,220,0.58)", justifyContent: "center" },
   protocolText: { color: C.primary, fontFamily: fonts.mono, fontSize: 9 },
   trialStatusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
-  activePill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 7, height: 22, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.14)" },
+  activePill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 7, height: 22, borderRadius: 999, backgroundColor: "rgba(30,122,70,0.14)" },
   activeDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: C.success },
   activeText: { color: C.success, fontFamily: fonts.semibold, fontSize: 9, textTransform: "capitalize" },
   openIcon: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: C.surface },
@@ -865,7 +865,7 @@ const styles = StyleSheet.create({
   emptyCopy: { flex: 1 },
   emptyTitle: { fontFamily: fonts.semibold, fontSize: 12 },
   emptyDescription: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 9, lineHeight: 13, marginTop: 2 },
-  errorCard: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: "rgba(192,57,43,0.30)", backgroundColor: "rgba(192,57,43,0.07)" },
+  errorCard: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14, padding: 11, borderRadius: 15, borderWidth: 1, borderColor: "rgba(194,48,48,0.30)", backgroundColor: "rgba(194,48,48,0.07)" },
   errorText: { flex: 1, fontFamily: fonts.medium, fontSize: 10, lineHeight: 14 },
   retryButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 9, height: 30, borderRadius: 999, backgroundColor: C.card },
   retryText: { color: C.primary, fontFamily: fonts.semibold, fontSize: 9 },

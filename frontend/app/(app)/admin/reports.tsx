@@ -205,11 +205,11 @@ export default function AdminReports() {
             <View style={[st.rangeWrap, { opacity: usesRange ? 1 : 0.45 }]}>
               <View style={{ flex: 1, gap: 6 }}>
                 <RNText style={st.fieldLabel}>From</RNText>
-                <TextInput value={from} onChangeText={setFrom} editable={usesRange} placeholder="YYYY-MM-DD" placeholderTextColor="rgba(123,95,115,0.5)" autoCapitalize="none" style={st.input} />
+                <TextInput value={from} onChangeText={setFrom} editable={usesRange} placeholder="YYYY-MM-DD" placeholderTextColor="rgba(85,98,117,0.5)" autoCapitalize="none" style={st.input} />
               </View>
               <View style={{ flex: 1, gap: 6 }}>
                 <RNText style={st.fieldLabel}>To</RNText>
-                <TextInput value={to} onChangeText={setTo} editable={usesRange} placeholder="YYYY-MM-DD" placeholderTextColor="rgba(123,95,115,0.5)" autoCapitalize="none" style={st.input} />
+                <TextInput value={to} onChangeText={setTo} editable={usesRange} placeholder="YYYY-MM-DD" placeholderTextColor="rgba(85,98,117,0.5)" autoCapitalize="none" style={st.input} />
               </View>
             </View>
             {!usesRange && <RNText style={st.hint}>Date range applies to the Login activity report only.</RNText>}
@@ -299,7 +299,7 @@ function Loading({ label }: { label: string }) {
 function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <View style={{ marginTop: 12 }}>
-      <View style={[st.card, { borderColor: "rgba(192,57,43,0.30)" }]}>
+      <View style={[st.card, { borderColor: "rgba(194,48,48,0.30)" }]}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <View style={st.errIcon}><AlertTriangle size={20} color={C.destructive} /></View>
           <RNText style={{ flex: 1, color: C.foreground, fontFamily: fonts.semibold, fontSize: 13 }}>{message}</RNText>
@@ -333,7 +333,7 @@ const st = StyleSheet.create({
   sectionTitle: { fontFamily: fonts.heading, fontSize: 16, color: C.foreground },
 
   typeRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, padding: 12 },
-  typeRowActive: { borderColor: C.primary, backgroundColor: "rgba(166,33,63,0.06)" },
+  typeRowActive: { borderColor: C.primary, backgroundColor: "rgba(27,95,193,0.06)" },
   rowIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.secondary, alignItems: "center", justifyContent: "center" },
   rowName: { fontFamily: fonts.semibold, fontSize: 14, color: C.foreground },
   rowSub: { fontFamily: fonts.regular, fontSize: 12, color: C.mutedFg, marginTop: 1 },
@@ -361,7 +361,7 @@ const st = StyleSheet.create({
 
   emptyText: { fontFamily: fonts.regular, fontSize: 13, color: C.mutedFg, paddingVertical: 20, textAlign: "center" },
   loadingTxt: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 13, marginTop: 12 },
-  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface },
 
   toast: { position: "absolute", left: 16, right: 16, bottom: 28, backgroundColor: C.foreground, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16 },

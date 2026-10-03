@@ -226,7 +226,7 @@ export default function AdminTerms() {
 function StatusBadge({ status }: { status?: string }) {
   const active = status === "active";
   const fg = active ? C.success : C.mutedFg;
-  const bg = active ? "rgba(92,154,110,0.15)" : C.surface;
+  const bg = active ? "rgba(30,122,70,0.15)" : C.surface;
   return (
     <View style={[st.badge, { backgroundColor: bg }]}>
       {active && <CheckCircle2 size={11} color={fg} />}
@@ -437,7 +437,7 @@ function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () 
   );
 }
 function Input(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor="rgba(123,95,115,0.5)" {...props} style={[st.input, props.multiline && { height: 80, textAlignVertical: "top" }, props.style]} />;
+  return <TextInput placeholderTextColor="rgba(85,98,117,0.5)" {...props} style={[st.input, props.multiline && { height: 80, textAlignVertical: "top" }, props.style]} />;
 }
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return <View style={{ gap: 6 }}><RNText style={st.fieldLabel}>{label}</RNText>{children}</View>;
@@ -480,7 +480,7 @@ function Loading({ label }: { label: string }) {
 function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <View style={{ padding: 16, marginTop: 12 }}>
-      <View style={[st.card, { borderColor: "rgba(192,57,43,0.30)" }]}>
+      <View style={[st.card, { borderColor: "rgba(194,48,48,0.30)" }]}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <View style={st.errIcon}><AlertTriangle size={20} color={C.destructive} /></View>
           <RNText style={{ flex: 1, color: C.foreground, fontFamily: fonts.semibold, fontSize: 13 }}>{message}</RNText>
@@ -536,10 +536,10 @@ const st = StyleSheet.create({
   card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingHorizontal: 16, paddingVertical: 16 },
   emptyText: { fontFamily: fonts.regular, fontSize: 13, color: C.mutedFg, paddingVertical: 20, textAlign: "center" },
   loadingTxt: { color: C.mutedFg, fontFamily: fonts.regular, fontSize: 13, marginTop: 12 },
-  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  errIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, backgroundColor: C.surface },
 
-  sheetOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  sheetOverlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, maxHeight: "88%" },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   sheetTitle: { fontFamily: fonts.display, fontSize: 20, color: C.foreground },
@@ -552,7 +552,7 @@ const st = StyleSheet.create({
   block: { backgroundColor: C.surface, borderRadius: 12, padding: 12, gap: 4 },
   blockLabel: { fontFamily: fonts.semibold, fontSize: 11, color: C.mutedFg, textTransform: "uppercase", letterSpacing: 0.6 },
   blockBody: { fontFamily: fonts.regular, fontSize: 13, color: C.foreground, lineHeight: 19 },
-  warnBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(216,154,60,0.10)", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "rgba(216,154,60,0.25)" },
+  warnBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(178,106,0,0.10)", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "rgba(178,106,0,0.25)" },
   warnBannerTxt: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: C.foreground },
 
   fieldLabel: { fontFamily: fonts.semibold, fontSize: 12, color: C.foreground },

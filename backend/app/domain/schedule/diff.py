@@ -31,9 +31,20 @@ class ChangeType(StrEnum):
     CONDITION_CHANGED = "CONDITION_CHANGED"
     DEPENDENCY_CHANGED = "DEPENDENCY_CHANGED"
     RECURRENCE_CHANGED = "RECURRENCE_CHANGED"
+    # RL-04/05: a composable restriction set changed meaning (normalised
+    # comparison - ids/evidence/ordering of identical items do not count).
+    CONSTRAINTS_CHANGED = "CONSTRAINTS_CHANGED"
+    # Only ids or evidence of otherwise identical restrictions changed.
+    CONSTRAINT_PROVENANCE_CHANGED = "CONSTRAINT_PROVENANCE_CHANGED"
     VISIT_MODE_CHANGED = "VISIT_MODE_CHANGED"
     ANCHOR_ADDED = "ANCHOR_ADDED"
     ANCHOR_REMOVED = "ANCHOR_REMOVED"
+    # A repeat block carries how a treatment block repeats, resumes and - for
+    # cycles - how each cycle start is dated (doc F1-F3, I1-I3). Changing any of
+    # that re-dates every patient in the block, so it is never silent.
+    REPEAT_BLOCK_ADDED = "REPEAT_BLOCK_ADDED"
+    REPEAT_BLOCK_REMOVED = "REPEAT_BLOCK_REMOVED"
+    REPEAT_BLOCK_CHANGED = "REPEAT_BLOCK_CHANGED"
     OTHER = "OTHER"
 
 
@@ -50,6 +61,7 @@ class Significance(StrEnum):
 ADMINISTRATIVE_CHANGES = frozenset({
     ChangeType.VISIT_RENAMED,
     ChangeType.WINDOW_WIDENED,
+    ChangeType.CONSTRAINT_PROVENANCE_CHANGED,
 })
 
 
@@ -89,8 +101,9 @@ def compare_schedule_versions(left: UniversalSchedule, right: UniversalSchedule)
         removed_events=sorted(left_events.keys() - right_events.keys()),
     )
     fields = (
-        "protocol_label", "display_name", "event_type", "timing", "applicability",
-        "conditions", "dependencies", "recurrence", "activities",
+        "protocol_label", "display_name", "event_type", "timing", "window",
+        "applicability", "conditions", "dependencies", "recurrence", "recurrence_plan",
+        "calendar_recurrence", "activities", "constraints",
     )
     for code in sorted(left_events.keys() & right_events.keys()):
         before = left_events[code].model_dump(mode="json")
@@ -156,6 +169,56 @@ def _classify(left: UniversalSchedule, right: UniversalSchedule) -> list[TypedCh
             f"{left_anchors[code].display_name} is no longer an anchor",
             entity_type="ANCHOR",
         ))
+    output.extend(_classify_repeat_blocks(left, right))
+    return output
+
+
+#: Repeat-block fields that are identity or provenance, not schedule meaning.
+_BLOCK_IDENTITY_FIELDS = {"id", "evidence_refs"}
+
+
+def _classify_repeat_blocks(left: UniversalSchedule, right: UniversalSchedule) -> list[TypedChange]:
+    """Added, removed and changed repeat blocks, matched by code.
+
+    A block's id is regenerated for every version, so it is not compared; its
+    evidence links are provenance, not meaning. Everything else - member
+    events, dependency and resume mode, the cycle plan (length, dependency
+    mode, termination) - decides patient dates.
+    """
+    left_blocks = {item.code: item for item in left.repeat_blocks}
+    right_blocks = {item.code: item for item in right.repeat_blocks}
+    output: list[TypedChange] = []
+    for code in sorted(right_blocks.keys() - left_blocks.keys()):
+        output.append(_typed(
+            ChangeType.REPEAT_BLOCK_ADDED, code,
+            f"{right_blocks[code].display_name} is a new repeating block",
+            entity_type="REPEAT_BLOCK",
+            after=right_blocks[code].model_dump(mode="json", exclude=_BLOCK_IDENTITY_FIELDS),
+        ))
+    for code in sorted(left_blocks.keys() - right_blocks.keys()):
+        output.append(_typed(
+            ChangeType.REPEAT_BLOCK_REMOVED, code,
+            f"{left_blocks[code].display_name} is no longer a repeating block",
+            entity_type="REPEAT_BLOCK",
+            detail="its visits no longer pause, resume or stop together",
+            before=left_blocks[code].model_dump(mode="json", exclude=_BLOCK_IDENTITY_FIELDS),
+        ))
+    for code in sorted(left_blocks.keys() & right_blocks.keys()):
+        before = left_blocks[code].model_dump(mode="json", exclude=_BLOCK_IDENTITY_FIELDS)
+        after = right_blocks[code].model_dump(mode="json", exclude=_BLOCK_IDENTITY_FIELDS)
+        changed = sorted(key for key in before.keys() | after.keys()
+                         if before.get(key) != after.get(key))
+        if not changed:
+            continue
+        output.append(_typed(
+            ChangeType.REPEAT_BLOCK_CHANGED, code,
+            f"{right_blocks[code].display_name} repeats differently "
+            f"({', '.join(changed)} changed)",
+            entity_type="REPEAT_BLOCK",
+            detail="every patient in this block is recalculated",
+            before={key: before.get(key) for key in changed},
+            after={key: after.get(key) for key in changed},
+        ))
     return output
 
 
@@ -183,6 +246,9 @@ def _classify_event(before, after) -> list[TypedChange]:
                 detail="every patient dependent on this visit is recalculated",
                 before=before_timing, after=after_timing,
             ))
+
+    if _dump(before.window) != _dump(after.window):
+        output.append(_event_window_change(code, after.display_name, before.window, after.window))
 
     before_activities = {
         item.code or item.display_name: item for item in before.activities}
@@ -220,6 +286,10 @@ def _classify_event(before, after) -> list[TypedChange]:
          "depends on a different visit"),
         ("recurrence", ChangeType.RECURRENCE_CHANGED,
          "repeats on a different schedule"),
+        ("recurrence_plan", ChangeType.RECURRENCE_CHANGED,
+         "follows a different phased follow-up plan"),
+        ("calendar_recurrence", ChangeType.RECURRENCE_CHANGED,
+         "repeats on different weekdays or calendar policies"),
     ):
         left_value = _dump(getattr(before, field))
         right_value = _dump(getattr(after, field))
@@ -228,6 +298,8 @@ def _classify_event(before, after) -> list[TypedChange]:
                 change_type, code, f"{after.display_name} {phrase}",
                 before=left_value, after=right_value,
             ))
+
+    output.extend(_constraint_changes(before, after))
 
     if (before.visit_mode, list(before.allowed_visit_modes)) != (
             after.visit_mode, list(after.allowed_visit_modes)):
@@ -241,6 +313,29 @@ def _classify_event(before, after) -> list[TypedChange]:
                    "allowed_visit_modes": list(after.allowed_visit_modes)},
         ))
     return output
+
+
+def _constraint_changes(before, after) -> list[TypedChange]:
+    from .feasibility import semantic_key
+
+    left, right = before.constraints, after.constraints
+    if _dump(left) == _dump(right):
+        return []
+    left_key = semantic_key(left) if left is not None else None
+    right_key = semantic_key(right) if right is not None else None
+    if left_key == right_key:
+        return [_typed(
+            ChangeType.CONSTRAINT_PROVENANCE_CHANGED, before.code,
+            f"the sources cited for {after.display_name}'s restrictions changed",
+            detail="the permitted dates are unchanged",
+            before=_dump(left), after=_dump(right),
+        )]
+    return [_typed(
+        ChangeType.CONSTRAINTS_CHANGED, before.code,
+        f"{after.display_name} has different restrictions on when it may happen",
+        detail="every patient's permitted dates for this visit are recalculated",
+        before=_dump(left), after=_dump(right),
+    )]
 
 
 def _dump(value: object) -> object:
@@ -260,6 +355,41 @@ def _window_days(timing: object) -> tuple[int, int] | None:
     if before is None or after is None:
         return None
     return int(getattr(before, "value", 0)), int(getattr(after, "value", 0))
+
+
+def _event_window_change(code: str, name: str, before, after) -> TypedChange:
+    """A change to an event's own window rule (doc B2/B3).
+
+    Only a same-unit change whose both edges moved outward is administrative.
+    Adding, removing, or re-uniting a window changes which dates count as on
+    time, so it is reviewed as clinical.
+    """
+    left, right = _dump(before), _dump(after)
+    same_unit = (
+        before is not None and after is not None
+        and before.before.unit == after.before.unit
+    )
+    if same_unit:
+        widened = (
+            after.before.value >= before.before.value
+            and after.after.value >= before.after.value
+        )
+        return _typed(
+            ChangeType.WINDOW_WIDENED if widened else ChangeType.WINDOW_NARROWED,
+            code, f"the {name} window {'widened' if widened else 'narrowed'}",
+            detail=(
+                "no existing booking can fall outside a wider window" if widened
+                else "patients already booked may now fall outside their window"
+            ),
+            before=left, after=right,
+        )
+    return _typed(
+        ChangeType.TIMING_CHANGED, code,
+        f"the allowed window for {name} was "
+        f"{'added' if before is None else 'removed' if after is None else 'changed'}",
+        detail="which dates count as on time changes for every patient",
+        before=left, after=right,
+    )
 
 
 def _window_change(code: str, before_timing, after_timing) -> TypedChange | None:

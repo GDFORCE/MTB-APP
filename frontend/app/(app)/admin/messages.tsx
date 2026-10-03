@@ -62,17 +62,17 @@ type Reply = {
 
 function typeMeta(t?: string): { fg: string; bg: string } {
   switch (t) {
-    case "compliance": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
+    case "compliance": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
     case "system":
-    case "urgent": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
-    case "targeted": return { fg: C.info, bg: "rgba(123,107,184,0.12)" };
+    case "urgent": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
+    case "targeted": return { fg: C.info, bg: "rgba(45,108,181,0.12)" };
     default: return { fg: C.mutedFg, bg: C.surface };
   }
 }
 function statusMeta(s?: string): { fg: string; bg: string } {
   switch (s) {
-    case "scheduled": return { fg: C.info, bg: "rgba(123,107,184,0.12)" };
-    case "sent": return { fg: C.success, bg: "rgba(92,154,110,0.15)" };
+    case "scheduled": return { fg: C.info, bg: "rgba(45,108,181,0.12)" };
+    case "sent": return { fg: C.success, bg: "rgba(30,122,70,0.15)" };
     default: return { fg: C.mutedFg, bg: C.surface };
   }
 }
@@ -407,7 +407,7 @@ function ReplyCard({ reply, showToast, onChanged }: { reply: Reply; showToast: (
       )}
 
       {resolved ? (
-        <View style={[mg.pill, { backgroundColor: "rgba(92,154,110,0.15)", alignSelf: "flex-start", marginTop: 10 }]}>
+        <View style={[mg.pill, { backgroundColor: "rgba(30,122,70,0.15)", alignSelf: "flex-start", marginTop: 10 }]}>
           <CheckCircle2 size={11} color={C.success} /><RNText style={[mg.pillTxt, { color: C.success }]}>Resolved</RNText>
         </View>
       ) : (
@@ -465,7 +465,7 @@ const mg = StyleSheet.create({
   subChipTxtActive: { color: C.secondaryFg },
   counter: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, textAlign: "right" },
   hint: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
-  previewBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(123,107,184,0.08)", borderRadius: 10, padding: 10, marginTop: 8 },
+  previewBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(45,108,181,0.08)", borderRadius: 10, padding: 10, marginTop: 8 },
   previewTxt: { flex: 1, fontFamily: fonts.medium, fontSize: 12, color: C.info },
 
   sendBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, height: 50, borderRadius: 14, backgroundColor: C.primary },
@@ -482,14 +482,14 @@ const mg = StyleSheet.create({
   unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.info },
   replyRe: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, marginTop: 1 },
   replyMsg: { fontFamily: fonts.regular, fontSize: 13, color: C.foreground, backgroundColor: C.surface, borderRadius: 10, padding: 10, marginTop: 8, lineHeight: 18 },
-  responseBubble: { backgroundColor: "rgba(166,33,63,0.06)", borderRadius: 10, padding: 10 },
+  responseBubble: { backgroundColor: "rgba(27,95,193,0.06)", borderRadius: 10, padding: 10 },
   responseBy: { fontFamily: fonts.semibold, fontSize: 11, color: C.primary },
   responseTxt: { fontFamily: fonts.regular, fontSize: 12, color: C.foreground, marginTop: 2, lineHeight: 17 },
   smallBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 40, borderRadius: 10 },
   smallBtnOutline: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 40, borderRadius: 10, backgroundColor: C.surface },
   smallBtnTxt: { fontFamily: fonts.bold, fontSize: 12, color: C.primaryFg },
 
-  confirmOverlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", alignItems: "center", justifyContent: "center", padding: 24 },
+  confirmOverlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", alignItems: "center", justifyContent: "center", padding: 24 },
   confirmCard: { width: "100%", maxWidth: 400, backgroundColor: C.background, borderRadius: 20, padding: 20, gap: 14 },
   confirmTitle: { fontFamily: fonts.heading, fontSize: 17, color: C.foreground },
   confirmBody: { fontFamily: fonts.regular, fontSize: 13, color: C.mutedFg, lineHeight: 19 },

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { AlertCircle, ChevronDown, ChevronRight, FileText } from "lucide-react-native";
 import { colors, fonts, radii } from "@/src/theme/tokens";
-import { classifyActivities, compactScheduleWindow, type ProtocolScheduleRow } from "./presentation";
+import { classifyActivities, compactScheduleWindow, NO_WINDOW_STATED, type ProtocolScheduleRow } from "./presentation";
 import { QualifierPanel } from "./ScheduleTable";
 
 /** A phone-sized table; full protocol meaning is retained in expandable rows. */
@@ -68,7 +68,7 @@ function VisitRows({ rows, onEvidence }: {
             </View>
           </View>
           <Text style={[styles.value, styles.timingColumn]}>{row.timing}</Text>
-          <Text style={[styles.value, styles.windowColumn]}>{row.window === "—" ? "Not stated" : compactScheduleWindow(row.window)}</Text>
+          <Text style={[styles.value, styles.windowColumn]}>{row.window === "—" ? NO_WINDOW_STATED : compactScheduleWindow(row.window)}</Text>
         </Pressable>
         {open && <View testID={`schedule-details-${row.id}`} style={styles.details}>
           <View style={styles.facts}>
@@ -78,6 +78,8 @@ function VisitRows({ rows, onEvidence }: {
             <Detail label="Status" value={row.status} />
           </View>
           {!!row.repeatRule && <Detail label="Repeats" value={row.repeatRule} />}
+          {/* Doc C6: this visit may be dated provisionally from a planned anchor. */}
+          {!!row.plannedAnchorNote && <Detail label="Planned dates" value={row.plannedAnchorNote} />}
           {!!row.sourceTiming?.length && <View style={styles.reasons}>
             <Text style={styles.label}>Extracted protocol wording</Text>
             {row.sourceTiming.map((statement, statementIndex) => <View key={statementIndex} style={{ gap: 3 }}>
@@ -138,9 +140,9 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   check: { flexDirection: "row", gap: 4, alignItems: "center", marginTop: 4 },
   checkText: { color: "#87591F", fontFamily: fonts.regular, fontSize: 11, lineHeight: 16 },
-  alternate: { backgroundColor: "#FCF5EA" },
+  alternate: { backgroundColor: "#F6F8FB" },
   pressed: { backgroundColor: colors.surface },
-  details: { padding: 16, gap: 10, backgroundColor: "#FFF9EF", borderTopWidth: 1, borderTopColor: colors.border },
+  details: { padding: 16, gap: 10, backgroundColor: "#FDF3E1", borderTopWidth: 1, borderTopColor: colors.border },
   facts: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
   fact: { flexGrow: 1, flexBasis: "42%", gap: 3 },
   label: { color: colors.mutedFg, fontFamily: fonts.semibold, fontSize: 12 },
@@ -149,7 +151,7 @@ const styles = StyleSheet.create({
   muted: { color: colors.mutedFg, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
   activity: { paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border, gap: 2 },
   activityName: { fontFamily: fonts.medium, fontSize: 13, color: colors.foreground },
-  reasons: { gap: 6, padding: 10, backgroundColor: "#FFF0D6", borderRadius: radii.sm },
+  reasons: { gap: 6, padding: 10, backgroundColor: "#FDF3E1", borderRadius: radii.sm },
   source: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 12, minHeight: 44 },
   sourceText: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 13 },
   empty: { padding: 20, borderRadius: radii.lg, backgroundColor: colors.card },

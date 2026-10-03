@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.db import models as db
 from app.services.schedule_projection import (
     ProjectedConfinement, ProjectedEvent, ProjectionResult, ReminderCandidate,
-    project, reconcile,
+    feasibility_from_explanation, project, reconcile,
 )
 from app.services.schedule_service import PatientScheduleService
 
@@ -59,8 +59,13 @@ def compute_patient_projection(
         .join(db.Event, db.Event.id == db.PatientEvent.event_definition_id)
         .where(db.PatientEvent.schedule_evaluation_id == patient_schedule.current_evaluation_id)
     ).all()
-    projected = [
-        ProjectedEvent(
+    projected = []
+    for row in rows:
+        # WP2/WP3: the occurrence's persisted feasibility (status + every
+        # permitted interval), so a disjoint or incomplete constraint set is
+        # never flattened into one reminder window.
+        feasibility, windows = feasibility_from_explanation(row.PatientEvent.generation_reason)
+        projected.append(ProjectedEvent(
             logical_key=row.PatientEvent.logical_key, event_code=row.code,
             event_type=row.event_type, visit_mode=row.visit_mode,
             display_name=row.display_name,
@@ -69,9 +74,8 @@ def compute_patient_projection(
             earliest_date=row.PatientEvent.earliest_date,
             latest_date=row.PatientEvent.latest_date,
             is_unscheduled=str(row.event_type).upper() == "UNSCHEDULED",
-        )
-        for row in rows
-    ]
+            feasibility=feasibility, feasible_windows=windows,
+        ))
 
     service = PatientScheduleService(session)
     confinements: list[ProjectedConfinement] = []

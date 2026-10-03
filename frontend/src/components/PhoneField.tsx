@@ -201,7 +201,7 @@ const s = StyleSheet.create({
     width: "100%", maxWidth: 400, maxHeight: "78%",
     backgroundColor: colors.card, borderRadius: radii.lg,
     borderWidth: 1, borderColor: colors.border, overflow: "hidden",
-    shadowColor: "#2E1B33", shadowOpacity: 0.2, shadowRadius: 24,
+    shadowColor: "#0F1B2D", shadowOpacity: 0.2, shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 }, elevation: 12,
   },
   sheetHead: {

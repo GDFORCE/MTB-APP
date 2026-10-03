@@ -154,6 +154,34 @@ export default function AddTrial() {
   const [loading, setLoading] = useState(false);
   const [createdTrialId, setCreatedTrialId] = useState<string | null>(null);
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(true);
+  // UI-12: a failed canonical build stays on screen with its reason and a
+  // retry, instead of redirecting anywhere silently.
+  const [buildFailure, setBuildFailure] = useState<string | null>(null);
+  const [retryingBuild, setRetryingBuild] = useState(false);
+
+  const openVisitSchedule = (trialId: string, scheduleVersionId: string) => router.replace({
+    pathname: "/(app)/sponsor/protocol-schedule",
+    params: { id: trialId, scheduleVersionId, trialName: details.title.trim() || protocolId.trim() },
+  });
+  const buildFailureText = (error: any) => {
+    const detail = error?.response?.data?.detail;
+    const reason = typeof detail === "string" ? detail : detail?.message || error?.message;
+    return (reason ? `Building the Visit Schedule failed: ${reason}` : "Building the Visit Schedule failed.")
+      + " The trial and its extracted protocol are saved; retry the build below.";
+  };
+  const retryBuild = async () => {
+    if (!createdTrialId || retryingBuild) return;
+    setRetryingBuild(true);
+    try {
+      const built = await buildCanonicalSchedule(createdTrialId);
+      const version = built.schedules[0];
+      if (!version) throw new Error("No schedule was produced from the extracted protocol");
+      setBuildFailure(null);
+      openVisitSchedule(createdTrialId, version.schedule_version_id);
+    } catch (error: any) {
+      setBuildFailure(buildFailureText(error));
+    } finally { setRetryingBuild(false); }
+  };
 
   const update = (patch: Partial<Details>) =>
     setDetails((current) => ({ ...current, ...patch }));
@@ -318,27 +346,14 @@ export default function AddTrial() {
         const built = await buildCanonicalSchedule(trialId);
         const version = built.schedules[0];
         if (!version) throw new Error("No canonical schedule was produced");
-        // Saving the trial is complete here - it does not require resolving
-        // any schedule review items first. The draft schedule can still have
-        // open items to review before approval, but that is a separate,
-        // optional next step reached from the trial page (Protocol &
-        // Schedule Versions), not something the save flow forces on the
-        // sponsor immediately.
-        router.replace({
-          pathname: "/(app)/clinical/trial-summary",
-          params: { id: trialId },
-        });
+        // UI-01: saving leads straight to the draft Visit Schedule. Nothing is
+        // approved here; review and approval happen on that screen.
+        setBuildFailure(null);
+        openVisitSchedule(trialId, version.schedule_version_id);
       } catch (canonicalError: any) {
         // The trial exists and its protocol was extracted; only the canonical
-        // build failed. The sponsor is told why, and can retry the build from
-        // the trial page rather than being silently redirected anywhere.
-        goToTrialWithNotice(
-          (canonicalError?.response?.data?.detail || canonicalError?.message
-            ? `Building the canonical schedule failed: ${
-                canonicalError?.response?.data?.detail || canonicalError?.message}`
-            : "Building the canonical schedule failed.")
-          + " Retry it from Protocol & Schedule Versions on the trial page."
-        );
+        // build failed. The reason and a retry stay on this screen (UI-12).
+        setBuildFailure(buildFailureText(canonicalError));
       }
     } catch (error: any) {
       setErr(error?.response?.data?.detail || "Could not save this trial.");
@@ -474,6 +489,13 @@ export default function AddTrial() {
 
           </>}
           {!!err && <Text style={s.error}>{err}</Text>}
+          {!!buildFailure && !!createdTrialId && <View style={s.buildFailure} accessibilityLiveRegion="polite">
+            <Text style={s.error}>{buildFailure}</Text>
+            <Button variant="secondary" onPress={retryBuild} loading={retryingBuild}>Retry Visit Schedule build</Button>
+            <Button variant="ghost" onPress={() => router.replace({
+              pathname: "/(app)/sponsor/schedule-versions", params: { id: createdTrialId },
+            })}>Open Protocol & Schedule Versions</Button>
+          </View>}
           <Button
             testID="add-trial-submit"
             onPress={submit}
@@ -648,6 +670,7 @@ function Choice({
 }
 
 const s = StyleSheet.create({
+  buildFailure: { gap: 8, marginTop: 8 },
   flex: { flex: 1 },
   content: { padding: spacing.md, paddingBottom: spacing.xxl },
   stepRow: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 4, marginBottom: 16 },
@@ -661,7 +684,7 @@ const s = StyleSheet.create({
   lookupButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", ...shadows.sm },
   disabled: { opacity: 0.4 },
   helper: { marginTop: 7, marginBottom: 16, lineHeight: 17 },
-  successBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: radii.lg, backgroundColor: "rgba(92,154,110,0.12)", padding: 13, marginBottom: 18 },
+  successBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: radii.lg, backgroundColor: "rgba(30,122,70,0.12)", padding: 13, marginBottom: 18 },
   successText: { flex: 1, color: colors.foreground, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18 },
   details: { marginBottom: 4 },
   detailsLocked: { opacity: 0.42 },
@@ -677,7 +700,7 @@ const s = StyleSheet.create({
   twoCol: { flexDirection: "row", gap: 11 },
   error: { color: colors.destructive, fontFamily: fonts.medium, fontSize: 12, lineHeight: 17, marginBottom: 12 },
   submit: { marginTop: 4 },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(46,27,51,0.48)", justifyContent: "center", padding: 24 },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(15,27,45,0.48)", justifyContent: "center", padding: 24 },
   modalCard: { width: "100%", maxWidth: 390, alignSelf: "center", padding: 20 },
   confirmCard: { width: "100%", maxWidth: 430, maxHeight: "94%", alignSelf: "center", padding: 20 },
   confirmIcon: { width: 50, height: 50, borderRadius: 17, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", alignSelf: "center", marginBottom: 12 },

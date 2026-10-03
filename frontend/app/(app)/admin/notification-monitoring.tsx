@@ -200,9 +200,9 @@ export default function AdminNotificationMonitoring() {
                 <View style={[st.card, { gap: 12 }]}>
                   <RNText style={nm.cardTitle}>By channel</RNText>
                   <View style={{ flexDirection: "row", gap: 8 }}>
-                    <ChannelTile icon={<Smartphone size={18} color={C.info} />} value={stats?.by_channel?.push || 0} label="Push" bg="rgba(123,107,184,0.08)" />
-                    <ChannelTile icon={<MessageSquare size={18} color={C.success} />} value={stats?.by_channel?.sms || 0} label="SMS" bg="rgba(92,154,110,0.10)" />
-                    <ChannelTile icon={<Mail size={18} color={C.violet} />} value={stats?.by_channel?.email || 0} label="Email" bg="rgba(142,91,180,0.08)" />
+                    <ChannelTile icon={<Smartphone size={18} color={C.info} />} value={stats?.by_channel?.push || 0} label="Push" bg="rgba(45,108,181,0.08)" />
+                    <ChannelTile icon={<MessageSquare size={18} color={C.success} />} value={stats?.by_channel?.sms || 0} label="SMS" bg="rgba(30,122,70,0.10)" />
+                    <ChannelTile icon={<Mail size={18} color={C.violet} />} value={stats?.by_channel?.email || 0} label="Email" bg="rgba(94,77,178,0.08)" />
                   </View>
                 </View>
                 <View style={[st.card, { gap: 10 }]}>
@@ -375,7 +375,7 @@ const nm = StyleSheet.create({
   channelTile: { flex: 1, alignItems: "center", borderRadius: 12, paddingVertical: 12, gap: 4 },
   channelValue: { fontFamily: fonts.heading, fontSize: 18, color: C.foreground },
   channelLabel: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
-  failedRow: { backgroundColor: "rgba(192,57,43,0.06)", borderRadius: 10, padding: 10, gap: 3 },
+  failedRow: { backgroundColor: "rgba(194,48,48,0.06)", borderRadius: 10, padding: 10, gap: 3 },
   failedRecipient: { fontFamily: fonts.semibold, fontSize: 12, color: C.foreground, flex: 1 },
   failedMsg: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   failedErr: { fontFamily: fonts.medium, fontSize: 11, color: C.destructive, marginTop: 4 },

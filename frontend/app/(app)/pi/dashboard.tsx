@@ -22,11 +22,11 @@ import {
 import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 
 const C = {
-  bg: "#FBF2E8", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
-  primary: "#A6213F", primaryDeep: "#6B1437", primaryFg: "#FBF2E8", secondary: "#F0D7DC",
-  accent: "#E69B5C", accentFg: "#5A3318", info: "#7B6BB8", violet: "#8E5BB4",
-  warning: "#D89A3C", success: "#5C9A6E", destructive: "#C0392B",
-  dawnFrom: "#F5C57A", dawnMid: "#E07A4B", dawnTo: "#A6213F",
+  bg: "#F4F6F9", surface: "#EDF1F6", card: "#FFFFFF", fg: "#0F1B2D", muted: "#556275", border: "#DDE3EA",
+  primary: "#1B5FC1", primaryDeep: "#0D2A4F", primaryFg: "#FFFFFF", secondary: "#E6EEFA",
+  accent: "#0B8074", accentFg: "#0B4F48", info: "#2D6CB5", violet: "#5E4DB2",
+  warning: "#B26A00", success: "#1E7A46", destructive: "#C23030",
+  dawnFrom: "#2A6FD0", dawnMid: "#1B5FC1", dawnTo: "#0D2A4F",
 };
 const DAWN = [C.dawnFrom, C.dawnMid, C.dawnTo] as const;
 
@@ -184,7 +184,7 @@ export default function PiDashboard() {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
         {/* Dawn hero */}
         <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pi.hero}>
-          <LinearGradient colors={[C.primaryDeep, "rgba(107,20,55,0.55)", "rgba(107,20,55,0)"] as any} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={[C.primaryDeep, "rgba(13,42,79,0.55)", "rgba(13,42,79,0)"] as any} style={StyleSheet.absoluteFill} />
           <View style={{ position: "absolute", right: -48, top: -48, width: 240, height: 240, opacity: 0.85 }} pointerEvents="none">
             <Svg viewBox="0 0 200 200" width={240} height={240}>
               <Path d="M30 110 a70 70 0 0 1 140 0" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" fill="none" />
@@ -225,7 +225,7 @@ export default function PiDashboard() {
                 <Text style={pi.heroSubtitle}>{isSmo ? "Your network today" : "Your review queue"}</Text>
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                   <View style={pi.heroChip}><ListTodo size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : (dashboard?.today.pending ?? tasks.length)} pending</Text></View>
-                  <View style={[pi.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(192,57,43,0.30)" }]}>
+                  <View style={[pi.heroChip, !loading && overdueVisits.length > 0 && { backgroundColor: "rgba(194,48,48,0.30)" }]}>
                     <AlertTriangle size={13} color={C.primaryFg} /><Text style={pi.heroChipText}>{loading ? "–" : (dashboard?.today.overdue ?? overdueVisits.length)} overdue</Text>
                   </View>
                 </View>
@@ -238,10 +238,10 @@ export default function PiDashboard() {
           {!!loadError && <DashboardError message={loadError} onRetry={loadDashboard} />}
           {/* Stat tiles */}
           <DashboardReveal delay={40} style={{ flexDirection: "row", gap: 7 }}>
-            <Stat compact icon={FileText} iconColor={C.info} iconBg="rgba(123,107,184,0.12)" glow="rgba(123,107,184,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
-            <Stat compact icon={Stethoscope} iconColor={C.accent} iconBg="rgba(230,155,92,0.15)" glow="rgba(230,155,92,0.20)" value={loading ? null : sponsorCount} label="Sponsors" onPress={() => router.push("/(app)/clinical/sponsors")} />
-            <Stat compact icon={Users} iconColor={C.violet} iconBg="rgba(142,91,180,0.12)" glow="rgba(142,91,180,0.20)" value={loading ? null : patients.length} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} />
-            <Stat compact icon={Home} iconColor={C.success} iconBg="rgba(92,154,110,0.14)" glow="rgba(92,154,110,0.18)" value={loading ? null : siteTotal} label="Sites" onPress={() => router.push("/(app)/clinical/sites")} />
+            <Stat compact icon={FileText} iconColor={C.info} iconBg="rgba(45,108,181,0.12)" glow="rgba(45,108,181,0.20)" value={loading ? null : trials.length} label="Total Trials" onPress={() => router.push("/(app)/clinical/my-trials")} />
+            <Stat compact icon={Stethoscope} iconColor={C.accent} iconBg="rgba(11,128,116,0.15)" glow="rgba(11,128,116,0.20)" value={loading ? null : sponsorCount} label="Sponsors" onPress={() => router.push("/(app)/clinical/sponsors")} />
+            <Stat compact icon={Users} iconColor={C.violet} iconBg="rgba(94,77,178,0.12)" glow="rgba(94,77,178,0.20)" value={loading ? null : patients.length} label="Patients" onPress={() => router.push("/(app)/clinical/patients")} />
+            <Stat compact icon={Home} iconColor={C.success} iconBg="rgba(30,122,70,0.14)" glow="rgba(30,122,70,0.18)" value={loading ? null : siteTotal} label="Sites" onPress={() => router.push("/(app)/clinical/sites")} />
           </DashboardReveal>
 
           {/* Quick actions */}
@@ -329,7 +329,7 @@ export default function PiDashboard() {
                         </Text>
                       ) : null}
                     </View>
-                    <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: p.status === "completed" ? "rgba(92,154,110,0.18)" : p.scheduled_date?.slice(0, 10) === todayIso ? "rgba(230,155,92,0.20)" : "rgba(123,107,184,0.12)" }}>
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: p.status === "completed" ? "rgba(30,122,70,0.18)" : p.scheduled_date?.slice(0, 10) === todayIso ? "rgba(11,128,116,0.20)" : "rgba(45,108,181,0.12)" }}>
                       <Text style={{ color: p.status === "completed" ? C.success : p.scheduled_date?.slice(0, 10) === todayIso ? C.accentFg : C.info, fontSize: 11, fontWeight: "700" }}>
                         {p.status === "completed" ? "Done" : p.scheduled_date?.slice(0, 10) === todayIso ? "Today" : "Upcoming"}
                       </Text>
@@ -383,17 +383,17 @@ export default function PiDashboard() {
                         { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, zIndex: 1 },
                         { backgroundColor: C.card, borderColor: isNext ? C.info : C.border },
                       ]}>
-                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(123,95,115,0.30)" }} />
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isNext ? C.info : "rgba(85,98,117,0.30)" }} />
                       </View>
                       {!last && <View style={{ width: 2, flex: 1, marginVertical: 4, borderRadius: 1, backgroundColor: C.border }} />}
                     </View>
-                    <View style={[pi.reviewCard, isNext && { borderColor: "rgba(123,107,184,0.40)" }]}>
+                    <View style={[pi.reviewCard, isNext && { borderColor: "rgba(45,108,181,0.40)" }]}>
                       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
                         <View style={{ flex: 1, minWidth: 0 }}>
                           <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                             <Text style={{ fontFamily: "monospace" as any, fontSize: 14, fontWeight: "700", color: C.fg }}>{protocol}</Text>
                             {isNext && (
-                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(45,108,181,0.10)" }}>
                                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: C.info }} />
                                 <Text style={{ fontSize: 10, fontWeight: "700", color: C.info }}>Up next</Text>
                               </View>
@@ -451,18 +451,18 @@ export default function PiDashboard() {
                         <Text style={{ fontFamily: "monospace" as any, fontSize: 11, fontWeight: "700", color: C.primary }}>{tr.protocol_id}</Text>
                       </View>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(92,154,110,0.15)" }}>
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(30,122,70,0.15)" }}>
                           <Text style={{ fontSize: 11, fontWeight: "700", color: C.success }}>{status}</Text>
                         </View>
                         <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: C.surface, alignItems: "center", justifyContent: "center" }}>
-                          <ArrowUpRight size={14} color="rgba(123,95,115,0.7)" />
+                          <ArrowUpRight size={14} color="rgba(85,98,117,0.7)" />
                         </View>
                       </View>
                     </View>
                     <Text style={{ fontSize: 16, fontWeight: "700", color: C.fg, marginBottom: 10 }} numberOfLines={2}>{tr.title}</Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                      {tr.phase ? <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={tr.phase} /> : null}
-                      {tr.condition ? <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={tr.condition} /> : null}
+                      {tr.phase ? <Tag bg="rgba(45,108,181,0.10)" fg={C.info} label={tr.phase} /> : null}
+                      {tr.condition ? <Tag bg="rgba(11,128,116,0.12)" fg={C.accent} label={tr.condition} /> : null}
                     </View>
                   </View>
                 </Pressable>
@@ -764,10 +764,10 @@ const pi = StyleSheet.create({
   dayDeck: { flexDirection: "row", alignItems: "center", marginTop: 20 },
   heroChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.15)" },
   heroChipText: { color: C.primaryFg, fontSize: 12, fontWeight: "700" },
-  statTile: { flex: 1, minWidth: 0, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 9, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  statTile: { flex: 1, minWidth: 0, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 9, overflow: "hidden", shadowColor: "#0F1B2D", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   statTileCompact: { minHeight: 82, alignItems: "center", paddingHorizontal: 4, paddingVertical: 9 },
-  quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  weekCard: { padding: 15, borderRadius: 21, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  quickAction: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 8, backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  weekCard: { padding: 15, borderRadius: 21, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 7, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   weekHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   weekTitle: { fontSize: 13, fontWeight: "700", color: C.fg },
   weekSubtitle: { marginTop: 2, fontSize: 10, color: C.muted },
@@ -783,64 +783,64 @@ const pi = StyleSheet.create({
   scheduleDateToday: { color: C.primary },
   scheduleLabel: { marginTop: 2, fontSize: 8.5, fontWeight: "600", color: C.muted },
   scheduleLabelToday: { color: C.primary, fontWeight: "800" },
-  patientCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  reviewCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  errorCard: { marginBottom: 12, padding: 13, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(192,57,43,0.28)", backgroundColor: "rgba(192,57,43,0.08)" },
+  patientCard: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#0F1B2D", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  reviewCard: { flex: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, marginBottom: 12, shadowColor: "#0F1B2D", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  errorCard: { marginBottom: 12, padding: 13, flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(194,48,48,0.28)", backgroundColor: "rgba(194,48,48,0.08)" },
   errorTitle: { color: C.destructive, fontSize: 13, fontWeight: "700" },
   errorCopy: { marginTop: 2, color: C.muted, fontSize: 11 },
   retryButton: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, backgroundColor: C.destructive },
   retryText: { color: C.primaryFg, fontSize: 11, fontWeight: "700" },
   actionBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
-  trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  trialPanel: { backgroundColor: C.card, borderRadius: 22, borderWidth: 1, borderColor: C.border, padding: 16, paddingLeft: 18, overflow: "hidden", shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
   visitTimeline: { gap: 8 },
   timelineRow: { flexDirection: "row", alignItems: "stretch", gap: 10 },
   timelineRail: { width: 24, alignItems: "center" },
   timelineDot: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", zIndex: 1, borderWidth: 2, backgroundColor: C.card },
   timelineDotUpcoming: { borderColor: C.info },
-  timelineDotToday: { borderColor: C.accent, backgroundColor: "#FFF4E5" },
+  timelineDotToday: { borderColor: C.accent, backgroundColor: "#FDF3E1" },
   timelineDotDone: { borderColor: C.success, backgroundColor: C.success },
   timelineDotCore: { width: 7, height: 7, borderRadius: 4, backgroundColor: C.info },
   timelineLine: { position: "absolute", top: 22, bottom: -10, width: 2, backgroundColor: C.border },
-  visitTimelineCard: { flex: 1, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 12, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  visitTimelineCardToday: { borderColor: "rgba(230,155,92,0.72)", backgroundColor: "#FFF9F2" },
+  visitTimelineCard: { flex: 1, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 12, shadowColor: "#0F1B2D", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  visitTimelineCardToday: { borderColor: "rgba(11,128,116,0.72)", backgroundColor: "#F6F8FB" },
   visitCardTop: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
   visitSubject: { fontFamily: "monospace" as any, fontSize: 13, fontWeight: "700", color: C.fg },
   visitInitials: { fontSize: 11, color: C.muted },
   visitMeta: { marginTop: 3, fontSize: 10, color: C.muted },
   visitCrc: { marginTop: 6, fontSize: 10, color: C.info, fontWeight: "700" },
-  todayBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(230,155,92,0.20)" },
+  todayBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(11,128,116,0.20)" },
   todayBadgeText: { fontSize: 8, fontWeight: "800", color: C.accentFg, letterSpacing: 0.35 },
   updateVisitButton: { alignSelf: "flex-start", paddingHorizontal: 11, height: 28, borderRadius: 14, backgroundColor: C.accent, alignItems: "center", justifyContent: "center" },
   updateVisitText: { color: C.accentFg, fontSize: 10, fontWeight: "800" },
-  doneVisitBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 7, height: 26, borderRadius: 13, backgroundColor: "rgba(92,154,110,0.12)" },
+  doneVisitBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 7, height: 26, borderRadius: 13, backgroundColor: "rgba(30,122,70,0.12)" },
   doneVisitText: { color: C.success, fontSize: 10, fontWeight: "800" },
   overdueCount: { minWidth: 20, height: 20, paddingHorizontal: 5, borderRadius: 10, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center" },
   overdueCountText: { color: C.primaryFg, fontSize: 10, fontWeight: "800" },
-  overdueCard: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#FFF8F6", borderRadius: 15, borderWidth: 1, borderColor: "rgba(192,57,43,0.42)", borderLeftWidth: 4, borderLeftColor: C.destructive, padding: 11 },
-  overdueAlert: { width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" },
+  overdueCard: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#FEF6F6", borderRadius: 15, borderWidth: 1, borderColor: "rgba(194,48,48,0.42)", borderLeftWidth: 4, borderLeftColor: C.destructive, padding: 11 },
+  overdueAlert: { width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" },
   overduePatient: { color: C.fg, fontSize: 12, fontWeight: "800" },
-  daysOverdueBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(192,57,43,0.12)" },
+  daysOverdueBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "rgba(194,48,48,0.12)" },
   daysOverdueText: { color: C.destructive, fontSize: 8, fontWeight: "800" },
   overdueVisit: { marginTop: 3, color: C.muted, fontSize: 10, fontWeight: "700" },
   overdueDate: { marginTop: 3, color: C.muted, fontSize: 9 },
   reviewOverdueButton: { paddingHorizontal: 10, height: 28, borderRadius: 14, backgroundColor: C.destructive, alignItems: "center", justifyContent: "center" },
   reviewOverdueText: { color: C.primaryFg, fontSize: 10, fontWeight: "800" },
-  sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(46,27,51,0.44)" },
+  sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15,27,45,0.44)" },
   visitSheet: { maxHeight: "88%", backgroundColor: C.card, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingBottom: 20, paddingTop: 10 },
   sheetGrabber: { alignSelf: "center", width: 38, height: 4, borderRadius: 2, backgroundColor: C.border, marginBottom: 15 },
   sheetHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 },
   sheetTitle: { color: C.fg, fontSize: 20, fontWeight: "700" },
   sheetSubtitle: { marginTop: 3, color: C.muted, fontSize: 12 },
-  sheetError: { marginBottom: 12, padding: 10, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.09)", borderWidth: 1, borderColor: "rgba(192,57,43,0.25)" },
+  sheetError: { marginBottom: 12, padding: 10, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.09)", borderWidth: 1, borderColor: "rgba(194,48,48,0.25)" },
   sheetErrorText: { color: C.destructive, fontSize: 12, fontWeight: "600" },
   visitContext: { flexDirection: "row", gap: 8, padding: 10, borderRadius: 13, backgroundColor: C.surface, marginBottom: 14 },
   contextLabel: { color: C.muted, fontSize: 8, fontWeight: "800", letterSpacing: 0.7 },
   contextValue: { color: C.fg, fontSize: 10, fontWeight: "700", marginTop: 4 },
   formRow: { flexDirection: "row", gap: 10, marginBottom: 13 },
   fieldLabel: { color: C.fg, fontSize: 11, fontWeight: "700", marginBottom: 6 },
-  readonlyField: { height: 42, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, justifyContent: "center", backgroundColor: "#FFFDF9" },
+  readonlyField: { height: 42, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, justifyContent: "center", backgroundColor: "#FAFBFD" },
   readonlyFieldText: { color: C.muted, fontSize: 12 },
-  sheetInput: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 9, color: C.fg, fontSize: 12, backgroundColor: "#FFFDF9" },
+  sheetInput: { minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 9, color: C.fg, fontSize: 12, backgroundColor: "#FAFBFD" },
   statusOptions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   statusOption: { minWidth: "30%", flexGrow: 1, paddingHorizontal: 10, height: 34, borderRadius: 17, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" },
   statusOptionSelected: { backgroundColor: C.primary, borderColor: C.primary },

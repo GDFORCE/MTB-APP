@@ -277,11 +277,11 @@ export default function AdminEmergencyAccess() {
             <View style={st.card}>
               {request.status === "denied" ? (
                 <View style={{ alignItems: "center" }}>
-                  <View style={[em.statusIcon, { backgroundColor: "rgba(192,57,43,0.12)" }]}><XCircle size={30} color={C.destructive} /></View>
+                  <View style={[em.statusIcon, { backgroundColor: "rgba(194,48,48,0.12)" }]}><XCircle size={30} color={C.destructive} /></View>
                   <RNText style={em.stepTitleCenter}>Request denied</RNText>
                   <RNText style={em.awaitingBody}>A senior administrator denied this break-the-glass request.</RNText>
                   {!!request.deny_reason && (
-                    <View style={[em.infoBox, { backgroundColor: "rgba(192,57,43,0.06)", borderColor: "rgba(192,57,43,0.2)" }]}>
+                    <View style={[em.infoBox, { backgroundColor: "rgba(194,48,48,0.06)", borderColor: "rgba(194,48,48,0.2)" }]}>
                       <RNText style={[em.infoBoxTxt, { color: C.destructive }]}>Reason: {request.deny_reason}</RNText>
                     </View>
                   )}
@@ -289,7 +289,7 @@ export default function AdminEmergencyAccess() {
                 </View>
               ) : (
                 <View style={{ alignItems: "center" }}>
-                  <View style={[em.statusIcon, { backgroundColor: "rgba(216,154,60,0.15)" }]}><Clock size={30} color={C.warning} /></View>
+                  <View style={[em.statusIcon, { backgroundColor: "rgba(178,106,0,0.15)" }]}><Clock size={30} color={C.warning} /></View>
                   <RNText style={em.stepTitleCenter}>Awaiting senior approval</RNText>
                   <RNText style={em.awaitingBody}>Submitted and pending a second administrator’s approval (two-person rule — you cannot approve your own request).</RNText>
                   <View style={em.infoBox}>
@@ -322,7 +322,7 @@ export default function AdminEmergencyAccess() {
               {step === 3 && session && (
             <View style={{ gap: 14 }}>
               <View style={[st.card, { alignItems: "center" }]}>
-                <View style={[em.statusIcon, { backgroundColor: "rgba(92,154,110,0.15)" }]}><Shield size={30} color={C.success} /></View>
+                <View style={[em.statusIcon, { backgroundColor: "rgba(30,122,70,0.15)" }]}><Shield size={30} color={C.success} /></View>
                 <RNText style={em.stepTitleCenter}>Emergency access granted</RNText>
                 {!!session.approver_name && <RNText style={em.awaitingBody}>Approved by {session.approver_name}</RNText>}
                 <View style={em.countdownBox}>
@@ -420,7 +420,7 @@ function ApprovalInbox({ rows, loading, error, busyId, onRetry, onDecision }: {
   if (rows.length === 0) {
     return (
       <View testID="emergency-inbox-empty" style={st.card}>
-        <View style={[em.statusIcon, { alignSelf: "center", backgroundColor: "rgba(92,154,110,0.14)" }]}>
+        <View style={[em.statusIcon, { alignSelf: "center", backgroundColor: "rgba(30,122,70,0.14)" }]}>
           <CheckCircle2 size={28} color={C.success} />
         </View>
         <RNText style={em.inboxTitleCenter}>No pending approvals</RNText>
@@ -573,7 +573,7 @@ function LogLine({ time, text, tone }: { time: string; text: string; tone?: "suc
 }
 
 const em = StyleSheet.create({
-  warnBanner: { flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: "rgba(192,57,43,0.06)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(192,57,43,0.22)", padding: 14 },
+  warnBanner: { flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: "rgba(194,48,48,0.06)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(194,48,48,0.22)", padding: 14 },
   warnTitle: { fontFamily: fonts.bold, fontSize: 14, color: C.destructive },
   warnBody: { fontFamily: fonts.regular, fontSize: 12, color: C.destructive, marginTop: 2, lineHeight: 17 },
   modeSwitch: { flexDirection: "row", gap: 4, padding: 4, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.surface },
@@ -609,7 +609,7 @@ const em = StyleSheet.create({
   ghostBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 44, borderRadius: 12, backgroundColor: C.surface, marginTop: 14, paddingHorizontal: 16 },
   ghostBtnTxt: { fontFamily: fonts.bold, fontSize: 13, color: C.mutedFg },
 
-  infoBox: { alignSelf: "stretch", backgroundColor: "rgba(216,154,60,0.08)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(216,154,60,0.22)", padding: 12, marginTop: 14 },
+  infoBox: { alignSelf: "stretch", backgroundColor: "rgba(178,106,0,0.08)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(178,106,0,0.22)", padding: 12, marginTop: 14 },
   infoBoxKey: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   infoBoxVal: { fontFamily: fonts.medium, fontSize: 13, color: C.foreground, marginTop: 1 },
   infoBoxMono: { fontFamily: fonts.mono, fontSize: 12, color: C.foreground, marginTop: 1 },
@@ -620,9 +620,9 @@ const em = StyleSheet.create({
   polling: { fontFamily: fonts.medium, fontSize: 12, color: C.warning },
   inboxCenter: { fontFamily: fonts.regular, fontSize: 12.5, lineHeight: 18, color: C.mutedFg, textAlign: "center", marginTop: 8 },
   inboxTitleCenter: { fontFamily: fonts.heading, fontSize: 17, color: C.foreground, textAlign: "center", marginTop: 10 },
-  inboxIntro: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(123,107,184,0.08)" },
+  inboxIntro: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(45,108,181,0.08)" },
   inboxIntroText: { flex: 1, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, color: C.info },
-  inboxAvatar: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(192,57,43,0.10)" },
+  inboxAvatar: { width: 42, height: 42, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(194,48,48,0.10)" },
   inboxName: { fontFamily: fonts.semibold, fontSize: 14, color: C.foreground },
   inboxMeta: { marginTop: 3, fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg },
   ownBadge: { paddingHorizontal: 8, height: 22, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: C.surface },
@@ -635,11 +635,11 @@ const em = StyleSheet.create({
   inboxActionText: { fontFamily: fonts.bold, fontSize: 12, color: C.white },
   ownNote: { marginTop: 12, padding: 10, borderRadius: 12, backgroundColor: C.surface, fontFamily: fonts.medium, fontSize: 11.5, color: C.mutedFg, textAlign: "center" },
 
-  countdownBox: { alignSelf: "stretch", backgroundColor: "rgba(192,57,43,0.06)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(192,57,43,0.22)", padding: 16, marginTop: 14, alignItems: "center" },
+  countdownBox: { alignSelf: "stretch", backgroundColor: "rgba(194,48,48,0.06)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(194,48,48,0.22)", padding: 16, marginTop: 14, alignItems: "center" },
   countdownLabel: { fontFamily: fonts.regular, fontSize: 12, color: C.destructive },
   countdownVal: { fontFamily: fonts.mono, fontSize: 34, color: C.destructive, marginTop: 4, fontVariant: ["tabular-nums"] },
 
-  reminderBox: { backgroundColor: "rgba(216,154,60,0.08)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(216,154,60,0.22)", padding: 14 },
+  reminderBox: { backgroundColor: "rgba(178,106,0,0.08)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(178,106,0,0.22)", padding: 14 },
   reminderTitle: { fontFamily: fonts.bold, fontSize: 13, color: C.warning },
   reminderDot: { fontFamily: fonts.bold, fontSize: 12, color: C.warning },
   reminderItem: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: C.foreground, lineHeight: 17 },

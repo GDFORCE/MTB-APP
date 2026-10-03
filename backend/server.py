@@ -452,6 +452,9 @@ class PatientIn(BaseModel):
     baseline_date: Optional[str] = None   # anchors visit-instance scheduling
     population_label: Optional[str] = None
     anchor_dates: dict[str, str] = Field(default_factory=dict)
+    # PT-01: per anchor code, whether the entered date is PLANNED or ACTUAL.
+    # Omitted codes keep the previous meaning (actual).
+    anchor_date_sources: dict[str, Literal['PLANNED', 'ACTUAL']] = Field(default_factory=dict)
     schedule_definition_id: Optional[str] = None
     schedule_version_id: Optional[str] = None
     # Which substudy (independent Schedule of Assessments) this patient is
@@ -509,6 +512,7 @@ class SchedulePreviewIn(BaseModel):
     cohort_label: Optional[str] = None
     dimension_values: dict[str, list[str]] = Field(default_factory=dict)
     anchor_dates: dict[str, date] = Field(default_factory=dict)
+    anchor_date_sources: dict[str, Literal['PLANNED', 'ACTUAL']] = Field(default_factory=dict)
     schedule_definition_id: Optional[uuid.UUID] = None
     schedule_version_id: Optional[uuid.UUID] = None
 
@@ -2197,16 +2201,154 @@ async def lookup_protocol_query(
     return await lookup_protocol(protocol_id, user)
 
 
-def raise_extraction_unavailable() -> None:
-    """Protocol extraction was removed pending the adaptive extraction rebuild.
-
-    Upload validation above still runs so the contract for callers is
-    unchanged; the schedule has to be entered manually until the new engine
-    is wired in here.
+def raise_extraction_unavailable(detail: str | None = None) -> None:
+    """No extraction provider is configured (UCTSM_EXTRACTION_PROVIDER plus
+    its API key). Upload validation still runs first, so callers keep the
+    same contract; the sponsor falls back to entering the schedule manually.
     """
     raise HTTPException(
-        503, 'Automatic protocol extraction is being rebuilt and is not '
-             'available yet. Enter the trial details and schedule manually.')
+        503, detail or 'Automatic protocol extraction is not configured on this '
+                       'server. Enter the trial details and schedule manually.')
+
+
+def _extraction_pages(data: bytes, *, is_text: bool):
+    from app.extraction.documents import pages_from_pdf, pages_from_text
+    if is_text:
+        return pages_from_text(data.decode('utf-8-sig'))
+    try:
+        return pages_from_pdf(data)
+    except Exception as exc:  # noqa: BLE001 - any parser failure is a bad upload
+        raise ValueError(f'The uploaded PDF could not be read: {exc}') from exc
+
+
+def _extraction_details(metadata) -> dict:
+    """The Add Trial form's details, in the legacy ExtractedTrialDetails shape."""
+    details = pe.ExtractedTrialDetails.model_validate(metadata.model_dump()).model_dump()
+    details['status'] = (
+        details.get('status') if details.get('status') in
+        ('active', 'completed', 'terminated') else 'active')
+    return details
+
+
+def _extraction_table_preview(result) -> dict:
+    """Schedule preview plus the accountability ledgers (source coverage and
+    statement dispositions, shape ``uctsm-extraction-accountability.v1``) so
+    the review screen can show what was read, skipped and left uncompiled."""
+    from app.domain.schedule.projection import project_schedule
+    accountability = getattr(result, 'accountability', None)
+    if result.schedule is None:
+        return {'schedule': None, 'projections': [],
+                'issues': [item.model_dump(mode='json') for item in result.issues],
+                'accountability': accountability}
+    schedule = result.schedule.model_copy(deep=True)
+    schedule.validation_issues = result.issues
+    return {'schedule': schedule.model_dump(mode='json'),
+            'projections': [item.model_dump(mode='json') for item in project_schedule(schedule)],
+            'issues': [item.model_dump(mode='json') for item in result.issues],
+            'accountability': accountability}
+
+
+def _extraction_verification(result) -> dict:
+    summary = (getattr(result, 'accountability', None) or {}).get('summary') or {}
+    return {
+        'status': 'needs_review' if result.issues or summary.get('complete') is False else 'ok',
+        'confidence': None,
+        'refinement_count': 0,
+        'issues': [item.message for item in result.issues],
+        'accuracy': None,
+        # Never "complete" while any page is unread or a statement uncompiled.
+        'coverage_status': summary.get('coverage_status'),
+        'uncompiled_statements': summary.get('uncompiled_statements'),
+    }
+
+
+async def _run_protocol_extraction(data: bytes, filename: str, user: dict, *,
+                                   is_text: bool = False,
+                                   trial_id: str | None = None) -> tuple[dict, list[dict]]:
+    """Read one uploaded protocol with the fact reader + deterministic
+    compiler (app/extraction/), store the document, and cache every schedule
+    option as a 2-hour protocol_extractions draft.
+
+    Returns the trial details and one entry per schedule option carrying the
+    stored draft document and its API preview.
+    """
+    from app.extraction import runner as extraction_runner
+    from app.extraction.llm_client import ExtractionModelError, ExtractionNotConfigured
+
+    if not extraction_runner.engine_available():
+        raise_extraction_unavailable()
+    try:
+        pages = await run_in_threadpool(_extraction_pages, data, is_text=is_text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    document_hash = hashlib.sha256(data).hexdigest()
+    from app.extraction.artifacts import StorageArtifactStore
+    try:
+        # Blocking model calls; offloaded so a multi-minute read does not
+        # stall this process's event loop. Every model call is stored as an
+        # artifact keyed by this document's hash, so re-uploading the same
+        # file after a failure resumes instead of repeating completed calls.
+        extraction = await run_in_threadpool(
+            extraction_runner.extract_protocol, pages,
+            pdf_bytes=None if is_text else data, document_hash=document_hash,
+            schedule_name=filename or 'Schedule of Assessments',
+            artifacts=StorageArtifactStore(file_storage.get_storage()),
+        )
+    except ExtractionNotConfigured as exc:
+        raise_extraction_unavailable(f'Protocol extraction is not configured: {exc}')
+    except (ExtractionModelError, ValueError) as exc:
+        raise HTTPException(502, f'Could not analyse protocol: {exc}') from exc
+    if not extraction.results:
+        raise HTTPException(502, 'Could not analyse protocol: no schedule could be extracted')
+    if not any(result.schedule is not None and result.schedule.events for _, result in extraction.results):
+        # Never an empty-success draft (AT-20): completed reads are kept as
+        # artifacts, so uploading the same file again resumes.
+        coverage = (extraction.results[0][1].accountability or {}).get('summary') or {}
+        raise HTTPException(
+            502, 'Could not analyse protocol: no visit could be extracted '
+                 f'(source coverage {coverage.get("coverage_status") or "unknown"}). '
+                 'Completed reading is kept; upload the same file again to resume.')
+
+    # The document is kept so the protocol version built at consume time
+    # points at a real, auditable file (native_import.py).
+    storage_key = f'protocol-uploads/{uuid.uuid4()}.{"txt" if is_text else "pdf"}'
+    await file_storage.get_storage().save(
+        storage_key, data, 'text/plain' if is_text else 'application/pdf')
+
+    details = _extraction_details(extraction.details)
+    created_at = now()
+    await db.protocol_extractions.delete_many({'expires_at': {'$lte': created_at}})
+    entries = []
+    for option, result in extraction.results:
+        schedule_dict = result.schedule.model_dump(mode='json') if result.schedule else None
+        document = {
+            'id': str(uuid.uuid4()),
+            'user_id': user['id'],
+            'file_name': filename or 'protocol.pdf',
+            'details': details,
+            'native_schedule': schedule_dict,
+            'native_issues': [item.model_dump(mode='json') for item in result.issues],
+            'native_accountability': result.accountability,
+            'pdf_storage_key': storage_key,
+            'pdf_document_hash': document_hash,
+            'option_id': option['id'] if option else '',
+            'option_label': option['label'] if option else '',
+            'option_description': (option.get('description') or '') if option else '',
+            'created_at': created_at,
+            'expires_at': created_at + timedelta(hours=2),
+        }
+        if trial_id:
+            document['trial_id'] = trial_id
+        await db.protocol_extractions.insert_one(dict(document))
+        entries.append({
+            'document': document,
+            'option': option,
+            'visit_count': len(schedule_dict.get('events', [])) if schedule_dict else 0,
+            'preview': _extraction_table_preview(result),
+            'verification': _extraction_verification(result),
+        })
+    return details, entries
 
 
 @api.post('/protocols/extract-details',
@@ -2222,7 +2364,28 @@ async def extract_protocol_details(file: UploadFile = File(...),
         raise HTTPException(400, 'The uploaded PDF is empty')
     if len(data) > pe.MAX_PDF_BYTES:
         raise HTTPException(413, 'Protocol PDF is too large (maximum 25 MB)')
-    raise_extraction_unavailable()
+
+    from app.extraction import runner as extraction_runner
+    from app.extraction.llm_client import ExtractionModelError, ExtractionNotConfigured
+
+    if not extraction_runner.engine_available():
+        raise_extraction_unavailable()
+    try:
+        pages = await run_in_threadpool(_extraction_pages, data, is_text=False)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        metadata = await run_in_threadpool(
+            extraction_runner.extract_trial_details, pages, pdf_bytes=data)
+    except ExtractionNotConfigured as exc:
+        raise_extraction_unavailable(f'Protocol extraction is not configured: {exc}')
+    except (ExtractionModelError, ValueError) as exc:
+        raise HTTPException(502, f'Could not extract protocol details: {exc}') from exc
+    details = _extraction_details(metadata)
+    await write_audit(
+        user, 'trial.extract_details',
+        f'Extracted creation details from {file.filename or "protocol PDF"}')
+    return {'details': details}
 
 
 @api.post('/protocols/extract',
@@ -2230,8 +2393,13 @@ async def extract_protocol_details(file: UploadFile = File(...),
 async def extract_protocol_alias(file: UploadFile = File(...),
                                  schedule_option_id: Optional[str] = Form(None),
                                  user=Depends(current_user)):
-    """Add Trial protocol upload. Validates the upload, then reports that
-    extraction is unavailable until the adaptive engine replaces it."""
+    """Add Trial protocol upload: trial details plus every schedule the
+    protocol prints, each compiled from cited facts and cached for 2 hours so
+    the trial can consume it after creation without another model call.
+
+    ``schedule_option_id`` is accepted for backward compatibility; every
+    independent Schedule of Assessments is extracted and returned together.
+    """
     content_type = (file.content_type or '').lower()
     filename = (file.filename or '').lower()
     is_text = content_type == 'text/plain' or filename.endswith('.txt')
@@ -2250,7 +2418,38 @@ async def extract_protocol_alias(file: UploadFile = File(...),
             raise HTTPException(400, 'Text protocols must use UTF-8 encoding') from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-    raise_extraction_unavailable()
+
+    display_name = file.filename or 'protocol.pdf'
+    details, entries = await _run_protocol_extraction(data, display_name, user, is_text=is_text)
+    extractions = [{
+        'extraction_id': entry['document']['id'],
+        'option_id': entry['document']['option_id'],
+        'option_label': entry['document']['option_label'],
+        'option_description': entry['document']['option_description'],
+        'schedule_visit_count': entry['visit_count'],
+        'preview': entry['preview'],
+        'verification': entry['verification'],
+    } for entry in entries]
+    await write_audit(
+        user, 'trial.extract_protocol',
+        f'Extracted trial details and {sum(item["schedule_visit_count"] for item in extractions)} '
+        f'schedule visit(s) across {len(extractions)} schedule(s) from {display_name}')
+
+    if len(entries) == 1 and entries[0]['option'] is None:
+        only = extractions[0]
+        return {
+            'details': details,
+            'extraction_id': only['extraction_id'],
+            'schedule_visit_count': only['schedule_visit_count'],
+            'needs_schedule_selection': False,
+            'verification': only['verification'],
+            'preview': only['preview'],
+        }
+    return {
+        'details': details,
+        'extractions': extractions,
+        'needs_schedule_selection': False,
+    }
 
 
 @api.get('/trials')
@@ -3790,6 +3989,7 @@ async def _persist_native_schedule_definition(
         'status': 'draft_review',
         'native_schedule': draft.get('native_schedule'),
         'native_issues': draft.get('native_issues') or [],
+        'native_accountability': draft.get('native_accountability'),
         'pdf_storage_key': draft.get('pdf_storage_key'),
         'pdf_document_hash': draft.get('pdf_document_hash'),
         'file_name': draft.get('file_name') or 'protocol.pdf',
@@ -3871,9 +4071,10 @@ def _schedule_extraction_payload(
 async def extract_schedule(trial_id: str, file: UploadFile = File(...),
                            schedule_option_id: Optional[str] = Form(None),
                            user=Depends(current_user)):
-    """Visit Schedule protocol upload. Trial-ownership scoped; validates the
-    upload, then reports that extraction is unavailable until the adaptive
-    engine replaces it."""
+    """Protocol upload for an existing trial. Trial-ownership scoped. Every
+    schedule the protocol prints is compiled from cited facts and stored as a
+    draft schedule definition for review (``POST /trials/{id}/uctsm-schedule``
+    then builds the canonical draft); nothing is approved here."""
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -3893,7 +4094,38 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     if data[:5] != b'%PDF-':
         raise HTTPException(400, 'The uploaded file does not look like a PDF')
 
-    raise_extraction_unavailable()
+    _, entries = await _run_protocol_extraction(
+        data, file.filename or 'protocol.pdf', user, trial_id=trial_id)
+    variants = []
+    for entry in entries:
+        document = entry['document']
+        definition_id = await _persist_native_schedule_definition(
+            trial_id, document, user, source_extraction_id=document['id'])
+        variants.append({
+            'schema_version': 'uctsm.v1',
+            'schedule_definition_id': definition_id,
+            'extraction_id': document['id'],
+            'option_id': document['option_id'],
+            'option_label': document['option_label'],
+            'option_description': document['option_description'],
+            'schedule_visit_count': entry['visit_count'],
+            'verification': entry['verification'],
+            'preview': entry['preview'],
+        })
+    if len(variants) > 1:
+        # The trial's schedule pointer is a deliberate choice, not whichever
+        # variant happened to be persisted last.
+        await db.trials.update_one(
+            {'id': trial_id},
+            {'$set': {'current_schedule_definition_id': variants[0]['schedule_definition_id']}})
+    await write_audit(
+        user, 'trial.extract_schedule',
+        f'Extracted {sum(item["schedule_visit_count"] for item in variants)} visit(s) across '
+        f'{len(variants)} schedule(s) from protocol PDF for '
+        f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
+    if len(variants) == 1 and entries[0]['option'] is None:
+        return {**variants[0], 'needs_schedule_selection': False}
+    return {'needs_schedule_selection': False, 'schedule_variants': variants}
 
 
 @api.post('/trials/{trial_id}/protocol-extractions/{extraction_id}/consume',
@@ -5640,6 +5872,7 @@ def _preview_canonical_enrolment_sync(trial, body, organization_id, baseline):
                                  if body.schedule_version_id else None),
             baseline=baseline, horizon=max(baseline, now().date()) + timedelta(days=366),
             anchor_dates={key: _parse_baseline_date(value) for key, value in body.anchor_dates.items()},
+            anchor_date_sources=getattr(body, 'anchor_date_sources', None) or {},
             arm_label=body.arm_label,
             cohort_label=body.cohort_label, population_label=body.population_label,
             dimension_values=body.dimension_values,
@@ -5682,6 +5915,7 @@ def _enroll_operational_patient_sync(
             dimension_values=patient.get('dimension_values') or {},
             anchor_dates={key: _parse_baseline_date(value) for key, value in
                           (patient.get('anchor_dates') or {}).items()},
+            anchor_date_sources=patient.get('anchor_date_sources') or {},
             expected_version_id=(_canonical_uuid(patient['schedule_version_id'], 'schedule_version_id')
                                  if patient.get('schedule_version_id') else None),
         )

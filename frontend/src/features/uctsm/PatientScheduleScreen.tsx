@@ -13,17 +13,20 @@ import {
   cancelScheduleImpact, confirmScheduleImpact, createUnscheduledVisit,
   getPatientAnchorStatuses, getPatientConditions, getPatientDeviations,
   getPatientSchedule, getPatientScheduleProjection, getScheduleProjection,
-  getUniversalSchedule, previewConditionImpact,
+  getUniversalSchedule, previewAnchorImpact, previewConditionImpact, recordPatientAnchor,
 } from "./api";
 import type {
   AnchorStatusResponse, DeviationReportResponse, PatientProjection, ScheduleImpact,
 } from "./api";
+import { PatientScheduleActions } from "./PatientScheduleActions";
 import {
+  ANCHOR_DATE_KINDS, anchorNamesFrom, anchorSourceType, conditionScopes,
+  toRecordableAnchors, validateAnchorEntry,
   summariseImpact, toAnchorStatusRows, toConditionalRequirementRows,
   toConfinementRows, toImpactRows, toPatientScheduleRows, toProtocolScheduleRows,
   toRepeatRuleRows, toTimelineEntries, toVersionContext,
 } from "./presentation";
-import type { ConditionalRequirementRow } from "./presentation";
+import type { AnchorDateKind, ConditionalRequirementRow } from "./presentation";
 import {
   AnchorStatusTable, ConditionalRequirementsTable, ConfinementTable, DeviationTable,
   ImpactPreviewTable, PatientTimeline, RepeatRuleFooter, ScheduleTable,
@@ -53,6 +56,15 @@ export default function PatientScheduleScreen() {
   const [proposal, setProposal] = useState<ScheduleImpact | null>(null);
   const [pendingCondition, setPendingCondition] = useState<ConditionalRequirementRow | null>(null);
   const [conditionBusy, setConditionBusy] = useState(false);
+  // Doc C6/D: recording a reference date (e.g. surgery). Planned vs actual is
+  // a required choice with no default - a planned date silently recorded as
+  // actual would date post-op visits as though the operation had happened.
+  const [proposalLabel, setProposalLabel] = useState("");
+  const [anchorId, setAnchorId] = useState("");
+  const [anchorDate, setAnchorDate] = useState("");
+  const [anchorKind, setAnchorKind] = useState<AnchorDateKind | null>(null);
+  const [anchorBusy, setAnchorBusy] = useState(false);
+  const [anchorError, setAnchorError] = useState("");
   const [view, setView] = useState<"table" | "timeline">("table");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -106,7 +118,13 @@ export default function PatientScheduleScreen() {
 
   const rows = useMemo(() => {
     if (!patientSchedule || !schedule) return [];
-    return toPatientScheduleRows(patientSchedule, toProtocolScheduleRows(schedule, projections));
+    return toPatientScheduleRows(
+      patientSchedule, toProtocolScheduleRows(schedule, projections),
+      {
+        anchorNames: anchorNamesFrom(schedule.anchors),
+        processNames: Object.fromEntries((schedule.processes || []).map((item) => [item.code, item.display_name])),
+      },
+    );
   }, [patientSchedule, schedule, projections]);
 
   const repeatRules = useMemo(
@@ -135,7 +153,10 @@ export default function PatientScheduleScreen() {
   const confinements = useMemo(
     () => toConfinementRows(projection?.confinements), [projection]);
   const conditionRows = useMemo(
-    () => toConditionalRequirementRows(conditions?.conditions || []), [conditions]);
+    () => toConditionalRequirementRows(conditions?.conditions || [], conditionScopes(schedule)),
+    [conditions, schedule]);
+  const recordableAnchors = useMemo(
+    () => toRecordableAnchors(anchors?.anchors, schedule?.anchors), [anchors, schedule]);
   const impactRows = useMemo(
     () => toImpactRows(proposal?.impact?.events || []), [proposal]);
   // Doc 10 s13-14: an unscheduled visit must be one of the protocol's OWN
@@ -189,6 +210,21 @@ export default function PatientScheduleScreen() {
     }
   };
 
+  // WP3 actions: processes, visits with an identity, and the protocol's groups.
+  const actionProcesses = useMemo(
+    () => (schedule?.processes || []).map((item) => ({ code: item.code, label: item.display_name })), [schedule]);
+  const actionVisits = useMemo(
+    () => rows.filter((row) => !!row.logicalKey).map((row) => ({
+      logicalKey: row.logicalKey!, label: `${row.visit} ${row.visitName}`, latestOccurrenceId: row.latestOccurrenceId,
+    })), [rows]);
+  const actionDimensions = useMemo(() => {
+    const output: Record<string, { code: string; label: string }[]> = {};
+    for (const [key, values] of [["ARM", schedule?.arms], ["COHORT", schedule?.cohorts], ["POPULATION", schedule?.populations]] as const) {
+      if (values?.length) output[key] = values.map((item) => ({ code: item.code, label: item.display_name }));
+    }
+    return output;
+  }, [schedule]);
+
   const horizon = () => {
     const next = new Date();
     next.setFullYear(next.getFullYear() + 1);
@@ -212,6 +248,7 @@ export default function PatientScheduleScreen() {
         `${row.condition} was recorded as having occurred`,
       ));
       setPendingCondition(row);
+      setProposalLabel(`If ${row.condition} is confirmed: `);
     } catch (nextError: any) {
       setError(
         nextError?.response?.data?.detail || nextError?.message
@@ -219,13 +256,41 @@ export default function PatientScheduleScreen() {
     } finally { setConditionBusy(false); }
   };
 
+  /** Record a reference date as a candidate, then show what it would move. */
+  const previewAnchor = async () => {
+    const patientId = patientSchedule?.patient_id;
+    if (!patientId || anchorBusy) return;
+    const problem = validateAnchorEntry({ anchorId, date: anchorDate, kind: anchorKind });
+    if (problem || !anchorKind) { setAnchorError(problem || ""); return; }
+    const anchor = recordableAnchors.find((item) => item.id === anchorId);
+    const label = anchor?.label || "Reference date";
+    const wording = anchorKind === "PLANNED" ? "planned for" : "actually on";
+    setAnchorBusy(true); setAnchorError(""); setError("");
+    try {
+      const candidate = await recordPatientAnchor(
+        patientId, anchorId, anchorDate, anchorSourceType(anchorKind));
+      setProposal(await previewAnchorImpact(
+        patientId, candidate.id, horizon(),
+        `${label} recorded as ${wording} ${anchorDate}`,
+      ));
+      setPendingCondition(null);
+      setProposalLabel(`If ${label} is confirmed as ${wording} ${anchorDate}: `);
+      setAnchorDate(""); setAnchorKind(null);
+    } catch (nextError: any) {
+      setAnchorError(
+        nextError?.response?.data?.detail || nextError?.message
+        || "The reference date could not be recorded.");
+    } finally { setAnchorBusy(false); }
+  };
+
   const applyProposal = async () => {
     if (!proposal || conditionBusy) return;
     setConditionBusy(true); setError("");
     try {
       await confirmScheduleImpact(
-        proposal.id, `${pendingCondition?.condition || "Condition"} confirmed by reviewer`);
-      setProposal(null); setPendingCondition(null);
+        proposal.id,
+        `${pendingCondition?.condition || proposalLabel.replace(/^If |: $/g, "") || "Change"} confirmed by reviewer`);
+      setProposal(null); setPendingCondition(null); setProposalLabel("");
       await load();
     } catch (nextError: any) {
       setError(
@@ -243,7 +308,7 @@ export default function PatientScheduleScreen() {
       // The proposal expires on its own; failing to cancel must not leave the
       // reviewer stuck looking at a change they already decided against.
     } finally {
-      setProposal(null); setPendingCondition(null); setConditionBusy(false);
+      setProposal(null); setPendingCondition(null); setProposalLabel(""); setConditionBusy(false);
     }
   };
 
@@ -371,6 +436,61 @@ export default function PatientScheduleScreen() {
                 </>
               )}
 
+              {!!recordableAnchors.length && (
+                <Card>
+                  <Body weight="700" style={styles.sectionTitle}>Record a Reference Date</Body>
+                  <Small>
+                    Say whether the date is planned or has actually happened. Visits after
+                    an event wait for its actual date; a planned date only dates visits
+                    the protocol allows to be planned (e.g. pre-op), and they are shown
+                    as provisional.
+                  </Small>
+                  <Small style={styles.fieldLabel}>Reference date</Small>
+                  <View style={styles.categoryRow}>
+                    {recordableAnchors.map((item) => (
+                      <Pressable
+                        key={item.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${item.label}, ${item.status}`}
+                        onPress={() => setAnchorId(item.id)}
+                        style={[styles.category, anchorId === item.id && styles.categoryActive]}>
+                        <Small style={styles.categoryLabel}>{item.label} · {item.status}</Small>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Small style={styles.fieldLabel}>Date (YYYY-MM-DD)</Small>
+                  <TextInput
+                    style={styles.input}
+                    value={anchorDate}
+                    onChangeText={setAnchorDate}
+                    placeholder="2026-12-14"
+                    placeholderTextColor={colors.mutedFg}
+                  />
+                  <Small style={styles.fieldLabel}>Is this date planned or actual?</Small>
+                  <View style={styles.kindChoices}>
+                    {ANCHOR_DATE_KINDS.map((kind) => (
+                      <Pressable
+                        key={kind.value}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: anchorKind === kind.value }}
+                        accessibilityLabel={kind.label}
+                        onPress={() => setAnchorKind(kind.value)}
+                        style={[styles.kindChoice, anchorKind === kind.value && styles.categoryActive]}>
+                        <Body weight="700">{kind.label}</Body>
+                        <Small>{kind.effect}</Small>
+                      </Pressable>
+                    ))}
+                  </View>
+                  {!!anchorError && <Small style={styles.unscheduledError}>{anchorError}</Small>}
+                  <Button
+                    disabled={anchorBusy || !!proposal}
+                    onPress={() => void previewAnchor()}
+                    style={{ marginTop: 12 }}>
+                    {anchorBusy ? "Calculating…" : "Preview schedule impact"}
+                  </Button>
+                </Card>
+              )}
+
               {/* Doc 9 s12-13: which version produced these dates. Two patients
                   on one trial showing different dates is the protocol working as
                   written, and this is what says so. */}
@@ -413,13 +533,23 @@ export default function PatientScheduleScreen() {
                 rows={conditionRows}
                 onConfirm={(row) => void previewCondition(row)}
               />
+              {!!patientSchedule?.patient_id && (
+                <PatientScheduleActions
+                  patientId={patientSchedule.patient_id}
+                  horizon={horizon()}
+                  processes={actionProcesses}
+                  visits={actionVisits}
+                  dimensions={actionDimensions}
+                  disabled={!!proposal}
+                  onProposal={(next, label) => { setProposal(next); setPendingCondition(null); setProposalLabel(label); }}
+                  onRecorded={async (message) => { await load(); setNotice(message); }}
+                />
+              )}
               {!!proposal && (
                 <Card>
                   <Body weight="700" style={styles.sectionTitle}>Schedule Impact</Body>
                   <Small>
-                    {pendingCondition
-                      ? `If ${pendingCondition.condition} is confirmed: `
-                      : ""}
+                    {proposalLabel}
                     {summariseImpact(impactRows)}
                   </Small>
                   <ImpactPreviewTable rows={impactRows} />
@@ -483,6 +613,10 @@ const styles = StyleSheet.create({
   },
   categoryActive: { borderColor: colors.primary, backgroundColor: colors.primary + "14" },
   categoryLabel: { fontSize: 12 },
+  kindChoices: { gap: 8 },
+  kindChoice: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, padding: 10,
+  },
   input: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radii.md,
     padding: 10, color: colors.foreground, fontFamily: fonts.regular,

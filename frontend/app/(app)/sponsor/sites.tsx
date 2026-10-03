@@ -85,9 +85,9 @@ const accessOptions: { value: SiteAccess; label: string; copy: string }[] = [
 
 const statusTone = (value: string) => {
   const status = value.toLowerCase();
-  if (status === "active") return { bg: "rgba(92,154,110,0.14)", fg: colors.success };
-  if (status === "completed") return { bg: "rgba(123,107,184,0.14)", fg: colors.info };
-  if (status === "terminated") return { bg: "rgba(192,57,43,0.12)", fg: colors.destructive };
+  if (status === "active") return { bg: "rgba(30,122,70,0.14)", fg: colors.success };
+  if (status === "completed") return { bg: "rgba(45,108,181,0.14)", fg: colors.info };
+  if (status === "terminated") return { bg: "rgba(194,48,48,0.12)", fg: colors.destructive };
   return { bg: colors.surface, fg: colors.mutedFg };
 };
 
@@ -1070,7 +1070,7 @@ const styles = StyleSheet.create({
   siteCard: { padding: 13, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
   between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   siteIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10 },
-  siteIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "rgba(230,155,92,0.13)" },
+  siteIcon: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "rgba(11,128,116,0.13)" },
   siteName: { flex: 1, fontFamily: fonts.semibold, fontSize: 13.5, color: colors.foreground },
   locationRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 4 },
   siteAddress: { flex: 1, fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
@@ -1118,9 +1118,9 @@ const styles = StyleSheet.create({
   contactLabel: { fontFamily: fonts.regular, fontSize: 9.5, color: colors.mutedFg },
   contactName: { marginTop: 5, fontFamily: fonts.semibold, fontSize: 12.5, color: colors.foreground },
   contactActions: { flexDirection: "row", gap: 7, marginTop: "auto" },
-  contactIcon: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(230,155,92,0.12)" },
+  contactIcon: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(11,128,116,0.12)" },
   contactIconDisabled: { opacity: 0.38 },
-  emailIcon: { backgroundColor: "rgba(123,107,184,0.10)" },
+  emailIcon: { backgroundColor: "rgba(45,108,181,0.10)" },
   pressed: { opacity: 0.75, transform: [{ scale: 0.985 }] },
   card: { padding: 15, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, gap: 11, ...shadows.sm },
   cardTitle: { fontFamily: fonts.semibold, fontSize: 13, color: colors.foreground },
@@ -1149,11 +1149,11 @@ const styles = StyleSheet.create({
   protocol: { fontFamily: fonts.mono, fontSize: 10.5, color: colors.info },
   trialTitle: { marginTop: 8, fontFamily: fonts.semibold, fontSize: 12.5, color: colors.foreground },
   trialMeta: { marginTop: 4, fontFamily: fonts.regular, fontSize: 10.5, color: colors.mutedFg },
-  accessSummary: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 13, borderRadius: 17, borderWidth: 1, borderColor: "rgba(123,107,184,0.22)", backgroundColor: "rgba(123,107,184,0.08)" },
+  accessSummary: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 13, borderRadius: 17, borderWidth: 1, borderColor: "rgba(45,108,181,0.22)", backgroundColor: "rgba(45,108,181,0.08)" },
   accessSummaryLabel: { fontFamily: fonts.bold, fontSize: 7.5, letterSpacing: 0.9, color: colors.info },
   accessSummaryTitle: { marginTop: 2, fontFamily: fonts.semibold, fontSize: 11.5, color: colors.foreground },
   accessSummaryCopy: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9, lineHeight: 13, color: colors.mutedFg },
-  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 20, justifyContent: "flex-end", backgroundColor: "rgba(46,27,51,0.38)" },
+  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 20, justifyContent: "flex-end", backgroundColor: "rgba(15,27,45,0.38)" },
   sheet: { maxHeight: "92%", padding: 20, paddingBottom: 22, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.background, ...shadows.md },
   sheetHandle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 18 },
   sheetEyebrow: { fontFamily: fonts.semibold, fontSize: 8.5, letterSpacing: 1.1, color: colors.primary },
@@ -1202,17 +1202,17 @@ const styles = StyleSheet.create({
   accessHelp: { marginTop: 6, fontFamily: fonts.regular, fontSize: 9.5, lineHeight: 14, color: colors.mutedFg },
   uploadContent: { paddingVertical: 4 },
   uploadBox: { minHeight: 150, padding: 20, borderRadius: 19, borderWidth: 1.5, borderStyle: "dashed", borderColor: colors.border, alignItems: "center", justifyContent: "center", backgroundColor: colors.card },
-  uploadBoxSelected: { borderColor: colors.success, backgroundColor: "rgba(92,154,110,0.07)" },
+  uploadBoxSelected: { borderColor: colors.success, backgroundColor: "rgba(30,122,70,0.07)" },
   uploadTitle: { marginTop: 10, textAlign: "center", fontFamily: fonts.semibold, fontSize: 12.5, color: colors.foreground },
   uploadHint: { marginTop: 4, fontFamily: fonts.regular, fontSize: 10, color: colors.mutedFg },
   uploadNote: { marginTop: 10, fontFamily: fonts.regular, fontSize: 10.5, lineHeight: 15, color: colors.mutedFg },
-  uploadSuccess: { marginTop: 12, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, borderWidth: 1, borderColor: "rgba(92,154,110,0.25)", backgroundColor: "rgba(92,154,110,0.08)" },
+  uploadSuccess: { marginTop: 12, padding: 12, flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 15, borderWidth: 1, borderColor: "rgba(30,122,70,0.25)", backgroundColor: "rgba(30,122,70,0.08)" },
   uploadSuccessTitle: { fontFamily: fonts.semibold, fontSize: 10.5, color: colors.success },
   uploadSuccessCopy: { marginTop: 2, fontFamily: fonts.regular, fontSize: 9, lineHeight: 13, color: colors.mutedFg },
   importResults: { maxHeight: 126, marginTop: 9, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   importResultRow: { minHeight: 43, paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", alignItems: "flex-start", gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  resultMark: { width: 19, height: 19, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(92,154,110,0.12)" },
-  resultMarkError: { backgroundColor: "rgba(192,57,43,0.10)" },
+  resultMark: { width: 19, height: 19, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(30,122,70,0.12)" },
+  resultMarkError: { backgroundColor: "rgba(194,48,48,0.10)" },
   importResultTitle: { fontFamily: fonts.semibold, fontSize: 9.5, color: colors.foreground },
   importResultError: { marginTop: 2, fontFamily: fonts.regular, fontSize: 8.5, lineHeight: 12, color: colors.destructive },
   formError: { marginTop: 10, fontFamily: fonts.regular, fontSize: 11, color: colors.destructive },

@@ -137,6 +137,7 @@ class OperationalBridgeService:
         dimension_values: dict[str, list[str]] | None = None,
         anchor_dates: dict[str, date] | None = None,
         expected_version_id: UUID | None = None,
+        anchor_date_sources: dict[str, str] | None = None,
     ) -> BridgeEnrollment:
         trial = self.session.scalar(select(db.Trial).where(
             db.Trial.id == canonical_trial_id,
@@ -225,11 +226,15 @@ class OperationalBridgeService:
                 if existing_anchor.value_date != dates[anchor.code]:
                     raise ValueError(f"{anchor.code} changed; use anchor impact preview/confirm")
                 continue
+            # PT-01: a date the site marked PLANNED is stored as planned, so it
+            # can never satisfy an actual-only rule (anchor_status.record_is_actual).
+            planned = str((anchor_date_sources or {}).get(anchor.code, "")).upper() == "PLANNED"
             self.session.add(db.PatientAnchor(
                 patient_id=patient.id, anchor_definition_id=anchor.id,
                 value_date=dates[anchor.code], status="CONFIRMED",
-                source_type="OPERATIONAL_ENROLMENT", recorded_by=actor_id,
-                source_reference={"external_patient_id": external_patient_id},
+                source_type="PLANNED" if planned else "OPERATIONAL_ENROLMENT", recorded_by=actor_id,
+                source_reference={"external_patient_id": external_patient_id,
+                                  "entered_as": "PLANNED" if planned else "ACTUAL"},
             ))
         self.session.flush()
         evaluation, rows = PatientScheduleService(self.session).evaluate(

@@ -47,6 +47,21 @@ class ExistsCondition(StrictModel):
     exists: bool = True
 
 
+class UnsupportedCondition(StrictModel):
+    """A source predicate the condition language cannot express (capability gap).
+
+    It evaluates to UNKNOWN - never FALSE - so missing capability can never
+    become a negative applicability decision (RL-06), and the validator's
+    capability check blocks approval of any rule containing it (RL-12).
+    """
+
+    type: Literal["UNSUPPORTED"] = "UNSUPPORTED"
+    source_operator: str = Field(min_length=1)
+    source_text: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    details: dict[str, object] = Field(default_factory=dict)
+
+
 class AllCondition(StrictModel):
     type: Literal["AND"] = "AND"
     conditions: list["ConditionExpression"] = Field(min_length=1)
@@ -70,6 +85,7 @@ ConditionExpression = Annotated[
         AllCondition,
         AnyCondition,
         NotCondition,
+        UnsupportedCondition,
     ],
     Field(discriminator="type"),
 ]
@@ -116,6 +132,8 @@ def evaluate_condition(expression: ConditionExpression, context: dict[str, objec
             TruthValue.FALSE: TruthValue.TRUE,
             TruthValue.UNKNOWN: TruthValue.UNKNOWN,
         }[result]
+    if isinstance(expression, UnsupportedCondition):
+        return TruthValue.UNKNOWN
     if isinstance(expression, ExistsCondition):
         found, value = _field_value(context, expression.field)
         result = found and value is not None

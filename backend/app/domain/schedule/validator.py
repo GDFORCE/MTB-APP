@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+import re
 from uuid import UUID
 
 from .models import (
+    CYCLE_BLOCK_DEPENDENCY_MODES,
+    CycleDependencyMode,
     DependencyMode,
     EventType,
     IssueStatus,
     InterpretationStatus,
+    PATIENT_RULE_SCOPES,
     Severity,
     UniversalSchedule,
     ValidationIssue,
@@ -15,18 +19,99 @@ from .models import (
 )
 from .timing import (
     ActivityReference,
+    AnchorAcceptance,
+    AnchorReference,
+    ActivityValue,
+    AnchorValue,
     ApproximateTiming,
+    ConstraintTiming,
     CycleDayTiming,
     EventReference,
+    EventValue,
+    NoLaterThanTiming,
     NominalWindowTiming,
+    OffsetTiming,
+    ProtocolDayTiming,
     ProtocolDefinedTiming,
+    RangeTiming,
     TriggeredTiming,
+    TriggerNoLaterThan,
+    TriggerWithin,
     UnresolvedTiming,
+    WithinTiming,
 )
+
+
+_UNIT_SCALE = {
+    "MINUTE": ("MINUTE", 1), "HOUR": ("MINUTE", 60), "DAY": ("DAY", 1),
+    "WEEK": ("DAY", 7), "MONTH": ("MONTH", 1), "YEAR": ("MONTH", 12),
+}
+
+
+def _comparable(amount: object) -> tuple[str, int]:
+    family, scale = _UNIT_SCALE[str(amount.unit)]
+    return family, amount.value * scale
+
+
+def _is_cycle_anchor(code: str, cycle_codes: set[str]) -> bool:
+    """CYCLE_3_START is a real anchor when CYCLE is a stated cycle plan."""
+    return any(
+        re.fullmatch(rf"{re.escape(plan)}_[1-9][0-9]*_START", code) is not None
+        for plan in cycle_codes
+    )
+
+
+def legacy_reference(value: object) -> object:
+    """A constraint reference value as the equivalent legacy reference model,
+    so graph, reference and enrolment code keyed on ``code``/``event_code``
+    sees constraint dependencies too. Occurrence detail beyond FIRST/LAST is
+    not representable there and is not needed by those callers."""
+    if isinstance(value, AnchorValue):
+        return AnchorReference(code=value.code, accepts=value.accepts)
+    if isinstance(value, EventValue):
+        occurrence = value.occurrence.type if value.occurrence.type in {"FIRST", "LAST"} else "CURRENT"
+        return EventReference(event_code=value.event_code, occurrence=occurrence)
+    if isinstance(value, ActivityValue):
+        return ActivityReference(activity_code=value.activity_code)
+    raise TypeError(f"not a reference value: {type(value).__name__}")
+
+
+def constraint_references(constraint: object) -> list[object]:
+    """Legacy-shaped references for every anchor/event/activity in a constraint tree."""
+    from .feasibility import constraint_value_references
+
+    if constraint is None:
+        return []
+    return [legacy_reference(item) for item in constraint_value_references(constraint)]
+
+
+def event_temporal_references(event: object) -> list[object]:
+    """Every reference an event's timing AND its constraint set depend on."""
+    return [
+        *timing_references(event.timing),
+        *constraint_references(getattr(event, "constraints", None)),
+    ]
+
+
+def _graph_references(event: object) -> list[object]:
+    """References that order events. A constraint's reference to its OWN event
+    is occurrence-advancing (PREVIOUS - validated in ``_constraints``) and is
+    not an ordering edge; legacy timing references are kept exactly as before."""
+    legacy = [] if isinstance(event.timing, ConstraintTiming) else timing_references(event.timing)
+    constrained = [
+        item for item in (
+            *constraint_references(event.timing.constraint if isinstance(event.timing, ConstraintTiming) else None),
+            *constraint_references(getattr(event, "constraints", None)),
+        )
+        if not (isinstance(item, EventReference) and item.event_code == event.code)
+    ]
+    return [*legacy, *constrained]
 
 
 def timing_references(timing: object) -> list[object]:
     """Return all temporal references nested in a timing expression."""
+    if isinstance(timing, ConstraintTiming):
+        return constraint_references(timing.constraint)
     references = []
     direct = getattr(timing, "reference", None)
     if direct is not None:
@@ -38,6 +123,32 @@ def timing_references(timing: object) -> list[object]:
     return references
 
 
+def _has_no_single_target(timing: object) -> bool:
+    """Timings whose result is a span of allowed dates rather than one target."""
+    if isinstance(timing, (RangeTiming, WithinTiming, NoLaterThanTiming, ConstraintTiming)):
+        return True
+    return isinstance(timing, TriggeredTiming) and isinstance(
+        timing.timing_after_trigger, (TriggerWithin, TriggerNoLaterThan))
+
+
+def _planned_after_references(timing: object) -> list[AnchorReference]:
+    """Planned-accepting anchor references that place a visit after the anchor."""
+    if isinstance(timing, NominalWindowTiming):
+        return _planned_after_references(timing.nominal)
+    reference = getattr(timing, "reference", None)
+    if not isinstance(reference, AnchorReference) or (
+            reference.accepts != AnchorAcceptance.PLANNED_OR_ACTUAL):
+        return []
+    after = (
+        (isinstance(timing, OffsetTiming) and timing.offset.value > 0)
+        or (isinstance(timing, ProtocolDayTiming) and timing.day > 1)
+        or (isinstance(timing, RangeTiming) and timing.start.value > 0)
+        or (isinstance(timing, WithinTiming) and timing.direction == "AFTER")
+        or (isinstance(timing, NoLaterThanTiming) and timing.duration.value > 0)
+    )
+    return [reference] if after else []
+
+
 #: AD-6: the closed taxonomy now lives as ``EventType`` on the domain model
 #: itself (models.py); re-exported here under its original name for the
 #: existing importers (schedule_projection.py, dashboard_service.py, tests).
@@ -45,6 +156,12 @@ def timing_references(timing: object) -> list[object]:
 #: for why an unrecognised value is a review WARNING here, never a hard
 #: validation failure.
 CORE_EVENT_TYPES = frozenset(EventType)
+
+
+def _non_acknowledgeable_codes() -> frozenset[str]:
+    from .capabilities import NON_ACKNOWLEDGEABLE_CODES
+
+    return NON_ACKNOWLEDGEABLE_CODES
 
 
 class ScheduleValidator:
@@ -55,7 +172,9 @@ class ScheduleValidator:
         # Preserve these findings until explicitly resolved or re-extracted.
         issues: list[ValidationIssue] = [
             issue.model_copy(deep=True) for issue in schedule.validation_issues
-            if issue.status == IssueStatus.OPEN and issue.details.get("origin") == "EXTRACTION"
+            if issue.details.get("origin") == "EXTRACTION" and (
+                issue.status == IssueStatus.OPEN
+                or issue.issue_code in _non_acknowledgeable_codes())
         ]
         if not schedule.events:
             issues.append(self._issue("EMPTY_SCHEDULE", "No visits or protocol events were extracted."))
@@ -66,6 +185,114 @@ class ScheduleValidator:
         issues.extend(self._schedule_structures(schedule))
         issues.extend(self._anchor_integrity(schedule))
         issues.extend(self._information_loss(schedule))
+        issues.extend(self._windows(schedule))
+        issues.extend(self._planned_anchor_use(schedule))
+        issues.extend(self._rule_scopes(schedule))
+        issues.extend(self._cycle_plans(schedule))
+        issues.extend(self._recurrence_plans(schedule))
+        issues.extend(self._calendar_recurrences(schedule))
+        issues.extend(self._processes(schedule))
+        issues.extend(self._constraints(schedule))
+        from .capabilities import capability_issues
+
+        issues.extend(capability_issues(schedule))
+        return issues
+
+    def _constraints(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        from .constraint_validation import validate_constraints
+
+        return validate_constraints(schedule, self._issue)
+
+    def _windows(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """Doc B2/B3: an event window needs one target date to sit around.
+
+        RANGE, WITHIN and NO_LATER_THAN already ARE the allowed dates; a second
+        window on top has no stated centre, and choosing one (the range start?
+        its midpoint?) would be a guess. A repeating event is exempt: each
+        occurrence's own target date is the centre. A NOMINAL_WITH_WINDOW timing
+        stating a different window from the event is two readings of one rule.
+        """
+        issues: list[ValidationIssue] = []
+        for event in schedule.events:
+            if event.window is None:
+                continue
+            if (not event.repeats
+                    and _has_no_single_target(event.timing)):
+                issues.append(self._issue(
+                    "AMBIGUOUS_WINDOW",
+                    f"{event.display_name!r} states a window but its timing "
+                    f"({event.timing.type}) has no single target date to apply it "
+                    "to; restate the timing or the window before approval",
+                    entity_type="EVENT", entity_id=event.id,
+                    details={"event_code": event.code, "timing_type": event.timing.type},
+                ))
+            if (isinstance(event.timing, NominalWindowTiming)
+                    and event.timing.window.model_dump() != event.window.model_dump()):
+                issues.append(self._issue(
+                    "CONFLICTING_SOURCE",
+                    "The visit window and the timing's own window disagree",
+                    entity_type="EVENT", entity_id=event.id,
+                    details={
+                        "event_code": event.code,
+                        "event_window": event.window.model_dump(mode="json"),
+                        "timing_window": event.timing.window.model_dump(mode="json"),
+                    },
+                ))
+        return issues
+
+    def _planned_anchor_use(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """Doc C6: surface a planned anchor dating a visit AFTER that anchor.
+
+        PLANNED_OR_ACTUAL exists for visits that precede the event (pre-op). A
+        post-op visit that accepts a planned surgery date is exactly what the
+        rule is there to prevent, so a reviewer is asked to look - not blocked,
+        because a protocol may genuinely want a projected follow-up.
+        """
+        issues: list[ValidationIssue] = []
+        for event in schedule.events:
+            codes = sorted({
+                reference.code for reference in _planned_after_references(event.timing)
+            })
+            if codes:
+                issues.append(self._issue(
+                    "PLANNED_ANCHOR_AFTER_EVENT",
+                    f"{event.display_name!r} falls after {', '.join(codes)} but may be "
+                    "dated from a planned value; confirm it should not wait for the "
+                    "actual date",
+                    entity_type="EVENT", entity_id=event.id,
+                    severity=Severity.WARNING, blocking=False,
+                    details={"event_code": event.code, "anchor_codes": codes},
+                ))
+        return issues
+
+    def _rule_scopes(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """Doc I8: a trial-level rule never changes a patient's visits.
+
+        The patient engine refuses SITE/COUNTRY/TRIAL rules, so any patient
+        action such a rule carries will never happen. Said here, at review,
+        rather than left for someone to discover when accrual is suspended and
+        no patient schedule moved. Not blocking: the rule is legitimate protocol
+        content that belongs in a trial-level workflow, and refusing approval
+        would only push a reviewer to delete it.
+        """
+        issues: list[ValidationIssue] = []
+        for definition in schedule.conditional_definitions:
+            if definition.scope in PATIENT_RULE_SCOPES:
+                continue
+            issues.append(self._issue(
+                "TRIAL_LEVEL_RULE_NOT_APPLIED_TO_PATIENTS",
+                f"Rule {definition.display_name!r} is {definition.scope.value}-scoped; "
+                "its patient actions ("
+                + ", ".join(sorted({item.action_type for item in definition.actions}))
+                + ") will not change any patient's schedule and must be handled "
+                "by a trial-level workflow",
+                entity_type="CONDITION", entity_id=definition.id,
+                severity=Severity.WARNING, blocking=False,
+                details={
+                    "rule_code": definition.code, "scope": definition.scope.value,
+                    "action_targets": sorted({item.target_code for item in definition.actions}),
+                },
+            ))
         return issues
 
     @staticmethod
@@ -242,6 +469,10 @@ class ScheduleValidator:
     def _references(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
         events = {item.code for item in schedule.events}
         anchors = {item.code for item in schedule.anchors}
+        cycle_codes = {
+            block.cycle_plan.code for block in schedule.repeat_blocks
+            if block.cycle_plan is not None
+        }
         epochs = {item.id for item in schedule.epochs}
         dimensions = {
             "ARM": {item.code for item in schedule.arms},
@@ -261,7 +492,7 @@ class ScheduleValidator:
                     entity_type="EVENT", entity_id=event_id,
                 ))
             code = getattr(reference, "code", None)
-            if code is not None and code not in anchors:
+            if code is not None and code not in anchors and not _is_cycle_anchor(code, cycle_codes):
                 issues.append(self._issue(
                     "UNKNOWN_ANCHOR", f"Unknown anchor {code!r}",
                     entity_type="EVENT", entity_id=event_id,
@@ -274,12 +505,23 @@ class ScheduleValidator:
                     entity_type="EVENT", entity_id=event.id,
                 ))
             timing = event.timing
-            for reference in timing_references(timing):
+            # Constraint references are checked with their constraint ids in
+            # _constraints; checking them here too would report them twice.
+            for reference in ([] if isinstance(timing, ConstraintTiming) else timing_references(timing)):
                 check_reference(reference, event.id)
             if event.recurrence is not None:
                 check_reference(event.recurrence.start_reference, event.id)
                 if event.recurrence.termination.type == "RELATIVE":
                     check_reference(event.recurrence.termination.end_reference, event.id)
+            if event.recurrence_plan is not None:
+                check_reference(event.recurrence_plan.start_reference, event.id)
+                plan_end = event.recurrence_plan.termination
+                if plan_end is not None and plan_end.type == "RELATIVE":
+                    check_reference(plan_end.end_reference, event.id)
+            if event.calendar_recurrence is not None:
+                check_reference(event.calendar_recurrence.start_reference, event.id)
+                if event.calendar_recurrence.termination.type == "RELATIVE":
+                    check_reference(event.calendar_recurrence.termination.end_reference, event.id)
             for dependency in event.dependencies:
                 if dependency.source_event_code not in events:
                     issues.append(self._issue(
@@ -346,7 +588,9 @@ class ScheduleValidator:
                             entity_type="ACTIVITY", entity_id=activity.id,
                         ))
                     seen_activity_codes.add(normalized)
-                for reference in timing_references(activity.timing):
+                for reference in (
+                        [] if isinstance(activity.timing, ConstraintTiming)
+                        else timing_references(activity.timing)):
                     if not isinstance(reference, ActivityReference):
                         check_reference(reference, event.id)
                         continue
@@ -408,7 +652,7 @@ class ScheduleValidator:
                         entity_type="EVENT", entity_id=event.id,
                     ))
             if isinstance(timing, CycleDayTiming):
-                if timing.cycle_reference not in anchors:
+                if timing.cycle_reference not in anchors | cycle_codes:
                     issues.append(self._issue(
                         "UNKNOWN_ANCHOR",
                         f"Unknown cycle reference {timing.cycle_reference!r}",
@@ -423,7 +667,7 @@ class ScheduleValidator:
         anchors = {anchor.code: anchor for anchor in schedule.anchors}
         for target in schedule.events:
             refs = {dep.source_event_code for dep in target.dependencies}
-            for timing_ref in timing_references(target.timing):
+            for timing_ref in _graph_references(target):
                 if isinstance(timing_ref, EventReference):
                     refs.add(timing_ref.event_code)
                 else:
@@ -491,6 +735,11 @@ class ScheduleValidator:
                 ("conditions", bool(event.conditions), "CONDITION"),
                 ("applicability", bool(event.applicability), "APPLICABILITY"),
                 ("recurrence", event.recurrence is not None, "RECURRENCE"),
+                ("recurrence_plan", event.recurrence_plan is not None, "RECURRENCE"),
+                ("calendar_recurrence", event.calendar_recurrence is not None, "RECURRENCE"),
+                # Doc B4: a window is a protocol statement like any other; one
+                # a reviewer adds must cite where the protocol says it.
+                ("window", event.window is not None, "WINDOW"),
                 ("dependencies", bool(event.dependencies), "DEPENDENCY"),
                 ("dependency_mode", event.dependency_mode is not None, "DEPENDENCY_MODE"),
                 ("conditional_actions", bool(event.conditional_actions), "CONDITIONAL_ACTION"),
@@ -679,6 +928,7 @@ class ScheduleValidator:
         events = {item.code for item in schedule.events}
         blocks = {item.code for item in schedule.repeat_blocks}
         episodes = {item.code for item in schedule.confinement_episodes}
+        processes = {item.code for item in schedule.processes}
         activity_codes = {
             activity.code
             for event in schedule.events for activity in event.activities
@@ -712,7 +962,21 @@ class ScheduleValidator:
                     "ADD_EVENT": events, "REPEAT_EVENT": events, "CANCEL_EVENT": events,
                     "MANUAL_REVIEW": events, "STOP_BLOCK": blocks, "PAUSE_BLOCK": blocks,
                     "RESUME_BLOCK": blocks, "EXTEND_CONFINEMENT": episodes,
+                    "HOLD_PROCESS": processes, "RESUME_PROCESS": processes,
+                    "STOP_PROCESS": processes, "COMPLETE_PROCESS": processes,
                 }[action.action_type]
+                if action.action_type == "RESUME_PROCESS" and "resume_policy" in action.parameters:
+                    from .processes import validate_resume_policy
+
+                    try:
+                        validate_resume_policy(action.parameters["resume_policy"])
+                    except ValueError:
+                        issues.append(self._issue(
+                            "AMBIGUOUS_CONDITION",
+                            "A resume action's resume_policy must be NOMINAL, SHIFT_BY_HOLD or "
+                            "RESTART_FROM_RESUME",
+                            entity_type="CONDITION", entity_id=definition.id,
+                        ))
                 if action.target_code not in known:
                     issues.append(self._issue(
                         "UNRESOLVED_REFERENCE",
@@ -774,7 +1038,16 @@ class ScheduleValidator:
                     entity_type="REPEAT_BLOCK", entity_id=block.id,
                     details={"event_codes": unknown},
                 ))
-            if block.dependency_mode == DependencyMode.UNCLEAR:
+            # The nominal-vs-actual question only has a clinical answer when
+            # something in the block repeats. A block that exists purely so a
+            # condition can pause or stop single visits has no "later cycle" to
+            # place, so demanding the protocol state one would block approval
+            # over a question the protocol never had to answer.
+            repeats = block.cycle_plan is not None or any(
+                event.repeats
+                for event in schedule.events if event.code in block.event_codes
+            )
+            if block.dependency_mode == DependencyMode.UNCLEAR and repeats:
                 issues.append(self._issue(
                     "UNCLEAR_DEPENDENCY_MODE",
                     "A repeating block must state whether later cycles follow the nominal "
@@ -836,9 +1109,256 @@ class ScheduleValidator:
                 ))
         return issues
 
+    def _cycle_plans(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """Doc F1-F3: a cycle plan must say how each cycle start is dated.
+
+        UNCLEAR blocks approval: nominal grid and follow-the-actual-cycle give
+        different dates from Cycle 3 on, and the engine never picks one.
+        """
+        issues: list[ValidationIssue] = []
+        events = {item.code for item in schedule.events}
+        anchors = {item.code for item in schedule.anchors}
+        claims = {(item.claim_entity_id, item.claim_type) for item in schedule.claim_evidence}
+        seen: set[str] = set()
+        for block in schedule.repeat_blocks:
+            plan = block.cycle_plan
+            if plan is None:
+                continue
+            details = {"cycle_plan": plan.code, "block": block.code}
+            if plan.code in seen:
+                issues.append(self._issue(
+                    "DUPLICATE_CYCLE_PLAN", f"Duplicate cycle plan code {plan.code!r}",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                ))
+            seen.add(plan.code)
+            if plan.start_reference.code not in anchors:
+                issues.append(self._issue(
+                    "UNKNOWN_ANCHOR",
+                    f"Cycle plan {plan.code!r} starts from unknown anchor "
+                    f"{plan.start_reference.code!r}",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                ))
+            if plan.start_event_code is not None and plan.start_event_code not in events:
+                issues.append(self._issue(
+                    "UNRESOLVED_REFERENCE",
+                    f"Cycle plan {plan.code!r} reads cycle starts from unknown visit "
+                    f"{plan.start_event_code!r}",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                ))
+            termination = plan.termination
+            if termination.type == "RELATIVE" and termination.end_reference.code not in anchors:
+                issues.append(self._issue(
+                    "UNKNOWN_ANCHOR", f"Unknown anchor {termination.end_reference.code!r}",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                ))
+            if termination.type == "EVENT" and termination.event_code not in events:
+                issues.append(self._issue(
+                    "UNRESOLVED_REFERENCE",
+                    f"Cycle plan {plan.code!r} ends at unknown visit {termination.event_code!r}",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                ))
+            if plan.dependency_mode == CycleDependencyMode.UNCLEAR:
+                issues.append(self._issue(
+                    "UNCLEAR_DEPENDENCY_MODE",
+                    "The protocol does not state whether each cycle follows the nominal "
+                    "grid or the actual start of the previous cycle",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                ))
+            elif CYCLE_BLOCK_DEPENDENCY_MODES[plan.dependency_mode] != block.dependency_mode:
+                issues.append(self._issue(
+                    "CONFLICTING_SOURCE",
+                    "The cycle plan and its repeating block state different dependency modes",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id,
+                    details={
+                        **details, "cycle_mode": plan.dependency_mode.value,
+                        "block_mode": block.dependency_mode.value,
+                    },
+                ))
+            if (plan.dependency_mode == CycleDependencyMode.ACTUAL_PREVIOUS_CYCLE_START
+                    and plan.start_event_code is None):
+                issues.append(self._issue(
+                    "CYCLE_START_SOURCE_UNSTATED",
+                    "Cycles follow the actual previous cycle but no Day-1 visit is named; "
+                    f"each actual start must be recorded as {plan.code}_<n>_START",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id, details=details,
+                    severity=Severity.WARNING, blocking=False,
+                ))
+            if (block.id, "CYCLE_PLAN") not in claims:
+                issues.append(self._issue(
+                    "MISSING_EVIDENCE",
+                    "Cycle length, count and dependency mode require claim-level evidence",
+                    entity_type="REPEAT_BLOCK", entity_id=block.id,
+                    details={**details, "claim_type": "CYCLE_PLAN"},
+                ))
+        return issues
+
+    def _recurrence_plans(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """Doc E4/E9: every segment boundary is stated, never assumed."""
+        issues: list[ValidationIssue] = []
+        for event in schedule.events:
+            plan = event.recurrence_plan
+            if plan is None:
+                continue
+            details: dict[str, object] = {"event_code": event.code}
+            if plan.include_start is None:
+                issues.append(self._issue(
+                    "UNRESOLVED_RECURRENCE_BOUNDARY",
+                    f"{event.display_name!r}: the follow-up plan does not state whether a "
+                    "visit falls on its start date",
+                    entity_type="EVENT", entity_id=event.id, details=details,
+                ))
+            previous_end: tuple[str, int] | None = None
+            last = len(plan.segments) - 1
+            for index, segment in enumerate(plan.segments):
+                segment_details = {**details, "segment": index + 1}
+                if segment.end_offset is not None and segment.end_inclusive is None:
+                    issues.append(self._issue(
+                        "UNRESOLVED_RECURRENCE_BOUNDARY",
+                        f"{event.display_name!r}: segment {index + 1} does not state "
+                        "whether the visit on its end boundary belongs to it",
+                        entity_type="EVENT", entity_id=event.id, details=segment_details,
+                    ))
+                open_end = segment.end_offset is None and segment.count is None
+                if open_end and (index < last or plan.termination is None):
+                    issues.append(self._issue(
+                        "PHASED_SEGMENT_UNBOUNDED",
+                        f"{event.display_name!r}: segment {index + 1} states no end"
+                        + ("" if index < last else " and the plan states no termination"),
+                        entity_type="EVENT", entity_id=event.id, details=segment_details,
+                    ))
+                if segment.end_offset is not None:
+                    end = _comparable(segment.end_offset)
+                    if previous_end is not None and (
+                            end[0] == previous_end[0] and end[1] <= previous_end[1]):
+                        issues.append(self._issue(
+                            "CONFLICTING_SOURCE",
+                            f"{event.display_name!r}: segment {index + 1} does not end "
+                            "after the previous segment",
+                            entity_type="EVENT", entity_id=event.id, details=segment_details,
+                        ))
+                    previous_end = end
+        return issues
+
+    def _calendar_recurrences(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """WP3 (RL-08/RL-09): material calendar policies are stated or visible.
+
+        An unstated holiday, missed-session or count-basis policy blocks only
+        the sessions that depend on it at runtime, so it is a WARNING here; a
+        stated policy that cannot be executed (no calendar to shift against) or
+        two policies that contradict each other block approval.
+        """
+        from .models import CountBasis, HolidayPolicy, MissedOccurrencePolicy
+
+        issues: list[ValidationIssue] = []
+        calendars = {item.code for item in schedule.holiday_calendars}
+        for event in schedule.events:
+            rule = event.calendar_recurrence
+            if rule is None:
+                continue
+            details = {"event_code": event.code}
+            if rule.holiday_policy != HolidayPolicy.NONE_STATED and rule.holiday_calendar_ref is None:
+                issues.append(self._issue(
+                    "CALENDAR_HOLIDAY_CALENDAR_REQUIRED",
+                    f"{event.display_name!r} states holiday policy {rule.holiday_policy.value} "
+                    "but names no holiday calendar to apply it with",
+                    entity_type="EVENT", entity_id=event.id, details=details))
+            if rule.holiday_calendar_ref is not None and rule.holiday_calendar_ref not in calendars:
+                issues.append(self._issue(
+                    "CALENDAR_HOLIDAY_CALENDAR_NOT_IN_SCHEDULE",
+                    f"Holiday calendar {rule.holiday_calendar_ref!r} is not part of the schedule; "
+                    "each site must supply it or the series stays undated",
+                    entity_type="EVENT", entity_id=event.id, blocking=False,
+                    severity=Severity.WARNING,
+                    details={**details, "calendar": rule.holiday_calendar_ref}))
+            if rule.holiday_policy == HolidayPolicy.NONE_STATED:
+                issues.append(self._issue(
+                    "CALENDAR_HOLIDAY_POLICY_UNSTATED",
+                    f"{event.display_name!r} does not state what happens to a session on a "
+                    "holiday; such a session will wait for review",
+                    entity_type="EVENT", entity_id=event.id, blocking=False,
+                    severity=Severity.WARNING, details=details))
+            if rule.termination.type == "COUNT" and rule.count_basis is None:
+                issues.append(self._issue(
+                    "CALENDAR_COUNT_BASIS_UNSTATED",
+                    f"{event.display_name!r} states {rule.termination.count} sessions but not "
+                    "whether that counts slots or delivered sessions; after a missed or held "
+                    "session the extra session will wait for review",
+                    entity_type="EVENT", entity_id=event.id, blocking=False,
+                    severity=Severity.WARNING, details=details))
+            if rule.missed_policy == MissedOccurrencePolicy.NONE_STATED and rule.count_basis != CountBasis.DELIVERED:
+                issues.append(self._issue(
+                    "CALENDAR_MISSED_POLICY_UNSTATED",
+                    f"{event.display_name!r} does not state whether a missed session is "
+                    "replaced; a replacement will wait for review",
+                    entity_type="EVENT", entity_id=event.id, blocking=False,
+                    severity=Severity.WARNING, details=details))
+            if (rule.count_basis == CountBasis.DELIVERED
+                    and rule.missed_policy == MissedOccurrencePolicy.NO_REPLACEMENT):
+                issues.append(self._issue(
+                    "CALENDAR_COUNT_BASIS_CONFLICT",
+                    f"{event.display_name!r} counts delivered sessions but also says a missed "
+                    "session is not replaced; the two readings contradict each other",
+                    entity_type="EVENT", entity_id=event.id, details=details))
+        return issues
+
+    def _processes(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """WP3 (RL-10/RL-11): process definitions are well formed and evidenced."""
+        from .models import HoldResumePolicy
+
+        issues: list[ValidationIssue] = []
+        events = {item.code for item in schedule.events}
+        evidence_ids = {item.id for item in schedule.evidence}
+        claims = {(item.claim_entity_id, item.claim_type) for item in schedule.claim_evidence}
+        owners: dict[str, str] = {}
+        seen: set[str] = set()
+        for process in schedule.processes:
+            if process.code in seen:
+                issues.append(self._issue(
+                    "DUPLICATE_CODE", f"Process code {process.code!r} is used more than once",
+                    entity_type="PROCESS", entity_id=process.id))
+            seen.add(process.code)
+            unknown = sorted(set(process.event_codes) - events)
+            if unknown:
+                issues.append(self._issue(
+                    "UNRESOLVED_REFERENCE", "Process links unknown events",
+                    entity_type="PROCESS", entity_id=process.id,
+                    details={"event_codes": unknown}))
+            for code in process.event_codes:
+                if code in owners and owners[code] != process.code:
+                    issues.append(self._issue(
+                        "PROCESS_OBLIGATION_CONFLICT",
+                        f"Event {code!r} is linked to processes {owners[code]!r} and "
+                        f"{process.code!r}; a stop of one would be ambiguous for it",
+                        entity_type="PROCESS", entity_id=process.id,
+                        details={"event_code": code}))
+                owners.setdefault(code, process.code)
+            missing_refs = [str(ref) for ref in process.evidence_refs if ref not in evidence_ids]
+            if not process.evidence_refs or missing_refs or (process.id, "PROCESS") not in claims:
+                issues.append(self._issue(
+                    "MISSING_EVIDENCE", "A process definition requires claim-level protocol evidence",
+                    entity_type="PROCESS", entity_id=process.id,
+                    details={"missing_reference_ids": missing_refs, "claim_type": "PROCESS"}))
+            if process.hold_resume_policy == HoldResumePolicy.NONE_STATED:
+                issues.append(self._issue(
+                    "PROCESS_RESUME_POLICY_UNSTATED",
+                    f"Process {process.code!r} does not state how its schedule continues after "
+                    "a hold; obligations after a resume will wait for a decision",
+                    entity_type="PROCESS", entity_id=process.id, blocking=False,
+                    severity=Severity.WARNING))
+        return issues
+
     @staticmethod
     def blocking(issues: list[ValidationIssue]) -> list[ValidationIssue]:
-        return [issue for issue in issues if issue.blocking and issue.status == IssueStatus.OPEN]
+        # RL-12: an unsupported operator stays blocking whatever its review
+        # status - acknowledging a capability gap does not make it executable.
+        from .capabilities import NON_ACKNOWLEDGEABLE_CODES
+
+        return [
+            issue for issue in issues
+            if issue.blocking and (
+                issue.status == IssueStatus.OPEN
+                or issue.issue_code in NON_ACKNOWLEDGEABLE_CODES)
+        ]
 
 
 def topological_event_codes(schedule: UniversalSchedule) -> list[str]:
@@ -847,9 +1367,18 @@ def topological_event_codes(schedule: UniversalSchedule) -> list[str]:
     indegree = {event.code: 0 for event in schedule.events}
     edges: dict[str, set[str]] = defaultdict(set)
     anchors = {anchor.code: anchor for anchor in schedule.anchors}
+    cycle_starts = {
+        block.cycle_plan.code: block.cycle_plan.start_reference.code
+        for block in schedule.repeat_blocks if block.cycle_plan is not None
+    }
     for target in schedule.events:
         refs = {item.source_event_code for item in target.dependencies}
-        for timing_ref in timing_references(target.timing):
+        if isinstance(target.timing, CycleDayTiming) and target.timing.cycle_reference in cycle_starts:
+            anchor = anchors.get(cycle_starts[target.timing.cycle_reference])
+            # A Day-1 visit may itself be the source of Cycle 1's anchor.
+            if anchor and anchor.source_event_code and anchor.source_event_code != target.code:
+                refs.add(anchor.source_event_code)
+        for timing_ref in _graph_references(target):
             if isinstance(timing_ref, EventReference):
                 refs.add(timing_ref.event_code)
             else:

@@ -75,6 +75,33 @@ assert set(PATIENT_WORDING) <= CORE_EVENT_TYPES
 assert ATTENDANCE_EVENT_TYPES <= CORE_EVENT_TYPES
 
 
+class FeasibleWindow(BaseModel):
+    """One permitted interval of a constrained occurrence, as inclusive dates.
+    ``None`` on a side means unbounded on that side."""
+
+    start: date | None = None
+    end: date | None = None
+
+
+def feasibility_from_explanation(explanation: dict | None) -> tuple[str | None, list[FeasibleWindow]]:
+    """Read the feasibility summary the evaluator stores in an occurrence's
+    explanation (persisted as ``PatientEvent.generation_reason``) back into
+    projection inputs. Returns (None, []) for legacy occurrences."""
+    summary = (explanation or {}).get("feasibility")
+    if not isinstance(summary, dict):
+        return None, []
+    windows = []
+    for interval in summary.get("intervals") or []:
+        lower = (interval.get("lower") or {}).get("value")
+        upper = (interval.get("upper") or {}).get("value")
+        windows.append(FeasibleWindow(
+            start=date.fromisoformat(str(lower)[:10]) if lower else None,
+            end=date.fromisoformat(str(upper)[:10]) if upper else None,
+        ))
+    status = summary.get("status")
+    return (str(status) if status else None), windows
+
+
 class ProjectedEvent(BaseModel):
     """The minimum a projection needs to know about one patient occurrence."""
 
@@ -101,6 +128,13 @@ class ProjectedEvent(BaseModel):
     latest_date: date | None = None
     is_conditional: bool = False
     is_unscheduled: bool = False
+    #: Constraint-set outcome (None for legacy rules). INCOMPLETE/INFEASIBLE
+    #: occurrences never produce a reminder or a due/overdue state, whatever
+    #: their status says.
+    feasibility: str | None = None
+    #: Every permitted interval when the set is disjoint; the flat
+    #: earliest/latest dates then hold only one of them.
+    feasible_windows: list[FeasibleWindow] = Field(default_factory=list)
 
 
 class ProjectedConfinement(BaseModel):
@@ -163,6 +197,21 @@ def _policy_state(
     return "DUE_WINDOW" if today <= candidate_end else "OVERDUE"
 
 
+def _windowed_policy_state(
+    windows: list[FeasibleWindow], today: date,
+) -> Literal["UPCOMING", "DUE_WINDOW", "OVERDUE"]:
+    """Due/overdue across disjoint permitted intervals: inside any interval is
+    DUE_WINDOW, a gap between intervals is UPCOMING (the next interval is
+    still permitted), and only after the last interval closes is it OVERDUE."""
+    ordered = sorted(windows, key=lambda item: item.start or date.min)
+    for window in ordered:
+        if window.start is not None and today < window.start:
+            return "UPCOMING"
+        if window.end is None or today <= window.end:
+            return "DUE_WINDOW"
+    return "OVERDUE"
+
+
 def _wording(event: ProjectedEvent) -> str:
     # visit_mode wins when it names a recognised mode: it is the more specific
     # signal (event_type answers "what kind of occasion", visit_mode answers
@@ -216,21 +265,37 @@ def project(
                        "indicated; it carries no reminder until a site creates one",
             ))
             continue
+        if event.feasibility in {"INCOMPLETE", "INFEASIBLE"}:
+            result.suppressed.append(SuppressedItem(
+                logical_key=event.logical_key,
+                reason=(
+                    "its restrictions cannot be evaluated yet (an input is missing)"
+                    if event.feasibility == "INCOMPLETE"
+                    else "its restrictions leave no permitted date"),
+            ))
+            continue
         if event.status not in ACTIONABLE_STATUSES:
             result.suppressed.append(SuppressedItem(
                 logical_key=event.logical_key,
                 reason=f"status {event.status} has no confirmed date",
             ))
             continue
-        if event.nominal_date is None:
+        # Doc A7/A8/D2: a window-only rule ("within 14 days before surgery")
+        # resolves to a window with no single target day. Its reminder uses the
+        # window start, exactly as a RANGE's does (whose nominal date already
+        # IS its start). Without this a RESOLVED pre-op window was silently
+        # never reminded about. A rule with only a deadline (NO_LATER_THAN) has
+        # no start to remind from and stays suppressed.
+        reminder_date = event.nominal_date or event.earliest_date
+        if reminder_date is None:
             result.suppressed.append(SuppressedItem(
                 logical_key=event.logical_key, reason="no calculated date",
             ))
             continue
 
         episode = absorbed.get(event.event_code)
-        start = event.earliest_date or event.nominal_date
-        end = event.latest_date or event.nominal_date
+        start = event.earliest_date or reminder_date
+        end = event.latest_date or event.nominal_date or reminder_date
         if episode is not None:
             # The stay itself is the calendar entry and the arrival reminder; an
             # internal study day must not tell an admitted patient to come in.
@@ -243,14 +308,17 @@ def project(
         result.calendar.append(CalendarEntry(
             key=f"calendar:event:{event.logical_key}", kind="EVENT",
             reference=event.logical_key, title=event.display_name,
-            start_date=event.nominal_date, end_date=event.nominal_date,
+            start_date=reminder_date,
+            end_date=event.nominal_date or event.latest_date or reminder_date,
         ))
         result.reminders.append(ReminderCandidate(
-            key=f"reminder:{event.logical_key}:{event.nominal_date.isoformat()}",
+            key=f"reminder:{event.logical_key}:{reminder_date.isoformat()}",
             logical_key=event.logical_key, event_code=event.event_code,
-            message=_wording(event), nominal_date=event.nominal_date,
+            message=_wording(event), nominal_date=reminder_date,
             earliest_date=event.earliest_date, latest_date=event.latest_date,
-            policy_state=_policy_state(start, end, today),
+            policy_state=(
+                _windowed_policy_state(event.feasible_windows, today)
+                if len(event.feasible_windows) > 1 else _policy_state(start, end, today)),
             requires_attendance=_requires_attendance(event),
         ))
     return result

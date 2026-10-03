@@ -93,11 +93,17 @@ export function ScheduleTable({ rows, patient = false, onEvidence }: Props) {
             </Cell>
             <Cell width={widths.name}>
               <Text style={styles.name}>{row.visitName}</Text>
+              <ContextLines row={row} />
               <VisitModeValue value={row.visitMode} modeKey={row.visitModeKey} />
               {row.requiresReview && <View style={styles.reviewLine}><AlertCircle size={12} color={colors.warning} /><Text style={styles.reviewText}>Review required</Text></View>}
               {!!row.evidenceRefs.length && onEvidence && <EvidenceButton onPress={() => onEvidence(row)} />}
             </Cell>
-            <Cell width={patient ? widths.expected : widths.timing}><Text style={styles.value}>{patient ? (row as PatientScheduleRow).expectedDate : row.timing}</Text></Cell>
+            <Cell width={patient ? widths.expected : widths.timing}>
+              <Text style={styles.value}>{patient ? (row as PatientScheduleRow).expectedDate : row.timing}</Text>
+              {/* Doc C6: a date counted from a planned anchor says so beside the date. */}
+              {patient && !!(row as PatientScheduleRow).dateNote && <Text style={styles.reviewText}>{(row as PatientScheduleRow).dateNote}</Text>}
+              {patient && <FeasibilityLines row={row as PatientScheduleRow} />}
+            </Cell>
             <Cell width={widths.window}><Text style={styles.value}>{patient ? (row as PatientScheduleRow).allowedWindow : row.window}</Text></Cell>
             <Cell width={widths.type}><Text style={styles.value}>{row.type}</Text></Cell>
             <Cell width={widths.activities}><ActivityGroupsView activities={row.activities} empty={patient ? "No applicable activities" : "No activities extracted"} /></Cell>
@@ -375,23 +381,29 @@ export function QualifierPanel({ details }: { details: QualifierDetail[] }) {
  * this patient must never look like a missed visit.
  */
 export function ConditionalRequirementsTable({
-  rows, onConfirm,
+  rows, onConfirm, title = "Conditional Requirements",
+  subtitle = "These apply only if the condition occurs for this patient. Confirming one shows its schedule impact before anything changes.",
 }: {
   rows: ConditionalRequirementRow[];
   onConfirm?: (row: ConditionalRequirementRow) => void;
+  title?: string;
+  subtitle?: string;
 }) {
   if (!rows.length) return null;
   return (
     <View style={styles.conditionalBlock}>
-      <Text style={styles.conditionalTitle}>Conditional Requirements</Text>
-      <Text style={styles.conditionalSubtitle}>
-        These apply only if the condition occurs for this patient. Confirming one shows
-        its schedule impact before anything changes.
-      </Text>
+      <Text style={styles.conditionalTitle}>{title}</Text>
+      <Text style={styles.conditionalSubtitle}>{subtitle}</Text>
       {rows.map((row) => (
         <View key={row.id} style={styles.conditionalRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.name}>{row.condition}</Text>
+            {/* Doc I8: a trial/site/country rule never moves a patient visit. */}
+            {!!row.scopeBadge && (
+              <View style={styles.scopeBadge}>
+                <Text style={styles.scopeBadgeText}>{row.scopeBadge}</Text>
+              </View>
+            )}
             <Text style={styles.muted}>If this occurs: {row.action}</Text>
             <Text style={styles.muted}>{row.timing}</Text>
             {row.requiresReview && (
@@ -403,7 +415,7 @@ export function ConditionalRequirementsTable({
           </View>
           <View style={styles.conditionalActions}>
             <Status value={row.status} compact />
-            {onConfirm && (
+            {onConfirm && !row.trialLevel && (
               <Pressable
                 onPress={() => onConfirm(row)}
                 accessibilityRole="button"
@@ -427,6 +439,7 @@ function MobileRow({ row, patient, onEvidence, expanded, onToggle }: { row: Prot
         <View style={styles.visitBadge}><Text style={styles.visitBadgeText}>{row.visit}</Text></View>
         <View style={{ flex: 1 }}>
           <Text style={styles.mobileName}>{row.visitName}</Text>
+          <ContextLines row={row} />
           {/* Doc 10 s21-s23: always shown, on both the protocol and patient
               table - not patient-view-only, so a reviewer sees it too. Under
               the name now rather than its own field, same as desktop. */}
@@ -436,12 +449,13 @@ function MobileRow({ row, patient, onEvidence, expanded, onToggle }: { row: Prot
         {patient && <Status value={patientRow.status} compact />}
       </View>
       <View style={styles.mobileGrid}>
-        <MobileField label={patient ? "Expected date" : "Timing"} value={patient ? patientRow.expectedDate : row.timing} />
+        <MobileField label={patient ? "Expected date" : "Timing"} value={patient ? patientRow.expectedDate : row.timing} note={patient ? patientRow.dateNote : null} />
         <MobileField label={patient ? "Allowed window" : "Window"} value={patient ? patientRow.allowedWindow : row.window} />
         <MobileField label="Type" value={row.type} />
         {!patient && <MobileField label="Applies to" value={row.appliesTo} />}
         {patient && <MobileField label="Actual date" value={patientRow.actualDate} />}
       </View>
+      {patient && <FeasibilityLines row={patientRow} />}
       <Text style={styles.mobileLabel}>Activities</Text>
       <ActivityGroupsView activities={row.activities} empty="No activities listed" />
       {row.reviewReasons?.map((reason) => <Text key={reason} style={styles.reviewText}>{reason}</Text>)}
@@ -463,11 +477,12 @@ function MobileRow({ row, patient, onEvidence, expanded, onToggle }: { row: Prot
 
 function Header({ label, width }: { label: string; width: number }) { return <View style={[styles.headerCell, { width }]}><Text style={styles.headerText}>{label}</Text></View>; }
 function Cell({ width, children }: { width: number; children: React.ReactNode }) { return <View style={[styles.cell, { width }]}>{children}</View>; }
-function MobileField({ label, value }: { label: string; value: string }) {
+function MobileField({ label, value, note }: { label: string; value: string; note?: string | null }) {
   return (
     <View style={styles.mobileField}>
       <Text style={styles.mobileLabel}>{label}</Text>
       <Text style={styles.value}>{value}</Text>
+      {!!note && <Text style={styles.reviewText}>{note}</Text>}
     </View>
   );
 }
@@ -530,6 +545,30 @@ const MODE_ICONS: Record<string, LucideIcon> = {
   PHARMACY: Pill,
 };
 
+/** WP2: every permitted period separately, the named missing inputs, or the conflict. */
+function FeasibilityLines({ row }: { row: PatientScheduleRow }) {
+  const view = row.feasibility;
+  const facts = row.factLines || [];
+  if (!view && !facts.length) return null;
+  return <View accessibilityLabel={view ? `Feasibility: ${view.headline}` : "Occurrence details"}>
+    {facts.map((line) => <Text key={line} style={line.includes("outside the permitted") ? styles.reviewText : styles.modeText}>{line}</Text>)}
+    {!!view && <>
+    {view.status === "INFEASIBLE" && <Text style={styles.reviewText}>{view.headline}{view.conflicts.length ? ` — conflicting rules: ${view.conflicts.join(", ")}` : ""}</Text>}
+    {view.status !== "INFEASIBLE" && view.intervals.map((line, index) => <Text key={index} style={styles.modeText}>
+      {view.intervals.length > 1 ? `Period ${index + 1}: ` : "Permitted: "}{line}
+    </Text>)}
+    {view.missing.map((line) => <Text key={line} style={styles.reviewText}>{line}</Text>)}
+    </>}
+  </View>;
+}
+
+/** Doc F1-F5 / E9: "Cycle 3 Day 8", how its start was dated, or the follow-up phase. */
+function ContextLines({ row }: { row: ProtocolScheduleRow | PatientScheduleRow }) {
+  const lines = (row as PatientScheduleRow).contextLines;
+  if (!lines?.length) return null;
+  return <>{lines.map((line) => <Text key={line} style={styles.modeText}>{line}</Text>)}</>;
+}
+
 function VisitModeValue({ value, modeKey }: { value: string; modeKey?: string | null }) {
   // Nested under the visit name now, not its own column - nothing to show
   // is nothing to render, rather than a stray "—" cluttering the name cell.
@@ -553,7 +592,10 @@ function VisitModeValue({ value, modeKey }: { value: string; modeKey?: string | 
 }
 
 function Status({ value, compact = false }: { value: string; compact?: boolean }) {
-  const pending = value.startsWith("Waiting") || value === "Review required";
+  // Every WAITING_* state and a provisional date read amber - never the green
+  // of a firm scheduled visit, and never anything that looks overdue.
+  const pending = value.startsWith("Waiting") || value.startsWith("Awaiting")
+    || value.includes("provisional") || value === "Review required";
   const inactive = value === "Not applicable";
   return <View style={[styles.status, compact && styles.statusCompact, pending && styles.statusPending, inactive && styles.statusInactive]}><Text style={[styles.statusText, pending && styles.statusPendingText, inactive && styles.statusInactiveText]}>{value}</Text></View>;
 }
@@ -570,7 +612,7 @@ const styles = StyleSheet.create({
   headerCell: { minHeight: 48, paddingHorizontal: 12, justifyContent: "center", borderRightWidth: 1, borderRightColor: "rgba(255,255,255,0.12)" },
   headerText: { color: colors.white, fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 0.2 },
   dataRow: { flexDirection: "row", minHeight: 78, backgroundColor: colors.card, borderTopWidth: 1, borderTopColor: colors.border },
-  altRow: { backgroundColor: "#FBF7F1" },
+  altRow: { backgroundColor: "#F3F5F9" },
   cell: { paddingHorizontal: 12, paddingVertical: 13, borderRightWidth: 1, borderRightColor: colors.border },
   visit: { fontFamily: fonts.bold, fontSize: 14, color: colors.primary },
   name: { fontFamily: fonts.semibold, fontSize: 14, color: colors.foreground },
@@ -592,7 +634,7 @@ const styles = StyleSheet.create({
   status: { alignSelf: "flex-start", paddingHorizontal: 9, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: "#E7F4EA" },
   statusCompact: { maxWidth: 120 },
   statusText: { color: "#326A43", fontFamily: fonts.semibold, fontSize: 11 },
-  statusPending: { backgroundColor: "#FFF0D6" },
+  statusPending: { backgroundColor: "#FDF3E1" },
   statusPendingText: { color: "#855416" },
   statusInactive: { backgroundColor: colors.surface },
   statusInactiveText: { color: colors.mutedFg },
@@ -615,6 +657,8 @@ const styles = StyleSheet.create({
   conditionalTitle: { color: colors.foreground, fontFamily: fonts.semibold, fontSize: 16 },
   conditionalSubtitle: { color: colors.mutedFg, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18, marginBottom: 8 },
   conditionalRow: { flexDirection: "row", gap: 12, alignItems: "flex-start", paddingVertical: 11, borderTopWidth: 1, borderTopColor: colors.border },
+  scopeBadge: { alignSelf: "flex-start", marginVertical: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radii.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  scopeBadgeText: { color: colors.mutedFg, fontFamily: fonts.semibold, fontSize: 11 },
   conditionalActions: { alignItems: "flex-end", gap: 8 },
   conditionalButton: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: radii.sm, backgroundColor: colors.secondary, minHeight: 34, justifyContent: "center" },
   conditionalButtonText: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 12 },

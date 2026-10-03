@@ -32,7 +32,7 @@ export default function Welcome() {
   const sun = useRef(new Animated.Value(0)).current;
   const drift = useRef(new Animated.Value(0)).current;
   const arc = useRef(new Animated.Value(0)).current;   // journey arc sweeps in
-  const line = useRef(new Animated.Value(0)).current;  // "sunrise" underline draws in
+  const line = useRef(new Animated.Value(0)).current;  // "schedule" underline draws in
   useEffect(() => {
     Animated.timing(arc, { toValue: 1, duration: 1100, delay: 350, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
     Animated.timing(line, { toValue: 1, duration: 700, delay: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
@@ -56,11 +56,11 @@ export default function Welcome() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top", "bottom"]}>
-      {/* Ambient dawn wash behind the hero — mirrors the demo's .dawn-ambient glow */}
+      {/* Soft tint behind the hero, fading to the canvas */}
       <LinearGradient
-        colors={[colors.dawnFrom + "2E", "transparent"]}
-        start={{ x: 0.12, y: 0 }}
-        end={{ x: 0.7, y: 0.5 }}
+        colors={[colors.dawnFrom + "1F", colors.dawnFrom + "00"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
         style={s.ambient}
         pointerEvents="none"
       />
@@ -72,7 +72,6 @@ export default function Welcome() {
             <Eyebrow>My Trial Board</Eyebrow>
             <Small style={{ marginTop: 1 }}>Patient Visit Schedule</Small>
           </View>
-          <View style={s.pill}><Eyebrow color={colors.mutedFg}>Est. 2026</Eyebrow></View>
         </Rise>
 
         <Rise delay={140}><View style={s.hairline} /></Rise>
@@ -80,22 +79,22 @@ export default function Welcome() {
         {/* ── Cover statement ── */}
         <View style={s.headlineWrap}>
           <Rise delay={220}>
-            <Text style={s.headline}>Your trial,</Text>
+            <Text style={s.headline}>Every visit,</Text>
             <View style={{ flexDirection: "row", alignItems: "flex-end", flexWrap: "wrap" }}>
-              <Text style={s.headline}>one </Text>
+              <Text style={s.headline}>on </Text>
               <View>
-                <Text style={[s.headline, { color: colors.dawnMid }]}>sunrise</Text>
+                <Text style={[s.headline, { color: colors.dawnMid }]}>schedule</Text>
                 <Animated.View style={{ transformOrigin: "left", transform: [{ scaleX: line }] }}>
                   <LinearGradient colors={dawnGradient as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.underline} />
                 </Animated.View>
               </View>
             </View>
-            <Text style={s.headline}>at a time<Text style={{ color: colors.dawnMid }}>.</Text></Text>
+            <Text style={s.headline}>for every patient<Text style={{ color: colors.dawnMid }}>.</Text></Text>
           </Rise>
 
           <Rise delay={320}>
             <Body color={colors.mutedFg} style={{ marginTop: spacing.md, maxWidth: 270, lineHeight: 22 }}>
-              One warm place for sponsors, sites and patients to follow a clinical trial — visit by visit, morning by morning.
+              Protocol schedules, patient visits and site coordination for sponsors, sites and patients, in one place.
             </Body>
           </Rise>
         </View>
@@ -167,7 +166,6 @@ const s = StyleSheet.create({
   container: { paddingBottom: spacing.xl, flexGrow: 1 },
   ambient: { position: "absolute", top: 0, left: 0, right: 0, height: 300 },
   masthead: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
-  pill: { borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: colors.card },
   hairline: { height: 1, backgroundColor: colors.border, marginHorizontal: spacing.lg, marginTop: spacing.md },
   headlineWrap: { marginTop: spacing.xl, paddingHorizontal: spacing.lg },
   headline: { fontFamily: fonts.display, fontSize: 40, lineHeight: 44, letterSpacing: -0.8, color: colors.foreground },

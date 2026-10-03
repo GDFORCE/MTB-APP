@@ -940,7 +940,7 @@ const s = StyleSheet.create({
   readOnly: { minHeight: 43, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.background, paddingHorizontal: 12, justifyContent: "center" },
   selectBox: { minHeight: 43, borderWidth: 1, borderColor: colors.primary, borderRadius: radii.md, backgroundColor: colors.card, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   selectBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.24)" },
-  selectMenu: { position: "absolute", left: spacing.md, right: spacing.md, bottom: "34%", borderRadius: radii.lg, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, elevation: 12, shadowColor: "#2E1B33", shadowOpacity: 0.22, shadowRadius: 12 },
+  selectMenu: { position: "absolute", left: spacing.md, right: spacing.md, bottom: "34%", borderRadius: radii.lg, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, elevation: 12, shadowColor: "#0F1B2D", shadowOpacity: 0.22, shadowRadius: 12 },
   selectOption: { paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   selectOptionActive: { backgroundColor: colors.primary },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.background, paddingHorizontal: 12, paddingVertical: 10, color: colors.foreground, fontSize: 15 },

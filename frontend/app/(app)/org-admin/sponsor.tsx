@@ -37,10 +37,10 @@ function funnelOf(subjects?: OrgSubject[]): Funnel | null {
 
 function statusTone(status?: string): { bg: string; fg: string } {
   const s = (status || "active").toLowerCase();
-  if (s === "active") return { bg: "rgba(92,154,110,0.15)", fg: C.success };
-  if (s === "completed") return { bg: "rgba(123,107,184,0.15)", fg: C.info };
-  if (s === "terminated" || s === "closed") return { bg: "rgba(192,57,43,0.12)", fg: C.destructive };
-  return { bg: "rgba(123,95,115,0.12)", fg: C.mutedFg };
+  if (s === "active") return { bg: "rgba(30,122,70,0.15)", fg: C.success };
+  if (s === "completed") return { bg: "rgba(45,108,181,0.15)", fg: C.info };
+  if (s === "terminated" || s === "closed") return { bg: "rgba(194,48,48,0.12)", fg: C.destructive };
+  return { bg: "rgba(85,98,117,0.12)", fg: C.mutedFg };
 }
 
 export default function SponsorConsole() {
@@ -129,7 +129,7 @@ export default function SponsorConsole() {
         <ConsoleHeader
           eyebrow="SPONSOR / CRO · ORGANIZATION OVERSIGHT"
           org={orgName} roleLabel="Org Admin"
-          glow="rgba(230,155,92,0.30)"
+          glow="rgba(11,128,116,0.30)"
           pulse={pulse} onBack={() => router.back()}
         />
 
@@ -169,14 +169,14 @@ export default function SponsorConsole() {
                               <View style={st.protocolPill}><RNText style={st.protocolTxt}>{t.protocol_id || t.id.slice(0, 8)}</RNText></View>
                               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                                 <View style={[st.badge, { backgroundColor: tone.bg }]}><RNText style={[st.badgeTxt, { color: tone.fg }]}>{(t.status || "active")}</RNText></View>
-                                <View style={st.arrowBtn}><ArrowUpRight size={14} color="rgba(123,95,115,0.7)" /></View>
+                                <View style={st.arrowBtn}><ArrowUpRight size={14} color="rgba(85,98,117,0.7)" /></View>
                               </View>
                             </View>
                             <RNText style={st.trialTitle} numberOfLines={2}>{t.title || "Untitled trial"}</RNText>
                             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                              {!!t.phase && <Tag bg="rgba(123,107,184,0.10)" fg={C.info} label={t.phase} />}
-                              {!!t.condition && <Tag bg="rgba(230,155,92,0.12)" fg={C.accent} label={t.condition} />}
-                              <Tag bg={mine ? "rgba(230,155,92,0.15)" : C.surface} fg={mine ? C.accent : C.mutedFg} label={mine ? "Managed by you" : "Oversight"} />
+                              {!!t.phase && <Tag bg="rgba(45,108,181,0.10)" fg={C.info} label={t.phase} />}
+                              {!!t.condition && <Tag bg="rgba(11,128,116,0.12)" fg={C.accent} label={t.condition} />}
+                              <Tag bg={mine ? "rgba(11,128,116,0.15)" : C.surface} fg={mine ? C.accent : C.mutedFg} label={mine ? "Managed by you" : "Oversight"} />
                             </View>
                             {/* created-by provenance */}
                             <View style={st.provenance}>

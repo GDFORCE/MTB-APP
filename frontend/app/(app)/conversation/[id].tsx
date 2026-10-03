@@ -551,7 +551,7 @@ const s = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, paddingVertical: 12 },
   bigAvatar: { width: 84, height: 84, borderRadius: radii.xl, backgroundColor: colors.overlay20, borderWidth: 1, borderColor: colors.overlay25, alignItems: "center", justifyContent: "center" },
   protocolTag: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.overlay20, borderWidth: 1, borderColor: colors.overlay25 },
-  titleInput: { marginTop: 10, width: "100%", textAlign: "center", fontFamily: "BricolageGrotesque-Bold", fontSize: 22, color: colors.primaryFg, borderBottomWidth: 1, borderColor: colors.overlay25, paddingVertical: 4 },
+  titleInput: { marginTop: 10, width: "100%", textAlign: "center", fontFamily: fonts.display, fontSize: 22, color: colors.primaryFg, borderBottomWidth: 1, borderColor: colors.overlay25, paddingVertical: 4 },
   descInput: { marginTop: 8, width: "100%", textAlign: "center", fontSize: 14, color: colors.primaryFg, paddingHorizontal: spacing.lg, minHeight: 40 },
   actionBtn: { flex: 1, alignItems: "center", gap: 6, paddingVertical: 12, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
   actionsCard: { flexDirection: "row", marginTop: -36, borderRadius: radii.xl, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 6, gap: 4, ...shadows.md },
@@ -579,7 +579,7 @@ const s = StyleSheet.create({
   encryptionIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.success + "26", alignItems: "center", justifyContent: "center" },
   dangerRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14 },
   dangerIcon: { width: 36, height: 36, borderRadius: radii.md, backgroundColor: colors.destructive + "1A", alignItems: "center", justifyContent: "center" },
-  reportOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(46,27,51,0.45)", alignItems: "center", justifyContent: "center", padding: spacing.md },
+  reportOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "rgba(15,27,45,0.45)", alignItems: "center", justifyContent: "center", padding: spacing.md },
   reportInput: { minHeight: 80, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, padding: 10, color: colors.foreground, textAlignVertical: "top" },
   retryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: colors.primary + "44", backgroundColor: colors.primary + "0D" },
 });

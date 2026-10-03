@@ -1,18 +1,45 @@
 from __future__ import annotations
 
-import calendar
-from datetime import date, datetime, timedelta
 
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo
+
+from .calendar_math import _is_aware, _normalise_wall_clock, add_amount  # noqa: F401 (re-exported)
 from .condition import TruthValue, evaluate_condition
-from .conditional import ConditionalPlan, build_conditional_plan
+from .conditional import ConditionalPlan, EventActivation, build_conditional_plan
 from .exceptions import ScheduleNotApprovedError, UnsupportedTimingError
-from .identity import activity_logical_key
+from .feasibility import (
+    KNOWN_CALENDAR_POLICIES,
+    BaseWindow,
+    FeasibilityResult,
+    Resolved,
+    UnsupportedConstraintError,
+    evaluate_feasibility,
+    interval_contains,
+)
+from .calendar_recurrence import (
+    HoldWindow,
+    expand_calendar,
+    resolve_calendar,
+)
+from .facts import (
+    AssignmentPeriod,
+    OccurrenceFacts,
+    annotate_occurrence,
+    assignment_periods,
+)
+from .identity import activity_logical_key, episode_occurrence_index, occurrence_identity
+from .processes import ProcessStates, apply_process_states, build_process_states
 from .models import (
     Activity,
     ApplicabilityRule,
     BlockState,
+    CalendarRecurrence,
     ConfinementEpisodeDefinition,
     ConfinementStatus,
+    CycleDependencyMode,
+    CyclePlan,
     EvaluatedConfinement,
     EvaluatedConfinementDay,
     DependencyMode,
@@ -20,9 +47,14 @@ from .models import (
     EvaluatedEvent,
     EvaluationResult,
     Event,
+    FeasibilityStatus,
+    MissingInput,
+    OccurrenceFactKind,
     PatientActivityStatus,
     PatientContext,
     PatientEventStatus,
+    RecurrencePlan,
+    RecurrenceTermination,
     RepeatSummary,
     Requiredness,
     ResolvedTiming,
@@ -30,17 +62,24 @@ from .models import (
     ScheduleStatus,
     UniversalSchedule,
     UnscheduledOccurrence,
+    cycle_start_anchor_code,
 )
 from .timing import (
     AbsoluteTiming,
     ActivityReference,
+    ActivityValue,
+    AnchorAcceptance,
     AnchorReference,
+    AnchorValue,
     ApproximateTiming,
+    ConstraintTiming,
+    EventValue,
     CycleDayTiming,
     EventReference,
     NoLaterThanTiming,
     NominalWindowTiming,
     OffsetTiming,
+    ProcessBoundaryValue,
     ProtocolDefinedTiming,
     ProtocolDayTiming,
     RangeTiming,
@@ -52,9 +91,15 @@ from .timing import (
     TriggeredTiming,
     TriggerWithin,
     UnresolvedTiming,
+    Window,
     WithinTiming,
 )
-from .validator import ScheduleValidator, topological_event_codes
+from .validator import (
+    ScheduleValidator,
+    event_temporal_references,
+    timing_references,
+    topological_event_codes,
+)
 
 
 Temporal = date | datetime
@@ -211,9 +256,14 @@ def _containing_pause(
     value: Temporal,
     pauses: list[tuple[Temporal, Temporal | None]],
 ) -> tuple[Temporal, Temporal | None] | None:
-    """The pause period this date falls in, treating an open pause as unbounded."""
+    """The pause period this date falls in, treating an open pause as unbounded.
+
+    A pause covers its own start day (doc I1: held on 26-Oct, the C2 dose due
+    26-Oct is PAUSED, not left due and then overdue) up to, not including, the
+    day treatment resumes.
+    """
     for start, end in pauses:
-        if _before_or_equal(value, start):
+        if not _before_or_equal(start, value):
             continue
         if end is None or not _before_or_equal(end, value):
             return start, end
@@ -304,12 +354,53 @@ def _cadence_text(amount: object) -> str:
     return f"every {value} {word if word.endswith('s') else word + 's'}"
 
 
-def _termination_text(termination: object) -> str:
+def _milestone_text(amount: TemporalAmount) -> str:
+    """'+24 MONTH' reads as 'year 2'; anything else keeps its own unit."""
+    if amount.unit == TimeUnit.MONTH and amount.value % 12 == 0:
+        return f"year {amount.value // 12}"
+    return f"{amount.unit.value.lower()} {amount.value}"
+
+
+def _interval_text(amount: object) -> str:
+    unit = getattr(amount, "unit", None)
+    value = getattr(amount, "value", None)
+    if (unit, value) in {(TimeUnit.YEAR, 1), (TimeUnit.MONTH, 12)}:
+        return "yearly"
+    return _cadence_text(amount)
+
+
+def calendar_cadence_text(rule: CalendarRecurrence) -> str:
+    """'every Mon, Tue, Wed, Thu, Fri' / 'every 2nd week on Tue'."""
+    days = ", ".join(item.value.title() for item in rule.weekdays)
+    if rule.interval_weeks == 1:
+        return f"every {days}"
+    return f"every {rule.interval_weeks} weeks on {days}"
+
+
+def plan_segment_texts(plan: RecurrencePlan) -> list[str]:
+    """One phrase per cadence of a phased plan, in order (doc E9)."""
+    output: list[str] = []
+    for segment in plan.segments:
+        text = _interval_text(segment.interval)
+        if segment.end_offset is not None:
+            text += f" to {_milestone_text(segment.end_offset)}"
+        elif segment.count is not None:
+            text += f" for {segment.count} visits"
+        output.append(text)
+    return output
+
+
+def plan_cadence_text(plan: RecurrencePlan) -> str:
+    """'every 3 months to year 2, then every 6 months to year 5, then yearly'."""
+    return ", then ".join(plan_segment_texts(plan))
+
+
+def _termination_text(termination: object, noun: str = "occurrences") -> str:
     """Plain wording for how a repeat ends, never implying a cap we invented."""
     kind = getattr(termination, "type", None)
     if kind == "COUNT":
         count = getattr(termination, "count", None)
-        return f"a protocol maximum of {count} occurrences"
+        return f"a protocol maximum of {count} {noun}"
     if kind == "DATE":
         value = getattr(termination, "termination_date", None)
         return f"until {value.isoformat()}" if value else "until a stated date"
@@ -343,9 +434,10 @@ def _apply_rolling_horizon(
         code: block.code
         for block in schedule.repeat_blocks for code in block.event_codes
     }
+    cycle_plans = schedule_cycle_plans(schedule)
     repeating = {
         event.code: event for event in schedule.events
-        if event.recurrence is not None
+        if event.repeats or _every_cycle_plan(event, cycle_plans) is not None
     }
     for code in plan.activations:
         if plan.activations[code].repeat_interval is not None and code in {
@@ -370,6 +462,9 @@ def _apply_rolling_horizon(
 
         activation = plan.activations.get(item_code)
         rule = event.recurrence
+        phased = event.recurrence_plan
+        weekly = event.calendar_recurrence
+        cycles = _every_cycle_plan(event, cycle_plans)
         future_dated = [
             item for item in group
             if item.timing is not None and item.timing.nominal_start is not None
@@ -387,6 +482,13 @@ def _apply_rolling_horizon(
         open_ended = (
             rule is not None and rule.termination.type == "HORIZON"
         ) or (
+            phased is not None and phased.termination is not None
+            and phased.termination.type == "HORIZON"
+        ) or (
+            cycles is not None and cycles.termination.type == "HORIZON"
+        ) or (
+            weekly is not None and weekly.termination.type == "HORIZON"
+        ) or (
             activation is not None and activation.repeat_until_resolved
             and activation.resolution_date is None
         )
@@ -397,18 +499,40 @@ def _apply_rolling_horizon(
         )
         if not dropped and not horizon_bounded:
             continue
-        cadence_source = (
-            rule.interval if rule is not None
-            else (activation.repeat_interval if activation else None)
-        )
+        segments: list[str] = []
+        if phased is not None:
+            cadence = plan_cadence_text(phased)
+            segments = plan_segment_texts(phased)
+            last = phased.segments[-1]
+            if phased.termination is not None:
+                termination = _termination_text(phased.termination)
+            elif last.end_offset is not None:
+                boundary = "through" if last.end_inclusive else "before"
+                termination = f"{boundary} {_milestone_text(last.end_offset)}"
+            else:
+                termination = f"after {last.count} visits in the final cadence"
+        elif cycles is not None:
+            cadence = f"every cycle ({_cadence_text(cycles.length)[len('every '):]})"
+            termination = _termination_text(cycles.termination, "cycles")
+        elif weekly is not None:
+            cadence = calendar_cadence_text(weekly)
+            termination = _termination_text(weekly.termination, "sessions")
+        else:
+            cadence_source = (
+                rule.interval if rule is not None
+                else (activation.repeat_interval if activation else None)
+            )
+            cadence = _cadence_text(cadence_source)
+            termination = (
+                _termination_text(rule.termination) if rule is not None
+                else "until the condition is marked resolved"
+            )
         summaries.append(RepeatSummary(
             event_code=item_code,
             block_code=blocks_by_event.get(item_code),
-            cadence=_cadence_text(cadence_source),
-            termination=(
-                _termination_text(rule.termination) if rule is not None
-                else "until the condition is marked resolved"
-            ),
+            cadence=cadence,
+            termination=termination,
+            segments=segments,
             materialized_count=len(group) - len(dropped),
             continues=True,
             next_unmaterialized=(
@@ -458,22 +582,195 @@ def _before_or_equal(left: Temporal, right: Temporal) -> bool:
     return left <= right
 
 
-def add_amount(value: Temporal, amount: TemporalAmount, multiplier: int = 1) -> Temporal:
-    count = amount.value * multiplier
-    if amount.unit == TimeUnit.MINUTE:
-        return value + timedelta(minutes=count)
-    if amount.unit == TimeUnit.HOUR:
-        return value + timedelta(hours=count)
-    if amount.unit == TimeUnit.DAY:
-        return value + timedelta(days=count)
-    if amount.unit == TimeUnit.WEEK:
-        return value + timedelta(weeks=count)
-    months = count if amount.unit == TimeUnit.MONTH else count * 12
-    month_index = value.month - 1 + months
-    year = value.year + month_index // 12
-    month = month_index % 12 + 1
-    day = min(value.day, calendar.monthrange(year, month)[1])
-    return value.replace(year=year, month=month, day=day)
+def _localise(value: Temporal, zone: tzinfo) -> Temporal:
+    """Read a naive recorded date-time as local site time; dates stay dates."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=zone)
+    return value
+
+
+def localise_context(context: PatientContext) -> PatientContext:
+    """Doc K2: give every naive recorded date-time the site's time zone.
+
+    Without a zone a naive 00:30 has no defined elapsed-time relationship to
+    anything, so hour-based rules could not be computed correctly across a
+    clock change. Values already carrying a zone are left as recorded.
+    """
+    if context.time_zone is None:
+        return context
+    zone = ZoneInfo(context.time_zone)
+    localised = context.model_copy(deep=True)
+    for mapping in (localised.anchors, localised.planned_anchors, localised.activity_actuals):
+        for key, value in list(mapping.items()):
+            mapping[key] = _localise(value, zone)
+    for mapping in (localised.event_values, localised.actual_event_values):
+        for key, values in list(mapping.items()):
+            mapping[key] = [_localise(value, zone) for value in values]
+    return localised
+
+
+_UNIT_FAMILIES: dict[TimeUnit, tuple[TimeUnit, int]] = {
+    TimeUnit.MINUTE: (TimeUnit.MINUTE, 1),
+    TimeUnit.HOUR: (TimeUnit.MINUTE, 60),
+    TimeUnit.DAY: (TimeUnit.DAY, 1),
+    TimeUnit.WEEK: (TimeUnit.DAY, 7),
+    TimeUnit.MONTH: (TimeUnit.MONTH, 1),
+    TimeUnit.YEAR: (TimeUnit.MONTH, 12),
+}
+
+
+def nth_occurrence(
+    origin: Temporal,
+    interval: TemporalAmount,
+    n: int,
+    offset: TemporalAmount | None = None,
+) -> Temporal:
+    """Occurrence ``n`` of a repeat, counted from its ORIGINAL start (doc E6/E8).
+
+    Adding the interval to the previous occurrence lets a month-end clamp
+    stick: monthly from 31-Jan gives 28-Feb, then 28-Mar forever. Counting
+    every occurrence from the start keeps the protocol's day: 28-Feb, 31-Mar,
+    30-Apr; yearly from 29-Feb-2028 returns to 29-Feb in 2032. A stated
+    first-occurrence offset is folded into the same single calculation when
+    its unit is commensurable with the interval, so it cannot introduce a
+    clamp of its own either. Days and weeks are unaffected mathematically.
+    """
+    if offset is None:
+        return add_amount(origin, interval, n)
+    offset_family, offset_scale = _UNIT_FAMILIES[offset.unit]
+    interval_family, interval_scale = _UNIT_FAMILIES[interval.unit]
+    if offset_family == interval_family:
+        total = offset.value * offset_scale + n * interval.value * interval_scale
+        return add_amount(origin, TemporalAmount(value=total, unit=offset_family))
+    # Different calendars (e.g. "2 weeks after X, then monthly"): the offset
+    # fixes the start once, and every repeat is still counted from that start.
+    return add_amount(add_amount(origin, offset), interval, n)
+
+
+def _sum_offsets(
+    left: TemporalAmount | None, right: TemporalAmount,
+) -> TemporalAmount | None:
+    """Add two offsets in one calendar, or None when they cannot be combined
+    exactly (weeks and months), so the caller falls back to a dated origin."""
+    if left is None:
+        return right
+    left_family, left_scale = _UNIT_FAMILIES[left.unit]
+    right_family, right_scale = _UNIT_FAMILIES[right.unit]
+    if left_family != right_family:
+        return None
+    return TemporalAmount(
+        value=left.value * left_scale + right.value * right_scale, unit=left_family)
+
+
+def effective_window(event: Event) -> Window | None:
+    """The window stated for this visit, wherever the schedule stated it.
+
+    ``Event.window`` is the independent rule (doc B2/B3). A NOMINAL_WITH_WINDOW
+    timing still supplies one for schedules written before that existed. No
+    window is ever invented: an event stating neither has none (doc B4).
+    """
+    if event.window is not None:
+        return event.window
+    if isinstance(event.timing, NominalWindowTiming):
+        return event.timing.window
+    return None
+
+
+def _window_bounds(
+    target: Temporal, window: Window | None,
+) -> tuple[Temporal | None, Temporal | None]:
+    if window is None:
+        return None, None
+    return (
+        add_amount(target, TemporalAmount(value=-window.before.value, unit=window.before.unit)),
+        add_amount(target, TemporalAmount(value=window.after.value, unit=window.after.unit)),
+    )
+
+
+@dataclass
+class _Bound:
+    """Where a repeat stops for this patient, resolved once per rule.
+
+    Shared by plain recurrences, phased plans and treatment cycles so that
+    "for 6 cycles", "until progression" and "for 2 years after X" mean the
+    same thing whichever kind of repeat states them. ``status`` is set when
+    the end itself cannot be decided yet; the repeat then gets no dates.
+    """
+
+    stop: Temporal
+    max_count: int = 10000
+    relative_end: Temporal | None = None
+    inclusive: bool = True
+    status: PatientEventStatus | None = None
+    explanation: dict[str, object] = field(default_factory=dict)
+
+    def allows(self, value: Temporal) -> bool:
+        if not _before_or_equal(value, self.stop):
+            return False
+        if self.relative_end is None:
+            return True
+        if not _before_or_equal(value, self.relative_end):
+            return False
+        return self.inclusive or not _before_or_equal(self.relative_end, value)
+
+
+def _undated(base: dict[str, object], bound: _Bound) -> EvaluatedEvent:
+    explanation = {**base["explanation"], **bound.explanation}
+    return EvaluatedEvent(**{**base, "explanation": explanation}, status=bound.status)
+
+
+def _earlier(left: Temporal, right: Temporal) -> Temporal:
+    return left if _before_or_equal(left, right) else right
+
+
+def _resolve_termination(
+    termination: RecurrenceTermination | None,
+    context: PatientContext,
+    horizon: date,
+    *,
+    effective_key: str,
+    sample: Temporal,
+) -> _Bound:
+    bound = _Bound(stop=horizon)
+    if termination is None:
+        return bound
+    if termination.type == "COUNT":
+        bound.max_count = termination.count or 0
+    elif termination.type == "DATE" and termination.termination_date is not None:
+        bound.stop = _earlier(horizon, termination.termination_date)
+    elif termination.type == "RELATIVE":
+        end_anchor = _resolve_reference(termination.end_reference, context)
+        if end_anchor is None:
+            bound.status = PatientEventStatus.WAITING_FOR_ANCHOR
+            bound.explanation = {
+                "reason": "The recurrence end anchor has not been recorded.",
+                "waiting_for_anchor": termination.end_reference.code,
+            }
+            return bound
+        bound.relative_end = add_amount(end_anchor, termination.end_offset)
+        bound.inclusive = bool(termination.inclusive)
+    elif termination.type == "EVENT" and termination.event_code:
+        values = context.event_values.get(termination.event_code, [])
+        if values:
+            bound.stop = _earlier(bound.stop, min(values))
+    elif termination.type == "CONDITION" and termination.condition is not None:
+        result = evaluate_condition(termination.condition, context.state)
+        if result == TruthValue.UNKNOWN:
+            bound.status = PatientEventStatus.WAITING_FOR_CONDITION
+            return bound
+        if result == TruthValue.TRUE:
+            effective = context.state_effective_at.get(effective_key)
+            if effective is None:
+                bound.status = PatientEventStatus.UNRESOLVED
+                bound.explanation = {
+                    "reason": "termination condition is true but its effective time is unresolved",
+                }
+                return bound
+            effective_value: Temporal = effective
+            if isinstance(sample, date) and not isinstance(sample, datetime):
+                effective_value = effective.date()
+            bound.stop = _earlier(bound.stop, effective_value)
+    return bound
 
 
 #: Re-exported so existing importers (this module's own callers below, plus
@@ -489,7 +786,13 @@ def _resolve_reference(
     activity_scope: tuple[str, int] | None = None,
 ) -> Temporal | None:
     if isinstance(reference, AnchorReference):
-        return context.anchors.get(reference.code)
+        actual = context.anchors.get(reference.code)
+        if actual is not None:
+            return actual
+        # Doc C6: a planned value is used only by a rule that said it may be.
+        if reference.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
+            return context.planned_anchors.get(reference.code)
+        return None
     if isinstance(reference, ActivityReference):
         if activity_scope is None:
             return None
@@ -603,6 +906,10 @@ def evaluate_timing(
             return None
         value = start + timedelta(days=(cycle_number - 1) * cycle_length + expression.day - 1)
         return ResolvedTiming(nominal_start=value, nominal_end=value, precision="EXACT")
+    if isinstance(expression, ConstraintTiming):
+        # The timing IS its constraint set: its own window is unbounded and the
+        # permitted set is computed by apply_constraints (never a nominal date).
+        return ResolvedTiming(precision="CONSTRAINT", constraints=[{"type": "CONSTRAINED"}])
     if isinstance(expression, ApproximateTiming):
         raise UnsupportedTimingError("approximate timing requires an approved precision policy")
     if isinstance(expression, (ProtocolDefinedTiming, UnresolvedTiming)):
@@ -670,6 +977,54 @@ def _kleene_or(left: TruthValue, right: TruthValue) -> TruthValue:
 def _evaluate_applicability(rules: list[ApplicabilityRule], context: PatientContext) -> TruthValue:
     if not rules:
         return TruthValue.TRUE
+    results = _applicability_rule_results(rules, context)
+    # Left-to-right fold: each rule's own ``combinator`` says how it joins
+    # with the NEXT rule's result. Every existing rule list defaults every
+    # entry to AND, which folds to exactly the old pure-AND behaviour.
+    accumulated = results[0]
+    for index in range(1, len(results)):
+        combine = _kleene_and if rules[index - 1].combinator == "AND" else _kleene_or
+        accumulated = combine(accumulated, results[index])
+    return accumulated
+
+
+#: Applicability dimensions that are an ASSIGNMENT the site makes (randomise,
+#: allocate), as opposed to a clinical fact about the patient. Generic study
+#: dimensions (a crossover SEQUENCE, a PART) are added per schedule.
+ASSIGNMENT_DIMENSIONS = frozenset({"ARM", "COHORT", "POPULATION"})
+
+
+def assignment_dimensions(schedule: UniversalSchedule) -> frozenset[str]:
+    return ASSIGNMENT_DIMENSIONS | {item.dimension_type for item in schedule.dimensions}
+
+
+def _awaited_assignments(
+    rules: list[ApplicabilityRule],
+    context: PatientContext,
+    assignments: frozenset[str],
+) -> list[str]:
+    """The assignments an UNKNOWN applicability is waiting for - or nothing.
+
+    Non-empty only when EVERY rule that could not be decided is an assignment
+    dimension. If any undecided rule is a clinical attribute (age, WOCBP, a
+    typed condition), the visit is still waiting on a clinical fact, so it
+    stays WAITING_FOR_CONDITION rather than claiming randomisation alone will
+    settle it.
+    """
+    unknown = [
+        rule for rule, result in zip(rules, _applicability_rule_results(rules, context))
+        if result == TruthValue.UNKNOWN
+    ]
+    if not unknown or any(
+            rule.condition is not None or rule.dimension not in assignments
+            for rule in unknown):
+        return []
+    return sorted({rule.dimension for rule in unknown})
+
+
+def _applicability_rule_results(
+    rules: list[ApplicabilityRule], context: PatientContext,
+) -> list[TruthValue]:
     dimensions = {
         "ARM": context.arm_code,
         "COHORT": context.cohort_code,
@@ -704,14 +1059,7 @@ def _evaluate_applicability(rules: list[ApplicabilityRule], context: PatientCont
         if rule.operator == "NOT_IN":
             included = not included
         results.append(TruthValue.TRUE if included else TruthValue.FALSE)
-    # Left-to-right fold: each rule's own ``combinator`` says how it joins
-    # with the NEXT rule's result. Every existing rule list defaults every
-    # entry to AND, which folds to exactly the old pure-AND behaviour.
-    accumulated = results[0]
-    for index in range(1, len(results)):
-        combine = _kleene_and if rules[index - 1].combinator == "AND" else _kleene_or
-        accumulated = combine(accumulated, results[index])
-    return accumulated
+    return results
 
 
 def _missing_activity_anchor(timing: object) -> str | None:
@@ -724,6 +1072,224 @@ def _missing_activity_anchor(timing: object) -> str | None:
         if isinstance(reference, ActivityReference):
             return reference.activity_code
     return None
+
+
+def _event_anchor_references(event: Event) -> list[AnchorReference]:
+    """Every anchor an event's own date depends on, including its repeat rule."""
+    references = [
+        item for item in event_temporal_references(event)
+        if isinstance(item, AnchorReference)
+    ]
+    if event.recurrence is not None:
+        if isinstance(event.recurrence.start_reference, AnchorReference):
+            references.append(event.recurrence.start_reference)
+        if event.recurrence.termination.end_reference is not None:
+            references.append(event.recurrence.termination.end_reference)
+    if event.recurrence_plan is not None:
+        if isinstance(event.recurrence_plan.start_reference, AnchorReference):
+            references.append(event.recurrence_plan.start_reference)
+        termination = event.recurrence_plan.termination
+        if termination is not None and termination.end_reference is not None:
+            references.append(termination.end_reference)
+    if event.calendar_recurrence is not None:
+        if isinstance(event.calendar_recurrence.start_reference, AnchorReference):
+            references.append(event.calendar_recurrence.start_reference)
+        if event.calendar_recurrence.termination.end_reference is not None:
+            references.append(event.calendar_recurrence.termination.end_reference)
+    return references
+
+
+def _record_anchor_basis(
+    event: Event, context: PatientContext, explanation: dict[str, object],
+) -> list[str]:
+    """Say which anchors dated this visit from a plan, and which wait on reality.
+
+    Returns the anchors that have only a planned value while this event's rule
+    accepts an actual one - the reason the visit is still undated (doc D2).
+    """
+    basis: dict[str, str] = {}
+    waiting_for_actual: set[str] = set()
+    for reference in _event_anchor_references(event):
+        if reference.code in context.anchors:
+            basis[reference.code] = "ACTUAL"
+        elif reference.code in context.planned_anchors:
+            if reference.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
+                basis[reference.code] = "PLANNED"
+            else:
+                waiting_for_actual.add(reference.code)
+    if basis:
+        explanation["anchor_basis"] = basis
+    return sorted(waiting_for_actual)
+
+
+def _waiting_for_actual_reason(codes: list[str]) -> str:
+    return (
+        f"waiting for the actual {', '.join(codes)} date; only a planned date is "
+        "recorded and this visit counts from the date it actually happens"
+    )
+
+
+def schedule_cycle_plans(schedule: UniversalSchedule) -> dict[str, CyclePlan]:
+    return {
+        block.cycle_plan.code: block.cycle_plan
+        for block in schedule.repeat_blocks if block.cycle_plan is not None
+    }
+
+
+def _cycle_plan_for(event: Event, plans: dict[str, CyclePlan]) -> CyclePlan | None:
+    if isinstance(event.timing, CycleDayTiming):
+        return plans.get(event.timing.cycle_reference)
+    return None
+
+
+def _every_cycle_plan(event: Event, plans: dict[str, CyclePlan]) -> CyclePlan | None:
+    plan = _cycle_plan_for(event, plans)
+    if plan is not None and event.timing.cycle.type == "CURRENT":
+        return plan
+    return None
+
+
+@dataclass
+class CycleStart:
+    """One treatment cycle's start for this patient.
+
+    ``start`` is None when the cycle cannot be dated yet; ``status`` then says
+    why (BLOCKED waiting for the previous cycle's actual start, WAITING_FOR_ANCHOR
+    for a manual entry, UNRESOLVED for an unstated mode).
+    """
+
+    number: int
+    start: Temporal | None
+    basis: str
+    status: PatientEventStatus = PatientEventStatus.RESOLVED
+    waiting_for: list[str] = field(default_factory=list)
+    reason: str | None = None
+
+
+def _actual_cycle_start(
+    plan: CyclePlan, context: PatientContext, number: int, recorded_starts: list[Temporal],
+) -> Temporal | None:
+    recorded = context.anchors.get(cycle_start_anchor_code(plan.code, number))
+    if recorded is not None:
+        return recorded
+    if number - 1 < len(recorded_starts):
+        return recorded_starts[number - 1]
+    if number == 1:
+        # Cycle 1 starts at the plan's own anchor; it is actual when that anchor is.
+        return context.anchors.get(plan.start_reference.code)
+    return None
+
+
+def cycle_starts(
+    plan: CyclePlan, context: PatientContext, horizon: date,
+) -> tuple[list[CycleStart], _Bound | None]:
+    """Every cycle start this patient has, up to the plan's end or the horizon.
+
+    Returns the starts and the plan's resolved end. The end is None when Cycle
+    1's own anchor is not known yet, and carries a status when the plan's
+    termination cannot be settled yet (no starts are listed then). The list stops at the
+    first cycle that cannot be dated: in ACTUAL_PREVIOUS_CYCLE_START mode that
+    cycle is returned BLOCKED on the previous cycle's actual start and no later
+    cycle is listed, because none of them has a date to show.
+    """
+    origin = _resolve_reference(plan.start_reference, context)
+    if origin is None:
+        return [], None
+    bound = _resolve_termination(
+        plan.termination, context, horizon,
+        effective_key=f"cycles:{plan.code}", sample=origin)
+    if bound.status is not None:
+        return [], bound
+    recorded_starts = sorted(
+        context.actual_event_values.get(plan.start_event_code or "", []) or [],
+        key=_sort_value,
+    )
+    output: list[CycleStart] = []
+    number = 1
+    while number <= min(bound.max_count, 1000):
+        own_actual = _actual_cycle_start(plan, context, number, recorded_starts)
+        anchor_code = cycle_start_anchor_code(plan.code, number)
+        if number == 1:
+            # On the nominal grid Cycle 1 stays at its anchor; when cycles follow
+            # reality, Cycle 1's days follow the day it was actually given.
+            follows_actual = plan.dependency_mode != CycleDependencyMode.NOMINAL
+            start = own_actual if follows_actual and own_actual is not None else origin
+            item = CycleStart(1, start, "ACTUAL" if own_actual is not None else "PLANNED")
+        elif plan.dependency_mode == CycleDependencyMode.NOMINAL:
+            item = CycleStart(number, nth_occurrence(origin, plan.length, number - 1), "NOMINAL")
+        elif plan.dependency_mode == CycleDependencyMode.ACTUAL_PREVIOUS_CYCLE_START:
+            previous = _actual_cycle_start(plan, context, number - 1, recorded_starts)
+            if previous is None:
+                waiting = cycle_start_anchor_code(plan.code, number - 1)
+                output.append(CycleStart(
+                    number, None, "WAITING_FOR_ACTUAL_PREVIOUS_CYCLE",
+                    status=PatientEventStatus.BLOCKED, waiting_for=[waiting],
+                    reason=(
+                        f"cycle {number} starts {_cadence_text(plan.length)[len('every '):]} "
+                        f"after cycle {number - 1} actually starts; waiting for the "
+                        f"actual {waiting} date"
+                    ),
+                ))
+                break
+            if own_actual is not None:
+                item = CycleStart(number, own_actual, "ACTUAL")
+            else:
+                item = CycleStart(number, add_amount(previous, plan.length), "FROM_ACTUAL_PREVIOUS_CYCLE")
+        elif plan.dependency_mode == CycleDependencyMode.MANUAL:
+            manual = own_actual or context.planned_anchors.get(anchor_code)
+            if manual is None:
+                output.append(CycleStart(
+                    number, None, "WAITING_FOR_MANUAL_DATE",
+                    status=PatientEventStatus.WAITING_FOR_ANCHOR, waiting_for=[anchor_code],
+                    reason=f"cycle {number} starts on a date the site enters; {anchor_code} is not recorded",
+                ))
+                break
+            item = CycleStart(number, manual, "ACTUAL" if own_actual is not None else "MANUAL")
+        else:
+            output.append(CycleStart(
+                number, None, "UNCLEAR", status=PatientEventStatus.UNRESOLVED,
+                reason=(
+                    "the protocol does not state whether later cycles follow the "
+                    "nominal grid or the actual previous cycle; confirm before scheduling"
+                ),
+            ))
+            break
+        if not bound.allows(item.start) or not _before_or_equal(item.start, horizon):
+            break
+        output.append(item)
+        number += 1
+    return output, bound
+
+
+def publish_cycle_anchors(
+    plans: dict[str, CyclePlan],
+    recorded: PatientContext,
+    working: PatientContext,
+    horizon: date,
+) -> None:
+    """Expose every cycle start as ``<code>_<n>_START`` (doc F2).
+
+    Actual starts go to ``anchors``; calculated ones only to ``planned_anchors``,
+    so a rule counting from CYCLE_3_START with the default ACTUAL acceptance
+    waits for Cycle 3 to really start. Values a person recorded are never
+    overwritten.
+    """
+    for plan in plans.values():
+        starts, _ = cycle_starts(plan, working, horizon)
+        recorded_days = sorted(
+            recorded.actual_event_values.get(plan.start_event_code or "", []) or [],
+            key=_sort_value,
+        )
+        for item in starts:
+            if item.start is None:
+                continue
+            code = cycle_start_anchor_code(plan.code, item.number)
+            actual = _actual_cycle_start(plan, working, item.number, recorded_days)
+            if actual is not None:
+                if code not in recorded.anchors:
+                    working.anchors[code] = actual
+            elif code not in recorded.planned_anchors:
+                working.planned_anchors[code] = item.start
 
 
 def evaluate_activities(
@@ -830,6 +1396,12 @@ def evaluate_activities(
             status=PatientActivityStatus.RESOLVED, timing=timing,
             explanation=explanation, **base,
         ))
+    by_id = {activity.id: activity for activity in event.activities}
+    results = [
+        apply_activity_constraints(by_id[item.activity_definition_id], item, context, scope)
+        if item.activity_definition_id in by_id else item
+        for item in results
+    ]
     return sorted(
         results,
         key=lambda item: (item.sequence_number is None, item.sequence_number or 0),
@@ -851,8 +1423,593 @@ def _evaluate_conditions(event: Event, context: PatientContext) -> TruthValue:
     return TruthValue.UNKNOWN if TruthValue.UNKNOWN in results else TruthValue.TRUE
 
 
+
+# ---------------------------------------------------------------------------
+# Composable constraints (RL-04/05/13, NF-03). Runs ONLY for rules carrying a
+# constraint set (Event/Activity.constraints or a CONSTRAINED timing), so every
+# legacy schedule evaluates exactly as before (NF-08).
+# ---------------------------------------------------------------------------
+
+
+def constraint_roots(owner: str, timing: object, constraints: object) -> list[tuple[str, object]]:
+    roots: list[tuple[str, object]] = []
+    if isinstance(timing, ConstraintTiming):
+        roots.append((f"{owner}/timing/constraint", timing.constraint))
+    if constraints is not None:
+        roots.append((f"{owner}/constraints", constraints))
+    return roots
+
+
+class ContextValueSource:
+    """Resolves constraint references against one patient occurrence.
+
+    ACTUAL references read only recorded facts; PLANNED_OR_ACTUAL may fall back
+    to a planned anchor or a CALCULATED target of an earlier-evaluated event.
+    A planned value never satisfies an ACTUAL-only reference (PT-01).
+    """
+
+    def __init__(
+        self,
+        context: PatientContext,
+        *,
+        event_code: str,
+        occurrence_index: int,
+        prior: dict[str, list[EvaluatedEvent]] | None = None,
+        own_planned: dict[int, Temporal | None] | None = None,
+        run: "_Run | None" = None,
+    ) -> None:
+        self.context = context
+        self.event_code = event_code
+        self.occurrence_index = occurrence_index
+        self.prior = prior
+        self.own_planned = own_planned if own_planned is not None else {}
+        self.run = run
+
+    def process_boundary(self, value: ProcessBoundaryValue) -> Resolved:
+        """START/END of a process from its CONFIRMED transitions only."""
+        def missing(reason: str) -> Resolved:
+            return Resolved(None, missing=[MissingInput(
+                kind="PROCESS", code=value.process_code, occurrence=value.boundary,
+                accepts="ACTUAL", reason=reason)])
+
+        if self.run is None:
+            return missing("PROCESS_STATE_UNAVAILABLE")
+        timeline = self.run.processes.timelines.get(value.process_code)
+        if timeline is None:
+            return missing("PROCESS_NOT_DEFINED")
+        change = timeline.started() if value.boundary == "START" else timeline.terminal()
+        if change is None:
+            return missing("PROCESS_NOT_STARTED" if value.boundary == "START" else "PROCESS_NOT_ENDED")
+        return Resolved(change.effective_at, inputs=[{
+            "kind": "PROCESS", "code": value.process_code, "boundary": value.boundary,
+            "value": change.effective_at.isoformat(), "basis": "ACTUAL",
+            "transition": change.id, "state": change.to_state.value}])
+
+    def _planned_ends(self, code: str) -> dict[int, Temporal | None]:
+        if self.prior is None:
+            return {}
+        return {
+            item.occurrence_index: (
+                item.timing.nominal_end or item.timing.nominal_start
+                if item.status == PatientEventStatus.RESOLVED and item.timing is not None
+                else None)
+            for item in self.prior.get(code, [])
+        }
+
+    def _counted(self, code: str) -> set[int] | None:
+        """Occurrence indexes that still count toward a series (a cancelled or
+        inapplicable occurrence can never become the last one)."""
+        if self.prior is None or code not in self.prior:
+            return None
+        return {
+            item.occurrence_index for item in self.prior[code]
+            if item.status not in {PatientEventStatus.CANCELLED, PatientEventStatus.NOT_APPLICABLE}
+        }
+
+    def anchor(self, value: AnchorValue) -> Resolved:
+        actual = self.context.anchors.get(value.code)
+        if actual is not None:
+            return Resolved(actual, inputs=[{
+                "kind": "ANCHOR", "code": value.code, "value": actual.isoformat(), "basis": "ACTUAL"}])
+        planned = self.context.planned_anchors.get(value.code)
+        if planned is not None and value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
+            return Resolved(planned, inputs=[{
+                "kind": "ANCHOR", "code": value.code, "value": planned.isoformat(), "basis": "PLANNED"}])
+        return Resolved(None, missing=[MissingInput(
+            kind="ANCHOR", code=value.code, accepts=value.accepts.value,
+            reason="PLANNED_ONLY" if planned is not None else "NOT_RECORDED")])
+
+    def _planned_series(self, code: str) -> dict[int, Temporal | None]:
+        if code == self.event_code:
+            return dict(self.own_planned)
+        if self.prior is not None:
+            return {
+                item.occurrence_index: (
+                    item.timing.nominal_start
+                    if item.status == PatientEventStatus.RESOLVED and item.timing is not None
+                    else None)
+                for item in self.prior.get(code, [])
+            }
+        return dict(enumerate(self.context.event_values.get(code, [])))
+
+    def event(self, value: EventValue) -> Resolved:
+        code, selector = value.event_code, value.occurrence
+        actual = sorted(self.context.actual_event_values.get(code) or [])
+        planned = self._planned_series(code)
+        occurrence = selector.type if selector.type != "NUMBER" else f"NUMBER:{selector.number}"
+
+        def missing(reason: str) -> Resolved:
+            return Resolved(None, missing=[MissingInput(
+                kind="EVENT", code=code, occurrence=occurrence,
+                accepts=value.accepts.value, reason=reason)])
+
+        def found(result: Temporal, basis: str, index: int) -> Resolved:
+            return Resolved(result, inputs=[{
+                "kind": "EVENT", "code": code, "occurrence": occurrence,
+                "occurrence_index": index, "value": result.isoformat(), "basis": basis}])
+
+        if value.boundary == "END":
+            return self._end_of(value, occurrence, missing, found)
+        if selector.type == "LAST":
+            if self.run is not None and code in self.run.open_series:
+                # The series has no final occurrence yet: the latest one so far
+                # is not "the last" (design, temporal semantics).
+                return missing("LAST_NOT_FINAL")
+            counted = self._counted(code)
+            indexes = [index for index in planned if counted is None or index in counted]
+            count = max([len(actual), *(index + 1 for index in indexes)])
+            if actual and len(actual) >= count:
+                return found(actual[-1], "ACTUAL", len(actual) - 1)
+            if value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL and count:
+                last = planned.get(count - 1)
+                if last is not None:
+                    return found(last, "PLANNED", count - 1)
+            return missing("LAST_NOT_FINAL" if actual else "NOT_RECORDED")
+        index = {
+            "FIRST": 0,
+            "NUMBER": (selector.number or 1) - 1,
+            "CURRENT": self.occurrence_index,
+            "PREVIOUS": self.occurrence_index - 1,
+        }[selector.type]
+        if index < 0:
+            # "After the previous dose" restricts nothing for the first dose.
+            return Resolved(None, vacuous=True, inputs=[{
+                "kind": "EVENT", "code": code, "occurrence": occurrence,
+                "note": "no previous occurrence; the restriction does not apply"}])
+        if index < len(actual):
+            return found(actual[index], "ACTUAL", index)
+        planned_value = planned.get(index)
+        if value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
+            if planned_value is not None:
+                return found(planned_value, "PLANNED", index)
+            return missing("NO_PLANNED_TARGET" if index in planned else "OCCURRENCE_NOT_AVAILABLE")
+        return missing("PLANNED_ONLY" if planned_value is not None else "NOT_RECORDED")
+
+    def _end_of(self, value: EventValue, occurrence: str, missing, found) -> Resolved:
+        """END boundary: planned from the nominal end, actual only from a
+        recorded end (a performed start never proves the end)."""
+        code, selector = value.event_code, value.occurrence
+        if selector.type == "LAST" and self.run is not None and code in self.run.open_series:
+            return missing("LAST_NOT_FINAL")
+        ends = self._planned_ends(code)
+        if selector.type == "LAST":
+            counted = self._counted(code)
+            indexes = sorted(index for index in ends if counted is None or index in counted)
+            if not indexes:
+                return missing("NOT_RECORDED")
+            index = indexes[-1]
+        else:
+            index = {
+                "FIRST": 0, "NUMBER": (selector.number or 1) - 1,
+                "CURRENT": self.occurrence_index, "PREVIOUS": self.occurrence_index - 1,
+            }[selector.type]
+            if index < 0:
+                return Resolved(None, vacuous=True, inputs=[{
+                    "kind": "EVENT", "code": code, "occurrence": occurrence, "boundary": "END",
+                    "note": "no previous occurrence; the restriction does not apply"}])
+        fact = self.run.facts.outcome.get((code, index)) if self.run is not None else None
+        if fact is not None and fact.kind == OccurrenceFactKind.PERFORMED and fact.end_value is not None:
+            return found(fact.end_value, "ACTUAL", index)
+        if value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
+            planned_end = ends.get(index)
+            if planned_end is not None:
+                return found(planned_end, "PLANNED", index)
+            return missing("NO_PLANNED_TARGET" if index in ends else "OCCURRENCE_NOT_AVAILABLE")
+        return missing("END_NOT_RECORDED")
+
+    def activity(self, value: ActivityValue) -> Resolved:
+        key = activity_actual_key(self.event_code, self.occurrence_index, value.activity_code)
+        actual = self.context.activity_actuals.get(key)
+        if actual is None:
+            return Resolved(None, missing=[MissingInput(
+                kind="ACTIVITY", code=value.activity_code, accepts="ACTUAL",
+                reason="NOT_RECORDED")])
+        return Resolved(actual, inputs=[{
+            "kind": "ACTIVITY", "code": value.activity_code,
+            "value": actual.isoformat(), "basis": "ACTUAL"}])
+
+
+def _base_window(timing: ResolvedTiming | None, source_id: str) -> BaseWindow:
+    if timing is None:
+        return BaseWindow(source_id=source_id, known=False)
+    if timing.earliest is not None or timing.latest is not None:
+        return BaseWindow(source_id=source_id, lower=timing.earliest, upper=timing.latest)
+    if timing.nominal_start is not None:
+        return BaseWindow(
+            source_id=source_id, lower=timing.nominal_start,
+            upper=timing.nominal_end or timing.nominal_start)
+    return BaseWindow(source_id=source_id)
+
+
+def _timing_missing_inputs(
+    timing: object, context: PatientContext, owner: str,
+    activity_scope: tuple[str, int] | None = None,
+) -> list[MissingInput]:
+    """Name the references a legacy timing is still waiting on."""
+    output: list[MissingInput] = []
+    if not isinstance(timing, ConstraintTiming):
+        for reference in timing_references(timing):
+            if _resolve_reference(reference, context, activity_scope=activity_scope) is not None:
+                continue
+            if isinstance(reference, AnchorReference):
+                output.append(MissingInput(
+                    kind="ANCHOR", code=reference.code, accepts=reference.accepts.value,
+                    reason=("PLANNED_ONLY" if reference.code in context.planned_anchors
+                            else "NOT_RECORDED")))
+            elif isinstance(reference, EventReference):
+                output.append(MissingInput(
+                    kind="EVENT", code=reference.event_code, occurrence=reference.occurrence,
+                    reason="NOT_RECORDED"))
+            elif isinstance(reference, ActivityReference):
+                output.append(MissingInput(
+                    kind="ACTIVITY", code=reference.activity_code, accepts="ACTUAL",
+                    reason="NOT_RECORDED"))
+    return output or [MissingInput(kind="TIMING", code=owner, reason="TIMING_REFERENCE_MISSING")]
+
+
+def _feasibility_fields(result: FeasibilityResult) -> dict[str, object]:
+    return {
+        "feasibility": result.status,
+        "feasible_intervals": result.intervals,
+        "missing_inputs": result.missing_inputs,
+        "conflicting_constraints": result.conflicting_constraints,
+        "constraint_trace": result.trace,
+        "constraint_relations": result.relations,
+    }
+
+
+def _describe_missing(items: list[MissingInput]) -> str:
+    return ", ".join(sorted({
+        f"{item.code or item.kind} ({item.reason.lower().replace('_', ' ')})" for item in items}))
+
+
+def _timing_from_feasible(
+    timing: ResolvedTiming, result: FeasibilityResult,
+) -> tuple[ResolvedTiming, dict[str, object]]:
+    """Carry a FEASIBLE set onto the flat timing fields without widening it.
+
+    The flat earliest/latest pair can hold ONE interval. When the nominal
+    target lies inside the set, the interval containing it is used; otherwise
+    the first interval is, and the nominal target is dropped (a constraint that
+    excludes the protocol target leaves no target - none is invented). A
+    CONSTRAINT-precision timing (range/window-only) never had a target, so its
+    nominal fields are cleared: a range start is not a planned date. Every
+    interval stays in ``feasible_intervals`` and in ``timing.constraints``.
+    """
+    notes: dict[str, object] = {}
+    intervals = result.intervals
+    chosen = intervals[0]
+    nominal = timing.nominal_start if timing.precision != "CONSTRAINT" else None
+    if nominal is not None:
+        containing = [item for item in intervals if interval_contains(item, nominal)]
+        if containing:
+            chosen = containing[0]
+        else:
+            notes["nominal_target_excluded"] = nominal.isoformat()
+            nominal = None
+    if len(intervals) > 1:
+        notes["disjoint_intervals"] = len(intervals)
+    constraints = [*timing.constraints, {
+        "type": "FEASIBLE_SET",
+        "intervals": [item.model_dump(mode="json") for item in intervals],
+    }]
+    updated = timing.model_copy(update={
+        "nominal_start": nominal,
+        "nominal_end": timing.nominal_end if nominal is not None else None,
+        "earliest": chosen.lower.value,
+        "latest": chosen.upper.value,
+        "constraints": constraints,
+    })
+    return updated, notes
+
+
+def apply_event_constraints(
+    event: Event,
+    results: list[EvaluatedEvent],
+    context: PatientContext,
+    prior: dict[str, list[EvaluatedEvent]],
+    *,
+    run: "_Run | None" = None,
+) -> list[EvaluatedEvent]:
+    roots = constraint_roots(event.code, event.timing, event.constraints)
+    if not roots:
+        return results
+    repeats = event.repeats
+    own_planned: dict[int, Temporal | None] = {}
+    output: list[EvaluatedEvent] = []
+    for item in sorted(results, key=lambda value: value.occurrence_index):
+        if item.status == PatientEventStatus.RESOLVED:
+            base = _base_window(item.timing, f"{event.code}/timing")
+        elif item.status == PatientEventStatus.WAITING_FOR_ANCHOR and not repeats:
+            base = BaseWindow(
+                source_id=f"{event.code}/timing", known=False,
+                missing=_timing_missing_inputs(event.timing, context, event.code))
+        else:
+            output.append(item)
+            continue
+        source = ContextValueSource(
+            context, event_code=event.code, occurrence_index=item.occurrence_index,
+            prior=prior, own_planned=own_planned, run=run)
+        explanation = dict(item.explanation)
+        try:
+            result = evaluate_feasibility(roots, source, base=base)
+        except UnsupportedConstraintError as error:
+            explanation["reason"] = str(error)
+            own_planned[item.occurrence_index] = None
+            output.append(item.model_copy(update={
+                "status": PatientEventStatus.UNRESOLVED, "timing": None,
+                "explanation": explanation}))
+            continue
+        explanation["feasibility"] = result.summary()
+        update: dict[str, object] = _feasibility_fields(result)
+        if result.status == FeasibilityStatus.FEASIBLE and item.timing is not None:
+            timing, notes = _timing_from_feasible(item.timing, result)
+            explanation.update(notes)
+            explanation["result"] = timing.model_dump(mode="json")
+            update["timing"] = timing
+        elif result.status == FeasibilityStatus.INCOMPLETE:
+            explanation["reason"] = (
+                "waiting for " + _describe_missing(result.missing_inputs)
+                + "; the known bounds are kept but the visit is not dated until every "
+                "restriction can be evaluated")
+            update.update(status=PatientEventStatus.WAITING_FOR_ANCHOR, timing=None)
+        else:
+            explanation["reason"] = (
+                "the restrictions on this visit leave no permitted date; conflicting "
+                "constraints: " + ", ".join(result.conflicting_constraints))
+            update.update(status=PatientEventStatus.UNRESOLVED, timing=None)
+        update["explanation"] = explanation
+        updated = item.model_copy(update=update)
+        own_planned[item.occurrence_index] = (
+            updated.timing.nominal_start
+            if updated.status == PatientEventStatus.RESOLVED and updated.timing is not None
+            else None)
+        output.append(updated)
+    return output
+
+
+def apply_activity_constraints(
+    activity: Activity,
+    evaluated: EvaluatedActivity,
+    context: PatientContext,
+    scope: tuple[str, int],
+) -> EvaluatedActivity:
+    owner = f"{scope[0]}/{activity.code or activity.id}"
+    roots = constraint_roots(owner, activity.timing, activity.constraints)
+    if not roots:
+        return evaluated
+    if evaluated.status == PatientActivityStatus.RESOLVED:
+        base = (_base_window(evaluated.timing, f"{owner}/timing")
+                if activity.timing is not None else None)
+    elif evaluated.status == PatientActivityStatus.WAITING_FOR_ANCHOR and activity.timing is not None:
+        base = BaseWindow(
+            source_id=f"{owner}/timing", known=False,
+            missing=_timing_missing_inputs(activity.timing, context, owner, activity_scope=scope))
+    else:
+        return evaluated
+    source = ContextValueSource(context, event_code=scope[0], occurrence_index=scope[1])
+    explanation = dict(evaluated.explanation)
+    try:
+        result = evaluate_feasibility(roots, source, base=base)
+    except UnsupportedConstraintError as error:
+        explanation["reason"] = str(error)
+        return evaluated.model_copy(update={
+            "status": PatientActivityStatus.UNRESOLVED, "timing": None,
+            "explanation": explanation})
+    explanation["feasibility"] = result.summary()
+    update: dict[str, object] = _feasibility_fields(result)
+    if result.status == FeasibilityStatus.FEASIBLE:
+        timing = evaluated.timing or ResolvedTiming(precision="CONSTRAINT")
+        timing, notes = _timing_from_feasible(timing, result)
+        explanation.update(notes)
+        explanation["result"] = timing.model_dump(mode="json")
+        update["timing"] = timing
+    elif result.status == FeasibilityStatus.INCOMPLETE:
+        explanation["reason"] = "waiting for " + _describe_missing(result.missing_inputs)
+        update.update(status=PatientActivityStatus.WAITING_FOR_ANCHOR, timing=None)
+    else:
+        explanation["reason"] = (
+            "the restrictions on this activity leave no permitted time; conflicting "
+            "constraints: " + ", ".join(result.conflicting_constraints))
+        update.update(status=PatientActivityStatus.UNRESOLVED, timing=None)
+    update["explanation"] = explanation
+    return evaluated.model_copy(update=update)
+
+
+@dataclass
+class _Run:
+    """Per-evaluation WP3 inputs, resolved once (never stored on the evaluator)."""
+
+    schedule: UniversalSchedule
+    facts: OccurrenceFacts
+    processes: ProcessStates
+    periods: list[AssignmentPeriod]
+    #: Events whose series has no final occurrence yet (LAST stays unknown).
+    open_series: set[str] = field(default_factory=set)
+
+
+def _open_series(
+    schedule: UniversalSchedule,
+    plan: ConditionalPlan,
+    cycle_plans: dict[str, CyclePlan],
+    processes: ProcessStates,
+) -> set[str]:
+    """Series whose LAST occurrence cannot be known yet (design: "LAST in an
+    unfinished series can be unknown").
+
+    Open-ended by rule - HORIZON termination (or a CONDITION one that has not
+    fired), or a conditional repeat until resolution that is unresolved - and
+    not ended by a terminal state of its process. A materialization horizon is
+    never the end of a series.
+    """
+    output: set[str] = set()
+    for event in schedule.events:
+        termination = None
+        if event.recurrence is not None:
+            termination = event.recurrence.termination
+        elif event.recurrence_plan is not None:
+            termination = event.recurrence_plan.termination
+        elif event.calendar_recurrence is not None:
+            termination = event.calendar_recurrence.termination
+        else:
+            cycles = _every_cycle_plan(event, cycle_plans)
+            termination = cycles.termination if cycles is not None else None
+        open_ended = termination is not None and termination.type in {"HORIZON", "CONDITION"}
+        activation = plan.activations.get(event.code)
+        if activation is not None and activation.repeat_until_resolved and activation.resolution_date is None:
+            open_ended = True
+        if not open_ended:
+            continue
+        timeline = processes.process_for(event.code)
+        if (timeline is not None and timeline.terminal() is not None) or processes.consent_withdrawn:
+            continue
+        output.add(event.code)
+    return output
+
+
+def _with_assignment_values(context: PatientContext, values: dict[str, str | None]) -> PatientContext:
+    """A copy of the context carrying one assignment period's values."""
+    updated = context.model_copy(deep=True)
+    named = {"ARM": "arm_code", "COHORT": "cohort_code", "POPULATION": "population_code"}
+    for dimension, value in values.items():
+        if dimension in named:
+            setattr(updated, named[dimension], value)
+        # ``dimension_values`` may also carry a named dimension (the
+        # assignment workflow writes both), and it wins in applicability, so
+        # it must hold the period's value too.
+        if value is None:
+            updated.dimension_values.pop(dimension, None)
+        else:
+            updated.dimension_values[dimension] = [value]
+    return updated
+
+
+def _period_json(period: AssignmentPeriod) -> dict[str, object]:
+    return {
+        "start": period.start.isoformat() if period.start else None,
+        "end": period.end.isoformat() if period.end else None,
+        "values": dict(period.values), "facts": list(period.fact_ids),
+    }
+
+
+def _item_date(item: EvaluatedEvent) -> date | None:
+    timing = item.timing
+    if timing is None:
+        return None
+    value = timing.nominal_start or timing.earliest or timing.latest
+    return _as_date(value) if value is not None else None
+
+
+def _reindex(items: list[EvaluatedEvent], episode_index: int, condition_code: str) -> list[EvaluatedEvent]:
+    """Give one condition episode's occurrences their own identities (AT-10)."""
+    output = []
+    for item in items:
+        index = episode_occurrence_index(episode_index, item.occurrence_index)
+        explanation = dict(item.explanation)
+        explanation["condition_episode"] = {
+            "condition": condition_code, "episode": episode_index,
+            **occurrence_identity(index),
+        }
+        output.append(item.model_copy(update={"occurrence_index": index, "explanation": explanation}))
+    return output
+
+
 class ScheduleEvaluator:
     version = "uctsm-evaluator.v1"
+
+    def _evaluate_with_history(
+        self,
+        event: Event,
+        context: PatientContext,
+        prior: dict[str, list[EvaluatedEvent]],
+        horizon: date,
+        *,
+        plan: ConditionalPlan,
+        assignments: frozenset[str],
+        cycle_plans: dict[str, CyclePlan],
+        run: _Run,
+    ) -> list[EvaluatedEvent]:
+        """Evaluate one event over its assignment periods and condition episodes.
+
+        RL-11/AT-11: with dated assignment history, each occurrence is judged
+        against the assignment in force ON ITS DATE; a late crossover changes
+        only the period after its effective date.
+        Without history (every existing context) this is ``_evaluate_event``.
+        """
+        def once(ctx: PatientContext) -> list[EvaluatedEvent]:
+            results = self._evaluate_event(
+                event, ctx, prior, horizon, plan=plan, assignments=assignments,
+                cycle_plans=cycle_plans, run=run)
+            return self._episode_identity(event, plan, results)
+
+        history_dimensions = {dimension for period in run.periods for dimension in period.values}
+        uses_history = any(
+            rule.dimension in history_dimensions for rule in event.applicability)
+        if not run.periods or not uses_history:
+            return once(context)
+        kept: list[EvaluatedEvent] = []
+        seen: set[int] = set()
+        undated: list[EvaluatedEvent] = []
+        last = len(run.periods) - 1
+        for number, period in enumerate(run.periods):
+            results = once(_with_assignment_values(context, period.values))
+            for item in results:
+                when = _item_date(item)
+                if when is None:
+                    if number == last:
+                        undated.append((item, period))
+                    continue
+                if not period.contains(when) or item.occurrence_index in seen:
+                    continue
+                seen.add(item.occurrence_index)
+                explanation = dict(item.explanation)
+                explanation["assignment_period"] = _period_json(period)
+                kept.append(item.model_copy(update={"explanation": explanation}))
+        for item, period in undated:
+            if item.occurrence_index in seen:
+                continue
+            if kept and item.status == PatientEventStatus.NOT_APPLICABLE:
+                # Applicable earlier in the history: the dated occurrences of
+                # that period stand; nothing is due under the current one.
+                continue
+            explanation = dict(item.explanation)
+            explanation["assignment_period"] = _period_json(period)
+            kept.append(item.model_copy(update={"explanation": explanation}))
+            seen.add(item.occurrence_index)
+        return sorted(kept, key=lambda item: item.occurrence_index)
+
+    @staticmethod
+    def _episode_identity(
+        event: Event, plan: ConditionalPlan, results: list[EvaluatedEvent],
+    ) -> list[EvaluatedEvent]:
+        """AT-10: an ADD_EVENT visit of a LATER condition episode gets that
+        episode's own identities, so it can never reuse - and overwrite - the
+        first episode's persisted occurrence. Episode 0 keeps its numbering
+        (NF-08). Repeats are numbered per episode in ``_episode_repeats``."""
+        activation = plan.activations.get(event.code)
+        if activation is None or activation.repeat_interval is not None or not activation.episode_index:
+            return results
+        return _reindex(results, activation.episode_index, activation.condition_code)
 
     def evaluate(
         self,
@@ -874,7 +2031,10 @@ class ScheduleEvaluator:
         events_by_code = {event.code: event for event in schedule.events}
         evaluated: list[EvaluatedEvent] = []
         results_by_code: dict[str, list[EvaluatedEvent]] = {}
+        snapshot = context
+        context = localise_context(context)
         working_context = context.model_copy(deep=True)
+        cycle_plans = schedule_cycle_plans(schedule)
 
         # WHAT becomes applicable is decided first; WHEN it happens is decided below.
         plan = build_conditional_plan(schedule, working_context)
@@ -888,14 +2048,34 @@ class ScheduleEvaluator:
             code: block
             for block in schedule.repeat_blocks for code in block.event_codes
         }
+        assignments = assignment_dimensions(schedule)
+        if cycle_plans:
+            publish_cycle_anchors(cycle_plans, context, working_context, horizon)
+        # WP3 facts. Every structure is empty for a context without them, and
+        # each step below is then a no-op (NF-08).
+        run = _Run(
+            schedule=schedule,
+            facts=OccurrenceFacts.build(context.occurrence_facts),
+            processes=build_process_states(
+                schedule, [*context.process_transitions, *plan.process_transitions]),
+            periods=assignment_periods(context.assignment_history),
+        )
+        run.open_series = _open_series(schedule, plan, cycle_plans, run.processes)
 
         for code in topological_event_codes(schedule):
             event = events_by_code[code]
-            event_results = self._evaluate_event(
+            event_results = self._evaluate_with_history(
                 event, working_context, results_by_code, horizon, plan=plan,
+                assignments=assignments, cycle_plans=cycle_plans, run=run,
             )
+            event_results = apply_event_constraints(
+                event, event_results, working_context, results_by_code, run=run)
             event_results = self._apply_block_state(
                 event_results, plan, blocks_by_event.get(code))
+            event_results = apply_process_states(
+                code, event_results, run.processes, run.facts.outcome,
+                holds_applied=event.calendar_recurrence is not None)
+            event_results = [annotate_occurrence(item, run.facts) for item in event_results]
             # Dependent events below see the FULL series; only what is written
             # down is trimmed, and that happens once at the end.
             evaluated.extend(event_results)
@@ -903,11 +2083,10 @@ class ScheduleEvaluator:
             dates = [item.timing.nominal_start for item in event_results if item.timing and item.timing.nominal_start]
             if dates:
                 working_context.event_values[code] = dates
-                for anchor in schedule.anchors:
-                    if anchor.source_event_code != code:
-                        continue
-                    selection = str((anchor.derivation_rule or {}).get("selection", "LAST")).upper()
-                    working_context.anchors[anchor.code] = min(dates) if selection == "FIRST" else max(dates)
+            self._derive_event_anchors(schedule, code, event_results, context, working_context)
+            if cycle_plans:
+                # A cycle's Cycle 1 anchor may itself come from a visit just dated.
+                publish_cycle_anchors(cycle_plans, context, working_context, horizon)
         evaluated, repeat_summaries = _apply_rolling_horizon(
             evaluated, schedule, plan, rolling, horizon)
         return EvaluationResult(
@@ -915,12 +2094,56 @@ class ScheduleEvaluator:
             schedule_version_id=schedule.schedule_version_id,
             patient_id=context.patient_id,
             evaluator_version=self.version,
-            input_snapshot=context.model_dump(mode="json"),
+            input_snapshot=snapshot.model_dump(mode="json"),
             events=evaluated,
             confinements=self._evaluate_confinements(
                 schedule, working_context, results_by_code, plan,
                 today=today or date.today()),
         )
+
+    @staticmethod
+    def _derive_event_anchors(
+        schedule: UniversalSchedule,
+        code: str,
+        event_results: list[EvaluatedEvent],
+        recorded: PatientContext,
+        working_context: PatientContext,
+    ) -> None:
+        """Set anchors that come from an event (``Anchor.source_event_code``).
+
+        Doc C6: only what actually happened is actual. A date the site recorded
+        for the source event is actual; a date this evaluation merely CALCULATED
+        for it is a plan, so it lands in ``planned_anchors`` and dates only rules
+        that accept a planned value. A value recorded directly on the anchor
+        always wins over one derived here, because a person entered it.
+
+        A calculated date is used as a plan only when it is an exact target:
+        a RANGE's start is the opening of a window, not the day surgery is
+        planned for, so a range-timed event yields no planned anchor at all.
+
+        "Last" is only actual once no scheduled occurrence remains outstanding:
+        the second of six doses is the latest dose given, not the last dose.
+        """
+        actual_dates = recorded.actual_event_values.get(code) or []
+        outstanding = [
+            item for item in event_results
+            if item.status == PatientEventStatus.RESOLVED
+            and item.timing is not None and item.timing.nominal_start is not None
+        ]
+        planned_dates = [
+            item.timing.nominal_start for item in outstanding
+            if item.timing.precision == "EXACT"
+        ]
+        for anchor in schedule.anchors:
+            if anchor.source_event_code != code:
+                continue
+            selection = str((anchor.derivation_rule or {}).get("selection", "LAST")).upper()
+            pick = min if selection == "FIRST" else max
+            actual_is_final = selection == "FIRST" or len(actual_dates) >= len(outstanding)
+            if anchor.code not in recorded.anchors and actual_dates and actual_is_final:
+                working_context.anchors[anchor.code] = pick(actual_dates)
+            if anchor.code not in recorded.planned_anchors and planned_dates:
+                working_context.planned_anchors[anchor.code] = pick(planned_dates)
 
     def _evaluate_confinements(
         self,
@@ -1055,6 +2278,13 @@ class ScheduleEvaluator:
                 f"condition {condition_code} requires manual review before scheduling")
             explanation["manual_review_for_condition"] = condition_code
             return [EvaluatedEvent(status=PatientEventStatus.UNRESOLVED, **base)]
+        refused_rule = plan.refused_event_codes.get(event.code)
+        if refused_rule is not None:
+            # Doc I8: said out loud, so a trial-level rule that was recorded as
+            # active is never mistaken for one that silently failed to act.
+            explanation["refused_trial_level_rule"] = {
+                "rule": refused_rule, "scope": plan.refused_rules.get(refused_rule),
+            }
         if plan.is_conditional(event.code) and not plan.is_active(event.code):
             explanation["reason"] = "protocol condition has not occurred for this patient"
             explanation["conditional"] = True
@@ -1075,6 +2305,20 @@ class ScheduleEvaluator:
         condition remains active, generation is bounded by the evaluation horizon.
         """
         activation = plan.activations[event.code]
+        output = self._episode_repeats(event, activation, horizon, base)
+        if not output:
+            explanation = dict(base["explanation"])
+            explanation["reason"] = "condition is resolved; no further repeat is due"
+            return [EvaluatedEvent(
+                **{**base, "explanation": explanation},
+                status=PatientEventStatus.NOT_APPLICABLE,
+            )]
+        return output
+
+    @staticmethod
+    def _episode_repeats(
+        event: Event, activation: "EventActivation", horizon: date, base: dict[str, object],
+    ) -> list[EvaluatedEvent]:
         interval = activation.repeat_interval
         current: Temporal = activation.occurrence_date
         stop: Temporal = horizon
@@ -1089,30 +2333,37 @@ class ScheduleEvaluator:
             stop = min(stop, resolution)
         output: list[EvaluatedEvent] = []
         index = 0
-        current = add_amount(current, interval)
+        origin = current
+        window = effective_window(event)
+        # Counted from the condition's occurrence date, never from the previous
+        # repeat, so a monthly repeat cannot drift onto a clamped month-end.
+        current = nth_occurrence(origin, interval, 1)
         while current <= stop and index < 1000:
+            earliest, latest = _window_bounds(current, window)
             timing = ResolvedTiming(
-                nominal_start=current, nominal_end=current, precision="EXACT")
+                nominal_start=current, nominal_end=current, earliest=earliest,
+                latest=latest, precision="EXACT")
             explanation = dict(base["explanation"])
             explanation["conditional_repeat"] = {
                 "condition": activation.condition_code,
                 "index": index,
                 "result": timing.model_dump(mode="json"),
             }
+            occurrence_index = index
+            if activation.episode_index:
+                occurrence_index = episode_occurrence_index(activation.episode_index, index)
+                explanation["condition_episode"] = {
+                    "condition": activation.condition_code,
+                    "episode": activation.episode_index,
+                    **occurrence_identity(occurrence_index),
+                }
             output.append(EvaluatedEvent(
                 **{**base, "explanation": explanation},
-                occurrence_index=index, status=PatientEventStatus.RESOLVED, timing=timing,
-                activities=[],
+                occurrence_index=occurrence_index, status=PatientEventStatus.RESOLVED,
+                timing=timing, activities=[],
             ))
             index += 1
-            current = add_amount(current, interval)
-        if not output:
-            explanation = dict(base["explanation"])
-            explanation["reason"] = "condition is resolved; no further repeat is due"
-            return [EvaluatedEvent(
-                **{**base, "explanation": explanation},
-                status=PatientEventStatus.NOT_APPLICABLE,
-            )]
+            current = nth_occurrence(origin, interval, index + 1)
         return output
 
     @staticmethod
@@ -1167,12 +2418,21 @@ class ScheduleEvaluator:
 
             paused_in = _containing_pause(start_date, pauses)
             if paused_in is not None:
-                updated.append(_with_block_reason(
+                held = _with_block_reason(
                     item, block.code, PatientEventStatus.PAUSED, directive.condition_code,
                     f"repeating block {block.code} is paused; this occurrence is not "
                     "due while the patient is off the cadence",
                     BlockState.PAUSED,
-                ))
+                )
+                resolved_by = plan.held_after_resolution.get(block.code)
+                if resolved_by is not None and paused_in[1] is None:
+                    explanation = dict(held.explanation)
+                    explanation["held_after_resolution"] = resolved_by
+                    explanation["reason"] = (
+                        f"condition {resolved_by} is resolved, but resolution does not resume "
+                        f"block {block.code}; it stays paused until an explicit resume is recorded")
+                    held = held.model_copy(update={"explanation": explanation})
+                updated.append(held)
                 continue
 
             if resumed is None or _before_or_equal(start_date, resumed):
@@ -1189,6 +2449,9 @@ class ScheduleEvaluator:
         horizon: date,
         *,
         plan: ConditionalPlan | None = None,
+        assignments: frozenset[str] | None = None,
+        cycle_plans: dict[str, CyclePlan] | None = None,
+        run: "_Run | None" = None,
     ) -> list[EvaluatedEvent]:
         plan = plan or ConditionalPlan()
         applicability = _evaluate_applicability(event.applicability, context)
@@ -1216,6 +2479,16 @@ class ScheduleEvaluator:
         conditional_result = self._conditional_gate(event, plan, base, explanation)
         if conditional_result is not None:
             return conditional_result
+        if applicability == TruthValue.UNKNOWN and condition != TruthValue.UNKNOWN:
+            awaited = _awaited_assignments(
+                event.applicability, context,
+                assignments if assignments is not None else ASSIGNMENT_DIMENSIONS)
+            if awaited:
+                # Doc H2: e.g. every arm visit before a late randomisation.
+                explanation["reason"] = (
+                    f"waiting for the patient's {', '.join(awaited)} assignment")
+                explanation["waiting_for_assignment"] = awaited
+                return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ASSIGNMENT, **base)]
         if applicability == TruthValue.UNKNOWN or condition == TruthValue.UNKNOWN:
             return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_CONDITION, **base)]
         blocked = []
@@ -1271,6 +2544,20 @@ class ScheduleEvaluator:
                     except ValueError:
                         value = date.fromisoformat(value)
                 timing_context.event_values[dependency.source_event_code] = [value]
+        waiting_for_actual = _record_anchor_basis(event, timing_context, explanation)
+        cycle_plan = _cycle_plan_for(event, cycle_plans or {})
+        if cycle_plan is not None:
+            return self._expand_cycle_days(
+                event, cycle_plan, timing_context, horizon,
+                {**base, "dependency_result": dependency_result})
+        if event.recurrence_plan is not None:
+            return self._expand_recurrence_plan(
+                event, timing_context, horizon,
+                {**base, "dependency_result": dependency_result})
+        if event.calendar_recurrence is not None:
+            return self._expand_calendar_recurrence(
+                event, timing_context, horizon,
+                {**base, "dependency_result": dependency_result}, run)
         try:
             timing = evaluate_timing(event.timing, timing_context)
         except UnsupportedTimingError as error:
@@ -1278,12 +2565,18 @@ class ScheduleEvaluator:
             return [EvaluatedEvent(status=PatientEventStatus.UNRESOLVED, **base)]
         if timing is None:
             explanation["reason"] = "required anchor or event reference is not available"
+            if waiting_for_actual:
+                explanation["reason"] = _waiting_for_actual_reason(waiting_for_actual)
+                explanation["waiting_for_actual_anchor"] = waiting_for_actual
             return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
         activation = plan.activations.get(event.code)
         if activation is not None and activation.repeat_interval is not None:
             return self._expand_conditional_repeats(
                 event, plan, horizon, {**base, "dependency_result": dependency_result})
         if event.recurrence is None:
+            if event.window is not None and timing.precision == "EXACT" and timing.nominal_start is not None:
+                earliest, latest = _window_bounds(timing.nominal_start, event.window)
+                timing = timing.model_copy(update={"earliest": earliest, "latest": latest})
             explanation["result"] = timing.model_dump(mode="json")
             return [EvaluatedEvent(
                 status=PatientEventStatus.RESOLVED, timing=timing,
@@ -1304,71 +2597,346 @@ class ScheduleEvaluator:
     ) -> list[EvaluatedEvent]:
         rule = event.recurrence
         assert rule is not None
-        current = _resolve_reference(rule.start_reference, context)
-        if current is None:
+        origin = _resolve_reference(rule.start_reference, context)
+        if origin is None:
+            waiting_for_actual = _record_anchor_basis(event, context, base["explanation"])
+            if waiting_for_actual:
+                base["explanation"]["reason"] = _waiting_for_actual_reason(waiting_for_actual)
+                base["explanation"]["waiting_for_actual_anchor"] = waiting_for_actual
             return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
+        current = origin
         if rule.start_offset is not None:
-            current = add_amount(current, rule.start_offset)
-        stop_date: Temporal = horizon
-        max_count = 10000
-        termination = rule.termination
-        relative_end: Temporal | None = None
-        if termination.type == "COUNT":
-            max_count = termination.count or 0
-        elif termination.type == "DATE" and termination.termination_date is not None:
-            stop_date = min(horizon, termination.termination_date)
-        elif termination.type == "RELATIVE":
-            end_anchor = _resolve_reference(termination.end_reference, context)
-            if end_anchor is None:
-                explanation = {**base["explanation"], "reason": "The recurrence end anchor has not been recorded.",
-                    "waiting_for_anchor": termination.end_reference.code}
-                return [EvaluatedEvent(**{**base, "explanation": explanation}, status=PatientEventStatus.WAITING_FOR_ANCHOR)]
-            relative_end = add_amount(end_anchor, termination.end_offset)
-        elif termination.type == "EVENT" and termination.event_code:
-            values = context.event_values.get(termination.event_code, [])
-            if values:
-                stop_date = min(stop_date, min(values))
-        elif termination.type == "CONDITION" and termination.condition is not None:
-            result = evaluate_condition(termination.condition, context.state)
-            if result == TruthValue.UNKNOWN:
-                return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_CONDITION, **base)]
-            if result == TruthValue.TRUE:
-                effective = context.state_effective_at.get(f"recurrence:{event.code}")
-                if effective is None:
-                    explanation = dict(base["explanation"])
-                    explanation["reason"] = "termination condition is true but its effective time is unresolved"
-                    return [EvaluatedEvent(
-                        **{**base, "explanation": explanation},
-                        status=PatientEventStatus.UNRESOLVED,
-                    )]
-                effective_value: Temporal = effective
-                if isinstance(current, date) and not isinstance(current, datetime):
-                    effective_value = effective.date()
-                stop_date = min(stop_date, effective_value)
+            current = add_amount(origin, rule.start_offset)
+        bound = _resolve_termination(
+            rule.termination, context, horizon,
+            effective_key=f"recurrence:{event.code}", sample=current)
+        if bound.status is not None:
+            return [_undated(base, bound)]
+        if rule.calendar_policy_ref is not None and rule.calendar_policy_ref not in KNOWN_CALENDAR_POLICIES:
+            base["explanation"]["reason"] = (
+                f"calendar policy {rule.calendar_policy_ref!r} is not one the engine executes; "
+                "the series is not dated until it is")
+            return [EvaluatedEvent(status=PatientEventStatus.UNRESOLVED, **base)]
         output: list[EvaluatedEvent] = []
         index = 0
-        if not rule.include_start:
-            current = add_amount(current, rule.interval)
-        while index < max_count and _before_or_equal(current, stop_date):
-            if relative_end is not None and (not _before_or_equal(current, relative_end)
-                or (not termination.inclusive and _before_or_equal(relative_end, current))):
-                break
-            earliest = latest = None
-            if isinstance(event.timing, NominalWindowTiming):
-                before = TemporalAmount(value=-event.timing.window.before.value, unit=event.timing.window.before.unit)
-                after = TemporalAmount(value=event.timing.window.after.value, unit=event.timing.window.after.unit)
-                earliest, latest = add_amount(current, before), add_amount(current, after)
+        # Occurrence numbering from the original start: step 0 is the start
+        # itself, so a rule that excludes the start begins at step 1.
+        first_step = 0 if rule.include_start else 1
+        window = effective_window(event)
+        monthly = rule.interval.unit in (TimeUnit.MONTH, TimeUnit.YEAR)
+        intended_day = _as_date(
+            add_amount(origin, rule.start_offset) if rule.start_offset is not None else origin).day
+
+        def occurrence(step: int) -> Temporal:
+            return nth_occurrence(origin, rule.interval, step, rule.start_offset)
+
+        current = occurrence(first_step)
+        while index < bound.max_count and bound.allows(current):
+            earliest, latest = _window_bounds(current, window)
             timing = ResolvedTiming(
                 nominal_start=current, nominal_end=current, earliest=earliest,
                 latest=latest, precision="EXACT",
             )
             explanation = dict(base["explanation"])
             explanation["recurrence"] = {"index": index, "result": timing.model_dump(mode="json")}
+            if monthly and _as_date(current).day < intended_day:
+                # AT-19: a month-end clamp is a material calendar policy. The
+                # date is the engine's existing MONTH_END_CLAMP.v1 result (NF-08),
+                # and whether the protocol stated that policy stays visible.
+                explanation["recurrence"]["calendar_policy"] = {
+                    "policy": rule.calendar_policy_ref or "MONTH_END_CLAMP.v1",
+                    "stated": rule.calendar_policy_ref is not None,
+                    "month_end_clamped": True,
+                }
             output.append(EvaluatedEvent(
                 **{**base, "explanation": explanation},
                 occurrence_index=index, status=PatientEventStatus.RESOLVED, timing=timing,
                 activities=evaluate_activities(event, context, occurrence_index=index),
             ))
             index += 1
-            current = add_amount(current, rule.interval)
+            current = occurrence(first_step + index)
+        return output
+
+    def _expand_recurrence_plan(
+        self,
+        event: Event,
+        context: PatientContext,
+        horizon: date,
+        base: dict[str, object],
+    ) -> list[EvaluatedEvent]:
+        """Expand a phased follow-up plan into one continuous series (doc E9).
+
+        Each segment is counted from its own start - the plan anchor plus the
+        previous segment's end offset - with ``nth_occurrence``, so a monthly
+        cadence never drifts onto a clamped month-end and a boundary is
+        computed exactly once. The previous segment's ``end_inclusive`` decides
+        who owns a visit falling on the boundary: inclusive, it belongs to the
+        ending segment and the next one starts one interval later; exclusive,
+        the next segment's first visit is the boundary itself. So a boundary
+        visit is never duplicated and never dropped.
+        """
+        plan = event.recurrence_plan
+        assert plan is not None
+        explanation = base["explanation"]
+        if plan.include_start is None or any(
+                segment.end_offset is not None and segment.end_inclusive is None
+                for segment in plan.segments):
+            explanation["reason"] = (
+                "the follow-up plan does not state whether a boundary visit belongs "
+                "to the segment that ends or the one that starts; confirm before scheduling"
+            )
+            return [EvaluatedEvent(status=PatientEventStatus.UNRESOLVED, **base)]
+        anchor = _resolve_reference(plan.start_reference, context)
+        if anchor is None:
+            waiting_for_actual = _record_anchor_basis(event, context, explanation)
+            if waiting_for_actual:
+                explanation["reason"] = _waiting_for_actual_reason(waiting_for_actual)
+                explanation["waiting_for_actual_anchor"] = waiting_for_actual
+            else:
+                explanation["reason"] = "required anchor or event reference is not available"
+            return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
+        bound = _resolve_termination(
+            plan.termination, context, horizon,
+            effective_key=f"recurrence:{event.code}", sample=anchor)
+        if bound.status is not None:
+            return [_undated(base, bound)]
+        window = effective_window(event)
+        output: list[EvaluatedEvent] = []
+        origin: Temporal = anchor
+        origin_offset = plan.start_offset
+        first_step = 0 if plan.include_start else 1
+        index = 0
+        finished = False
+        for number, segment in enumerate(plan.segments, start=1):
+            end = add_amount(anchor, segment.end_offset) if segment.end_offset is not None else None
+            step = first_step
+            taken = 0
+            while segment.count is None or taken < segment.count:
+                value = nth_occurrence(origin, segment.interval, step, origin_offset)
+                if end is not None and (not _before_or_equal(value, end) or (
+                        not segment.end_inclusive and _before_or_equal(end, value))):
+                    break
+                if index >= min(bound.max_count, 10000) or not bound.allows(value):
+                    finished = True
+                    break
+                earliest, latest = _window_bounds(value, window)
+                timing = ResolvedTiming(
+                    nominal_start=value, nominal_end=value, earliest=earliest,
+                    latest=latest, precision="EXACT",
+                )
+                occurrence_explanation = dict(explanation)
+                occurrence_explanation["recurrence"] = {
+                    "index": index, "segment": number, "segment_occurrence": taken,
+                    "cadence": _interval_text(segment.interval),
+                    "result": timing.model_dump(mode="json"),
+                }
+                output.append(EvaluatedEvent(
+                    **{**base, "explanation": occurrence_explanation},
+                    occurrence_index=index, status=PatientEventStatus.RESOLVED, timing=timing,
+                    activities=evaluate_activities(event, context, occurrence_index=index),
+                ))
+                index += 1
+                taken += 1
+                step += 1
+            if finished:
+                break
+            if segment.end_offset is not None:
+                origin, origin_offset = anchor, segment.end_offset
+                first_step = 1 if segment.end_inclusive else 0
+            elif segment.count is not None:
+                last = step - 1
+                spent = TemporalAmount(value=segment.interval.value * last, unit=segment.interval.unit)
+                combined = _sum_offsets(origin_offset, spent)
+                if combined is not None:
+                    origin_offset = combined
+                else:
+                    origin = nth_occurrence(origin, segment.interval, last, origin_offset)
+                    origin_offset = None
+                first_step = 1
+            else:
+                break
+        return output
+
+    def _expand_calendar_recurrence(
+        self,
+        event: Event,
+        context: PatientContext,
+        horizon: date,
+        base: dict[str, object],
+        run: "_Run | None",
+    ) -> list[EvaluatedEvent]:
+        """Expand a weekday series (WEEKDAY_GRID.v1) - see calendar_recurrence.
+
+        Each slot keeps its ordinal as ``occurrence_index`` whatever date it
+        lands on. Holds of the event's process are laid back onto the grid
+        here, so ``apply_process_states`` only applies stops for it.
+        """
+        rule = event.calendar_recurrence
+        assert rule is not None
+        explanation = base["explanation"]
+        origin = _resolve_reference(rule.start_reference, context)
+        if origin is None:
+            waiting_for_actual = _record_anchor_basis(event, context, explanation)
+            if waiting_for_actual:
+                explanation["reason"] = _waiting_for_actual_reason(waiting_for_actual)
+                explanation["waiting_for_actual_anchor"] = waiting_for_actual
+            else:
+                explanation["reason"] = "required anchor or event reference is not available"
+            return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
+        start = add_amount(origin, rule.start_offset) if rule.start_offset is not None else origin
+        bound = _resolve_termination(
+            rule.termination, context, horizon,
+            effective_key=f"recurrence:{event.code}", sample=start)
+        if bound.status is not None:
+            return [_undated(base, bound)]
+        schedule_calendars = run.schedule.holiday_calendars if run is not None else []
+        calendar = resolve_calendar(rule, schedule_calendars, context.holiday_calendars)
+        holds: list[HoldWindow] = []
+        hold_notes: list[dict[str, object]] = []
+        if run is not None:
+            timeline = run.processes.process_for(event.code)
+            if timeline is not None:
+                holds, hold_notes = timeline.holds()
+        expansion = expand_calendar(
+            rule, start, calendar=calendar,
+            facts=run.facts.for_event(event.code) if run is not None else {},
+            max_count=bound.max_count if rule.termination.type == "COUNT" else None,
+            allows=lambda value: bound.allows(value),
+            horizon=horizon, holds=holds)
+        series = dict(expansion.notes)
+        if hold_notes:
+            series["hold_notes"] = hold_notes
+        if expansion.status is not None:
+            explanation["reason"] = expansion.reason
+            explanation["calendar_recurrence"] = series
+            return [EvaluatedEvent(
+                status=expansion.status, missing_inputs=expansion.missing, **base)]
+        window = effective_window(event)
+        output: list[EvaluatedEvent] = []
+        for slot in expansion.slots:
+            item_explanation = dict(explanation)
+            item_explanation["calendar_recurrence"] = {**series, **slot.explanation()}
+            if slot.reason:
+                item_explanation["reason"] = slot.reason
+            timing = None
+            if slot.date is not None:
+                earliest, latest = _window_bounds(slot.date, window)
+                timing = ResolvedTiming(
+                    nominal_start=slot.date, nominal_end=slot.date, earliest=earliest,
+                    latest=latest, precision="EXACT",
+                    constraints=[{"type": "CALENDAR_SLOT", "session": slot.ordinal + 1}])
+                item_explanation["result"] = timing.model_dump(mode="json")
+            output.append(EvaluatedEvent(
+                **{**base, "explanation": item_explanation},
+                occurrence_index=slot.ordinal, status=slot.status, timing=timing,
+                missing_inputs=list(slot.missing),
+                activities=(
+                    evaluate_activities(event, context, occurrence_index=slot.ordinal)
+                    if timing is not None else []),
+            ))
+        if not output:
+            explanation["reason"] = "the calendar series has no session within its bounds"
+            explanation["calendar_recurrence"] = series
+            return [EvaluatedEvent(status=PatientEventStatus.NOT_APPLICABLE, **base)]
+        return output
+
+    def _expand_cycle_days(
+        self,
+        event: Event,
+        cycle_plan: CyclePlan,
+        context: PatientContext,
+        horizon: date,
+        base: dict[str, object],
+    ) -> list[EvaluatedEvent]:
+        """Date a Cycle-N-Day-D visit from its cycle's own start (doc F1-F5).
+
+        Every-cycle visits ("Days 1, 8 and 15 of each cycle") get one
+        occurrence per cycle, numbered cycle - 1, so an activity condition on
+        ``occurrence_number`` means the cycle number (doc F5). A cycle that
+        cannot be dated yet appears once, undated, with the reason - and in
+        ACTUAL_PREVIOUS_CYCLE_START mode nothing after it is listed, because a
+        later cycle has no date until the one before it actually starts.
+        """
+        timing = event.timing
+        assert isinstance(timing, CycleDayTiming)
+        explanation = base["explanation"]
+        dependency = {
+            **base["dependency_result"],
+            "mode": cycle_plan.dependency_mode.value, "cycle_plan": cycle_plan.code,
+        }
+        base = {**base, "dependency_result": dependency}
+        starts, bound = cycle_starts(cycle_plan, context, horizon)
+        if bound is None:
+            code = cycle_plan.start_reference.code
+            if code in context.planned_anchors and (
+                    cycle_plan.start_reference.accepts == AnchorAcceptance.ACTUAL):
+                explanation["reason"] = _waiting_for_actual_reason([code])
+                explanation["waiting_for_actual_anchor"] = [code]
+            else:
+                explanation["reason"] = f"cycle 1 start {code} is not available"
+            return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
+        if bound.status is not None:
+            return [_undated(base, bound)]
+        every_cycle = timing.cycle.type == "CURRENT"
+        target = timing.cycle.number or 0
+        if every_cycle:
+            selected = starts
+        else:
+            selected = [item for item in starts if item.number == target]
+            if not selected:
+                pending = starts[-1] if starts and starts[-1].start is None else None
+                if pending is not None and pending.number <= target:
+                    selected = [pending]
+                elif (cycle_plan.termination.type == "COUNT"
+                        and target > (cycle_plan.termination.count or 0)):
+                    explanation["reason"] = (
+                        f"the protocol states {cycle_plan.termination.count} cycles; "
+                        f"cycle {target} does not exist"
+                    )
+                    return [EvaluatedEvent(status=PatientEventStatus.NOT_APPLICABLE, **base)]
+        window = effective_window(event)
+        output: list[EvaluatedEvent] = []
+        for item in selected:
+            index = item.number - 1 if every_cycle else 0
+            item_explanation = dict(explanation)
+            item_explanation["cycle"] = {
+                "plan": cycle_plan.code, "number": item.number, "day": timing.day,
+                "anchor": cycle_start_anchor_code(cycle_plan.code, item.number),
+                "start": item.start.isoformat() if item.start is not None else None,
+                "start_basis": item.basis,
+                "dependency_mode": cycle_plan.dependency_mode.value,
+            }
+            if item.start is None:
+                item_explanation["reason"] = item.reason
+                waiting_key = (
+                    "waiting_for_actual" if item.status == PatientEventStatus.BLOCKED
+                    else "waiting_for_manual_date"
+                )
+                item_dependency = (
+                    {**dependency, waiting_key: item.waiting_for} if item.waiting_for
+                    else dependency
+                )
+                output.append(EvaluatedEvent(
+                    **{**base, "explanation": item_explanation,
+                       "dependency_result": item_dependency},
+                    occurrence_index=index, status=item.status,
+                ))
+                continue
+            value = add_amount(item.start, TemporalAmount(value=timing.day - 1, unit=TimeUnit.DAY))
+            if not bound.allows(value):
+                if every_cycle:
+                    break
+                continue
+            earliest, latest = _window_bounds(value, window)
+            resolved = ResolvedTiming(
+                nominal_start=value, nominal_end=value, earliest=earliest,
+                latest=latest, precision="EXACT",
+                constraints=[{"type": "CYCLE_DAY", "cycle": item.number, "day": timing.day}],
+            )
+            item_explanation["result"] = resolved.model_dump(mode="json")
+            output.append(EvaluatedEvent(
+                **{**base, "explanation": item_explanation},
+                occurrence_index=index, status=PatientEventStatus.RESOLVED, timing=resolved,
+                activities=evaluate_activities(event, context, occurrence_index=index),
+            ))
         return output

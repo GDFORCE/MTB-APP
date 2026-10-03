@@ -1,8 +1,9 @@
 import type {
-  AnchorStatusView, ConditionalDefinition, EnrolmentDimension, PatientActivity,
+  AnchorStatusView, ConditionalDefinition, CycleExplanation, CyclePlan, DependencyResult,
+  EnrolmentDimension, EventWindow, PatientActivity, RecurrenceExplanation, RecurrenceTermination,
   PatientScheduleEvent, PatientScheduleResponse, Qualifier, RepeatRuleSummary,
   ScheduleActivity, ScheduleEvent, ScheduleProjection, TypedScheduleChange,
-  UniversalSchedule,
+  UniversalSchedule, ValidationIssue,
 } from "./types";
 
 export type ProtocolScheduleRow = {
@@ -58,6 +59,12 @@ export type ProtocolScheduleRow = {
    * table carries actual times instead.
    */
   activityRows?: ProtocolActivityRow[];
+  /**
+   * Doc C6: set when this visit's timing may count from a PLANNED anchor value
+   * (a pre-op visit off a planned surgery date), so a reviewer sees it before
+   * approval. Null when every reference needs the actual date.
+   */
+  plannedAnchorNote?: string | null;
 };
 
 export type QualifierDetail = {
@@ -78,6 +85,13 @@ export type ConditionalRequirementRow = {
   status: string;
   requiresReview: boolean;
   evidenceRefs: string[];
+  /**
+   * Doc I8: "Trial-level — not applied to patients" (or Site-/Country-level)
+   * for a rule the patient engine refuses; null for a patient/arm/cohort rule.
+   */
+  scopeBadge: string | null;
+  /** True when the rule can never change a patient's visits (SITE/COUNTRY/TRIAL). */
+  trialLevel: boolean;
 };
 
 export type DayScheduleRow = {
@@ -109,6 +123,37 @@ export type PatientScheduleRow = ProtocolScheduleRow & {
    */
   expectedIso: string | null;
   actualIso: string | null;
+  /**
+   * Doc C6/D2: "Provisional — based on planned Surgery date" when the date was
+   * counted from a planned anchor value. Null for a date from actual anchors.
+   */
+  dateNote: string | null;
+  provisional: boolean;
+  /**
+   * Why an undated visit has no date, as a machine-readable kind: ASSIGNMENT
+   * (doc H2), ACTUAL_ANCHOR (doc D2: only a planned value exists), ANCHOR,
+   * CONDITION. Null for a dated, completed or not-applicable visit.
+   */
+  waitingKind:
+    | "ASSIGNMENT" | "ACTUAL_ANCHOR" | "ANCHOR" | "CONDITION"
+    | "PREVIOUS_CYCLE" | "MANUAL_DATE" | null;
+  /** Doc F1-F5: "Cycle 3 Day 8" on a cycle visit; null otherwise. */
+  cycleLabel: string | null;
+  /** How the cycle start was dated, e.g. "Nominal grid — not moved by an earlier late cycle". */
+  cycleBasis: string | null;
+  /** Doc E9: "Phase 2 (every 6 months), visit 3" on a phased follow-up visit. */
+  phaseLabel: string | null;
+  /** The three lines above, non-empty only, for the component to list under the name. */
+  contextLines: string[];
+  /** WP2: constraint-set feasibility for this occurrence; null for legacy rules. */
+  feasibility: FeasibilityView | null;
+  /** WP3: process state, calendar session, booking, performed time, episode. */
+  factLines: string[];
+  /** A booking outside the permitted dates (the rule itself never moves). */
+  bookedOutside: boolean;
+  logicalKey: string | null;
+  /** Newest occurrence record; a correction supersedes it. */
+  latestOccurrenceId: string | null;
 };
 
 /**
@@ -122,6 +167,8 @@ export type RepeatRuleRow = {
   cadence: string;
   continuation: string;
   nextDate: string;
+  /** Doc E9: each cadence of a phased plan, in order; empty for one cadence. */
+  segments?: string[];
 };
 
 const EMPTY = "—";
@@ -133,6 +180,57 @@ export function compactScheduleWindow(value: string): string {
   const [, before, unit, after] = match;
   const units = `${unit.toLowerCase()}${Number(before) === 1 && Number(after) === 1 ? "" : "s"}`;
   return Number(before) === Number(after) ? `±${before} ${units}` : `-${before}/+${after} ${units}`;
+}
+
+/**
+ * Doc B4: exact text shown where the protocol states no window. A window is
+ * never defaulted to ±0 or ±3 days - saying there is none is the answer.
+ */
+export const NO_WINDOW_STATED = "No window stated";
+
+/**
+ * Doc B2/B3: an event's own window rule, e.g. "±14 days" or "-0/+3 days"
+ * (up to 3 days late, never early). Returns null when the protocol states none
+ * or the shape is incomplete - a partial window is not guessed at.
+ */
+export function eventWindowText(window?: EventWindow | null): string | null {
+  const before = window?.before;
+  const after = window?.after;
+  if (!before || !after) return null;
+  if (typeof before.value !== "number" || typeof after.value !== "number") return null;
+  if (!before.unit || !after.unit) return null;
+  const unitFor = (amount: { value: number; unit: string }) => {
+    const unit = amount.unit.toLowerCase();
+    return `${unit}${amount.value === 1 ? "" : "s"}`;
+  };
+  return compactScheduleWindow(
+    `-${before.value} ${unitFor(before)}/+${after.value} ${unitFor(after)}`);
+}
+
+/**
+ * The window a patient's visit may happen in, from the evaluator's resolved
+ * earliest/latest dates. One-sided bounds read as words ("From 19 Oct 2026",
+ * "By 22 Oct 2026") rather than a range with a dash or ellipsis standing in for
+ * the missing side.
+ *
+ * `dated` says the visit itself has a target date; only then does "no bounds"
+ * mean the protocol stated no window rather than the visit simply being undated.
+ */
+export function patientWindowText(
+  earliest?: string | null, latest?: string | null,
+  options: { dated?: boolean; protocolStatesWindow?: boolean } = {},
+): string {
+  const from = earliest ? displayDate(earliest) : null;
+  const to = latest ? displayDate(latest) : null;
+  if (from && to) {
+    if (from === to) {
+      return options.protocolStatesWindow === false ? NO_WINDOW_STATED : `${from} only`;
+    }
+    return `${from} – ${to}`;
+  }
+  if (from) return `From ${from}`;
+  if (to) return `By ${to}`;
+  return options.dated && options.protocolStatesWindow === false ? NO_WINDOW_STATED : EMPTY;
 }
 
 // Codes such as PK_2H or ANC_LOW must read as clinical language, not as enums.
@@ -170,6 +268,9 @@ export function displayPatientState(value: string): string {
     RESOLVED: "Scheduled",
     WAITING_FOR_ANCHOR: "Awaiting Anchor",
     WAITING_FOR_CONDITION: "Inactive",
+    // Doc H2: needs a randomisation or assignment, not a clinical event - so it
+    // is neither "Inactive" (a trigger) nor anything that can read as due.
+    WAITING_FOR_ASSIGNMENT: "Waiting for assignment",
     // Doc 10 s13-s15: available, never due. Deliberately not "Scheduled" and
     // not "Not applicable" - the patient may well have one.
     AVAILABLE_ON_DEMAND: "Available if needed",
@@ -189,9 +290,67 @@ export function displayPatientState(value: string): string {
   return labels[value] || titleCase(value);
 }
 
+/** Anchor code -> the name the protocol gives it (e.g. SURGERY -> "Surgery"). */
+export type AnchorNames = Record<string, string>;
+
+const stringList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && !!item) : [];
+
+// "Surgery Date" -> "Surgery", so callers can append "date" without doubling it.
+const anchorLabel = (code: string, names?: AnchorNames) =>
+  (names?.[code] || titleCase(code)).replace(/\s+date$/i, "");
+
+/** Doc H2: the study dimensions (ARM, COHORT, ...) this visit waits to be assigned. */
+export function waitingForAssignment(event: PatientScheduleEvent): string[] {
+  return stringList((event.explanation || {}).waiting_for_assignment);
+}
+
+/** Doc D2: anchors with only a planned value while this visit needs the actual one. */
+export function waitingForActualAnchors(event: PatientScheduleEvent): string[] {
+  return stringList((event.explanation || {}).waiting_for_actual_anchor);
+}
+
+/** Doc C6: anchors whose PLANNED value dated this visit - i.e. why it is provisional. */
+export function plannedAnchorBasis(event: PatientScheduleEvent): string[] {
+  const basis = (event.explanation || {}).anchor_basis;
+  if (!basis || typeof basis !== "object" || Array.isArray(basis)) return [];
+  return Object.entries(basis as Record<string, unknown>)
+    .filter(([, value]) => value === "PLANNED")
+    .map(([code]) => code)
+    .sort();
+}
+
+/**
+ * Doc C6/D2: the label on a visit dated from a planned anchor, e.g.
+ * "Provisional — based on planned Surgery date". Null when every anchor that
+ * dated it is actual.
+ */
+export function provisionalDateNote(
+  event: PatientScheduleEvent, names?: AnchorNames,
+): string | null {
+  const planned = plannedAnchorBasis(event);
+  if (!planned.length) return null;
+  return `Provisional — based on planned ${planned.map((code) => anchorLabel(code, names)).join(", ")} date`;
+}
+
 /** Name the event a visit is waiting for, so the row reads "Awaiting Surgery Date". */
-export function displayWaitingReason(event: PatientScheduleEvent): string | null {
+export function displayWaitingReason(
+  event: PatientScheduleEvent, names?: AnchorNames,
+): string | null {
   const explanation = (event.explanation || {}) as Record<string, unknown>;
+  if (event.status === "WAITING_FOR_ASSIGNMENT") {
+    const dimensions = waitingForAssignment(event).map(titleCase);
+    return dimensions.length
+      ? `Waiting for randomisation/assignment: ${dimensions.join(", ")}`
+      : "Waiting for randomisation/assignment";
+  }
+  const cycleReason = cycleWaitingReason(event);
+  if (cycleReason) return cycleReason;
+  const actual = waitingForActualAnchors(event);
+  if (event.status === "WAITING_FOR_ANCHOR" && actual.length) {
+    // Doc D2: a planned date exists but this rule may only count from reality.
+    return `Waiting for ${actual.map((code) => anchorLabel(code, names)).join(", ")} to be recorded (planned date not used)`;
+  }
   const waitingFor = explanation.waiting_for_activity;
   if (typeof waitingFor === "string") return `Awaiting ${titleCase(waitingFor)} Time`;
   const dependency = explanation.reconciliation ? null : explanation.reason;
@@ -202,15 +361,14 @@ export function displayWaitingReason(event: PatientScheduleEvent): string | null
   if (event.status !== "WAITING_FOR_ANCHOR" && event.status !== "BLOCKED") return null;
   const anchor = anchorCodeFrom(event);
   return anchor
-    ? `Awaiting ${titleCase(anchor)} Date`
+    ? `Awaiting ${anchorLabel(anchor, names)} Date`
     : (typeof dependency === "string" ? dependency : "Awaiting required date");
 }
 
 function anchorCodeFrom(event: PatientScheduleEvent): string | null {
   const explanation = (event.explanation || {}) as Record<string, unknown>;
-  const dependency = explanation.dependency_result as Record<string, unknown> | undefined;
-  const waiting = (dependency?.waiting_for_actual || dependency?.waiting_for_manual_date) as
-    string[] | undefined;
+  const dependency = dependencyResultOf(event);
+  const waiting = dependency.waiting_for_actual || dependency.waiting_for_manual_date;
   if (Array.isArray(waiting) && waiting.length) return waiting[0];
   const timing = explanation.timing as Record<string, unknown> | undefined;
   const reference = timing?.reference as Record<string, unknown> | undefined;
@@ -237,6 +395,219 @@ function recurrenceText(recurrence?: Record<string, unknown>): string | null {
     ending = ` ${termination.inclusive ? "through" : "before"} ${amount} ${Math.abs(amount) === 1 ? endUnit : `${endUnit}s`} after ${titleCase(termination.end_reference.code)}`;
   }
   return `Every ${interval.value} ${plural}${ending}`;
+}
+
+type Amount = { value?: number; unit?: string } | null | undefined;
+
+/**
+ * Port of evaluator.py `_cadence_text`: "every month", "every 3 months",
+ * and (`_interval_text`) "yearly" for 1 year or 12 months - so a protocol row
+ * reads exactly like the backend's RepeatSummary for the same rule.
+ */
+export function cadenceText(amount: Amount): string {
+  if (!amount || typeof amount.value !== "number" || !amount.unit) return "on a repeating schedule";
+  const word = amount.unit.toLowerCase();
+  if (amount.value === 1) return `every ${word.endsWith("s") ? word.slice(0, -1) : word}`;
+  return `every ${amount.value} ${word.endsWith("s") ? word : `${word}s`}`;
+}
+
+function intervalText(amount: Amount): string {
+  const unit = amount?.unit?.toUpperCase();
+  if ((unit === "YEAR" && amount?.value === 1) || (unit === "MONTH" && amount?.value === 12)) return "yearly";
+  return cadenceText(amount);
+}
+
+/** Port of `_milestone_text`: +24 MONTH reads "year 2"; else "week 6". */
+function milestoneText(amount: Amount): string | null {
+  if (!amount || typeof amount.value !== "number" || !amount.unit) return null;
+  const unit = amount.unit.toUpperCase();
+  if (unit === "MONTH" && amount.value % 12 === 0) return `year ${amount.value / 12}`;
+  return `${unit.toLowerCase()} ${amount.value}`;
+}
+
+/** Port of `plan_segment_texts`: one phrase per cadence of a phased plan. */
+export function planSegmentTexts(plan?: Record<string, unknown> | null): string[] {
+  const segments = Array.isArray(plan?.segments) ? plan!.segments as Record<string, unknown>[] : [];
+  return segments.map((segment) => {
+    let text = intervalText(segment.interval as Amount);
+    const end = milestoneText(segment.end_offset as Amount);
+    if (end) text += ` to ${end}`;
+    else if (typeof segment.count === "number") text += ` for ${segment.count} visits`;
+    return text;
+  });
+}
+
+/** Segments joined the way the backend joins them (`plan_cadence_text`). */
+export const joinSegments = (segments: string[]) => segments.join(", then ");
+
+/**
+ * Doc E9: a phased follow-up plan as one rule, worded like the backend -
+ * "Every 3 months to year 2, then every 6 months to year 5, then yearly" -
+ * followed by how the plan ends when it says. An unstated end is said, never
+ * invented (the validator raises PHASED_SEGMENT_UNBOUNDED).
+ */
+export function recurrencePlanText(plan?: Record<string, unknown> | null): string | null {
+  if (!plan) return null;
+  const segments = planSegmentTexts(plan);
+  if (!segments.length) return "Phased repeat as specified by protocol";
+  const text = joinSegments(segments);
+  const last = (plan.segments as Record<string, unknown>[])[segments.length - 1];
+  const openLast = last.end_offset == null && typeof last.count !== "number";
+  const termination = plan.termination as RecurrenceTermination | null | undefined;
+  const ending = termination
+    ? `; ${termination.type === "HORIZON"
+      ? "continues while the patient remains on study"
+      : terminationText(termination, "visits")}`
+    : (openLast ? "; end not stated" : "");
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}${ending}`;
+}
+
+/**
+ * Port of `_termination_text`: how a repeat or cycle plan ends, never
+ * implying a cap nobody stated.
+ */
+export function terminationText(termination: RecurrenceTermination | null | undefined, noun = "occurrences"): string {
+  switch (termination?.type) {
+    case "COUNT": return `a protocol maximum of ${termination.count} ${noun}`;
+    case "DATE": return termination.date ? `until ${displayDate(termination.date)}` : "until a stated date";
+    case "EVENT": return `until ${titleCase(termination.event_code || "a later event")}`;
+    case "CONDITION": return "until the protocol stopping condition is met";
+    case "RELATIVE": {
+      const offset = termination.end_offset;
+      if (!offset || !termination.end_reference?.code) return "at a stated point";
+      const unit = offset.unit.toLowerCase();
+      return `${termination.inclusive ? "through" : "before"} ${offset.value} ${Math.abs(offset.value) === 1 ? unit : `${unit}s`} after ${titleCase(termination.end_reference.code)}`;
+    }
+    case "HORIZON": return "no stated maximum; the protocol continues while the patient remains on study";
+    default: return "end not stated";
+  }
+}
+
+// --- Treatment cycles (doc F1-F5) -------------------------------------------
+
+/** `explanation.cycle`, when this visit is a Cycle-N-Day-D occurrence. */
+export function cycleOf(event: PatientScheduleEvent): CycleExplanation | null {
+  const cycle = (event.explanation || {}).cycle as CycleExplanation | undefined;
+  return cycle && typeof cycle === "object" && typeof cycle.number === "number" ? cycle : null;
+}
+
+/** `dependency_result`, top level (per-event endpoint) or nested in the explanation. */
+export function dependencyResultOf(event: PatientScheduleEvent): DependencyResult {
+  const nested = (event.explanation || {}).dependency_result as DependencyResult | undefined;
+  return { ...(nested || {}), ...(event.dependency_result || {}) };
+}
+
+/** "Cycle 3 Day 8". */
+export function cycleDayLabel(cycle: Pick<CycleExplanation, "number" | "day">): string {
+  return `Cycle ${cycle.number} Day ${cycle.day}`;
+}
+
+/** The cycle number a `<plan>_<n>_START` anchor code names, or null. */
+export function cycleNumberFromAnchor(code: string, plan?: string | null): number | null {
+  const match = /^(.+)_([1-9][0-9]*)_START$/.exec(code);
+  if (!match) return null;
+  if (plan && match[1] !== plan) return null;
+  return Number(match[2]);
+}
+
+const cycleBasisLabels: Record<string, string> = {
+  NOMINAL: "Nominal grid — not moved by an earlier late cycle",
+  ACTUAL: "Actual start recorded",
+  FROM_ACTUAL_PREVIOUS_CYCLE: "Counted from the previous cycle's actual start",
+  PLANNED: "Planned start — cycle not yet recorded as given",
+  MANUAL: "Start date entered by the site",
+};
+
+/** How this cycle's start was dated, in plain words; null while it is undated. */
+export function cycleStartBasisText(cycle: CycleExplanation): string | null {
+  if (!cycle.start) return null;
+  return cycleBasisLabels[cycle.start_basis] || titleCase(cycle.start_basis);
+}
+
+/**
+ * Why an undated cycle has no date: "Waiting for Cycle 3 to be given" when the
+ * next cycle follows the previous one's actual start, "Waiting for the Cycle 4
+ * start date to be entered" in MANUAL mode, and the unstated-rule case.
+ */
+export function cycleWaitingReason(event: PatientScheduleEvent): string | null {
+  const cycle = cycleOf(event);
+  const dependency = dependencyResultOf(event);
+  const plan = cycle?.plan || dependency.cycle_plan || null;
+  const numberFrom = (codes?: string[]) => {
+    for (const code of codes || []) {
+      const number = cycleNumberFromAnchor(code, plan);
+      if (number) return number;
+    }
+    return null;
+  };
+  if (cycle?.start_basis === "WAITING_FOR_ACTUAL_PREVIOUS_CYCLE" || (event.status === "BLOCKED" && numberFrom(dependency.waiting_for_actual))) {
+    const previous = numberFrom(dependency.waiting_for_actual) || (cycle ? cycle.number - 1 : null);
+    return previous ? `Waiting for Cycle ${previous} to be given` : "Waiting for the previous cycle to be given";
+  }
+  if (cycle?.start_basis === "WAITING_FOR_MANUAL_DATE" || (event.status === "WAITING_FOR_ANCHOR" && numberFrom(dependency.waiting_for_manual_date))) {
+    const number = numberFrom(dependency.waiting_for_manual_date) || cycle?.number;
+    return number ? `Waiting for the Cycle ${number} start date to be entered` : "Waiting for a cycle start date to be entered";
+  }
+  if (cycle?.start_basis === "UNCLEAR") {
+    return "Cycle start rule not stated in the protocol — needs review";
+  }
+  return null;
+}
+
+/** Doc E9: "Phase 2 (every 6 months), visit 3" for one occurrence of a phased plan. */
+export function phaseLabel(event: PatientScheduleEvent): string | null {
+  const recurrence = (event.explanation || {}).recurrence as RecurrenceExplanation | undefined;
+  if (!recurrence || typeof recurrence.segment !== "number") return null;
+  const cadence = recurrence.cadence ? ` (${recurrence.cadence})` : "";
+  const visit = typeof recurrence.segment_occurrence === "number"
+    ? `, visit ${recurrence.segment_occurrence + 1}` : "";
+  return `Phase ${recurrence.segment}${cadence}${visit}`;
+}
+
+export type CyclePlanRow = {
+  id: string;
+  block: string;
+  length: string;
+  startsFrom: string;
+  mode: string;
+  modeUnstated: boolean;
+  ends: string;
+  dayOneVisit: string;
+};
+
+/** Doc F1-F3: each dependency mode in words a reviewer can check against the protocol. */
+export function cycleDependencyModeText(mode: string, length: Amount): string {
+  const span = cadenceText(length).replace(/^every /, "");
+  switch (mode) {
+    case "NOMINAL": return `Fixed grid — every ${span} from Cycle 1 Day 1; a late cycle does not move later cycles`;
+    case "ACTUAL_PREVIOUS_CYCLE_START": return `Each cycle starts ${span} after the previous cycle actually started`;
+    case "MANUAL": return "The site enters each cycle's start date";
+    case "UNCLEAR": return "Not stated in the protocol — blocks approval";
+    default: return titleCase(mode);
+  }
+}
+
+/** The protocol's treatment-cycle plans, for review before approval. */
+export function toCyclePlanRows(schedule: UniversalSchedule | null | undefined): CyclePlanRow[] {
+  return (schedule?.repeat_blocks || []).flatMap((block) => {
+    const plan: CyclePlan | null | undefined = block.cycle_plan;
+    if (!plan) return [];
+    return [{
+      id: block.id || plan.code,
+      block: block.display_name || block.protocol_label || titleCase(plan.code),
+      length: cadenceText(plan.length).replace(/^every /, ""),
+      startsFrom: `Cycle 1 starts at ${titleCase(plan.start_reference.code)}`
+        + (plan.start_reference.accepts === "PLANNED_OR_ACTUAL" ? " (planned date accepted)" : ""),
+      mode: cycleDependencyModeText(plan.dependency_mode, plan.length),
+      modeUnstated: plan.dependency_mode === "UNCLEAR",
+      ends: sentenceCase(terminationText(plan.termination, "cycles")),
+      dayOneVisit: plan.start_event_code
+        ? `Actual starts read from ${titleCase(plan.start_event_code)}`
+        : (plan.dependency_mode === "ACTUAL_PREVIOUS_CYCLE_START"
+          ? "No Day-1 visit named — each actual start must be recorded"
+          : EMPTY),
+    }];
+  });
 }
 
 const visitModeLabels: Record<string, string> = {
@@ -634,7 +1005,9 @@ export function toTimelineEntries(
       date: row.actualDate !== EMPTY ? row.actualDate : row.expectedDate,
       visit: row.visitName,
       status: row.status,
-      detail: row.unscheduledReason || (row.visitMode || null),
+      // A provisional date must say so wherever the date is shown (doc C6).
+      detail: row.dateNote || (row.contextLines?.length ? row.contextLines.join(" · ") : null)
+        || row.unscheduledReason || (row.visitMode || null),
       past: Boolean(iso && iso <= today),
       undated: !iso,
       _sort: iso || "",
@@ -906,6 +1279,15 @@ const anchorStatusLabels: Record<string, string> = {
 };
 
 /**
+ * Doc C6: a confirmed PLANNED record confirms the plan, not that the event
+ * happened, so it still reads as a planned date.
+ */
+export function anchorStatusText(item: Pick<AnchorStatusView, "status" | "confirmed">): string {
+  if (item.status === "PLANNED" && item.confirmed) return "Planned date (plan confirmed)";
+  return anchorStatusLabels[item.status] || titleCase(item.status);
+}
+
+/**
  * Doc 1 s22. A site reading this needs to know at a glance which anchors still
  * need something from them, so NOT_REQUIRED and CONFIRMED are the only two
  * statuses that are finished.
@@ -916,11 +1298,13 @@ export function toAnchorStatusRows(
   return (anchors || []).map((item) => ({
     id: item.anchor_code,
     anchor: item.display_name,
-    status: anchorStatusLabels[item.status] || titleCase(item.status),
+    status: anchorStatusText(item),
     date: displayDate(item.value || undefined),
     detail: item.awaiting_event_code
       ? `Awaiting ${titleCase(item.awaiting_event_code)}`
-      : item.reason,
+      : (item.status === "PLANNED"
+        ? "Expected date only — the event has not happened yet"
+        : item.reason),
     needsAttention:
       item.status !== "NOT_REQUIRED" && item.status !== "CONFIRMED"
       && item.status !== "CORRECTED",
@@ -931,13 +1315,20 @@ export function toAnchorStatusRows(
 export function toRepeatRuleRows(
   summaries: RepeatRuleSummary[] | undefined,
 ): RepeatRuleRow[] {
-  return (summaries || []).filter((item) => item.continues).map((item) => ({
-    id: item.event_code,
-    eventCode: titleCase(item.event_code),
-    cadence: titleCase(item.cadence),
-    continuation: `Continues — ${item.termination}`,
-    nextDate: displayDate(item.next_unmaterialized || undefined),
-  }));
+  return (summaries || []).filter((item) => item.continues).map((item) => {
+    const segments = (item.segments || []).filter(Boolean);
+    return {
+      id: item.event_code,
+      eventCode: titleCase(item.event_code),
+      // Doc E9: a phased plan reads as its cadences in order, not one cadence.
+      // Backend already joins them the same way in `cadence`; rebuilt here so
+      // an older payload with segments but a bare cadence still reads right.
+      cadence: segments.length ? joinSegments(segments) : titleCase(item.cadence),
+      continuation: `Continues — ${item.termination}`,
+      nextDate: displayDate(item.next_unmaterialized || undefined),
+      segments,
+    };
+  });
 }
 
 const scopeLabels: Record<string, string> = {
@@ -976,9 +1367,9 @@ function visitLabel(event: ScheduleEvent, index: number): string {
   const candidate = event.protocol_label?.trim();
   if (candidate && /^(visit\s*)?v?\d+[a-z]?\+?$/i.test(candidate)) {
     const normalized = candidate.replace(/^visit\s*/i, "V").replace(/^([0-9])/, "V$1");
-    return event.recurrence && !normalized.endsWith("+") ? `${normalized}+` : normalized;
+    return (event.recurrence || event.recurrence_plan) && !normalized.endsWith("+") ? `${normalized}+` : normalized;
   }
-  return `V${index + 1}${event.recurrence ? "+" : ""}`;
+  return `V${index + 1}${event.recurrence || event.recurrence_plan ? "+" : ""}`;
 }
 
 function applicabilityText(event: ScheduleEvent): string {
@@ -1000,7 +1391,7 @@ export function toProtocolScheduleRows(
   const conditional = new Set(conditionalEventCodes);
   return schedule.events.map((event, index) => {
     const projection = byId.get(event.id);
-    const recurring = recurrenceText(event.recurrence);
+    const recurring = recurrenceText(event.recurrence) || recurrencePlanText(event.recurrence_plan);
     const isConditional = conditional.has(event.code) || event.conditions.length > 0;
     const conditionPrefix = isConditional ? "If required by protocol" : null;
     const activityQualifiers = event.activities.flatMap(
@@ -1029,7 +1420,10 @@ export function toProtocolScheduleRows(
       visit: visitLabel(event, index),
       visitName: projection?.title || event.display_name || event.protocol_label,
       timing,
-      window: projection?.window_display || EMPTY,
+      // Doc B2/B3: the event's own window rule first (it applies to every
+      // occurrence and may be one-sided), then the timing-derived display.
+      // Doc B4: never a default - say none was stated.
+      window: eventWindowText(event.window) || projection?.window_display || NO_WINDOW_STATED,
       type: displayVisitType(projection?.event_type_display || event.event_type),
       activities: projection?.activities_display?.filter(Boolean) || event.activities.map((item) => item.display_name),
       appliesTo: applicabilityText(event),
@@ -1046,8 +1440,33 @@ export function toProtocolScheduleRows(
       visitModeKey: visitModeIconKey(event.visit_mode, event.allowed_visit_modes),
       repeatRule: recurring,
       activityRows: toProtocolActivityRows(event.activities),
+      plannedAnchorNote: plannedAnchorNote(event),
     };
   });
+}
+
+/** Every ANCHOR reference in a timing/recurrence tree that accepts a planned value. */
+function plannedAcceptingAnchors(node: unknown, found: Set<string>, depth = 0): void {
+  if (!node || typeof node !== "object" || depth > 8) return;
+  if (Array.isArray(node)) {
+    node.forEach((item) => plannedAcceptingAnchors(item, found, depth + 1));
+    return;
+  }
+  const record = node as Record<string, unknown>;
+  if (record.kind === "ANCHOR" && typeof record.code === "string"
+    && record.accepts === "PLANNED_OR_ACTUAL") {
+    found.add(record.code);
+  }
+  Object.values(record).forEach((value) => plannedAcceptingAnchors(value, found, depth + 1));
+}
+
+/** Doc C6: "May be dated from a planned Surgery date" at protocol-review time. */
+export function plannedAnchorNote(event: Pick<ScheduleEvent, "timing" | "recurrence">): string | null {
+  const found = new Set<string>();
+  plannedAcceptingAnchors(event.timing, found);
+  plannedAcceptingAnchors(event.recurrence, found);
+  if (!found.size) return null;
+  return `May be dated from a planned ${[...found].sort().map((code) => titleCase(code)).join(", ")} date`;
 }
 
 /**
@@ -1057,33 +1476,222 @@ export function toProtocolScheduleRows(
  */
 export function toConditionalRequirementRows(
   conditions: ConditionalDefinition[],
+  scopes: Record<string, string> = {},
 ): ConditionalRequirementRow[] {
-  const actionText: Record<string, string> = {
-    ADD_EVENT: "Activate",
-    REPEAT_EVENT: "Repeat",
-    CANCEL_EVENT: "Cancel",
-    STOP_BLOCK: "Stop",
-    PAUSE_BLOCK: "Pause",
-    RESUME_BLOCK: "Resume",
-    EXTEND_CONFINEMENT: "Extend stay",
-    MANUAL_REVIEW: "Flag for review of",
-  };
-  return conditions.map((condition) => ({
-    id: condition.condition_code,
-    condition: condition.display_name || condition.protocol_label,
-    trigger: "PI/CRC confirms",
-    action: condition.actions
-      .map((action) => `${actionText[action.action_type] || titleCase(action.action_type)} `
-        + titleCase(action.target_code))
-      .join(" · ") || "No schedule change",
-    timing: condition.occurrence_date
-      ? `Occurred ${displayDate(condition.occurrence_date)}`
-      : "On confirmation",
-    status: displayPatientState(condition.state),
-    requiresReview: condition.requires_review
-      || condition.interpretation_status === "UNRESOLVED",
-    evidenceRefs: condition.evidence_refs,
-  }));
+  return conditions.map((condition) => {
+    const scope = condition.scope || scopes[condition.condition_code];
+    const scopeBadge = ruleScopeBadge(scope);
+    return {
+      id: condition.condition_code,
+      condition: condition.display_name || condition.protocol_label,
+      trigger: scopeBadge ? "Trial-level workflow" : "PI/CRC confirms",
+      action: conditionalActionText(condition.actions),
+      timing: scopeBadge
+        ? "Never changes a patient's visits"
+        : (condition.occurrence_date
+          ? `Occurred ${displayDate(condition.occurrence_date)}`
+          : "On confirmation"),
+      status: displayPatientState(condition.state),
+      requiresReview: condition.requires_review
+        || condition.interpretation_status === "UNRESOLVED",
+      evidenceRefs: condition.evidence_refs,
+      scopeBadge,
+      trialLevel: !!scopeBadge,
+    };
+  });
+}
+
+const conditionalActionLabels: Record<string, string> = {
+  ADD_EVENT: "Activate",
+  REPEAT_EVENT: "Repeat",
+  CANCEL_EVENT: "Cancel",
+  STOP_BLOCK: "Stop",
+  PAUSE_BLOCK: "Pause",
+  RESUME_BLOCK: "Resume",
+  EXTEND_CONFINEMENT: "Extend stay",
+  MANUAL_REVIEW: "Flag for review of",
+};
+
+function conditionalActionText(actions: { action_type: string; target_code: string }[]): string {
+  return (actions || [])
+    .map((action) => `${conditionalActionLabels[action.action_type] || titleCase(action.action_type)} `
+      + titleCase(action.target_code))
+    .join(" · ") || "No schedule change";
+}
+
+/** Doc I8: the scopes whose rules act on an individual patient's schedule. */
+export const PATIENT_RULE_SCOPES: ReadonlySet<string> = new Set(["PATIENT", "ARM", "COHORT"]);
+
+const ruleScopeLevels: Record<string, string> = {
+  TRIAL: "Trial-level",
+  SITE: "Site-level",
+  COUNTRY: "Country-level",
+};
+
+/**
+ * Doc I8: the badge on a rule the patient engine refuses, e.g.
+ * "Trial-level — not applied to patients". Null for PATIENT/ARM/COHORT rules
+ * and for rules stored before scopes existed (those are PATIENT).
+ */
+export function ruleScopeBadge(scope?: string | null): string | null {
+  if (!scope) return null;
+  const key = scope.toUpperCase();
+  if (PATIENT_RULE_SCOPES.has(key)) return null;
+  return `${ruleScopeLevels[key] || `${titleCase(key)}-level`} — not applied to patients`;
+}
+
+/** Condition code -> scope, from the schedule definition itself. */
+export function conditionScopes(schedule: UniversalSchedule | null | undefined): Record<string, string> {
+  const scopes: Record<string, string> = {};
+  for (const definition of schedule?.conditional_definitions || []) {
+    if (definition.scope) scopes[definition.code] = definition.scope;
+  }
+  return scopes;
+}
+
+/**
+ * The protocol's conditional rules at review time, before any patient exists.
+ * Trial/site/country rules are badged so a reviewer knows they will never move
+ * a patient visit (the validator raises TRIAL_LEVEL_RULE_NOT_APPLIED_TO_PATIENTS).
+ */
+export function toProtocolConditionalRows(
+  schedule: UniversalSchedule | null | undefined,
+): ConditionalRequirementRow[] {
+  return (schedule?.conditional_definitions || []).map((definition) => {
+    const scopeBadge = ruleScopeBadge(definition.scope);
+    return {
+      id: definition.code,
+      condition: definition.display_name || definition.protocol_label,
+      trigger: scopeBadge ? "Trial-level workflow" : "PI/CRC confirms",
+      action: conditionalActionText(definition.actions),
+      timing: scopeBadge ? "Never changes a patient's visits" : "On confirmation",
+      status: scopeBadge ? "Not applied to patients" : "Patient rule",
+      requiresReview: definition.requires_review
+        || definition.interpretation_status === "UNRESOLVED",
+      evidenceRefs: definition.evidence_refs || [],
+      scopeBadge,
+      trialLevel: !!scopeBadge,
+    };
+  });
+}
+
+/**
+ * Human headings for validator issue codes. The backend message stays the
+ * detail; this is the one-line "what kind of problem" a reviewer scans.
+ */
+const issueCodeLabels: Record<string, string> = {
+  AMBIGUOUS_WINDOW: "Window has no single target date",
+  PLANNED_ANCHOR_AFTER_EVENT: "Visit after the event may use a planned date",
+  TRIAL_LEVEL_RULE_NOT_APPLIED_TO_PATIENTS: "Trial-level rule — not applied to patients",
+  UNCLEAR_DEPENDENCY_MODE: "Cycle/visit dependency not stated (planned or actual previous date)",
+  CIRCULAR_DEPENDENCY: "Circular dependency",
+  AMBIGUOUS_TIMING: "Timing unclear",
+  AMBIGUOUS_CONDITION: "Condition unclear",
+  AMBIGUOUS_BASELINE: "Baseline unclear",
+  CONFLICTING_SOURCE: "Protocol sources disagree",
+  CONFLICTING_EVIDENCE: "Protocol evidence disagrees",
+  UNRESOLVED_REFERENCE: "Refers to something not in the schedule",
+  UNKNOWN_ANCHOR: "Reference date not defined",
+  UNRESOLVED_SCHEDULE_ORIGIN: "Day 1 reference not stated",
+  UNRESOLVED_QUALIFIER: "Footnote needs a decision",
+  MISSING_EVIDENCE: "No protocol evidence",
+  UNSUPPORTED_TIMING: "Timing the engine cannot calculate",
+  INVALID_CONFINEMENT: "Inpatient stay is inconsistent",
+  INFORMATION_LOSS: "Protocol detail may be lost",
+  EMPTY_SCHEDULE: "Schedule has no visits",
+  // Engine batch 2: phased follow-up and treatment cycles (doc E9, F1-F5).
+  UNRESOLVED_RECURRENCE_BOUNDARY: "Follow-up boundary not stated (does the boundary visit belong here?)",
+  PHASED_SEGMENT_UNBOUNDED: "Follow-up phase has no stated end",
+  DUPLICATE_CYCLE_PLAN: "Two cycle plans share one code",
+  CYCLE_START_SOURCE_UNSTATED: "No Day-1 visit named for actual cycle starts",
+  UNRESOLVED_CONDITION: "Condition not yet resolved",
+  ORPHAN_QUALIFIER: "Footnote not attached to any visit",
+  DUPLICATE_ACTIVITY: "Activity listed twice",
+};
+
+export function displayIssueCode(code: string): string {
+  if (issueCodeLabels[code]) return issueCodeLabels[code];
+  // validator.py emits DUPLICATE_<KIND> for every coded entity type.
+  const duplicate = /^DUPLICATE_([A-Z_]+)$/.exec(code);
+  if (duplicate) return `Two ${titleCase(duplicate[1]).toLowerCase()} entries share one code`;
+  return titleCase(code);
+}
+
+
+
+/** "Blocks approval · Window has no single target date" for one issue. */
+export function issueHeading(issue: Pick<ValidationIssue, "issue_code" | "blocking">): string {
+  return `${issue.blocking ? "Blocks approval" : "Review"} · ${displayIssueCode(issue.issue_code)}`;
+}
+
+/**
+ * Doc C6/D: whether a recorded reference date is an expectation or a fact.
+ * There is deliberately NO default - recording a surgery date must say which
+ * it is, because a planned date silently treated as actual would date post-op
+ * visits and reminders as though the operation had happened.
+ */
+export type AnchorDateKind = "PLANNED" | "ACTUAL";
+
+export const ANCHOR_DATE_KINDS: { value: AnchorDateKind; label: string; effect: string; sourceType: string }[] = [
+  {
+    value: "ACTUAL",
+    label: "Actual date",
+    effect: "The event has happened on this date. Every visit counted from it can be dated.",
+    sourceType: "ACTUAL_EVENT",
+  },
+  {
+    value: "PLANNED",
+    label: "Planned date",
+    effect: "Expected only. Visits before the event may be dated provisionally; visits after it keep waiting for the actual date.",
+    // anchor_status.PLANNED_SOURCE_TYPES
+    sourceType: "PLANNED_PROCEDURE",
+  },
+];
+
+export function anchorSourceType(kind: AnchorDateKind): string {
+  const match = ANCHOR_DATE_KINDS.find((item) => item.value === kind);
+  if (!match) throw new Error(`Unknown anchor date kind ${kind}`);
+  return match.sourceType;
+}
+
+/** Why a reference-date entry cannot be submitted yet, or null when it can. */
+export function validateAnchorEntry(entry: {
+  anchorId?: string | null; date?: string | null; kind?: AnchorDateKind | null;
+}): string | null {
+  if (!entry.anchorId) return "Choose which reference date this is.";
+  if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) return "Enter the date as YYYY-MM-DD.";
+  if (!entry.kind) return "Say whether this is the planned date or the actual date.";
+  return null;
+}
+
+/** Anchor statuses where a site may still record (or replace a plan with) a date. */
+const RECORDABLE_ANCHOR_STATUSES = new Set(["AWAITING_EVENT", "PLANNED", "ACTUAL"]);
+
+/**
+ * The anchors a site can record a date for on the patient screen, joined to
+ * the schedule's anchor definition id the record endpoint needs.
+ */
+export function toRecordableAnchors(
+  statuses: AnchorStatusView[] | undefined,
+  definitions: { id: string; code: string; display_name: string }[] | undefined,
+): { id: string; code: string; label: string; status: string }[] {
+  const byCode = new Map((definitions || []).map((item) => [item.code, item]));
+  return (statuses || []).flatMap((item) => {
+    const definition = byCode.get(item.anchor_code);
+    if (!definition || !RECORDABLE_ANCHOR_STATUSES.has(item.status)) return [];
+    return [{
+      id: definition.id, code: item.anchor_code,
+      label: item.display_name || definition.display_name,
+      status: anchorStatusText(item),
+    }];
+  });
+}
+
+/** Schedule anchors as a code -> name map, for waiting/provisional labels. */
+export function anchorNamesFrom(
+  anchors: { code: string; display_name: string }[] | undefined,
+): AnchorNames {
+  return Object.fromEntries((anchors || []).map((item) => [item.code, item.display_name]));
 }
 
 /**
@@ -1127,10 +1735,80 @@ function displayDate(value?: string): string {
   return `${Number(match[3])} ${months[Number(match[2]) - 1]} ${match[1]}`;
 }
 
+// --- Constraint-set feasibility (WP2) -------------------------------------------------
+
+export type FeasibilityView = {
+  status: "FEASIBLE" | "INCOMPLETE" | "INFEASIBLE";
+  headline: string;
+  /** One line per permitted interval; disjoint intervals are never merged (AT-18). */
+  intervals: string[];
+  /** "Waiting for RT end (actual)" - one per missing input, by name. */
+  missing: string[];
+  /** Constraint ids that cannot be satisfied together. */
+  conflicts: string[];
+};
+
+function readFeasibility(event: PatientScheduleEvent) {
+  const stored = (event.explanation?.feasibility || null) as Record<string, any> | null;
+  const status = event.feasibility || stored?.status;
+  if (!status) return null;
+  return {
+    status: status as FeasibilityView["status"],
+    intervals: (event.feasible_intervals?.length ? event.feasible_intervals : stored?.intervals) || [],
+    missing: (event.missing_inputs?.length ? event.missing_inputs : stored?.missing_inputs) || [],
+    conflicts: (event.conflicting_constraints?.length ? event.conflicting_constraints : stored?.conflicting_constraints) || [],
+  };
+}
+
+function boundText(bound: { value?: string | null; inclusive: boolean; provisional?: boolean } | undefined, side: "lower" | "upper") {
+  if (!bound || bound.value == null) {
+    const open = side === "lower" ? "no earliest date" : "no latest date";
+    return bound?.provisional ? `${open} yet (may still change)` : open;
+  }
+  const date = displayDate(String(bound.value).slice(0, 10));
+  const word = side === "lower" ? (bound.inclusive ? "on or after" : "after") : (bound.inclusive ? "on or before" : "before");
+  return `${word} ${date}${bound.provisional ? " (may still change)" : ""}`;
+}
+
+export function feasibleIntervalText(interval: { lower: any; upper: any }): string {
+  return `${boundText(interval.lower, "lower")}, ${boundText(interval.upper, "upper")}`;
+}
+
+export function missingInputText(input: { kind: string; code?: string | null; occurrence?: string | null; accepts?: string | null; reason: string }, names?: AnchorNames): string {
+  const name = input.code ? (names?.[input.code] || input.code.replace(/_/g, " ").toLowerCase()) : "a date";
+  const which = input.accepts === "PLANNED_OR_ACTUAL" ? " (planned or actual)" : input.accepts === "ACTUAL" ? " (actual)" : "";
+  switch (input.reason) {
+    case "PLANNED_ONLY": return `Waiting for ${name} (actual) — only a planned date is recorded`;
+    case "LAST_NOT_FINAL": return `Waiting for the final ${name}`;
+    case "NO_PLANNED_TARGET": return `Waiting for a planned ${name}`;
+    case "OCCURRENCE_NOT_AVAILABLE": return `Waiting for ${name}${input.occurrence ? ` (${input.occurrence.toLowerCase()} occurrence)` : ""}`;
+    case "TIME_PRECISION": return `Needs the exact time of ${name}`;
+    case "DATE_PRECISION": return `Needs an exact day for ${name}`;
+    case "CALENDAR_POLICY_REQUIRED": return "Needs a calendar rule decision (e.g. month-end) before dating";
+    case "TIMING_REFERENCE_MISSING": return `Waiting for ${name}${which}`;
+    default: return `Waiting for ${name}${which}`;
+  }
+}
+
+export function toFeasibilityView(event: PatientScheduleEvent, names?: AnchorNames): FeasibilityView | null {
+  const read = readFeasibility(event);
+  if (!read) return null;
+  const intervals: string[] = read.intervals.map((item: any) => feasibleIntervalText(item));
+  const missing: string[] = Array.from(new Set<string>(read.missing.map((item: any) => missingInputText(item, names))));
+  const headline = read.status === "INFEASIBLE"
+    ? "No date satisfies all rules"
+    : read.status === "INCOMPLETE"
+      ? (missing[0] || "Waiting for information")
+      : intervals.length > 1 ? `${intervals.length} separate permitted periods` : "Permitted period";
+  return { status: read.status, headline, intervals, missing, conflicts: read.conflicts.map(String) };
+}
+
 export function toPatientScheduleRows(
   patientSchedule: PatientScheduleResponse,
   protocolRows: ProtocolScheduleRow[],
+  options: { anchorNames?: AnchorNames; processNames?: Record<string, string> } = {},
 ): PatientScheduleRow[] {
+  const names = options.anchorNames;
   const definitions = new Map(protocolRows.map((row) => [row.eventDefinitionId, row]));
   return patientSchedule.events.map((event, index) => {
     const definition = definitions.get(event.event_definition_id);
@@ -1157,10 +1835,47 @@ export function toPatientScheduleRows(
       activityRows: [],
     };
     const row = definition || fallback;
-    const earliest = displayDate(event.earliest_date);
-    const latest = displayDate(event.latest_date);
-    const waiting = displayWaitingReason(event);
+    const waiting = displayWaitingReason(event, names);
+    const awaitingActual = event.status === "WAITING_FOR_ANCHOR"
+      && waitingForActualAnchors(event).length > 0;
+    // Doc H2 / D2: these visits have no date, no reminder and can never be
+    // overdue - even a stray date on the payload is not shown.
+    const forcedUndated = event.status === "WAITING_FOR_ASSIGNMENT" || awaitingActual;
+    const nominal = forcedUndated ? undefined : event.nominal_start_date;
+    const dateNote = nominal ? provisionalDateNote(event, names) : null;
+    const cycle = cycleOf(event);
+    const cycleWait = cycleWaitingReason(event);
+    const waitsForPreviousCycle = !!cycleWait && (cycleWait.startsWith("Waiting for Cycle")
+      || cycleWait === "Waiting for the previous cycle to be given");
+    const waitsForManualCycle = !!cycleWait && cycleWait.includes("start date to be entered");
+    let waitingKind: PatientScheduleRow["waitingKind"] = null;
+    if (event.status === "WAITING_FOR_ASSIGNMENT") waitingKind = "ASSIGNMENT";
+    else if (waitsForPreviousCycle) waitingKind = "PREVIOUS_CYCLE";
+    else if (waitsForManualCycle) waitingKind = "MANUAL_DATE";
+    else if (awaitingActual) waitingKind = "ACTUAL_ANCHOR";
+    else if (event.status === "WAITING_FOR_ANCHOR" || event.status === "BLOCKED") waitingKind = "ANCHOR";
+    else if (event.status === "WAITING_FOR_CONDITION") waitingKind = "CONDITION";
+    let status = displayPatientState(event.status);
+    if (waitsForPreviousCycle) status = "Waiting for previous cycle";
+    else if (waitsForManualCycle) status = "Waiting for cycle start date";
+    else if (awaitingActual) status = "Waiting for actual date";
+    else if (dateNote && event.status === "RESOLVED") status = "Scheduled (provisional)";
+    const cycleLabel = cycle ? cycleDayLabel(cycle) : null;
+    const cycleBasis = cycle && nominal ? cycleStartBasisText(cycle) : null;
+    const phase = phaseLabel(event);
+    const feasibility = toFeasibilityView(event, names);
+    if (feasibility?.status === "INFEASIBLE") status = "No feasible date";
+    else if (feasibility?.status === "INCOMPLETE" && !nominal) status = "Waiting for information";
     return {
+      feasibility,
+      factLines: occurrenceFactLines(event, options.processNames),
+      bookedOutside: event.booked_outside_permitted === true,
+      logicalKey: event.logical_key || null,
+      latestOccurrenceId: event.occurrence_records?.[0]?.id || null,
+      cycleLabel,
+      cycleBasis,
+      phaseLabel: phase,
+      contextLines: [cycleLabel, cycleBasis, phase].filter((item): item is string => !!item),
       ...row,
       id: event.id,
       patientEventId: event.id,
@@ -1168,19 +1883,27 @@ export function toPatientScheduleRows(
       dayScheduleRows: toDayScheduleRows(event.activities),
       completion: toCompletionSummary(event.activities),
       // An undated visit shows the event it waits on, never an invented date.
-      expectedDate: event.nominal_start_date
-        ? displayDate(event.nominal_start_date)
-        : (waiting || EMPTY),
+      expectedDate: feasibility?.status === "INFEASIBLE"
+        ? feasibility.headline
+        : nominal
+          ? displayDate(nominal)
+          : (feasibility?.status === "INCOMPLETE" ? feasibility.headline : (waiting || EMPTY)),
       actualDate: displayDate(event.actual_date),
-      allowedWindow: earliest === EMPTY && latest === EMPTY
+      allowedWindow: forcedUndated
         ? EMPTY
-        : `${earliest} – ${latest}`,
-      status: displayPatientState(event.status),
+        : patientWindowText(event.earliest_date, event.latest_date, {
+          dated: !!nominal,
+          protocolStatesWindow: definition ? definition.window !== NO_WINDOW_STATED : undefined,
+        }),
+      status,
+      dateNote,
+      provisional: !!dateNote,
+      waitingKind,
       visitMode: displayVisitMode(event.visit_mode, definition?.allowedVisitModes),
       visitModeKey: visitModeIconKey(event.visit_mode, definition?.allowedVisitModes),
       unscheduledReason: event.unscheduled_reason || null,
       isOnDemand: event.status === "AVAILABLE_ON_DEMAND",
-      expectedIso: event.nominal_start_date || null,
+      expectedIso: nominal || null,
       actualIso: event.actual_date || null,
     };
   });
@@ -1450,4 +2173,58 @@ export function toProtocolActivityRows(
         : (nominal?.type === "UNRESOLVED" ? "Unresolved" : "OK"),
     };
   });
+}
+
+// --- WP3 occurrence details (process state, session, booking, performed) ------------------------------------------------------------------------
+
+type ProcessStateInfo = { process?: string; state?: string; effective_at?: string; reason?: string; shift_days?: number };
+
+export type OccurrenceDetail = {
+  process_state?: ProcessStateInfo | null;
+  booked_time?: string | null;
+  booked_outside_permitted?: boolean | null;
+  actual_time?: string | null;
+  condition_episode?: { condition?: string; episode?: number } | null;
+  held_after_resolution?: string | null;
+  calendar_session?: { session?: number; kind?: string; replaces_session?: number | null } | null;
+  status?: string;
+};
+
+const STATE_WORDS: Record<string, string> = {
+  HELD: "On hold", STOPPED: "Stopped", COMPLETED: "Completed", ACTIVE: "Active",
+};
+
+/** Lines under a patient visit: process state, session, booking, performed, episode. */
+export function occurrenceFactLines(event: OccurrenceDetail, processNames: Record<string, string> = {}): string[] {
+  const lines: string[] = [];
+  const session = event.calendar_session;
+  if (session?.session) {
+    let text = `Session ${session.session}`;
+    if (session.replaces_session) text += ` — replaces missed session ${session.replaces_session}`;
+    else if (event.status === "MISSED") text += " — missed (keeps its number)";
+    if (session.kind === "CONTINGENT") text += " (only if a policy is confirmed)";
+    lines.push(text);
+  }
+  const state = event.process_state;
+  if (state?.state) {
+    const who = state.process === "PATIENT" ? "Participation"
+      : (state.process && (processNames[state.process] || state.process)) || "Process";
+    let text = `${who}: ${STATE_WORDS[state.state] || state.state.toLowerCase()}`;
+    if (state.effective_at) text += ` from ${state.effective_at.slice(0, 10)}`;
+    if (state.shift_days) text += ` (moved ${state.shift_days} day${state.shift_days === 1 ? "" : "s"} by the hold)`;
+    lines.push(text);
+  }
+  if (event.held_after_resolution) {
+    lines.push(`Still on hold: ${event.held_after_resolution} resolved, but a resume must be recorded`);
+  }
+  if (event.condition_episode?.condition) {
+    lines.push(`Episode ${(event.condition_episode.episode ?? 0) + 1} of ${event.condition_episode.condition}`);
+  }
+  if (event.booked_time) {
+    lines.push(event.booked_outside_permitted
+      ? `Booked ${event.booked_time.slice(0, 10)} — Booked outside the permitted window (the rule has not moved)`
+      : `Booked ${event.booked_time.slice(0, 10)}`);
+  }
+  if (event.actual_time) lines.push(`Performed ${event.actual_time.slice(0, 10)}`);
+  return lines;
 }

@@ -47,12 +47,12 @@ const METRICS: { key: keyof RecruitmentFunnel; label: string; tone?: string }[] 
 function statusTone(status: string) {
   const normalized = status.toLowerCase();
   if (normalized.includes("complete")) {
-    return { backgroundColor: "rgba(92,154,110,0.14)", color: colors.success };
+    return { backgroundColor: "rgba(30,122,70,0.14)", color: colors.success };
   }
   if (normalized.includes("terminat")) {
-    return { backgroundColor: "rgba(192,57,43,0.12)", color: colors.destructive };
+    return { backgroundColor: "rgba(194,48,48,0.12)", color: colors.destructive };
   }
-  return { backgroundColor: "rgba(92,154,110,0.14)", color: colors.success };
+  return { backgroundColor: "rgba(30,122,70,0.14)", color: colors.success };
 }
 
 function TrialCard({ trial, onPress }: { trial: SponsorTrial; onPress: () => void }) {

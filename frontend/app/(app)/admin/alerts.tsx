@@ -36,9 +36,9 @@ const errMsg = (e: any, fb: string): string => e?.response?.data?.detail || fb;
 function sevColors(sev?: string): { fg: string; bg: string } {
   switch ((sev || "").toLowerCase()) {
     case "critical":
-    case "high": return { fg: C.destructive, bg: "rgba(192,57,43,0.12)" };
-    case "medium": return { fg: C.warning, bg: "rgba(216,154,60,0.15)" };
-    default: return { fg: C.info, bg: "rgba(123,107,184,0.12)" };
+    case "high": return { fg: C.destructive, bg: "rgba(194,48,48,0.12)" };
+    case "medium": return { fg: C.warning, bg: "rgba(178,106,0,0.15)" };
+    default: return { fg: C.info, bg: "rgba(45,108,181,0.12)" };
   }
 }
 function fmtDateTime(iso?: string): string {
@@ -207,7 +207,7 @@ export default function AdminAlerts() {
                     <View key={h.id} style={[st.card, { padding: 12 }]}>
                       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                         <RNText style={al.alertId}>{h.type || h.id.slice(0, 8)}</RNText>
-                        <View style={[st.badge, { backgroundColor: "rgba(92,154,110,0.15)" }]}>
+                        <View style={[st.badge, { backgroundColor: "rgba(30,122,70,0.15)" }]}>
                           <RNText style={[st.badgeTxt, { color: C.success }]}>Resolved</RNText>
                         </View>
                       </View>
@@ -274,7 +274,7 @@ function ResolveSheet({ alert, busy, onClose, onConfirm }: { alert: Alert | null
               <View style={{ gap: 12 }}>
                 <RNText style={al.desc}>{alert.description}</RNText>
                 <RNText style={al.fieldLabel}>Resolution note (optional, logged)</RNText>
-                <TextInput value={note} onChangeText={setNote} placeholder="What resolved this?" placeholderTextColor="rgba(123,95,115,0.5)"
+                <TextInput value={note} onChangeText={setNote} placeholder="What resolved this?" placeholderTextColor="rgba(85,98,117,0.5)"
                   multiline style={[st.card, al.input]} />
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <Pressable onPress={onClose} style={[al.cancelBtn, { flex: 1 }]}><RNText style={al.cancelTxt}>Cancel</RNText></Pressable>
@@ -296,7 +296,7 @@ const al = StyleSheet.create({
   warnTxt: { flex: 1, fontFamily: fonts.medium, fontSize: 12, color: C.primaryFg },
   sectionTitle: { fontFamily: fonts.heading, fontSize: 15, color: C.primary, marginTop: 18, marginBottom: 10 },
   sectionTitleInline: { fontFamily: fonts.heading, fontSize: 15, color: C.primary },
-  allClear: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(92,154,110,0.10)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(92,154,110,0.25)", padding: 14 },
+  allClear: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(30,122,70,0.10)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(30,122,70,0.25)", padding: 14 },
   allClearTxt: { fontFamily: fonts.semibold, fontSize: 13, color: C.success },
   dot: { width: 8, height: 8, borderRadius: 4, marginTop: 5 },
   alertId: { fontFamily: fonts.bold, fontSize: 12, color: C.foreground },
@@ -307,7 +307,7 @@ const al = StyleSheet.create({
   actBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, height: 34, borderRadius: 999, paddingHorizontal: 12, minWidth: "47%", flexGrow: 1 },
   actTxt: { fontFamily: fonts.bold, fontSize: 12 },
   historyHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: C.card, borderRadius: 14, borderWidth: 1, borderColor: C.border, padding: 14, marginTop: 18, marginBottom: 10 },
-  overlay: { flex: 1, backgroundColor: "rgba(46,27,51,0.45)", justifyContent: "flex-end" },
+  overlay: { flex: 1, backgroundColor: "rgba(15,27,45,0.45)", justifyContent: "flex-end" },
   sheet: { backgroundColor: C.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28 },
   sheetHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   sheetTitle: { fontFamily: fonts.display, fontSize: 20, color: C.foreground },

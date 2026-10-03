@@ -32,7 +32,7 @@ export function localeLabel(value?: string | null): string {
 }
 
 const en = {
-  welcome: { title: "Your trial, one sunrise at a time.", subtitle: "One warm place for sponsors, sites and patients to follow a clinical trial.", create: "Create an account", signIn: "Sign in", forgot: "Forgot password?" },
+  welcome: { title: "Every visit, on schedule, for every patient.", subtitle: "Protocol schedules, patient visits and site coordination in one place.", create: "Create an account", signIn: "Sign in", forgot: "Forgot password?" },
   common: { save: "Save", cancel: "Cancel", continue: "Continue", back: "Back", done: "Done", retry: "Retry", language: "Language" },
   dashboard: { hi: "Hi", welcomeBack: "Welcome back", yourProgress: "Your progress", visitsCompleted: "visits completed", nextVisit: "Next visit", visitSchedule: "Visit schedule", updates: "Updates", yourTrials: "Your trials", patients: "Patients", seeAll: "See all" },
   trial: { myTrial: "My Trial", myVisits: "My Visits", aboutTrial: "About this study", visits: "Visits", medications: "Medications", progress: "Progress", roadAhead: "The road ahead", contactPI: "Contact PI" },

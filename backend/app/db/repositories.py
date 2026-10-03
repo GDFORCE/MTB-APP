@@ -18,6 +18,46 @@ def _json(value: object | None) -> object | None:
     return to_jsonable_python(value, by_alias=True)
 
 
+def _repeat_rule_fields(rule: object) -> dict[str, object]:
+    """One stored repeat rule per event: a plain recurrence, a phased plan
+    (doc E9, type SEGMENTED) or a weekday series (WP3, type CALENDAR). All
+    share uctsm_event_recurrence, discriminated by their typed ``type``."""
+    empty = {"recurrence": None, "recurrence_plan": None, "calendar_recurrence": None}
+    if isinstance(rule, dict) and rule.get("type") == "SEGMENTED":
+        return {**empty, "recurrence_plan": rule}
+    if isinstance(rule, dict) and rule.get("type") == "CALENDAR":
+        return {**empty, "calendar_recurrence": rule}
+    return {**empty, "recurrence": rule}
+
+
+#: WP3 schedule-level structures kept in the version's existing metadata JSON
+#: under reserved keys (no migration; a version without them loads as before).
+PROCESSES_METADATA_KEY = "_uctsm_processes"
+HOLIDAY_CALENDARS_METADATA_KEY = "_uctsm_holiday_calendars"
+
+
+def _repeat_rule(event: object) -> object | None:
+    return event.recurrence or event.recurrence_plan or event.calendar_recurrence
+
+
+#: Composable constraint sets (Event/Activity.constraints) are stored inside the
+#: row's existing metadata JSON under this reserved key - no schema migration
+#: is needed, and a row without the key loads with ``constraints=None``, i.e.
+#: exactly its previous meaning. A CONSTRAINED timing lives in the timing JSON.
+CONSTRAINTS_METADATA_KEY = "_uctsm_constraints"
+
+
+def _metadata_with_constraints(metadata: dict | None, constraints: object | None) -> dict | None:
+    if constraints is None:
+        return metadata
+    return {**(metadata or {}), CONSTRAINTS_METADATA_KEY: _json(constraints)}
+
+
+def _split_constraints(metadata: dict | None) -> tuple[dict, object | None]:
+    values = dict(metadata or {})
+    return values, values.pop(CONSTRAINTS_METADATA_KEY, None)
+
+
 class ScheduleRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -40,7 +80,12 @@ class ScheduleRepository:
             status=schedule.schedule_metadata.status.value,
             extraction_run_id=extraction_run_id,
             schema_version=schedule.schema_version,
-            metadata_json=schedule.schedule_metadata.model_dump(mode="json", exclude={"status", "version_number", "protocol_version_id"}),
+            metadata_json={
+                **schedule.schedule_metadata.model_dump(mode="json", exclude={"status", "version_number", "protocol_version_id"}),
+                **({PROCESSES_METADATA_KEY: _json(schedule.processes)} if schedule.processes else {}),
+                **({HOLIDAY_CALENDARS_METADATA_KEY: _json(schedule.holiday_calendars)}
+                   if schedule.holiday_calendars else {}),
+            },
             dimensions=_json(schedule.dimensions),
             conditional_definitions=_json(schedule.conditional_definitions),
             repeat_blocks=_json(schedule.repeat_blocks),
@@ -84,11 +129,12 @@ class ScheduleRepository:
                 allowed_visit_modes=_json(item.allowed_visit_modes),
                 activation=item.activation,
                 epoch_id=item.epoch_id, sequence_number=item.sequence_number,
-                timing=_json(item.timing), conditions=_json(item.conditions),
+                timing=_json(item.timing), window=_json(item.window),
+                conditions=_json(item.conditions),
                 dependency_mode=item.dependency_mode.value if item.dependency_mode else None,
                 conditional_actions=_json(item.conditional_actions),
                 qualifiers=_json(item.qualifiers), confinement=_json(item.confinement),
-                metadata_json=item.metadata,
+                metadata_json=_metadata_with_constraints(item.metadata, item.constraints),
                 interpretation_status=item.interpretation_status.value,
                 requires_review=item.requires_review, evidence_refs=_json(item.evidence_refs),
             ))
@@ -104,13 +150,14 @@ class ScheduleRepository:
                     activity_type=activity.activity_type, requiredness=activity.requiredness.value,
                     timing=_json(activity.timing), conditions=_json(activity.conditions),
                     applicability=_json(activity.applicability), qualifiers=_json(activity.qualifiers),
-                    metadata_json=activity.metadata,
+                    metadata_json=_metadata_with_constraints(activity.metadata, activity.constraints),
                     interpretation_status=activity.interpretation_status.value,
                     requires_review=activity.requires_review,
                     evidence_refs=_json(activity.evidence_refs),
                 ))
-            if item.recurrence:
-                self.session.add(db.EventRecurrence(event_id=item.id, rule=_json(item.recurrence)))
+            repeat_rule = _repeat_rule(item)
+            if repeat_rule:
+                self.session.add(db.EventRecurrence(event_id=item.id, rule=_json(repeat_rule)))
         self.session.flush()
         for target in schedule.events:
             for dependency in target.dependencies:
@@ -168,15 +215,21 @@ class ScheduleRepository:
         row.display_name = event.display_name
         row.normalized_name = event.normalized_name
         row.event_type = event.event_type
+        # Attendance mode and activation are part of the rule: an edit that
+        # changes how a patient attends must survive reload (previously dropped).
+        row.visit_mode = event.visit_mode
+        row.allowed_visit_modes = _json(event.allowed_visit_modes)
+        row.activation = event.activation
         row.epoch_id = event.epoch_id
         row.sequence_number = event.sequence_number
         row.timing = _json(event.timing)
+        row.window = _json(event.window)
         row.conditions = _json(event.conditions)
         row.dependency_mode = event.dependency_mode.value if event.dependency_mode else None
         row.conditional_actions = _json(event.conditional_actions)
         row.qualifiers = _json(event.qualifiers)
         row.confinement = _json(event.confinement)
-        row.metadata_json = event.metadata
+        row.metadata_json = _metadata_with_constraints(event.metadata, event.constraints)
         row.interpretation_status = event.interpretation_status.value
         row.requires_review = event.requires_review
         row.evidence_refs = _json(event.evidence_refs)
@@ -200,8 +253,9 @@ class ScheduleRepository:
                 target_event_id=event.id, dependency_type=dependency.dependency_type,
                 condition=_json(dependency.condition),
             ))
-        if event.recurrence:
-            self.session.add(db.EventRecurrence(event_id=event.id, rule=_json(event.recurrence)))
+        repeat_rule = _repeat_rule(event)
+        if repeat_rule:
+            self.session.add(db.EventRecurrence(event_id=event.id, rule=_json(repeat_rule)))
         for activity in event.activities:
             self.session.add(db.Activity(
                 id=activity.id, event_id=event.id, code=activity.code,
@@ -209,7 +263,7 @@ class ScheduleRepository:
                 activity_type=activity.activity_type, requiredness=activity.requiredness.value,
                 timing=_json(activity.timing), conditions=_json(activity.conditions),
                 applicability=_json(activity.applicability), qualifiers=_json(activity.qualifiers),
-                metadata_json=activity.metadata,
+                metadata_json=_metadata_with_constraints(activity.metadata, activity.constraints),
                 interpretation_status=activity.interpretation_status.value,
                 requires_review=activity.requires_review,
                 evidence_refs=_json(activity.evidence_refs),
@@ -222,6 +276,8 @@ class ScheduleRepository:
         definition = self.session.get(db.ScheduleDefinition, version.schedule_definition_id)
         assert definition is not None
         metadata = dict(version.metadata_json or {})
+        processes = metadata.pop(PROCESSES_METADATA_KEY, None) or []
+        holiday_calendars = metadata.pop(HOLIDAY_CALENDARS_METADATA_KEY, None) or []
         metadata.update({
             "name": metadata.get("name", definition.name),
             "description": metadata.get("description", definition.description),
@@ -264,11 +320,13 @@ class ScheduleRepository:
             for row in self.session.scalars(select(db.EventApplicability).where(db.EventApplicability.event_id.in_(event_ids))):
                 applicability[row.event_id].append(row.expression)
             for row in self.session.scalars(select(db.Activity).where(db.Activity.event_id.in_(event_ids))):
+                activity_metadata, activity_constraints = _split_constraints(row.metadata_json)
                 activities[row.event_id].append({
                     "id": row.id, "code": row.code, "protocol_label": row.protocol_label,
                     "display_name": row.display_name, "activity_type": row.activity_type,
                     "requiredness": row.requiredness, "timing": row.timing,
-                    "conditions": row.conditions, "metadata": row.metadata_json,
+                    "conditions": row.conditions, "metadata": activity_metadata,
+                    "constraints": activity_constraints,
                     "applicability": row.applicability or [], "qualifiers": row.qualifiers or [],
                     "interpretation_status": row.interpretation_status,
                     "requires_review": row.requires_review, "evidence_refs": row.evidence_refs,
@@ -281,6 +339,10 @@ class ScheduleRepository:
                     "source_event_code": code_by_id[row.source_event_id],
                     "dependency_type": row.dependency_type, "condition": row.condition,
                 })
+        def event_payload(row: db.Event) -> dict[str, object]:
+            metadata, constraints = _split_constraints(row.metadata_json)
+            return {"metadata": metadata, "constraints": constraints}
+
         events = [domain.Event.model_validate({
             "id": row.id, "code": row.code, "protocol_label": row.protocol_label,
             "display_name": row.display_name, "normalized_name": row.normalized_name,
@@ -289,14 +351,17 @@ class ScheduleRepository:
             "allowed_visit_modes": row.allowed_visit_modes or [],
             "activation": row.activation or "SCHEDULED",
             "sequence_number": row.sequence_number, "timing": row.timing,
+            "window": row.window,
             "conditions": row.conditions, "applicability": applicability[row.id],
             "dependency_mode": row.dependency_mode,
             "conditional_actions": row.conditional_actions or [],
             "qualifiers": row.qualifiers or [], "confinement": row.confinement,
-            "dependencies": dependencies[row.id], "recurrence": recurrence.get(row.id),
+            "dependencies": dependencies[row.id],
+            **_repeat_rule_fields(recurrence.get(row.id)),
             "activities": activities[row.id], "evidence_refs": row.evidence_refs,
             "interpretation_status": row.interpretation_status,
-            "requires_review": row.requires_review, "metadata": row.metadata_json,
+            "requires_review": row.requires_review,
+            **event_payload(row),
         }) for row in event_rows]
         evidence = [domain.Evidence.model_validate({
             "id": row.id, "evidence_type": row.evidence_type,
@@ -326,6 +391,8 @@ class ScheduleRepository:
             conditional_definitions=[domain.ConditionalDefinition.model_validate(item) for item in (version.conditional_definitions or [])],
             repeat_blocks=[domain.RepeatBlock.model_validate(item) for item in (version.repeat_blocks or [])],
             confinement_episodes=[domain.ConfinementEpisodeDefinition.model_validate(item) for item in (version.confinement_episodes or [])],
+            processes=[domain.ProcessDefinition.model_validate(item) for item in processes],
+            holiday_calendars=[domain.HolidayCalendar.model_validate(item) for item in holiday_calendars],
             evidence=evidence, claim_evidence=claims, validation_issues=issues,
             created_at=version.created_at,
         )

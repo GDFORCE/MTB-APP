@@ -33,10 +33,10 @@ const W = { w55: "rgba(255,255,255,0.55)", w70: "rgba(255,255,255,0.70)", w15: "
 type Urgency = "red" | "amber" | "green" | "blue";
 
 const URGENCY: Record<Urgency, { fg: string; bg: string }> = {
-  red: { fg: C.destructive, bg: "rgba(192,57,43,0.12)" },
-  amber: { fg: C.warning, bg: "rgba(216,154,60,0.15)" },
-  green: { fg: C.success, bg: "rgba(92,154,110,0.15)" },
-  blue: { fg: C.info, bg: "rgba(123,107,184,0.14)" },
+  red: { fg: C.destructive, bg: "rgba(194,48,48,0.12)" },
+  amber: { fg: C.warning, bg: "rgba(178,106,0,0.15)" },
+  green: { fg: C.success, bg: "rgba(30,122,70,0.15)" },
+  blue: { fg: C.info, bg: "rgba(45,108,181,0.14)" },
 };
 
 const ROLE_LABELS: { key: string; label: string; color: string }[] = [
@@ -218,9 +218,9 @@ export default function AdminDashboard() {
           </View>
         ) : error ? (
           <View style={{ padding: 16, marginTop: 12 }}>
-            <View style={[st.card, { borderColor: "rgba(192,57,43,0.30)" }]}>
+            <View style={[st.card, { borderColor: "rgba(194,48,48,0.30)" }]}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(192,57,43,0.12)", alignItems: "center", justifyContent: "center" }}>
+                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(194,48,48,0.12)", alignItems: "center", justifyContent: "center" }}>
                   <AlertTriangle size={20} color={C.destructive} />
                 </View>
                 <RNText style={{ flex: 1, color: C.foreground, fontFamily: fonts.semibold, fontSize: 13 }}>{error}</RNText>
@@ -244,7 +244,7 @@ export default function AdminDashboard() {
                       <View style={[st.tileIcon, { backgroundColor: u.bg }]}>
                         <Icon size={18} color={u.fg} />
                       </View>
-                      <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                      <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                     </View>
                     <RNText style={st.tileValue}>{t.value}</RNText>
                     <RNText style={st.tileLabel}>{t.label}</RNText>
@@ -314,7 +314,7 @@ export default function AdminDashboard() {
                     <View style={[st.badge, { backgroundColor: u.bg }]}>
                       <RNText style={{ color: u.fg, fontFamily: fonts.bold, fontSize: 12 }}>{p.count}</RNText>
                     </View>
-                    <ChevronRight size={16} color="rgba(123,95,115,0.4)" />
+                    <ChevronRight size={16} color="rgba(85,98,117,0.4)" />
                   </Pressable>
                 );
               })}
@@ -373,15 +373,15 @@ const st = StyleSheet.create({
   iconBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: W.w15, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: W.w20 },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: W.w20, alignItems: "center", justifyContent: "center" },
   tileGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  tile: { width: "47.8%", flexGrow: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#2E1B33", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  tile: { width: "47.8%", flexGrow: 1, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, padding: 14, shadowColor: "#0F1B2D", shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   tileIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   tileValue: { fontFamily: fonts.display, fontSize: 26, color: C.foreground, marginTop: 10, fontVariant: ["tabular-nums"] },
   tileLabel: { fontFamily: fonts.semibold, fontSize: 12, color: C.foreground, marginTop: 2 },
   tileSub: { fontFamily: fonts.regular, fontSize: 11, color: C.mutedFg, marginTop: 3, lineHeight: 15 },
   quick: { flex: 1, alignItems: "center", paddingVertical: 14, paddingHorizontal: 6, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border },
-  quickIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: "rgba(230,155,92,0.14)", alignItems: "center", justifyContent: "center" },
+  quickIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: "rgba(11,128,116,0.14)", alignItems: "center", justifyContent: "center" },
   quickLabel: { fontFamily: fonts.medium, fontSize: 11, color: C.foreground, marginTop: 8 },
-  card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingHorizontal: 16, paddingVertical: 4, shadowColor: "#2E1B33", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  card: { backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.border, paddingHorizontal: 16, paddingVertical: 4, shadowColor: "#0F1B2D", shadowOpacity: 0.04, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   distBar: { flexDirection: "row", height: 12, borderRadius: 999, overflow: "hidden", backgroundColor: C.surface, marginTop: 14 },
   distLegend: { flexDirection: "row", flexWrap: "wrap", paddingBottom: 14 },
   pendingRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 13 },

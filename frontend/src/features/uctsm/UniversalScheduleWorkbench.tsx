@@ -13,7 +13,7 @@ import {
   previewPatientStateImpact, recordPatientAnchor, seedDemoWorkspace,
   submitScheduleReview, validateSchedule,
 } from "./api";
-import { toImpactRows, summariseImpact } from "./presentation";
+import { anchorSourceType, toImpactRows, summariseImpact } from "./presentation";
 import type { ImpactRow } from "./presentation";
 import { ImpactPreviewTable } from "./ScheduleTable";
 import { ScheduleReviewCard } from "./ScheduleReviewCard";
@@ -135,7 +135,8 @@ export default function UniversalScheduleWorkbench() {
     if (!lastDoseAnchor) throw new Error("The test schedule has no LAST_DOSE anchor.");
     const previews: ImpactRecord[] = [];
     const confirmAnchor = async (anchorId: string, value: string, label: string) => {
-      const candidate = await recordPatientAnchor(patientId, anchorId, value);
+      // The workbench records dates that already happened (last dose, progression).
+      const candidate = await recordPatientAnchor(patientId, anchorId, value, anchorSourceType("ACTUAL"));
       const preview = await previewAnchorImpact(
         patientId, candidate.id, "2028-12-31", `Confirm ${label} anchor`,
       );
@@ -184,7 +185,7 @@ export default function UniversalScheduleWorkbench() {
           <Body color={colors.white} weight="700">Universal Schedule Test</Body>
           <Small color="rgba(255,255,255,0.72)">Evidence → review → patient dates</Small>
         </View>
-        <FlaskConical size={22} color="#F5C7D2" />
+        <FlaskConical size={22} color="#CFDDF4" />
       </SafeAreaView>
 
       <ScrollView contentContainerStyle={styles.content}>

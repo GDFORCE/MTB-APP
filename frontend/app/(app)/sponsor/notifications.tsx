@@ -30,9 +30,9 @@ const categoryOf = (item: Notification) => {
 };
 
 const iconOf = (category: string) => {
-  if (category === "Trials") return { Icon: FlaskConical, fg: colors.info, bg: "rgba(123,107,184,0.12)" };
-  if (category === "Sites") return { Icon: Building2, fg: colors.accent, bg: "rgba(230,155,92,0.14)" };
-  if (category === "Recruitment") return { Icon: Target, fg: colors.success, bg: "rgba(92,154,110,0.13)" };
+  if (category === "Trials") return { Icon: FlaskConical, fg: colors.info, bg: "rgba(45,108,181,0.12)" };
+  if (category === "Sites") return { Icon: Building2, fg: colors.accent, bg: "rgba(11,128,116,0.14)" };
+  if (category === "Recruitment") return { Icon: Target, fg: colors.success, bg: "rgba(30,122,70,0.13)" };
   return { Icon: Bell, fg: colors.primary, bg: colors.secondary };
 };
 
@@ -199,7 +199,7 @@ const s = StyleSheet.create({
   retryText: { fontFamily: fonts.semibold, fontSize: 12, color: colors.white },
   list: { padding: 14, paddingTop: 2, paddingBottom: 26, gap: 9 },
   card: { position: "relative", overflow: "hidden", padding: 12, paddingLeft: 15, flexDirection: "row", gap: 10, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },
-  cardUnread: { backgroundColor: "rgba(166,33,63,0.045)", borderColor: "rgba(224,122,75,0.34)" },
+  cardUnread: { backgroundColor: "rgba(27,95,193,0.045)", borderColor: "rgba(27,95,193,0.34)" },
   unreadRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
   icon: { width: 38, height: 38, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   cardTop: { flexDirection: "row", alignItems: "flex-start", gap: 7 },

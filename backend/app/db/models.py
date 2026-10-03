@@ -245,6 +245,9 @@ class Event(ScheduleChildMixin, TimestampMixin, Base):
     epoch_id: Mapped[UUID | None] = mapped_column(ForeignKey("uctsm_epochs.id"))
     sequence_number: Mapped[int | None] = mapped_column(Integer)
     timing: Mapped[dict[str, Any]] = mapped_column(JsonType)
+    # Doc B2/B3: the visit window as its own rule. Null means the protocol states
+    # none - never defaulted. Column named visit_window: WINDOW is reserved SQL.
+    window: Mapped[dict[str, Any] | None] = mapped_column("visit_window", JsonType)
     conditions: Mapped[list[Any]] = mapped_column(JsonType, default=list)
     dependency_mode: Mapped[str | None] = mapped_column(String(32))
     conditional_actions: Mapped[list[Any] | None] = mapped_column(JsonType, default=list)

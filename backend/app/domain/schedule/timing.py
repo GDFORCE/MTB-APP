@@ -45,9 +45,28 @@ class PositiveTemporalAmount(StrictModel):
     unit: TimeUnit
 
 
+class AnchorAcceptance(StrEnum):
+    """Which recorded values of an anchor a rule may count from (doc C6).
+
+    A planned surgery date may place the pre-op visits, but a post-op visit dated
+    from it would be presented - and reminded about - as if surgery had happened.
+    So every anchor reference states whether it accepts a planned value at all.
+    """
+
+    ACTUAL = "ACTUAL"
+    PLANNED_OR_ACTUAL = "PLANNED_OR_ACTUAL"
+
+
 class AnchorReference(StrictModel):
     kind: Literal["ANCHOR"] = "ANCHOR"
     code: str = Field(min_length=1)
+    # Default ACTUAL is the safe direction: a reference that never said it may use
+    # a planned value waits for the real one. Every existing approved schedule
+    # loads with this default, and the anchors enrolment records (registration,
+    # baseline, consent) are stored CONFIRMED, which counts as actual - so those
+    # schedules date exactly as before. Only a reviewer can opt a rule into
+    # PLANNED_OR_ACTUAL, for visits that genuinely precede the event (pre-op).
+    accepts: AnchorAcceptance = AnchorAcceptance.ACTUAL
 
 
 class EventReference(StrictModel):
@@ -212,6 +231,203 @@ class UnresolvedTiming(StrictModel):
     requires_review: Literal[True] = True
 
 
+# ---------------------------------------------------------------------------
+# Composable constraint language (design: "Implementation specification:
+# composable protocol language"). ADDITIVE to the timing union above: every
+# legacy timing keeps its own evaluator; a constraint set is intersected with
+# the legacy timing's resolved window only where a rule carries one. Nothing
+# here has a default for a clinically material value - inclusivity, occurrence
+# selection and literal precision must be stated.
+# ---------------------------------------------------------------------------
+
+#: Version of the constraint language; stamped into evaluation explanations and
+#: the capability registry so a stored rule can be matched to its semantics.
+CONSTRAINT_LANGUAGE_VERSION = "uctsm-constraints.v1"
+
+
+class OccurrenceSelector(StrictModel):
+    """Which occurrence of a repeated event a reference means.
+
+    FIRST/LAST/NUMBER select within the referenced event's own series. CURRENT
+    is the occurrence with the same index as the one being evaluated; PREVIOUS
+    is the one before it (index - 1), which is the only selector a rule may use
+    to refer to its OWN event ("at least 21 days after the previous dose").
+    LAST with ACTUAL is known only once every scheduled occurrence has an
+    actual - the latest dose given so far is not the last dose.
+    """
+
+    type: Literal["FIRST", "LAST", "CURRENT", "PREVIOUS", "NUMBER"]
+    number: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def number_matches_type(self) -> "OccurrenceSelector":
+        if (self.type == "NUMBER") != (self.number is not None):
+            raise ValueError("an occurrence number is required only for the NUMBER selector")
+        return self
+
+
+class AnchorValue(StrictModel):
+    type: Literal["ANCHOR"] = "ANCHOR"
+    code: str = Field(min_length=1)
+    # Same safe default as AnchorReference: a reference that never said it may
+    # use a planned value waits for the actual one (doc C6, PT-01).
+    accepts: AnchorAcceptance = AnchorAcceptance.ACTUAL
+
+
+class EventValue(StrictModel):
+    type: Literal["EVENT"] = "EVENT"
+    event_code: str = Field(min_length=1)
+    # No default: which dose/cycle/visit is meant is a material fact.
+    occurrence: OccurrenceSelector
+    accepts: AnchorAcceptance = AnchorAcceptance.ACTUAL
+    #: WP3: which edge of the selected occurrence. ``None`` (every existing
+    #: rule) is the occurrence's date exactly as before. START is its start;
+    #: END is its end - planned from the occurrence's nominal end, actual only
+    #: from a recorded end (a performed start is not proof of the end).
+    boundary: Literal["START", "END"] | None = None
+
+
+class ActivityValue(StrictModel):
+    """The ACTUAL recorded time of another activity in the same visit occurrence."""
+
+    type: Literal["ACTIVITY"] = "ACTIVITY"
+    activity_code: str = Field(min_length=1)
+
+
+class ProcessBoundaryValue(StrictModel):
+    """WP3: when an intervention/pathway process actually started or ended.
+
+    START is its first confirmed ACTIVE transition; END its confirmed STOPPED
+    or COMPLETED transition. Both are ACTUAL facts only - a process that has
+    not ended has no end date yet ("end of treatment" stays unknown while
+    treatment continues), and no planned value is ever substituted.
+    """
+
+    type: Literal["PROCESS_BOUNDARY"] = "PROCESS_BOUNDARY"
+    process_code: str = Field(min_length=1)
+    boundary: Literal["START", "END"]
+
+
+class LiteralDateValue(StrictModel):
+    """A fixed calendar date or instant. ``precision`` is required: "by March
+    2027" is not the same bound as "by 1 March 2027", and the evaluator will
+    not pick a day inside a month for you (it reports missing precision)."""
+
+    type: Literal["LITERAL_DATE"] = "LITERAL_DATE"
+    value: date | datetime
+    precision: Literal["INSTANT", "DAY", "MONTH", "YEAR"]
+
+    @model_validator(mode="after")
+    def precision_matches_value(self) -> "LiteralDateValue":
+        is_instant = isinstance(self.value, datetime)
+        if (self.precision == "INSTANT") != is_instant:
+            raise ValueError("INSTANT precision needs a date-time; other precisions need a date")
+        return self
+
+
+class ShiftValue(StrictModel):
+    """``reference`` moved by a signed, calendar-aware amount. Months and years
+    stay calendar units; a month-end clamp needs ``calendar_policy_ref``."""
+
+    type: Literal["SHIFT"] = "SHIFT"
+    reference: "TemporalValue"
+    amount: TemporalAmount
+    calendar_policy_ref: str | None = None
+
+
+TemporalValue = Annotated[
+    Union[AnchorValue, EventValue, ActivityValue, LiteralDateValue, ShiftValue,
+          ProcessBoundaryValue],
+    Field(discriminator="type"),
+]
+
+
+class _ConstraintNode(StrictModel):
+    #: Stable id used for provenance and conflict reports. When omitted the
+    #: evaluator uses the node's structural path (e.g. ``SCAN/constraints/items/1``).
+    id: str | None = Field(default=None, min_length=1)
+    #: Evidence ids (``Evidence.id`` as a string) this node is justified by.
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class LowerBoundConstraint(_ConstraintNode):
+    type: Literal["LOWER_BOUND"] = "LOWER_BOUND"
+    value: TemporalValue
+    inclusive: bool
+
+
+class UpperBoundConstraint(_ConstraintNode):
+    type: Literal["UPPER_BOUND"] = "UPPER_BOUND"
+    value: TemporalValue
+    inclusive: bool
+
+
+class AtConstraint(_ConstraintNode):
+    type: Literal["AT"] = "AT"
+    value: TemporalValue
+
+
+class AllConstraint(_ConstraintNode):
+    """Conjunction: the feasible sets of every item are intersected."""
+
+    type: Literal["ALL"] = "ALL"
+    items: list["Constraint"] = Field(min_length=1)
+
+
+class AnyConstraint(_ConstraintNode):
+    """Permitted temporal alternatives: a union that is never widened to its
+    convex hull. It never selects a treatment arm or branch."""
+
+    type: Literal["ANY"] = "ANY"
+    items: list["Constraint"] = Field(min_length=1)
+
+
+class UnsupportedConstraint(_ConstraintNode):
+    """A source requirement the language cannot yet execute (a capability gap).
+
+    Carried so the requirement stays visible and blocks approval of the rule
+    it belongs to - never squeezed into a similar executable operator.
+    ``family`` names what kind of operator was missing (CONSTRAINT, RECURRENCE,
+    CONDITION, TIMING, ...), ``source_operator`` what the source asked for.
+    """
+
+    type: Literal["UNSUPPORTED"] = "UNSUPPORTED"
+    family: str = Field(default="CONSTRAINT", min_length=1)
+    source_operator: str = Field(min_length=1)
+    source_text: str | None = None
+    details: dict[str, object] = Field(default_factory=dict)
+
+
+Constraint = Annotated[
+    Union[
+        LowerBoundConstraint,
+        UpperBoundConstraint,
+        AtConstraint,
+        AllConstraint,
+        AnyConstraint,
+        UnsupportedConstraint,
+    ],
+    Field(discriminator="type"),
+]
+
+
+class ConstraintTiming(StrictModel):
+    """Timing stated only as a constraint set (no single nominal target).
+
+    Its own window is unbounded; the feasible set is exactly ``constraint``
+    (intersected with the owning event's ``constraints`` when both exist).
+    """
+
+    type: Literal["CONSTRAINED"] = "CONSTRAINED"
+    constraint: Constraint
+
+
+ShiftValue.model_rebuild()
+AllConstraint.model_rebuild()
+AnyConstraint.model_rebuild()
+ConstraintTiming.model_rebuild()
+
+
 TimingExpression = Annotated[
     Union[
         AbsoluteTiming,
@@ -226,6 +442,7 @@ TimingExpression = Annotated[
         CycleDayTiming,
         ProtocolDefinedTiming,
         UnresolvedTiming,
+        ConstraintTiming,
     ],
     Field(discriminator="type"),
 ]

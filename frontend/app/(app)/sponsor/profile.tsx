@@ -309,7 +309,7 @@ const s = StyleSheet.create({
     ...shadows.sm,
   },
   name: { color: colors.foreground, fontFamily: fonts.bold, fontSize: 18 },
-  designation: { marginTop: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(123,107,184,0.10)" },
+  designation: { marginTop: 5, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: "rgba(45,108,181,0.10)" },
   designationText: { color: colors.info, fontFamily: fonts.semibold, fontSize: 10 },
   avatarErrText: { marginTop: 8, color: colors.destructive, fontFamily: fonts.regular, fontSize: 10.5, textAlign: "center" },
   details: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, ...shadows.sm },

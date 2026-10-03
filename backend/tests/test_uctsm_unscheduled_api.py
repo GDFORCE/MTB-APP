@@ -188,8 +188,9 @@ def test_an_unknown_event_code_is_a_not_found(
     assert response.status_code == 404
 
 
-def test_extraction_without_an_engine_fails_visibly(client: TestClient):
+def test_extraction_without_an_engine_fails_visibly(client: TestClient, monkeypatch):
     """A run that cannot start must say so, not sit QUEUED forever."""
+    monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
     workspace = client.post(f"{API}/demo/seed").json()
     trial_id = workspace["trial_id"]
 
@@ -220,7 +221,7 @@ def test_extraction_without_an_engine_fails_visibly(client: TestClient):
 
     run = client.get(f"{API}/extraction-runs/{body['extraction_run_id']}").json()
     assert run["status"] == "FAILED"
-    assert "being rebuilt" in str(run.get("error_details"))
+    assert "not configured" in str(run.get("error_details"))
 
 
 # --- the cutover gate, over the API -------------------------------------------------

@@ -9,14 +9,15 @@ import {
   EMPTY_ASSIGNMENT, ProtocolAssignmentFields,
 } from "@/src/features/uctsm/ProtocolAssignmentFields";
 import type { ProtocolAssignment } from "@/src/features/uctsm/ProtocolAssignmentFields";
+import { ANCHOR_SOURCE_CHOICES, anchorDateSources, type AnchorDateSource } from "@/src/features/uctsm/anchorEntry";
 import { useAuth } from "@/src/auth/AuthContext";
 import { formatIsoCalendarDate } from "@/src/lib/visit-timing";
 import { sanitizeName } from "@/src/lib/validators";
 
 const C = {
-  surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
-  primary: "#A6213F", primaryFg: "#FFFFFF",
-  accent: "#E69B5C", info: "#7B6BB8", destructive: "#C0392B",
+  surface: "#EDF1F6", card: "#FFFFFF", fg: "#0F1B2D", muted: "#556275", border: "#DDE3EA",
+  primary: "#1B5FC1", primaryFg: "#FFFFFF",
+  accent: "#0B8074", info: "#2D6CB5", destructive: "#C23030",
 };
 
 type Trial = { id: string; title?: string; protocol_id?: string; condition?: string; phase?: string };
@@ -132,8 +133,11 @@ export default function AddPatient() {
   const [assignment, setAssignment] = useState<ProtocolAssignment>(EMPTY_ASSIGNMENT);
   const [baseline, setBaseline] = useState("");
   const [anchorDates, setAnchorDates] = useState<Record<string, string>>({});
+  // PT-01: each entered anchor date must be marked planned or actual.
+  const [anchorSources, setAnchorSources] = useState<Record<string, AnchorDateSource | undefined>>({});
   const [previewVersion, setPreviewVersion] = useState<string | null>(null);
-  const previewInput = JSON.stringify([trialId, baseline, anchorDates, assignment.values, assignment.scheduleVersionId]);
+  const previewInput = JSON.stringify([trialId, baseline, anchorDates, anchorSources, assignment.values, assignment.scheduleVersionId]);
+  const anchorEntry = anchorDateSources(parsedAnchorDates(anchorDates), anchorSources);
   const latestPreviewInput = useRef(previewInput);
   latestPreviewInput.current = previewInput;
   const [scheduleGenerated, setScheduleGenerated] = useState(false);
@@ -284,10 +288,13 @@ export default function AddPatient() {
     && assignment.complete
     && assignment.ready
     && previewVersion === assignment.scheduleVersionId
+    && !anchorEntry.missing.length
     && !subjectDuplicate
     && !emailDuplicate
     && !saving;
-  const submitHint = !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10
+  const submitHint = anchorEntry.missing.length
+    ? "Mark each entered protocol date as planned or actual"
+    : !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10
     ? "Complete the required patient details"
     : !optionalEmailValid
       ? "Enter a valid email address or leave it blank"
@@ -349,6 +356,10 @@ export default function AddPatient() {
       setError("Select a trial and enter a valid baseline date before generating the schedule.");
       return;
     }
+    if (anchorEntry.missing.length) {
+      setError("Mark each entered protocol date as planned or actual before generating the schedule.");
+      return;
+    }
     setScheduleLoading(true);
     setError(null);
     setShowAll(false);
@@ -361,6 +372,7 @@ export default function AddPatient() {
         population_label: assignment.labels.POPULATION || undefined,
         dimension_values: dimensionValues,
         anchor_dates: parsedAnchorDates(anchorDates),
+        anchor_date_sources: anchorEntry.sources,
         schedule_definition_id: assignment.scheduleDefinitionId,
         schedule_version_id: assignment.scheduleVersionId,
       });
@@ -382,7 +394,7 @@ export default function AddPatient() {
 
   useEffect(() => {
     setScheduleGenerated(false); setScheduleVisits([]); setPreviewVersion(null); setScheduleLoading(false);
-    if (!parseDate(baseline) || !assignment.complete || !assignment.ready) return;
+    if (!parseDate(baseline) || !assignment.complete || !assignment.ready || anchorEntry.missing.length) return;
     const timer = setTimeout(() => { void generateSchedule(); }, 500);
     return () => clearTimeout(timer);
   }, [previewInput, assignment.complete, assignment.ready]);
@@ -408,6 +420,7 @@ export default function AddPatient() {
         population_label: assignment.labels.POPULATION || undefined,
         dimension_values: Object.keys(dimensionValues).length ? dimensionValues : undefined,
         anchor_dates: parsedAnchorDates(anchorDates),
+        anchor_date_sources: anchorEntry.sources,
         schedule_definition_id: assignment.scheduleDefinitionId,
         schedule_version_id: previewVersion,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
@@ -664,7 +677,7 @@ export default function AddPatient() {
             trialId={trialId}
             onChange={(next) => {
               setAssignment(next);
-              if (next.scheduleVersionId !== assignment.scheduleVersionId) setAnchorDates({});
+              if (next.scheduleVersionId !== assignment.scheduleVersionId) { setAnchorDates({}); setAnchorSources({}); }
               if (next.scheduleVersionId !== assignment.scheduleVersionId || JSON.stringify(next.values) !== JSON.stringify(assignment.values)) {
                 // A schedule previewed under a different assignment no longer
                 // reflects what will be sent, so it has to be regenerated.
@@ -777,6 +790,24 @@ export default function AddPatient() {
                   if (value.trim()) next[anchor.code] = value.trim(); else delete next[anchor.code];
                   return next;
                 })} />
+              {!!anchorDates[anchor.code]?.trim() && <View style={s.sourceRow} accessibilityRole="radiogroup"
+                accessibilityLabel={`Is the ${anchor.display_name} date planned or actual?`}>
+                {ANCHOR_SOURCE_CHOICES.map((choice) => {
+                  const selected = anchorSources[anchor.code] === choice.value;
+                  return <Pressable key={choice.value} accessibilityRole="radio" accessibilityState={{ selected }}
+                    accessibilityLabel={`${choice.label}: ${choice.hint}`}
+                    onPress={() => setAnchorSources((current) => ({ ...current, [anchor.code]: choice.value }))}
+                    style={[s.sourceChip, selected && s.sourceChipSelected]}>
+                    <Text style={[s.sourceChipText, selected && s.sourceChipTextSelected]}>{selected ? "✓ " : ""}{choice.label}</Text>
+                  </Pressable>;
+                })}
+              </View>}
+              {!!anchorDates[anchor.code]?.trim() && !anchorSources[anchor.code] && <Text style={s.fieldHint}>
+                Required: say whether this date is planned or has already happened.
+              </Text>}
+              {anchorSources[anchor.code] === "PLANNED" && !!anchorDates[anchor.code]?.trim() && <Text style={s.fieldHint}>
+                Planned: visits that must follow the real {anchor.display_name} keep waiting until it is recorded.
+              </Text>}
             </Field>)}
 
           <Pressable
@@ -906,6 +937,11 @@ function InlineDuplicate({ message }: { message: string }) {
 }
 
 const s = StyleSheet.create({
+  sourceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  sourceChip: { minHeight: 40, paddingHorizontal: 14, justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  sourceChipSelected: { backgroundColor: C.primary, borderColor: C.primary },
+  sourceChipText: { color: C.fg, fontSize: 13, fontWeight: "700" },
+  sourceChipTextSelected: { color: C.primaryFg },
   screen: { flex: 1, backgroundColor: C.surface },
   appBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10 },
   backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: C.card, borderWidth: 1, borderColor: C.border },
@@ -921,43 +957,43 @@ const s = StyleSheet.create({
   sectionCard: { position: "relative", zIndex: 1, padding: 16, borderRadius: 20, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, shadowColor: C.fg, shadowOpacity: 0.04, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
   sectionCardActive: { zIndex: 50, elevation: 8 },
   sectionHeader: { flexDirection: "row", alignItems: "center", gap: 11, paddingBottom: 14, marginBottom: 14, borderBottomWidth: 1, borderBottomColor: C.border },
-  sectionIcon: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(166,33,63,0.08)" },
+  sectionIcon: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(27,95,193,0.08)" },
   sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
   sectionIndex: { color: C.primary, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
   sectionTitle: { color: C.fg, fontSize: 15, fontWeight: "800" },
   sectionSubtitle: { marginTop: 2, color: C.muted, fontSize: 11 },
   sectionFields: { gap: 14 },
   fieldLabelRow: { minHeight: 20, marginBottom: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  fieldLabel: { color: "rgba(46,27,51,0.84)", fontSize: 12, fontWeight: "700" },
+  fieldLabel: { color: "rgba(15,27,45,0.84)", fontSize: 12, fontWeight: "700" },
   fieldHint: { marginTop: 5, color: C.muted, fontSize: 10, lineHeight: 14 },
   autoLabel: { color: C.primary, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
-  autoAction: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(166,33,63,0.08)" },
+  autoAction: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(27,95,193,0.08)" },
   autoActionText: { color: C.primary, fontSize: 10, fontWeight: "700" },
-  input: { minHeight: 50, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#FFFDFC", color: C.fg, fontSize: 14 },
+  input: { minHeight: 50, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#FAFBFD", color: C.fg, fontSize: 14 },
   inputPair: { flexDirection: "row", gap: 8 },
-  prefix: { minWidth: 68, minHeight: 50, paddingHorizontal: 12, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#F8EFE4", alignItems: "center", justifyContent: "center" },
+  prefix: { minWidth: 68, minHeight: 50, paddingHorizontal: 12, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#E8EDF4", alignItems: "center", justifyContent: "center" },
   prefixText: { color: C.fg, fontSize: 14, fontWeight: "700" },
   monoPrefix: { color: C.primary, fontFamily: "monospace" as any, fontSize: 13, fontWeight: "700" },
   twoColumns: { flexDirection: "row", gap: 10 },
   selectControl: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   selectText: { color: C.fg, fontSize: 14, lineHeight: 20, flex: 1 },
   placeholderText: { color: C.muted },
-  dupWarn: { marginTop: 2, flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(192,57,43,0.05)", borderWidth: 1, borderColor: "rgba(192,57,43,0.20)" },
+  dupWarn: { marginTop: 2, flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 14, backgroundColor: "rgba(194,48,48,0.05)", borderWidth: 1, borderColor: "rgba(194,48,48,0.20)" },
   duplicateInput: { borderColor: C.destructive, borderWidth: 2 },
   inlineDuplicate: { marginTop: 6, flexDirection: "row", alignItems: "flex-start", gap: 6 },
   inlineDuplicateText: { flex: 1, color: C.destructive, fontSize: 12, lineHeight: 17 },
-  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 100, elevation: 30, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#FFFDFC", overflow: "hidden", shadowColor: C.fg, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
+  dropdown: { position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 100, elevation: 30, borderRadius: 13, borderWidth: 1, borderColor: C.border, backgroundColor: "#FAFBFD", overflow: "hidden", shadowColor: C.fg, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
   dropdownRow: { minHeight: 44, justifyContent: "center", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.border },
   dropdownText: { color: C.fg, fontSize: 13 },
   inlineState: { flexDirection: "row", alignItems: "center", gap: 8 },
-  piStateCard: { marginTop: 8, flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 13, backgroundColor: "#FFFDFC", borderWidth: 1, borderColor: C.border },
+  piStateCard: { marginTop: 8, flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 13, backgroundColor: "#FAFBFD", borderWidth: 1, borderColor: C.border },
   piStateText: { color: C.destructive, fontSize: 12, lineHeight: 17 },
-  stateAction: { alignSelf: "flex-start", minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: "rgba(166,33,63,0.08)" },
+  stateAction: { alignSelf: "flex-start", minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: "rgba(27,95,193,0.08)" },
   stateActionText: { color: C.primary, fontSize: 12, fontWeight: "700" },
-  infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 13, backgroundColor: "rgba(123,107,184,0.06)", borderWidth: 1, borderColor: "rgba(123,107,184,0.18)" },
+  infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 13, backgroundColor: "rgba(45,108,181,0.06)", borderWidth: 1, borderColor: "rgba(45,108,181,0.18)" },
   infoNoteText: { fontSize: 11, lineHeight: 16, color: C.info, flex: 1 },
-  autoCalc: { backgroundColor: "rgba(123,107,184,0.05)", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "rgba(123,107,184,0.12)" },
-  generateSchedule: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: "rgba(166,33,63,0.28)", backgroundColor: "rgba(166,33,63,0.06)", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
+  autoCalc: { backgroundColor: "rgba(45,108,181,0.05)", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "rgba(45,108,181,0.12)" },
+  generateSchedule: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: "rgba(27,95,193,0.28)", backgroundColor: "rgba(27,95,193,0.06)", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
   generateScheduleText: { color: C.primary, fontSize: 14, fontWeight: "700" },
   footer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 20 : 12, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.card },
   submitHint: { marginBottom: 7, color: C.muted, fontSize: 10, textAlign: "center" },

@@ -12,11 +12,14 @@ from sqlalchemy.orm import Session
 from app.db import models as db
 from app.domain.schedule.enrolment import validate_assignment
 from app.db.repositories import ScheduleRepository
+from app.domain.schedule.anchor_status import record_is_actual
 from app.domain.schedule.models import (
-    ConditionState, EvaluationResult, PatientConditionStatus,
+    AssignmentFact, ConditionState, EvaluationResult, PatientConditionStatus, ProcessTransition,
 )
 from app.services.schedule_diff import compute_schedule_diff
-from app.services.schedule_service import PatientScheduleService
+from app.services.schedule_service import (
+    ASSIGNMENT_FACT_STATE_CODE, PROCESS_TRANSITION_STATE_CODE, PatientScheduleService,
+)
 
 
 def utc_now() -> datetime:
@@ -51,6 +54,8 @@ class PatientScheduleImpactService:
         anchor_candidate: db.PatientAnchor | None = None,
         state_change: dict[str, object] | None = None,
         assignment_change: dict[str, str | None] | None = None,
+        assignment_effective_from: date | None = None,
+        process_transition: ProcessTransition | None = None,
     ) -> db.ScheduleImpactProposal:
         patient = self._patient(patient_id, organization_id, lock=False)
         source_id = patient.current_schedule_version_id
@@ -65,14 +70,19 @@ class PatientScheduleImpactService:
         # The proposed assignment is applied to a COPY for the preview, so a
         # preview that is never confirmed leaves the patient untouched.
         preview_patient = self._with_assignment(patient, assignment)
+        if assignment_effective_from is not None and not assignment:
+            raise ValueError("an assignment effective date needs an assignment change")
+        facts = self._assignment_facts(
+            patient, assignment, assignment_effective_from, recorded_at=utc_now(),
+            proposal_id=None)
+        transition = self._pending_transition(process_transition)
         result = self.patient_schedules.evaluate_result(
             preview_patient, target_schedule_version_id, horizon=horizon,
             condition_overrides=overrides,
-            anchor_overrides=(
-                {anchor_change["anchor_code"]: anchor_change["value"]}
-                if anchor_change and anchor_change["effective"] else None
-            ),
+            **self._anchor_override_kwargs(anchor_change),
             state_overrides=state_override,
+            process_transition_overrides=[transition] if transition else None,
+            assignment_fact_overrides=facts or None,
         )
         prior = self.patient_schedules.current_events(patient.id, source_id)
         impact = compute_schedule_diff(self.patient_schedules, prior, result)
@@ -84,9 +94,17 @@ class PatientScheduleImpactService:
             impact["state_change"] = to_jsonable_python(state_change)
         if assignment is not None:
             impact["assignment_change"] = to_jsonable_python(assignment)
+        if assignment_effective_from is not None:
+            impact["assignment_effective_from"] = assignment_effective_from.isoformat()
+        if transition is not None:
+            impact["process_transition"] = transition.model_dump(mode="json")
         input_hash = self._fingerprint(
             patient, result, prior, horizon, condition_change, anchor_change,
             state_change, assignment,
+            wp3={
+                "assignment_effective_from": impact.get("assignment_effective_from"),
+                "process_transition": _stable_transition(impact.get("process_transition")),
+            },
         )
         proposal = db.ScheduleImpactProposal(
             patient_id=patient.id,
@@ -144,17 +162,25 @@ class PatientScheduleImpactService:
         state_change = (proposal.impact or {}).get("state_change")
         state_override = self._state_override(state_change)
         assignment = (proposal.impact or {}).get("assignment_change")
+        effective_raw = (proposal.impact or {}).get("assignment_effective_from")
+        assignment_effective_from = date.fromisoformat(effective_raw) if effective_raw else None
+        transition_payload = (proposal.impact or {}).get("process_transition")
+        transition = (
+            ProcessTransition.model_validate(transition_payload) if transition_payload else None)
         overrides = (
             {condition_change.condition_code: condition_change} if condition_change else None)
+        recorded_at = utc_now()
+        facts = self._assignment_facts(
+            patient, assignment, assignment_effective_from, recorded_at=recorded_at,
+            proposal_id=proposal.id)
         result = self.patient_schedules.evaluate_result(
             self._with_assignment(patient, assignment),
             proposal.to_schedule_version_id, horizon=proposal.horizon,
             condition_overrides=overrides,
-            anchor_overrides=(
-                {anchor_change["anchor_code"]: anchor_change["value"]}
-                if anchor_change and anchor_change["effective"] else None
-            ),
+            **self._anchor_override_kwargs(anchor_change),
             state_overrides=state_override,
+            process_transition_overrides=[transition] if transition else None,
+            assignment_fact_overrides=facts or None,
         )
         prior = self.patient_schedules.current_events(
             patient.id, proposal.from_schedule_version_id,
@@ -162,6 +188,10 @@ class PatientScheduleImpactService:
         current_hash = self._fingerprint(
             patient, result, prior, proposal.horizon, condition_change, anchor_change,
             state_change, assignment,
+            wp3={
+                "assignment_effective_from": effective_raw,
+                "process_transition": _stable_transition(transition_payload),
+            },
         )
         if current_hash != proposal.input_hash:
             proposal.status = "STALE"
@@ -179,6 +209,37 @@ class PatientScheduleImpactService:
                 organization_id=organization_id, actor_id=actor_id,
                 reason=reason or proposal.reason,
             )
+        for fact in facts:
+            # RL-11: dated history is appended, never rewritten.
+            self.patient_schedules.record_patient_fact(
+                patient, state_code=ASSIGNMENT_FACT_STATE_CODE,
+                value=fact.model_dump(mode="json"),
+                effective_at=fact.effective_from or date(1970, 1, 1), actor_id=actor_id,
+                source_reference={"impact_proposal_id": str(proposal.id)})
+            self.session.add(db.AuditEvent(
+                organization_id=organization_id, actor_id=actor_id,
+                action="PATIENT_ASSIGNMENT_FACT_RECORDED", entity_type="PATIENT",
+                entity_id=patient.id, before=None,
+                after={**fact.model_dump(mode="json"), "proposal_id": str(proposal.id)},
+                reason=reason or proposal.reason,
+            ))
+        if transition is not None:
+            confirmed = transition.model_copy(update={
+                "status": "CONFIRMED", "recorded_at": recorded_at,
+                "authority": transition.authority or str(actor_id),
+            })
+            self.patient_schedules.record_patient_fact(
+                patient, state_code=PROCESS_TRANSITION_STATE_CODE,
+                value=confirmed.model_dump(mode="json"),
+                effective_at=confirmed.effective_at, actor_id=actor_id,
+                source_reference={"impact_proposal_id": str(proposal.id)})
+            self.session.add(db.AuditEvent(
+                organization_id=organization_id, actor_id=actor_id,
+                action="PATIENT_PROCESS_TRANSITION_RECORDED", entity_type="PATIENT",
+                entity_id=patient.id, before=None,
+                after={**confirmed.model_dump(mode="json"), "proposal_id": str(proposal.id)},
+                reason=reason or proposal.reason,
+            ))
         if condition_change is not None:
             self._persist_condition(
                 patient, condition_change, proposal_id=proposal.id,
@@ -336,6 +397,57 @@ class PatientScheduleImpactService:
         if target is None or target.trial_id != patient.trial_id:
             raise ValueError("target must be an approved schedule version for the patient's trial")
 
+    @staticmethod
+    def _pending_transition(transition: ProcessTransition | None) -> ProcessTransition | None:
+        """A proposed transition acts in the preview exactly as it will once
+        confirmed; it is only persisted (as CONFIRMED) by ``confirm``."""
+        if transition is None:
+            return None
+        if transition.status == "CANCELLED":
+            raise ValueError("a cancelled transition cannot be proposed")
+        return transition.model_copy(update={"status": "CONFIRMED"})
+
+    def _assignment_facts(
+        self,
+        patient: db.Patient,
+        assignment: dict[str, object] | None,
+        effective_from: date | None,
+        *,
+        recorded_at: datetime,
+        proposal_id: UUID | None,
+    ) -> list[AssignmentFact]:
+        """RL-11/AT-11: dated assignment facts for a confirmed reassignment.
+
+        The first dated fact of a dimension is preceded by a baseline fact
+        holding the value in force until then (from the start), so the earlier
+        period keeps its assignment; nothing already recorded is rewritten.
+        Deterministic ids keep preview and confirm fingerprints equal.
+        """
+        if not assignment or effective_from is None:
+            return []
+        schedule = self.patient_schedules.repository.get(patient.current_schedule_version_id)
+        current = _current_assignment_codes(self.session, patient, schedule)
+        history = {
+            item.dimension
+            for item in self.patient_schedules._context(
+                patient, patient.current_schedule_version_id).assignment_history
+        }
+        tag = str(proposal_id) if proposal_id else "preview"
+        facts: list[AssignmentFact] = []
+        for dimension, value in sorted(assignment.items()):
+            if dimension not in history:
+                facts.append(AssignmentFact(
+                    id=f"assignment:{patient.id}:{dimension}:baseline:{tag}",
+                    dimension=dimension, value=current.get(dimension),
+                    effective_from=None, recorded_at=recorded_at,
+                    source="ASSIGNMENT_IN_FORCE_BEFORE_DATED_CHANGE"))
+            facts.append(AssignmentFact(
+                id=f"assignment:{patient.id}:{dimension}:{effective_from.isoformat()}:{tag}",
+                dimension=dimension, value=None if value is None else str(value),
+                effective_from=effective_from, recorded_at=recorded_at,
+                source="IMPACT_CONFIRMATION"))
+        return facts
+
     def _proposed_condition(
         self, proposal: db.ScheduleImpactProposal,
     ) -> PatientConditionStatus | None:
@@ -376,7 +488,23 @@ class PatientScheduleImpactService:
             "candidate_status": candidate.status,
             "previous_value": previous_value,
             "effective": not (selection == "FIRST" and previous is not None),
+            # Doc C6: once confirmed, will this value count as the real date?
+            # Decided now so the preview shows exactly what confirmation does.
+            "planned": not record_is_actual("CONFIRMED", candidate.source_type),
         }
+
+    @staticmethod
+    def _anchor_override_kwargs(
+        anchor_change: dict[str, object] | None,
+    ) -> dict[str, dict[str, object] | None]:
+        """Route a previewed anchor value to the planned or actual overrides, so a
+        planned surgery date previews exactly as it will evaluate once confirmed."""
+        if not anchor_change or not anchor_change["effective"]:
+            return {"anchor_overrides": None}
+        override = {anchor_change["anchor_code"]: anchor_change["value"]}
+        if anchor_change.get("planned"):
+            return {"anchor_overrides": None, "planned_anchor_overrides": override}
+        return {"anchor_overrides": override}
 
     def _proposed_anchor(
         self, proposal: db.ScheduleImpactProposal, patient: db.Patient,
@@ -582,6 +710,7 @@ class PatientScheduleImpactService:
         anchor_change: dict[str, object] | None = None,
         state_change: dict[str, object] | None = None,
         assignment_change: dict[str, object] | None = None,
+        wp3: dict[str, object] | None = None,
     ) -> str:
         protected_ids = self.patient_schedules.protected_event_ids(prior)
         payload = {
@@ -604,7 +733,8 @@ class PatientScheduleImpactService:
                     str(patient.population_id) if patient.population_id else None),
                 "dimension_values": to_jsonable_python(patient.dimension_values or {}),
             },
-            "input": result.input_snapshot,
+            "input": _without_volatile(result.input_snapshot),
+            **({"wp3": wp3} if wp3 and any(wp3.values()) else {}),
             "prior": [{
                 "id": str(item.id),
                 "logical_key": self.patient_schedules.logical_key_for_row(item),
@@ -637,3 +767,26 @@ def _current_assignment_codes(
         if values:
             codes.setdefault(dimension_type.upper(), str(values[0]))
     return codes
+
+
+def _stable_transition(payload: dict[str, object] | None) -> dict[str, object] | None:
+    """A proposed transition without its (preview-time) recording instant."""
+    if not payload:
+        return None
+    return {key: value for key, value in payload.items() if key != "recorded_at"}
+
+
+def _without_volatile(snapshot: dict[str, object]) -> dict[str, object]:
+    """The input snapshot minus values that differ only by WHEN the preview
+    or confirmation was computed (recording instants and derived ids of the
+    facts being proposed); the facts' meaning stays in the fingerprint."""
+    output = dict(snapshot)
+    output["process_transitions"] = [
+        {key: value for key, value in item.items() if key not in {"recorded_at", "status"}}
+        for item in snapshot.get("process_transitions") or []
+    ]
+    output["assignment_history"] = [
+        {key: value for key, value in item.items() if key not in {"recorded_at", "id"}}
+        for item in snapshot.get("assignment_history") or []
+    ]
+    return output

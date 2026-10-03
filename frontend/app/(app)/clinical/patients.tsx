@@ -9,9 +9,9 @@ import { useAuth } from "@/src/auth/AuthContext";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
 
 const C = {
-  bg: "#F4E5D3", surface: "#F4E5D3", card: "#FEFAF1", fg: "#2E1B33", muted: "#7B5F73", border: "#E6D6C5",
-  primary: "#A6213F", primaryDeep: "#6B1437", primaryFg: "#FFFFFF", secondary: "#F0D7DC",
-  accent: "#E69B5C", info: "#7B6BB8", success: "#5C9A6E", destructive: "#C0392B",
+  bg: "#EDF1F6", surface: "#EDF1F6", card: "#FFFFFF", fg: "#0F1B2D", muted: "#556275", border: "#DDE3EA",
+  primary: "#1B5FC1", primaryDeep: "#0D2A4F", primaryFg: "#FFFFFF", secondary: "#E6EEFA",
+  accent: "#0B8074", info: "#2D6CB5", success: "#1E7A46", destructive: "#C23030",
 };
 
 // Derived per-patient status — computed by the backend from visit instances.
@@ -30,10 +30,10 @@ type PatientRow = {
 };
 
 const STATUS_META: Record<DerivedStatus, { label: string; bg: string; fg: string }> = {
-  active: { label: "Active", bg: "rgba(230,155,92,0.12)", fg: C.accent },
-  overdue: { label: "⚠ Overdue", bg: "rgba(192,57,43,0.12)", fg: C.destructive },
-  completed: { label: "Completed", bg: "rgba(92,154,110,0.14)", fg: C.success },
-  no_visits: { label: "No visits", bg: "rgba(123,95,115,0.10)", fg: C.muted },
+  active: { label: "Active", bg: "rgba(11,128,116,0.12)", fg: C.accent },
+  overdue: { label: "⚠ Overdue", bg: "rgba(194,48,48,0.12)", fg: C.destructive },
+  completed: { label: "Completed", bg: "rgba(30,122,70,0.14)", fg: C.success },
+  no_visits: { label: "No visits", bg: "rgba(85,98,117,0.10)", fg: C.muted },
 };
 
 const FILTERS: { id: string; label: string }[] = [
@@ -318,7 +318,7 @@ const s = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: "600" },
   listCard: { gap: 12 },
   row: { padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
-  subjectCard: { padding: 14, borderWidth: 1, borderColor: C.border, borderRadius: 20, backgroundColor: C.card, gap: 12, shadowColor: "#3f1d2e", shadowOpacity: 0.07, shadowRadius: 8, elevation: 2 },
+  subjectCard: { padding: 14, borderWidth: 1, borderColor: C.border, borderRadius: 20, backgroundColor: C.card, gap: 12, shadowColor: "#0F1B2D", shadowOpacity: 0.07, shadowRadius: 8, elevation: 2 },
   subjectTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   trialMeta: { flexDirection: "row", gap: 8, paddingTop: 11, borderTopWidth: 1, borderTopColor: C.border },
   metaLabel: { color: C.muted, opacity: 0.7, fontSize: 9, fontWeight: "700", letterSpacing: 0.7 },
@@ -332,9 +332,9 @@ const s = StyleSheet.create({
   retryBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 24, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },
   quickMenuRoot: { position: "absolute", right: 16, bottom: 86, alignItems: "flex-end" },
   quickActionStack: { alignItems: "flex-end", gap: 9, marginBottom: 10 },
-  quickAction: { minWidth: 158, height: 46, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, shadowColor: "#2E1B33", shadowOpacity: 0.16, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 7 },
+  quickAction: { minWidth: 158, height: 46, borderRadius: 16, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 10, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, shadowColor: "#0F1B2D", shadowOpacity: 0.16, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 7 },
   quickActionPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
   quickActionIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: C.secondary },
   quickActionText: { color: C.fg, fontSize: 13, fontWeight: "700" },
-  quickMenuButton: { width: 54, height: 54, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: C.primary, shadowColor: "#2E1B33", shadowOpacity: 0.26, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 10 },
+  quickMenuButton: { width: 54, height: 54, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: C.primary, shadowColor: "#0F1B2D", shadowOpacity: 0.26, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 10 },
 });
