@@ -31,8 +31,10 @@ from .authoring import (
 )
 from .patients import (
     ActivityEntryRecord,
+    AssignmentRecord,
     ConfinementEpisodeRecord,
     EvaluationRecord,
+    ImpactProposalRecord,
     OccurrenceRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
@@ -165,6 +167,10 @@ class PatientRepository(Protocol):
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
     ) -> PatientRecord: ...
+    def save(self, record: PatientRecord) -> PatientRecord:
+        """Replace the patient, guarded by its revision. ``StaleRevisionError``
+        when someone else changed it first; returns the stored record."""
+        ...
 
 
 class PatientFactsRepository(Protocol):
@@ -172,6 +178,12 @@ class PatientFactsRepository(Protocol):
     that a correction marks the fact it replaces as superseded."""
 
     def add_anchor(self, record: PatientAnchorRecord) -> None: ...
+    def get_anchor(self, anchor_id: UUID) -> PatientAnchorRecord:
+        """Raises ``RecordNotFoundError``."""
+        ...
+    def confirm_anchor(self, anchor_id: UUID, metadata: dict) -> PatientAnchorRecord:
+        """PENDING_CONFIRMATION -> CONFIRMED, once. ``StaleRevisionError`` otherwise."""
+        ...
     def list_anchors(
         self, patient_id: UUID, *, statuses: set[str] | None = None) -> list[PatientAnchorRecord]:
         """Oldest recorded first."""
@@ -218,9 +230,22 @@ class EvaluationRepository(Protocol):
         ...
     def list_events(self, evaluation_id: UUID) -> list[PatientEventRecord]: ...
     def list_confinements(self, evaluation_id: UUID) -> list[ConfinementEpisodeRecord]: ...
+    def supersede_active_pointers(self, patient_id: UUID) -> int:
+        """Mark every ACTIVE patient schedule SUPERSEDED (a version change)."""
+        ...
     def list_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> list[EvaluationRecord]:
         """Oldest first - the full, never-rewritten history."""
         ...
+
+
+class ImpactRepository(Protocol):
+    def add(self, record: ImpactProposalRecord) -> None: ...
+    def get(self, proposal_id: UUID) -> ImpactProposalRecord:
+        """Raises ``RecordNotFoundError``."""
+        ...
+    def save(self, record: ImpactProposalRecord) -> None: ...
+    def add_assignment(self, record: AssignmentRecord) -> None: ...
+    def list_assignments(self, patient_id: UUID) -> list[AssignmentRecord]: ...
 
 
 class CommandRepository(Protocol):
@@ -254,6 +279,7 @@ class UnitOfWork(Protocol):
     facts: PatientFactsRepository
     evaluations: EvaluationRepository
     commands: CommandRepository
+    impacts: ImpactRepository
     outbox: OutboxRepository
 
     def run(self, fn: "Callable[[UnitOfWork], T]") -> T: ...

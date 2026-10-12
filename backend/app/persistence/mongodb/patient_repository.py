@@ -18,8 +18,10 @@ from app.application.errors import (
 )
 from app.application.patients import (
     ActivityEntryRecord,
+    AssignmentRecord,
     ConfinementEpisodeRecord,
     EvaluationRecord,
+    ImpactProposalRecord,
     OccurrenceRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
@@ -46,6 +48,8 @@ EVALUATIONS = "schedule_evaluations"
 EVENTS = "patient_events"
 CONFINEMENTS = "patient_confinement_episodes"
 POINTERS = "patient_schedules"
+PROPOSALS = "schedule_impact_proposals"
+ASSIGNMENTS = "patient_schedule_assignments"
 RECEIPTS = "command_receipts"
 OUTBOX = "outbox"
 
@@ -114,6 +118,16 @@ class MongoPatientRepository(_Base):
         return {row["_id"]: int(row["count"])
                 for row in self._db[PATIENTS].aggregate(pipeline, session=self._session)}
 
+    def save(self, record: PatientRecord) -> PatientRecord:
+        document = to_document(record.model_copy(update={
+            "revision": record.revision + 1, "updated_at": datetime.now(timezone.utc)}))
+        result = self._db[PATIENTS].replace_one(
+            {"_id": record.id, "organization_id": record.organization_id,
+             "revision": record.revision}, document, session=self._session)
+        if result.matched_count == 0:
+            raise StaleRevisionError("the patient changed since it was read")
+        return from_document(PatientRecord, document)
+
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
     ) -> PatientRecord:
@@ -131,6 +145,23 @@ class MongoPatientFactsRepository(_Base):
     # anchors
     def add_anchor(self, record: PatientAnchorRecord) -> None:
         self._insert(ANCHORS, record, "patient anchor")
+
+    def get_anchor(self, anchor_id: UUID) -> PatientAnchorRecord:
+        doc = self._db[ANCHORS].find_one({"_id": anchor_id}, session=self._session)
+        if doc is None:
+            raise RecordNotFoundError("patient anchor not found")
+        return from_document(PatientAnchorRecord, doc)
+
+    def confirm_anchor(self, anchor_id: UUID, metadata: dict) -> PatientAnchorRecord:
+        from .codec import encode
+
+        doc = self._db[ANCHORS].find_one_and_update(
+            {"_id": anchor_id, "status": "PENDING_CONFIRMATION"},
+            {"$set": {"status": "CONFIRMED", "metadata": encode(metadata)}},
+            return_document=ReturnDocument.AFTER, session=self._session)
+        if doc is None:
+            raise StaleRevisionError("anchor candidate is no longer pending confirmation")
+        return from_document(PatientAnchorRecord, doc)
 
     def list_anchors(
         self, patient_id: UUID, *, statuses: set[str] | None = None,
@@ -209,6 +240,30 @@ class MongoPatientFactsRepository(_Base):
             query["schedule_version_id"] = schedule_version_id
         return self._list(OCCURRENCES, OccurrenceRecord, query,
                           [("recorded_at", ASCENDING), ("_id", ASCENDING)])
+
+
+class MongoImpactRepository(_Base):
+    def add(self, record: ImpactProposalRecord) -> None:
+        self._insert(PROPOSALS, record, "impact proposal")
+
+    def get(self, proposal_id: UUID) -> ImpactProposalRecord:
+        doc = self._db[PROPOSALS].find_one({"_id": proposal_id}, session=self._session)
+        if doc is None:
+            raise RecordNotFoundError("impact proposal not found")
+        return from_document(ImpactProposalRecord, doc)
+
+    def save(self, record: ImpactProposalRecord) -> None:
+        result = self._db[PROPOSALS].replace_one(
+            {"_id": record.id}, to_document(record), session=self._session)
+        if result.matched_count == 0:
+            raise RecordNotFoundError("impact proposal not found")
+
+    def add_assignment(self, record: AssignmentRecord) -> None:
+        self._insert(ASSIGNMENTS, record, "schedule assignment")
+
+    def list_assignments(self, patient_id: UUID) -> list[AssignmentRecord]:
+        return self._list(ASSIGNMENTS, AssignmentRecord, {"patient_id": patient_id},
+                          [("assigned_at", ASCENDING), ("_id", ASCENDING)])
 
 
 class MongoCommandRepository(_Base):
@@ -297,6 +352,13 @@ class MongoEvaluationRepository(_Base):
         return self._list(
             CONFINEMENTS, ConfinementEpisodeRecord, {"evaluation_id": evaluation_id},
             [("episode_code", ASCENDING), ("_id", ASCENDING)])
+
+    def supersede_active_pointers(self, patient_id: UUID) -> int:
+        result = self._db[POINTERS].update_many(
+            {"patient_id": patient_id, "status": "ACTIVE"},
+            {"$set": {"status": "SUPERSEDED", "updated_at": datetime.now(timezone.utc)}},
+            session=self._session)
+        return int(result.modified_count)
 
     def list_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> list[EvaluationRecord]:
         return self._list(

@@ -24,8 +24,10 @@ from app.application.errors import (
 )
 from app.application.patients import (
     ActivityEntryRecord,
+    AssignmentRecord,
     ConfinementEpisodeRecord,
     EvaluationRecord,
+    ImpactProposalRecord,
     OccurrenceRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
@@ -65,6 +67,8 @@ class _Store:
         self.confinements: dict[UUID, list[ConfinementEpisodeRecord]] = {}
         self.pointers: dict[tuple[UUID, UUID], PatientScheduleRecord] = {}
         self.receipts: list[CommandReceiptRecord] = []
+        self.proposals: dict[UUID, ImpactProposalRecord] = {}
+        self.assignments: list[AssignmentRecord] = []
         self.outbox: list[OutboxRecord] = []
 
 
@@ -470,6 +474,14 @@ class InMemoryPatientRepository:
                 counts[row.current_schedule_version_id] = counts.get(row.current_schedule_version_id, 0) + 1
         return counts
 
+    def save(self, record: PatientRecord) -> PatientRecord:
+        row = self._s.patients.get(record.id)
+        if row is None or row.organization_id != record.organization_id or row.revision != record.revision:
+            raise StaleRevisionError("the patient changed since it was read")
+        stored = record.model_copy(update={"revision": record.revision + 1, "updated_at": _now()}, deep=True)
+        self._s.patients[record.id] = stored
+        return stored.model_copy(deep=True)
+
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
     ) -> PatientRecord:
@@ -492,6 +504,22 @@ class InMemoryPatientFactsRepository:
 
     def add_anchor(self, record: PatientAnchorRecord) -> None:
         self._s.anchors.append(record.model_copy(deep=True))
+
+    def get_anchor(self, anchor_id: UUID) -> PatientAnchorRecord:
+        for item in self._s.anchors:
+            if item.id == anchor_id:
+                return item.model_copy(deep=True)
+        raise RecordNotFoundError("patient anchor not found")
+
+    def confirm_anchor(self, anchor_id: UUID, metadata: dict) -> PatientAnchorRecord:
+        for item in self._s.anchors:
+            if item.id == anchor_id:
+                if item.status != "PENDING_CONFIRMATION":
+                    raise StaleRevisionError("anchor candidate is no longer pending confirmation")
+                item.status = "CONFIRMED"
+                item.metadata = dict(metadata)
+                return item.model_copy(deep=True)
+        raise StaleRevisionError("anchor candidate is no longer pending confirmation")
 
     def list_anchors(self, patient_id: UUID, *, statuses: set[str] | None = None):
         rows = [item for item in self._s.anchors if item.patient_id == patient_id
@@ -638,10 +666,47 @@ class InMemoryEvaluationRepository:
                       key=lambda item: (item.episode_code, str(item.id)))
         return [item.model_copy(deep=True) for item in rows]
 
+    def supersede_active_pointers(self, patient_id: UUID) -> int:
+        changed = 0
+        for (owner, _version), pointer in self._s.pointers.items():
+            if owner == patient_id and pointer.status == "ACTIVE":
+                pointer.status = "SUPERSEDED"
+                changed += 1
+        return changed
+
     def list_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> list[EvaluationRecord]:
         rows = [item for item in self._s.evaluations.values()
                 if item.patient_id == patient_id and item.schedule_version_id == schedule_version_id]
         rows.sort(key=lambda item: (item.sequence, item.evaluated_at))
+        return [item.model_copy(deep=True) for item in rows]
+
+
+class InMemoryImpactRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def add(self, record: ImpactProposalRecord) -> None:
+        if record.id in self._s.proposals:
+            raise DuplicateRecordError("impact proposal already exists", key=str(record.id))
+        self._s.proposals[record.id] = record.model_copy(deep=True)
+
+    def get(self, proposal_id: UUID) -> ImpactProposalRecord:
+        row = self._s.proposals.get(proposal_id)
+        if row is None:
+            raise RecordNotFoundError("impact proposal not found")
+        return row.model_copy(deep=True)
+
+    def save(self, record: ImpactProposalRecord) -> None:
+        if record.id not in self._s.proposals:
+            raise RecordNotFoundError("impact proposal not found")
+        self._s.proposals[record.id] = record.model_copy(deep=True)
+
+    def add_assignment(self, record: AssignmentRecord) -> None:
+        self._s.assignments.append(record.model_copy(deep=True))
+
+    def list_assignments(self, patient_id: UUID) -> list[AssignmentRecord]:
+        rows = [item for item in self._s.assignments if item.patient_id == patient_id]
+        rows.sort(key=lambda item: (item.assigned_at, str(item.id)))
         return [item.model_copy(deep=True) for item in rows]
 
 
@@ -689,6 +754,7 @@ class InMemoryUnitOfWork:
         self.facts = InMemoryPatientFactsRepository(self._store)
         self.evaluations = InMemoryEvaluationRepository(self._store)
         self.commands = InMemoryCommandRepository(self._store)
+        self.impacts = InMemoryImpactRepository(self._store)
         self.outbox = InMemoryOutboxRepository(self._store)
 
     def run(self, fn: Callable[["InMemoryUnitOfWork"], T]) -> T:

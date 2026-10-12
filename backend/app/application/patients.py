@@ -190,6 +190,41 @@ class PatientEventRecord(Record):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ImpactProposalRecord(Record):
+    """A previewed, human-confirmable schedule change (replaces the SQL proposal row)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    patient_id: UUID
+    from_schedule_version_id: UUID
+    to_schedule_version_id: UUID
+    horizon: date
+    input_hash: str
+    impact: dict[str, Any] = Field(default_factory=dict)
+    status: str = "PENDING"
+    reason: str | None = None
+    created_by: UUID
+    confirmed_by: UUID | None = None
+    confirmed_at: datetime | None = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AssignmentRecord(Record):
+    """Append-only: which schedule version a patient was put on, and why."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    patient_id: UUID
+    schedule_version_id: UUID
+    previous_schedule_version_id: UUID | None = None
+    impact_proposal_id: UUID | None = None
+    assignment_type: str = "ENROLMENT"
+    reason: str | None = None
+    assigned_by: UUID | None = None
+    assigned_at: datetime = Field(default_factory=utc_now)
+
+
 class CalendarEntry(Record):
     """One visit as the latest calendar shows it: the plan, and what happened."""
 

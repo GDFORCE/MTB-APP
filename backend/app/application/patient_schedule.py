@@ -133,7 +133,8 @@ class PatientScheduleService:
     def result_date(item: object | None) -> date | None:
         if item is None:
             return None
-        value = getattr(item, "nominal_start", None)
+        timing = getattr(item, "timing", None)
+        value = getattr(timing, "nominal_start", None) if timing else None
         return _as_date(value)
 
     def current_events(
@@ -947,3 +948,42 @@ class PatientScheduleService:
                 old_status=was.status if was else None, new_status=now.status if now else None,
                 reason=reason))
         return changes
+
+    # ------------------------------------------------------- in-transaction forms
+    def evaluate_in(
+        self, tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID, horizon: date,
+        schedule_version_id: UUID | None = None, idempotency_key: str | None = None,
+        prior_events_override: list[PatientEventRecord] | None = None,
+        rolling: RollingHorizon | None = None, actor_id: UUID | None = None,
+        reason: str | None = None,
+    ) -> tuple[EvaluationRecord, list[PatientEventRecord]]:
+        """``evaluate`` for a caller that already holds the unit of work."""
+        return self._evaluate(
+            tx, patient_id, organization_id=organization_id, horizon=horizon,
+            schedule_version_id=schedule_version_id, idempotency_key=idempotency_key,
+            prior_events_override=prior_events_override, rolling=rolling,
+            actor_id=actor_id, reason=reason)
+
+    @staticmethod
+    def record_patient_fact_in(
+        tx: UnitOfWork, patient: PatientRecord, *, state_code: str, value: dict[str, object],
+        effective_at: date | datetime, actor_id: UUID | None,
+        source_reference: dict[str, object] | None = None,
+    ) -> PatientStateRecord:
+        if state_code not in RESERVED_STATE_CODES:
+            raise ValueError(f"{state_code!r} is not a typed WP3 fact")
+        effective = effective_at if isinstance(effective_at, datetime) else datetime.combine(
+            effective_at, datetime.min.time(), tzinfo=timezone.utc)
+        record = PatientStateRecord(
+            organization_id=patient.organization_id, patient_id=patient.id, state_code=state_code,
+            state_value=value, effective_at=effective, recorded_by=actor_id,
+            source_reference=source_reference or {})
+        tx.facts.append_state(record)
+        return record
+
+    @staticmethod
+    def protected_keys_for(
+        service: "PatientScheduleService", tx: UnitOfWork, patient_id: UUID,
+        events: list[PatientEventRecord],
+    ) -> set[tuple[str, int]]:
+        return service.protected_event_keys(tx, patient_id, events)
