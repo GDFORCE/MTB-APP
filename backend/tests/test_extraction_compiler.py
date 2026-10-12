@@ -28,7 +28,7 @@ from app.domain.schedule.models import (
 )
 from app.domain.schedule.timing import (
     AbsoluteTiming, AnchorReference, ApproximateTiming, CycleDayTiming, CycleSelector,
-    EventReference, NoLaterThanTiming,
+    BasisSource, EventReference, NoLaterThanTiming, TemporalBasis,
     OffsetTiming, ProtocolDayTiming, ProtocolDefinedTiming, RangeTiming,
     TriggeredTiming, UnresolvedTiming, WithinTiming,
 )
@@ -247,10 +247,15 @@ def test_a_visit_counted_from_another_visit_depends_on_it_and_needs_a_stated_mod
         fact("Visit 3", timing={"pattern": "OFFSET", "from": "Visit 2", "offset": "14 DAY"}))
 
     visit = event(result, "VISIT_3")
-    assert visit.timing.reference == EventReference(event_code="VISIT_2")
+    # P1-01: the protocol did not say planned vs actual, so the basis is a
+    # flagged placeholder that blocks approval - never a stated fact.
+    assert visit.timing.reference == EventReference(
+        event_code="VISIT_2", temporal_basis=TemporalBasis.CURRENT_PLANNED,
+        basis_source=BasisSource.UNCONFIRMED)
     assert [item.source_event_code for item in visit.dependencies] == ["VISIT_2"]
     assert visit.dependency_mode == "UNCLEAR"
     assert "UNCLEAR_DEPENDENCY_MODE" in issues_for(result, visit.id)
+    assert "TEMPORAL_BASIS_UNCONFIRMED" in issues_for(result, visit.id)
 
 
 def test_on_demand_visit_is_available_not_dated():

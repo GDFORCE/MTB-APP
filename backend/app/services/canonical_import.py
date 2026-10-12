@@ -62,9 +62,11 @@ from app.domain.schedule.models import (
 from app.domain.schedule.timing import (
     AnchorReference,
     ApproximateTiming,
+    BasisSource,
     EventReference,
     NoLaterThanTiming,
     NominalWindowTiming,
+    TemporalBasis,
     NonNegativeTemporalAmount,
     OffsetTiming,
     ProtocolDefinedTiming,
@@ -301,7 +303,13 @@ def _timing_for(
             reference = AnchorReference(code=anchor_codes[anchor_id])
         elif anchor_id in event_codes:
             # A visit counted from another VISIT is a dependency, not an anchor.
-            reference = EventReference(event_code=event_codes[anchor_id])
+            # P1-01: the legacy visit/gap data never says whether the gap is
+            # counted from the previous visit's planned or actual date, so the
+            # basis is a flagged placeholder, not a stated fact.
+            reference = EventReference(
+                event_code=event_codes[anchor_id],
+                temporal_basis=TemporalBasis.CURRENT_PLANNED,
+                basis_source=BasisSource.UNCONFIRMED)
     elif kind in {"offset", "calendar_offset", "range"} and default_anchor:
         # A schedule-of-assessments "Day 8" with no named anchor is measured from
         # the study baseline. That is not an invention: it is the same origin the

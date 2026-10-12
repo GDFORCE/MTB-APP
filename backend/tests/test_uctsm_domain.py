@@ -22,7 +22,7 @@ from app.domain.schedule.timing import (
     AnchorReference, EventReference, NominalWindowTiming, NonNegativeTemporalAmount,
     OffsetTiming, PositiveTemporalAmount, RangeTiming, TemporalAmount,
     ProtocolDayTiming, TimeUnit, TriggeredTiming, TriggerWithin,
-    UnresolvedTiming, Window, WithinTiming,
+    TemporalBasis, UnresolvedTiming, Window, WithinTiming,
 )
 from app.domain.schedule.validator import ScheduleValidator
 
@@ -108,7 +108,7 @@ def test_event_relative_intraday_and_triggered_constraints_preserve_datetime_pre
         anchors={"PROGRESSION": date(2026, 9, 12)},
     )
     pk = evaluate_timing(OffsetTiming(
-        reference=EventReference(event_code="DOSE"),
+        reference=EventReference(event_code="DOSE", temporal_basis=TemporalBasis.CURRENT_PLANNED),
         offset=TemporalAmount(value=4, unit="HOUR"),
     ), patient_context)
     assert pk.nominal_start == datetime(2026, 1, 10, 13, 0, tzinfo=timezone.utc)
@@ -236,7 +236,7 @@ def test_dependency_mode_distinguishes_nominal_from_actual_previous_event():
     follow_up = Event(
         code="FOLLOW_UP", protocol_label="Follow-up", display_name="Follow-up", event_type="VISIT",
         timing=OffsetTiming(
-            reference=EventReference(event_code="DOSE"),
+            reference=EventReference(event_code="DOSE", temporal_basis=TemporalBasis.CURRENT_PLANNED),
             offset=TemporalAmount(value=7, unit="DAY"),
         ),
         dependencies=[Dependency(source_event_code="DOSE", dependency_type="TEMPORAL")],
@@ -260,7 +260,10 @@ def test_dependency_mode_distinguishes_nominal_from_actual_previous_event():
     )
     assert nominal.events[1].timing.nominal_start == date(2026, 1, 8)
 
+    # P1-01: counting from the actual date is stated by the reference as well.
     schedule.events[1].dependency_mode = DependencyMode.ACTUAL_PREVIOUS_EVENT
+    schedule.events[1].timing.reference = EventReference(
+        event_code="DOSE", temporal_basis=TemporalBasis.ACTUAL_VISIT)
     actual = ScheduleEvaluator().evaluate(
         schedule, patient_context, horizon=date(2026, 12, 31),
     )
@@ -272,7 +275,7 @@ def test_actual_previous_dependency_waits_for_recorded_actual():
     event = Event(
         code="FOLLOW_UP", protocol_label="Follow-up", display_name="Follow-up", event_type="VISIT",
         timing=OffsetTiming(
-            reference=EventReference(event_code="DOSE"),
+            reference=EventReference(event_code="DOSE", temporal_basis=TemporalBasis.ACTUAL_VISIT),
             offset=TemporalAmount(value=7, unit="DAY"),
         ),
         dependencies=[Dependency(source_event_code="DOSE", dependency_type="TEMPORAL")],

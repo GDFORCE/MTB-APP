@@ -118,7 +118,8 @@ def test_unsupported_operator_blocks_every_affected_row_and_cannot_be_acknowledg
             "type": "UNSUPPORTED", "id": "dose-bsa", "family": "CONSTRAINT",
             "source_operator": "WITHIN_N_BUSINESS_DAYS", "source_text": "within 3 business days"}}},
         {"code": "POST_DOSE", "timing": {"type": "OFFSET",
-                                          "reference": {"kind": "EVENT", "event_code": "DOSE", "occurrence": "FIRST"},
+                                          "reference": {"kind": "EVENT", "event_code": "DOSE", "occurrence": "FIRST",
+                                                           "temporal_basis": "CURRENT_PLANNED"},
                                           "offset": {"value": 7, "unit": "DAY"}}},
     ])
     body = view(client, version_id)

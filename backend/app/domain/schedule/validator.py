@@ -20,6 +20,8 @@ from .models import (
 from .timing import (
     ActivityReference,
     AnchorAcceptance,
+    BasisSource,
+    TemporalBasis,
     AnchorReference,
     ActivityValue,
     AnchorValue,
@@ -70,7 +72,16 @@ def legacy_reference(value: object) -> object:
         return AnchorReference(code=value.code, accepts=value.accepts)
     if isinstance(value, EventValue):
         occurrence = value.occurrence.type if value.occurrence.type in {"FIRST", "LAST"} else "CURRENT"
-        return EventReference(event_code=value.event_code, occurrence=occurrence)
+        # Synthetic, never stored or evaluated (graph / enrolment ordering only).
+        # The constraint value states its own acceptance, so the basis is explicit.
+        if value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
+            return EventReference(
+                event_code=value.event_code, occurrence=occurrence,
+                temporal_basis=TemporalBasis.ACTUAL_OR_PLANNED,
+                fallback_basis=TemporalBasis.CURRENT_PLANNED)
+        return EventReference(
+            event_code=value.event_code, occurrence=occurrence,
+            temporal_basis=TemporalBasis.ACTUAL_VISIT)
     if isinstance(value, ActivityValue):
         return ActivityReference(activity_code=value.activity_code)
     raise TypeError(f"not a reference value: {type(value).__name__}")
@@ -106,6 +117,26 @@ def _graph_references(event: object) -> list[object]:
         if not (isinstance(item, EventReference) and item.event_code == event.code)
     ]
     return [*legacy, *constrained]
+
+
+def _own_event_references(event: object) -> list[EventReference]:
+    """The stored (legacy-timing) event references an event carries: its timing,
+    its repeat rule's start / end, and its activities' timing. Constraint values
+    state their own acceptance and are validated with the constraints."""
+    references: list[object] = []
+    if not isinstance(event.timing, ConstraintTiming):
+        references.extend(timing_references(event.timing))
+    for rule in (event.recurrence, event.recurrence_plan, event.calendar_recurrence):
+        if rule is None:
+            continue
+        references.append(rule.start_reference)
+        end = getattr(rule, "termination", None)
+        if end is not None and end.type == "RELATIVE" and end.end_reference is not None:
+            references.append(end.end_reference)
+    for activity in event.activities:
+        if activity.timing is not None and not isinstance(activity.timing, ConstraintTiming):
+            references.extend(timing_references(activity.timing))
+    return [item for item in references if isinstance(item, EventReference)]
 
 
 def timing_references(timing: object) -> list[object]:
@@ -180,6 +211,7 @@ class ScheduleValidator:
             issues.append(self._issue("EMPTY_SCHEDULE", "No visits or protocol events were extracted."))
         issues.extend(self._unique_codes(schedule))
         issues.extend(self._references(schedule))
+        issues.extend(self._temporal_basis(schedule))
         issues.extend(self._dependency_graph(schedule))
         issues.extend(self._clinical_completeness(schedule))
         issues.extend(self._schedule_structures(schedule))
@@ -238,6 +270,90 @@ class ScheduleValidator:
                         "timing_window": event.timing.window.model_dump(mode="json"),
                     },
                 ))
+        return issues
+
+    #: Bases the evaluator honours today. P1-02 widens this as it learns to
+    #: resolve the others; until then approving one would date a visit from a
+    #: different source than the schedule states.
+    _EXECUTABLE_BASES = frozenset({
+        TemporalBasis.CURRENT_PLANNED, TemporalBasis.ACTUAL_VISIT, TemporalBasis.MANUAL_ANCHOR,
+    })
+
+    def _temporal_basis(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """P1-01: every event reference says which date it counts from, and the
+        statement must be one the engine will actually carry out."""
+        from .temporal_basis import legacy_basis, mode_is_stated
+
+        issues: list[ValidationIssue] = []
+        types = {item.code: str(item.event_type).upper() for item in schedule.events}
+        for event in schedule.events:
+            dependencies = {item.source_event_code for item in event.dependencies}
+            stated = mode_is_stated(event.dependency_mode)
+            legacy_codes: set[str] = set()
+
+            def block(code: str, message: str, ref: EventReference, **extra: object) -> None:
+                issues.append(self._issue(
+                    code, message, entity_type="EVENT", entity_id=event.id,
+                    details={"event_code": event.code, "referenced_event": ref.event_code,
+                             "temporal_basis": ref.temporal_basis.value, **extra}))
+
+            for ref in _own_event_references(event):
+                is_dependency = ref.event_code in dependencies
+                if ref.basis_source == BasisSource.LEGACY_EQUIVALENT:
+                    legacy_codes.add(ref.event_code)
+                if ref.basis_source == BasisSource.UNCONFIRMED:
+                    # A reviewer stating the owner's dependency mode settles it
+                    # (the basis is then derived from that mode); until then the
+                    # extractor's placeholder must not reach a patient.
+                    if not stated:
+                        block("TEMPORAL_BASIS_UNCONFIRMED",
+                              f"{event.display_name!r} counts from {ref.event_code!r} but the "
+                              "protocol does not say whether that is its planned or actual "
+                              "date; a reviewer must state it", ref)
+                    continue
+                if (ref.temporal_basis == TemporalBasis.ACTUAL_TREATMENT
+                        and types.get(ref.event_code) != "TREATMENT"):
+                    block("TEMPORAL_BASIS_TREATMENT_ON_NON_TREATMENT",
+                          f"{event.display_name!r} counts from the actual treatment date of "
+                          f"{ref.event_code!r}, which is not a treatment event", ref)
+                    continue
+                if ref.temporal_basis not in self._EXECUTABLE_BASES:
+                    block("TEMPORAL_BASIS_NOT_EXECUTABLE",
+                          f"{event.display_name!r} uses {ref.temporal_basis.value} for "
+                          f"{ref.event_code!r}, which the schedule engine cannot evaluate yet; "
+                          "approving it would date the visit from a different source", ref)
+                    continue
+                if (ref.temporal_basis == TemporalBasis.MANUAL_ANCHOR
+                        and event.dependency_mode != DependencyMode.MANUAL):
+                    block("TEMPORAL_BASIS_MANUAL_REQUIRES_MANUAL_MODE",
+                          f"{event.display_name!r} counts from a manually entered date of "
+                          f"{ref.event_code!r} but its dependency mode is not MANUAL", ref)
+                    continue
+                expected = legacy_basis(event.dependency_mode, is_dependency=is_dependency)
+                if stated and is_dependency and ref.temporal_basis != expected:
+                    block("TEMPORAL_BASIS_MODE_MISMATCH",
+                          f"{event.display_name!r} states {ref.temporal_basis.value} for "
+                          f"{ref.event_code!r} but its dependency mode "
+                          f"{event.dependency_mode.value} counts from {expected.value}",
+                          ref, expected_basis=expected.value)
+                elif stated and not is_dependency and ref.temporal_basis != TemporalBasis.CURRENT_PLANNED:
+                    issues.append(self._issue(
+                        "TEMPORAL_BASIS_NOT_A_DEPENDENCY",
+                        f"{event.display_name!r} states {ref.temporal_basis.value} for "
+                        f"{ref.event_code!r}, which is not one of its listed dependencies, "
+                        "so the engine counts it from the planned date; list it as a "
+                        "dependency if the actual date is meant",
+                        entity_type="EVENT", entity_id=event.id,
+                        severity=Severity.WARNING, blocking=False,
+                        details={"event_code": event.code, "referenced_event": ref.event_code}))
+            if legacy_codes:
+                issues.append(self._issue(
+                    "TEMPORAL_BASIS_LEGACY_EQUIVALENT",
+                    f"{event.display_name!r} references {', '.join(sorted(legacy_codes))} with "
+                    "the date source the engine already used; nobody has confirmed it",
+                    entity_type="EVENT", entity_id=event.id,
+                    severity=Severity.WARNING, blocking=False,
+                    details={"event_code": event.code, "referenced_events": sorted(legacy_codes)}))
         return issues
 
     def _planned_anchor_use(self, schedule: UniversalSchedule) -> list[ValidationIssue]:

@@ -99,6 +99,7 @@ from app.domain.schedule.timing import (
     ApproximateTiming,
     CycleDayTiming,
     CycleSelector,
+    BasisSource,
     EventReference,
     NoLaterThanTiming,
     NonNegativeTemporalAmount,
@@ -114,6 +115,7 @@ from app.domain.schedule.timing import (
     Window,
     WithinTiming,
 )
+from app.domain.schedule.temporal_basis import legacy_basis
 from app.domain.schedule.validator import ScheduleValidator
 
 from app.domain.schedule.feasibility import semantic_key
@@ -663,7 +665,15 @@ class _Compiler:
             code = self.event_names.get(key)
             if code is None:
                 raise _Unresolved(f"the visit {reference.name!r} is not defined anywhere in the schedule")
-            return EventReference(event_code=code, occurrence=reference.occurrence or "CURRENT")
+            # P1-01: which date the visit is counted from is a protocol statement,
+            # carried by the fact's dependency mode. Unstated -> an UNCONFIRMED
+            # placeholder that cannot be approved until a reviewer states it.
+            stated = _EVENT_MODES.get(fact.dependency_mode or "UNCLEAR", fact.dependency_mode or "UNCLEAR")
+            known = stated in {"NOMINAL", "ACTUAL_PREVIOUS_EVENT", "MANUAL"}
+            return EventReference(
+                event_code=code, occurrence=reference.occurrence or "CURRENT",
+                temporal_basis=legacy_basis(stated if known else None, is_dependency=True),
+                basis_source=BasisSource.EXPLICIT if known else BasisSource.UNCONFIRMED)
         if kind == "CONDITION":
             condition = self.condition_names.get(key, key)
             self.condition_names.setdefault(key, condition)

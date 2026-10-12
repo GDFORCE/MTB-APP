@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models as db
 from app.domain.schedule.models import UniversalSchedule, ValidationIssue
+from app.domain.schedule.temporal_basis import upgrade_schedule_payload
 from app.extraction.contracts import ExtractionResult
 from app.services.canonical_bridge import _protocol, _trial
 from app.services.extraction_service import ExtractionService
@@ -167,7 +168,9 @@ def import_native_schedules(
             ))
             continue
 
-        schedule = UniversalSchedule.model_validate(native_schedule)
+        # P1-01: a draft stored before ``temporal_basis`` existed is upgraded to
+        # the basis the engine already used, marked LEGACY_EQUIVALENT.
+        schedule = UniversalSchedule.model_validate(upgrade_schedule_payload(native_schedule))
         issues = [ValidationIssue.model_validate(item) for item in definition.get("native_issues") or []]
         # The ledgers computed at upload travel with the draft onto its run.
         accountability = definition.get("native_accountability")

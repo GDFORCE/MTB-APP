@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from pydantic_core import to_jsonable_python
 
 from app.domain.schedule import models as domain
+from app.domain.schedule.temporal_basis import upgrade_event_payload
 
 from . import models as db
 
@@ -343,7 +344,10 @@ class ScheduleRepository:
             metadata, constraints = _split_constraints(row.metadata_json)
             return {"metadata": metadata, "constraints": constraints}
 
-        events = [domain.Event.model_validate({
+        # P1-01: events stored before ``temporal_basis`` existed get the basis
+        # the engine already used for them, marked LEGACY_EQUIVALENT. Read-time
+        # only - nothing stored is rewritten.
+        events = [domain.Event.model_validate(upgrade_event_payload({
             "id": row.id, "code": row.code, "protocol_label": row.protocol_label,
             "display_name": row.display_name, "normalized_name": row.normalized_name,
             "event_type": row.event_type, "epoch_id": row.epoch_id,
@@ -362,7 +366,7 @@ class ScheduleRepository:
             "interpretation_status": row.interpretation_status,
             "requires_review": row.requires_review,
             **event_payload(row),
-        }) for row in event_rows]
+        })) for row in event_rows]
         evidence = [domain.Evidence.model_validate({
             "id": row.id, "evidence_type": row.evidence_type,
             "page_number": row.page_number, "section_title": row.section_title,

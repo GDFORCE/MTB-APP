@@ -69,10 +69,71 @@ class AnchorReference(StrictModel):
     accepts: AnchorAcceptance = AnchorAcceptance.ACTUAL
 
 
+class TemporalBasis(StrEnum):
+    """Which recorded date of the referenced visit a rule counts from (P1-01).
+
+    Never inferred from an event's name, code or status: a reference says which
+    date it uses, or it is not a complete rule.
+
+    ORIGINAL_PLANNED: the date the first evaluation of that occurrence produced;
+    it never moves afterwards. CURRENT_PLANNED: the date the latest evaluation
+    plans for it. ACTUAL_VISIT / ACTUAL_TREATMENT: the date the patient attended
+    / was actually treated - independent facts (a visit can happen with the
+    treatment withheld). ACTUAL_OR_PLANNED: the actual date once it exists, else
+    the planned basis named in ``fallback_basis``, with the fallback stated in
+    the explanation. MANUAL_ANCHOR: a date a person entered by hand.
+    """
+
+    ORIGINAL_PLANNED = "ORIGINAL_PLANNED"
+    CURRENT_PLANNED = "CURRENT_PLANNED"
+    ACTUAL_VISIT = "ACTUAL_VISIT"
+    ACTUAL_TREATMENT = "ACTUAL_TREATMENT"
+    ACTUAL_OR_PLANNED = "ACTUAL_OR_PLANNED"
+    MANUAL_ANCHOR = "MANUAL_ANCHOR"
+
+
+#: The planned bases a fallback may name.
+PLANNED_BASES = frozenset({TemporalBasis.ORIGINAL_PLANNED, TemporalBasis.CURRENT_PLANNED})
+
+
+class BasisSource(StrEnum):
+    """Who stated a reference's temporal basis.
+
+    EXPLICIT: a person or the extractor read it from the protocol / a reviewer
+    chose it. LEGACY_EQUIVALENT: the reference predates the field and carries
+    the basis the engine already used for it (so nothing moves); it was derived
+    at read time, not stated by anyone. UNCONFIRMED: extraction could not tell;
+    the stored basis is a placeholder that cannot be approved while the owning
+    event's dependency mode is also unstated.
+    """
+
+    EXPLICIT = "EXPLICIT"
+    LEGACY_EQUIVALENT = "LEGACY_EQUIVALENT"
+    UNCONFIRMED = "UNCONFIRMED"
+
+
 class EventReference(StrictModel):
     kind: Literal["EVENT"] = "EVENT"
     event_code: str = Field(min_length=1)
     occurrence: Literal["FIRST", "LAST", "CURRENT"] = "CURRENT"
+    # Required, no default: a reference that does not say which date it counts
+    # from is not a complete rule (P1-01).
+    temporal_basis: TemporalBasis
+    #: Only for ACTUAL_OR_PLANNED: which planned date is used while the actual
+    #: one does not exist yet. Never defaulted.
+    fallback_basis: TemporalBasis | None = None
+    basis_source: BasisSource = BasisSource.EXPLICIT
+
+    @model_validator(mode="after")
+    def coherent_basis(self) -> "EventReference":
+        if self.temporal_basis == TemporalBasis.ACTUAL_OR_PLANNED:
+            if self.fallback_basis not in PLANNED_BASES:
+                raise ValueError(
+                    "ACTUAL_OR_PLANNED must state its fallback as ORIGINAL_PLANNED "
+                    "or CURRENT_PLANNED")
+        elif self.fallback_basis is not None:
+            raise ValueError("fallback_basis is only valid with ACTUAL_OR_PLANNED")
+        return self
 
 
 class ActivityReference(StrictModel):
