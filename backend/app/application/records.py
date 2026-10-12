@@ -39,6 +39,35 @@ class Record(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class CommandReceiptRecord(Record):
+    """Proof that one idempotency key already produced one result."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    patient_id: UUID
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    command_type: str
+    payload_hash: str
+    result: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class OutboxRecord(Record):
+    """A notification-worthy fact, written in the same transaction as the
+    change it describes. Consumers (reminders, calendars) are a later epic."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    aggregate_type: str
+    aggregate_id: UUID
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    dedupe_key: str
+    status: str = "PENDING"
+    attempts: int = 0
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class AuditRecord(Record):
     """One append-only audit event (replaces ``uctsm_audit_events``)."""
 

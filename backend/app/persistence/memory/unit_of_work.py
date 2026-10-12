@@ -35,7 +35,7 @@ from app.application.patients import (
     PatientStateRecord,
     UnscheduledVisitRecord,
 )
-from app.application.records import AuditRecord
+from app.application.records import AuditRecord, CommandReceiptRecord, OutboxRecord
 from app.domain.schedule.models import Event, UniversalSchedule, ValidationIssue
 
 T = TypeVar("T")
@@ -64,6 +64,8 @@ class _Store:
         self.events: dict[UUID, list[PatientEventRecord]] = {}
         self.confinements: dict[UUID, list[ConfinementEpisodeRecord]] = {}
         self.pointers: dict[tuple[UUID, UUID], PatientScheduleRecord] = {}
+        self.receipts: list[CommandReceiptRecord] = []
+        self.outbox: list[OutboxRecord] = []
 
 
 def _now() -> datetime:
@@ -628,6 +630,38 @@ class InMemoryEvaluationRepository:
         return [item.model_copy(deep=True) for item in rows]
 
 
+class InMemoryCommandRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def find_receipt(self, organization_id: UUID, patient_id: UUID, idempotency_key: str):
+        for row in self._s.receipts:
+            if (row.organization_id, row.patient_id, row.idempotency_key) == (
+                    organization_id, patient_id, idempotency_key):
+                return row.model_copy(deep=True)
+        return None
+
+    def add_receipt(self, record: CommandReceiptRecord) -> None:
+        if self.find_receipt(record.organization_id, record.patient_id, record.idempotency_key):
+            raise DuplicateRecordError("command receipt already exists", key=record.idempotency_key)
+        self._s.receipts.append(record.model_copy(deep=True))
+
+
+class InMemoryOutboxRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def add(self, record: OutboxRecord) -> None:
+        if any(row.dedupe_key == record.dedupe_key for row in self._s.outbox):
+            raise DuplicateRecordError("outbox record already exists", key=record.dedupe_key)
+        self._s.outbox.append(record.model_copy(deep=True))
+
+    def list_pending(self, *, limit: int = 100):
+        rows = sorted((row for row in self._s.outbox if row.status == "PENDING"),
+                      key=lambda row: (row.created_at, str(row.id)))
+        return [row.model_copy(deep=True) for row in rows[:limit]]
+
+
 class InMemoryUnitOfWork:
     """Atomic like the real store: an exception restores the pre-run state."""
 
@@ -639,6 +673,8 @@ class InMemoryUnitOfWork:
         self.patients = InMemoryPatientRepository(self._store)
         self.facts = InMemoryPatientFactsRepository(self._store)
         self.evaluations = InMemoryEvaluationRepository(self._store)
+        self.commands = InMemoryCommandRepository(self._store)
+        self.outbox = InMemoryOutboxRepository(self._store)
 
     def run(self, fn: Callable[["InMemoryUnitOfWork"], T]) -> T:
         snapshot = copy.deepcopy(self._store.__dict__)

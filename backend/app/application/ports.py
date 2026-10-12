@@ -42,7 +42,7 @@ from .patients import (
     PatientStateRecord,
     UnscheduledVisitRecord,
 )
-from .records import AuditRecord
+from .records import AuditRecord, CommandReceiptRecord, OutboxRecord
 
 T = TypeVar("T")
 
@@ -218,6 +218,22 @@ class EvaluationRepository(Protocol):
         ...
 
 
+class CommandRepository(Protocol):
+    def find_receipt(
+        self, organization_id: UUID, patient_id: UUID, idempotency_key: str,
+    ) -> CommandReceiptRecord | None: ...
+    def add_receipt(self, record: CommandReceiptRecord) -> None:
+        """Unique per (organization, patient, key). ``DuplicateRecordError``."""
+        ...
+
+
+class OutboxRepository(Protocol):
+    def add(self, record: OutboxRecord) -> None:
+        """Unique per ``dedupe_key``. ``DuplicateRecordError``."""
+        ...
+    def list_pending(self, *, limit: int = 100) -> list[OutboxRecord]: ...
+
+
 class UnitOfWork(Protocol):
     """One atomic business operation.
 
@@ -232,6 +248,8 @@ class UnitOfWork(Protocol):
     patients: PatientRepository
     facts: PatientFactsRepository
     evaluations: EvaluationRepository
+    commands: CommandRepository
+    outbox: OutboxRepository
 
     def run(self, fn: "Callable[[UnitOfWork], T]") -> T: ...
 

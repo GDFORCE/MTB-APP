@@ -28,5 +28,9 @@ class StaleRevisionError(PersistenceError):
     """Optimistic concurrency: the record changed since the caller read it."""
 
 
+class IdempotencyConflictError(PersistenceError):
+    """An idempotency key was reused with a DIFFERENT payload (HTTP 409)."""
+
+
 class ImmutableRecordError(PersistenceError):
     """An approved or append-only record was addressed by a write."""

@@ -29,7 +29,7 @@ from app.application.patients import (
     PatientStateRecord,
     UnscheduledVisitRecord,
 )
-from app.application.records import Record
+from app.application.records import CommandReceiptRecord, OutboxRecord, Record
 
 from .documents import from_document, to_document
 
@@ -46,6 +46,8 @@ EVALUATIONS = "schedule_evaluations"
 EVENTS = "patient_events"
 CONFINEMENTS = "patient_confinement_episodes"
 POINTERS = "patient_schedules"
+RECEIPTS = "command_receipts"
+OUTBOX = "outbox"
 
 
 def _duplicate(error: Exception) -> bool:
@@ -196,6 +198,28 @@ class MongoPatientFactsRepository(_Base):
             query["schedule_version_id"] = schedule_version_id
         return self._list(OCCURRENCES, OccurrenceRecord, query,
                           [("recorded_at", ASCENDING), ("_id", ASCENDING)])
+
+
+class MongoCommandRepository(_Base):
+    def find_receipt(
+        self, organization_id: UUID, patient_id: UUID, idempotency_key: str,
+    ) -> CommandReceiptRecord | None:
+        doc = self._db[RECEIPTS].find_one(
+            {"organization_id": organization_id, "patient_id": patient_id,
+             "idempotency_key": idempotency_key}, session=self._session)
+        return from_document(CommandReceiptRecord, doc) if doc else None
+
+    def add_receipt(self, record: CommandReceiptRecord) -> None:
+        self._insert(RECEIPTS, record, "command receipt")
+
+
+class MongoOutboxRepository(_Base):
+    def add(self, record: OutboxRecord) -> None:
+        self._insert(OUTBOX, record, "outbox record")
+
+    def list_pending(self, *, limit: int = 100) -> list[OutboxRecord]:
+        return self._list(OUTBOX, OutboxRecord, {"status": "PENDING"},
+                          [("created_at", ASCENDING), ("_id", ASCENDING)])[:limit]
 
 
 class MongoEvaluationRepository(_Base):

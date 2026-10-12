@@ -127,6 +127,9 @@ class OccurrenceRecord(Record):
     occurrence_type: str
     scheduled_date: date | None = None
     actual_date: date | None = None
+    #: The date treatment was actually administered at this visit - a fact
+    #: independent of the visit date (D7). None means none was recorded.
+    treatment_date: date | None = None
     status: str
     recorded_by: UUID | None = None
     recorded_at: datetime = Field(default_factory=utc_now)
@@ -173,6 +176,9 @@ class PatientEventRecord(Record):
     nominal_end_date: date | None = None
     earliest_date: date | None = None
     latest_date: date | None = None
+    #: The first date any evaluation produced for this logical visit; carried
+    #: forward unchanged once set (D3).
+    original_nominal_start_date: date | None = None
     timing_resolution: dict[str, Any] = Field(default_factory=dict)
     applicability_result: Any | None = None
     condition_result: Any | None = None
@@ -182,6 +188,52 @@ class PatientEventRecord(Record):
     unscheduled_reason: str | None = None
     activities: list[PatientActivityEntry] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class CalendarEntry(Record):
+    """One visit as the latest calendar shows it: the plan, and what happened."""
+
+    logical_key: str
+    event_code: str
+    occurrence_index: int
+    logical_occurrence_id: UUID
+    evaluation_id: UUID
+    status: str
+    completed: bool = False
+    planned_start: date | None = None
+    earliest: date | None = None
+    latest: date | None = None
+    original_planned: date | None = None
+    actual_visit_date: date | None = None
+    actual_treatment_date: date | None = None
+
+
+class ScheduleChange(Record):
+    """Before/after of one logical visit across an evaluation, with the reason."""
+
+    logical_key: str
+    event_code: str
+    occurrence_index: int
+    changed: bool
+    old_target: date | None = None
+    new_target: date | None = None
+    old_window: tuple[date | None, date | None] = (None, None)
+    new_window: tuple[date | None, date | None] = (None, None)
+    old_status: str | None = None
+    new_status: str | None = None
+    reason: str = ""
+
+
+class OccurrenceOutcome(Record):
+    """What recording one actual occurrence did."""
+
+    occurrence_id: UUID
+    evaluation_id: UUID | None = None
+    reevaluated: bool
+    #: True when this response replays an earlier identical request.
+    replayed: bool = False
+    reason: str = ""
+    changes: list[ScheduleChange] = Field(default_factory=list)
 
 
 class ConfinementEpisodeRecord(Record):

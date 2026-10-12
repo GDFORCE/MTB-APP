@@ -17,27 +17,31 @@ the patient's history, positionally by date.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import hashlib
+import json
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, TypeVar
 from uuid import UUID, uuid4
 
 from app.domain.schedule.anchor_status import record_is_actual
 from app.domain.schedule.evaluator import ScheduleEvaluator
 from app.domain.schedule.identity import activity_logical_key, event_logical_key
+from app.domain.schedule.relevance import references_event
 from app.domain.schedule.models import (
-    AssignmentFact, ConditionState, EvaluationResult, HolidayCalendar, OccurrenceFact,
+    AssignmentFact, ConditionState, EvaluationResult, HolidayCalendar, LogicalOccurrenceState,
+    OccurrenceFact,
     OccurrenceFactKind, PatientConditionStatus, PatientContext, ProcessTransition,
     RollingHorizon, UnscheduledOccurrence,
 )
 
-from .errors import DuplicateRecordError, StaleRevisionError
+from .errors import DuplicateRecordError, IdempotencyConflictError, StaleRevisionError
 from .patients import (
-    ActivityEntryRecord, ConfinementEpisodeRecord, EvaluationRecord, OccurrenceRecord,
-    PatientActivityEntry, PatientEventRecord, PatientRecord, PatientStateRecord,
-    UnscheduledVisitRecord,
+    ActivityEntryRecord, CalendarEntry, ConfinementEpisodeRecord, EvaluationRecord,
+    OccurrenceOutcome, OccurrenceRecord, PatientActivityEntry, PatientEventRecord, PatientRecord,
+    PatientStateRecord, ScheduleChange, UnscheduledVisitRecord,
 )
 from .ports import UnitOfWork
-from .records import AuditRecord, utc_now
+from .records import AuditRecord, CommandReceiptRecord, OutboxRecord, utc_now
 
 T = TypeVar("T")
 
@@ -55,6 +59,9 @@ BOOKED_KEY = "booked_date"
 END_KEY = "end_date"
 
 _RETRIES = 3
+#: An actual date earlier than this many days before the patient's earliest
+#: confirmed anchor is refused as implausible (screening visits precede baseline).
+MAX_DAYS_BEFORE_FIRST_ANCHOR = 365
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
@@ -294,6 +301,7 @@ class PatientScheduleService:
             dimension_values=patient.dimension_values or {},
             occurrence_facts=occurrence_facts, process_transitions=process_transitions,
             assignment_history=assignment_history, holiday_calendars=list(site_calendars.values()),
+            occurrence_history=self._history(tx, patient, schedule_version_id, occurrences),
         )
 
     @staticmethod
@@ -407,6 +415,10 @@ class PatientScheduleService:
                 protected_history=keep, status=status,
                 nominal_start_date=nominal_start, nominal_end_date=nominal_end,
                 earliest_date=earliest, latest_date=latest,
+                original_nominal_start_date=(
+                    previous.original_nominal_start_date
+                    if previous is not None and previous.original_nominal_start_date is not None
+                    else nominal_start),
                 timing_resolution=(previous.timing_resolution if keep and previous else (
                     timing.model_dump(mode="json") if timing else {})),
                 applicability_result={"value": item.applicability_result},
@@ -431,6 +443,7 @@ class PatientScheduleService:
                 nominal_start_date=previous.nominal_start_date,
                 nominal_end_date=previous.nominal_end_date,
                 earliest_date=previous.earliest_date, latest_date=previous.latest_date,
+                original_nominal_start_date=previous.original_nominal_start_date,
                 timing_resolution=previous.timing_resolution,
                 applicability_result=previous.applicability_result,
                 condition_result=previous.condition_result,
@@ -599,6 +612,7 @@ class PatientScheduleService:
         kind: OccurrenceFactKind, value: date | None = None, end_value: date | None = None,
         effective_at: date | None = None, supersedes_occurrence_id: UUID | None = None,
         actor_id: UUID | None = None, reason: str | None = None, source: str | None = None,
+        treatment_date: date | None = None,
     ) -> OccurrenceRecord:
         """Record a performed / missed / booked fact for one logical occurrence.
 
@@ -609,13 +623,14 @@ class PatientScheduleService:
             tx, patient_id, organization_id=organization_id, logical_key=logical_key, kind=kind,
             value=value, end_value=end_value, effective_at=effective_at,
             supersedes_occurrence_id=supersedes_occurrence_id, actor_id=actor_id,
-            reason=reason, source=source))
+            reason=reason, source=source, treatment_date=treatment_date))
 
     def _record_fact(
         self, tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID, logical_key: str,
         kind: OccurrenceFactKind, value: date | None, end_value: date | None,
         effective_at: date | None, supersedes_occurrence_id: UUID | None,
         actor_id: UUID | None, reason: str | None, source: str | None,
+        treatment_date: date | None = None,
     ) -> OccurrenceRecord:
         patient = tx.patients.get(organization_id, patient_id)
         if patient.current_schedule_version_id is None:
@@ -627,6 +642,8 @@ class PatientScheduleService:
             raise KeyError(f"occurrence {logical_key} is not in the patient's current plan")
         if kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED} and value is None:
             raise ValueError(f"a {kind.value.lower()} fact needs its date")
+        if treatment_date is not None and kind != OccurrenceFactKind.PERFORMED:
+            raise ValueError("a treatment date can only accompany a performed visit")
         previous: OccurrenceRecord | None = None
         if supersedes_occurrence_id is not None:
             previous = next((item for item in tx.facts.list_occurrences(patient.id)
@@ -653,6 +670,7 @@ class PatientScheduleService:
             occurrence_type="BOOKING" if kind == OccurrenceFactKind.BOOKED else "VISIT",
             scheduled_date=row.nominal_start_date,
             actual_date=value if kind == OccurrenceFactKind.PERFORMED else None,
+            treatment_date=treatment_date,
             status={OccurrenceFactKind.PERFORMED: "COMPLETED", OccurrenceFactKind.MISSED: "MISSED",
                     OccurrenceFactKind.BOOKED: "BOOKED"}[kind],
             recorded_by=actor_id, metadata=metadata)
@@ -695,3 +713,237 @@ class PatientScheduleService:
 
         return self._run(work)
 
+    # ------------------------------------------------------------------ history
+    def _history(
+        self, tx: UnitOfWork, patient: PatientRecord, schedule_version_id: UUID,
+        occurrences: list[OccurrenceRecord],
+    ) -> list[LogicalOccurrenceState]:
+        """Per logical visit: original / latest planned date, actual visit and
+        actual treatment date, and status - read in three bounded queries
+        (pointer, its projections, the patient's occurrence facts)."""
+        projected: dict[tuple[str, int], PatientEventRecord] = {}
+        pointer = tx.evaluations.get_pointer(patient.id, schedule_version_id)
+        if pointer is not None and pointer.current_evaluation_id is not None:
+            for item in tx.evaluations.list_events(pointer.current_evaluation_id):
+                projected[(item.event_code, item.occurrence_index)] = item
+        superseded = {str((row.metadata or {}).get(SUPERSEDES_KEY))
+                      for row in occurrences if (row.metadata or {}).get(SUPERSEDES_KEY)}
+        visit: dict[tuple[str, int], date] = {}
+        treatment: dict[tuple[str, int], date] = {}
+        outcome: dict[tuple[str, int], str] = {}
+        for row in occurrences:  # oldest first: the newest effective fact wins
+            if str(row.id) in superseded:
+                continue
+            fact = occurrence_fact_from_record(row)
+            if fact is None:
+                continue
+            key = (row.event_code, row.occurrence_index)
+            if fact.kind == OccurrenceFactKind.PERFORMED and row.actual_date is not None:
+                visit[key] = row.actual_date
+                outcome[key] = "COMPLETED"
+                if row.treatment_date is not None:
+                    treatment[key] = row.treatment_date
+                else:
+                    treatment.pop(key, None)
+            elif fact.kind == OccurrenceFactKind.MISSED:
+                visit.pop(key, None)
+                treatment.pop(key, None)
+                outcome[key] = "MISSED"
+        states = []
+        for key in sorted(set(projected) | set(visit) | set(outcome)):
+            event = projected.get(key)
+            states.append(LogicalOccurrenceState(
+                event_code=key[0], occurrence_index=key[1],
+                original_planned_date=event.original_nominal_start_date if event else None,
+                latest_planned_date=event.nominal_start_date if event else None,
+                actual_visit_date=visit.get(key), actual_treatment_date=treatment.get(key),
+                status=outcome.get(key) or (event.status if event else None)))
+        return states
+
+    def current_calendar(
+        self, patient_id: UUID, *, organization_id: UUID,
+    ) -> list[CalendarEntry]:
+        """The latest calendar: every visit with its plan AND what happened.
+
+        Completion and actual dates come from the facts recorded against each
+        logical visit, so they are present however many evaluations have run.
+        """
+        def work(tx: UnitOfWork) -> list[CalendarEntry]:
+            patient = tx.patients.get(organization_id, patient_id)
+            if patient.current_schedule_version_id is None:
+                return []
+            version_id = patient.current_schedule_version_id
+            pointer = tx.evaluations.get_pointer(patient.id, version_id)
+            if pointer is None or pointer.current_evaluation_id is None:
+                return []
+            history = {
+                (item.event_code, item.occurrence_index): item
+                for item in self._history(
+                    tx, patient, version_id, tx.facts.list_occurrences(patient.id))}
+            entries = []
+            for item in tx.evaluations.list_events(pointer.current_evaluation_id):
+                state = history.get((item.event_code, item.occurrence_index))
+                status = state.status if state and state.status in {"COMPLETED", "MISSED"} \
+                    else item.status
+                entries.append(CalendarEntry(
+                    logical_key=item.logical_key, event_code=item.event_code,
+                    occurrence_index=item.occurrence_index,
+                    logical_occurrence_id=item.logical_occurrence_id,
+                    evaluation_id=item.evaluation_id, status=status,
+                    completed=status == "COMPLETED", planned_start=item.nominal_start_date,
+                    earliest=item.earliest_date, latest=item.latest_date,
+                    original_planned=item.original_nominal_start_date,
+                    actual_visit_date=state.actual_visit_date if state else None,
+                    actual_treatment_date=state.actual_treatment_date if state else None))
+            return entries
+
+        return self._uow.read(work)
+
+    # ----------------------------------------------------------------- command
+    def record_actual_occurrence(
+        self, patient_id: UUID, *, organization_id: UUID, logical_key: str,
+        kind: OccurrenceFactKind, visit_date: date | None = None,
+        treatment_date: date | None = None, effective_at: date | None = None,
+        supersedes_occurrence_id: UUID | None = None, actor_id: UUID | None = None,
+        reason: str | None = None, idempotency_key: str | None = None,
+        today: date | None = None, horizon: date | None = None,
+        source: str = "SITE_ENTRY",
+    ) -> OccurrenceOutcome:
+        """Record an actual occurrence and bring the schedule up to date, atomically.
+
+        validate -> save the occurrence and audit it -> decide whether anything
+        depends on it -> (only then) re-evaluate and save a NEW immutable
+        evaluation -> return the before/after, with reasons -> write the outbox
+        record. All of it commits together or not at all.
+
+        * the same idempotency key with the same payload replays the first
+          result and writes nothing;
+        * the same key with a different payload is refused (409);
+        * an occurrence nothing depends on is saved and audited but triggers no
+          evaluation (empty change list, reason "no dependent rules").
+
+        Correcting a wrongly entered date is the supersede path here; the full
+        reversal command belongs to epic P5.
+        """
+        clock = today or date.today()
+        payload_hash = hashlib.sha256(json.dumps({
+            "patient": str(patient_id), "logical_key": logical_key, "kind": kind.value,
+            "visit_date": visit_date.isoformat() if visit_date else None,
+            "treatment_date": treatment_date.isoformat() if treatment_date else None,
+            "effective_at": effective_at.isoformat() if effective_at else None,
+            "supersedes": str(supersedes_occurrence_id) if supersedes_occurrence_id else None,
+        }, sort_keys=True).encode("utf-8")).hexdigest()
+
+        def work(tx: UnitOfWork) -> OccurrenceOutcome:
+            if idempotency_key:
+                receipt = tx.commands.find_receipt(organization_id, patient_id, idempotency_key)
+                if receipt is not None:
+                    if receipt.payload_hash != payload_hash:
+                        raise IdempotencyConflictError(
+                            "this idempotency key was already used for a different request")
+                    return OccurrenceOutcome.model_validate(
+                        {**receipt.result, "replayed": True})
+            patient = tx.patients.get(organization_id, patient_id)
+            if patient.current_schedule_version_id is None:
+                raise ValueError("patient has no active schedule version")
+            version_id = patient.current_schedule_version_id
+            for label, value in (("visit", visit_date), ("treatment", treatment_date)):
+                if value is not None and value > clock:
+                    raise ValueError(f"an actual {label} date cannot be in the future")
+            if visit_date is not None:
+                anchors = tx.facts.list_anchors(patient.id, statuses={"CONFIRMED", "PROVISIONAL"})
+                earliest = min(
+                    (item.value_datetime.date() if item.value_datetime else item.value_date
+                     for item in anchors if item.value_datetime or item.value_date), default=None)
+                if earliest is not None and visit_date < earliest - timedelta(
+                        days=MAX_DAYS_BEFORE_FIRST_ANCHOR):
+                    raise ValueError(
+                        f"an actual date of {visit_date.isoformat()} is more than "
+                        f"{MAX_DAYS_BEFORE_FIRST_ANCHOR} days before this patient's earliest "
+                        f"recorded anchor ({earliest.isoformat()})")
+            before = self.current_events(tx, patient.id, version_id)
+            occurrence = self._record_fact(
+                tx, patient_id, organization_id=organization_id, logical_key=logical_key,
+                kind=kind, value=visit_date, end_value=None, effective_at=effective_at,
+                supersedes_occurrence_id=supersedes_occurrence_id, actor_id=actor_id,
+                reason=reason, source=source, treatment_date=treatment_date)
+            schedule = tx.schedules.get(version_id)
+            recorded = next(item for item in before if item.logical_key == logical_key)
+            relevant = references_event(schedule, recorded.event_code)
+            if not relevant:
+                outcome = OccurrenceOutcome(
+                    occurrence_id=occurrence.id, reevaluated=False, reason="no dependent rules")
+            else:
+                evaluation, after = self._evaluate(
+                    tx, patient.id, organization_id=organization_id,
+                    horizon=horizon or (clock + timedelta(days=365)),
+                    schedule_version_id=version_id,
+                    idempotency_key=(f"occurrence:{idempotency_key}" if idempotency_key else None),
+                    prior_events_override=None, rolling=None, actor_id=actor_id,
+                    reason=f"Occurrence recorded: {reason or logical_key}")
+                changes = self._changes(before, after, recorded.event_code)
+                outcome = OccurrenceOutcome(
+                    occurrence_id=occurrence.id, evaluation_id=evaluation.id, reevaluated=True,
+                    reason="recalculated", changes=changes)
+                tx.outbox.add(OutboxRecord(
+                    organization_id=organization_id, aggregate_type="PATIENT_SCHEDULE",
+                    aggregate_id=patient.id, event_type="PATIENT_SCHEDULE_CHANGED",
+                    dedupe_key=f"{evaluation.id}:PATIENT_SCHEDULE_CHANGED",
+                    payload={"evaluation_id": str(evaluation.id),
+                             "occurrence_id": str(occurrence.id), "logical_key": logical_key,
+                             "changed": [item.logical_key for item in changes if item.changed]}))
+            if idempotency_key:
+                tx.commands.add_receipt(CommandReceiptRecord(
+                    organization_id=organization_id, patient_id=patient.id,
+                    idempotency_key=idempotency_key, command_type="RECORD_ACTUAL_OCCURRENCE",
+                    payload_hash=payload_hash, result=outcome.model_dump(mode="json")))
+            return outcome
+
+        return self._run(work)
+
+    @staticmethod
+    def _changes(
+        before: list[PatientEventRecord], after: list[PatientEventRecord], recorded_code: str,
+    ) -> list[ScheduleChange]:
+        old = {item.logical_key: item for item in before}
+        new = {item.logical_key: item for item in after}
+        changes: list[ScheduleChange] = []
+        for key in sorted(set(old) | set(new)):
+            was, now = old.get(key), new.get(key)
+            basis = []
+            for entry in ((now.generation_reason or {}).get("temporal_basis") or []) if now else []:
+                if entry.get("event_code") == recorded_code:
+                    basis.append(entry)
+            if was is None:
+                changed, reason = True, "added by this evaluation"
+            elif now is None or now.status == "CANCELLED" and was.status != "CANCELLED":
+                changed, reason = True, "no longer scheduled"
+            else:
+                moved = (was.nominal_start_date, was.earliest_date, was.latest_date) != (
+                    now.nominal_start_date, now.earliest_date, now.latest_date)
+                changed = moved or was.status != now.status
+                if key.startswith(f"{recorded_code}:") and now.protected_history:
+                    reason = "recorded outcome; its planned dates are kept"
+                elif changed and basis:
+                    reason = "; ".join(
+                        f"counts from the {item['temporal_basis'].lower().replace('_', ' ')} of "
+                        f"{recorded_code}" + (" (fallback used)" if item.get("fallback_used") else "")
+                        for item in basis)
+                elif changed:
+                    reason = "recalculated from the updated inputs"
+                elif basis:
+                    reason = (f"counts from {recorded_code}, which resolved to the same date")
+                else:
+                    reason = f"does not depend on {recorded_code}"
+            ref = now or was
+            assert ref is not None
+            changes.append(ScheduleChange(
+                logical_key=key, event_code=ref.event_code, occurrence_index=ref.occurrence_index,
+                changed=changed,
+                old_target=was.nominal_start_date if was else None,
+                new_target=now.nominal_start_date if now else None,
+                old_window=(was.earliest_date, was.latest_date) if was else (None, None),
+                new_window=(now.earliest_date, now.latest_date) if now else (None, None),
+                old_status=was.status if was else None, new_status=now.status if now else None,
+                reason=reason))
+        return changes
