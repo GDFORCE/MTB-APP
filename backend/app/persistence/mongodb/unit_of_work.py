@@ -19,6 +19,8 @@ from pymongo.read_preferences import ReadPreference
 from pymongo.write_concern import WriteConcern
 
 from .audit_repository import MongoAuditRepository
+from .authoring_repository import MongoAuthoringRepository
+from .schedule_repository import MongoScheduleVersionRepository
 
 T = TypeVar("T")
 
@@ -32,6 +34,8 @@ class BoundUnitOfWork:
     def __init__(self, database: Database, session: ClientSession | None):
         self.session = session
         self.audit = MongoAuditRepository(database, session)
+        self.authoring = MongoAuthoringRepository(database, session)
+        self.schedules = MongoScheduleVersionRepository(database, session)
 
     def run(self, fn):  # pragma: no cover - guard
         raise RuntimeError("nested units of work are not allowed")

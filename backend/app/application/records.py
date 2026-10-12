@@ -13,7 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    """Current instant at MILLISECOND precision.
+
+    BSON dates carry milliseconds, so a finer clock would read back different
+    from what was written. Truncating here keeps every store identical.
+    """
+    now = datetime.now(timezone.utc)
+    return now.replace(microsecond=(now.microsecond // 1000) * 1000)
 
 
 class Record(BaseModel):

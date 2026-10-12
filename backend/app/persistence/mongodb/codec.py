@@ -28,7 +28,9 @@ def encode(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             raise ValueError("a naive datetime cannot be stored as an instant; supply a zone")
-        return value.astimezone(timezone.utc)
+        utc = value.astimezone(timezone.utc)
+        # BSON dates hold milliseconds; truncate explicitly so a read returns what was meant.
+        return utc.replace(microsecond=(utc.microsecond // 1000) * 1000)
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):

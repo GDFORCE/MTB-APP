@@ -20,8 +20,8 @@ def _db(mongo_uow):
 def test_migrations_are_idempotent_and_recorded(mongo_uow):
     database = _db(mongo_uow)
     assert run_migrations(database) == []  # fixture already applied everything
-    rows = list(database[LEDGER].find({}, {"_id": 0, "version": 1, "status": 1}))
-    assert rows == [{"version": 1, "status": "COMPLETED"}]
+    rows = list(database[LEDGER].find({}, {"_id": 0, "version": 1, "status": 1}).sort("version"))
+    assert rows == [{"version": 1, "status": "COMPLETED"}, {"version": 2, "status": "COMPLETED"}]
 
 
 def test_an_applied_migration_that_was_edited_is_refused(mongo_uow):
@@ -35,6 +35,7 @@ def test_a_half_applied_migration_resumes(mongo_uow):
     database = _db(mongo_uow)
     database[LEDGER].update_one({"version": 1}, {"$set": {"status": "RUNNING"}})
     assert run_migrations(database) == [1]
+    assert database[LEDGER].count_documents({"status": "COMPLETED"}) == 2
 
 
 def test_the_validator_rejects_a_malformed_audit_document(mongo_uow):
