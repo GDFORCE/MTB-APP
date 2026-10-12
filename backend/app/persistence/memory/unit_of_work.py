@@ -205,6 +205,13 @@ class InMemoryAuthoringRepository:
             raise DuplicateRecordError("schedule definition already exists", key=record.name)
         self._s.definitions[record.id] = self._copy(record)
 
+    def set_definition_external_id(self, definition_id: UUID, external_id: str) -> None:
+        row = self._s.definitions.get(definition_id)
+        if row is None:
+            raise RecordNotFoundError("schedule definition not found")
+        row.external_schedule_definition_id = external_id
+        row.updated_at = _now()
+
     def get_definition(self, definition_id: UUID) -> ScheduleDefinitionRecord:
         row = self._s.definitions.get(definition_id)
         if row is None:
@@ -454,6 +461,14 @@ class InMemoryPatientRepository:
                 if item.organization_id == organization_id and item.trial_id == trial_id]
         rows.sort(key=lambda item: item.patient_code)
         return [item.model_copy(deep=True) for item in rows]
+
+    def count_by_schedule_version(self, organization_id: UUID, trial_id: UUID) -> dict[UUID, int]:
+        counts: dict[UUID, int] = {}
+        for row in self._s.patients.values():
+            if (row.organization_id == organization_id and row.trial_id == trial_id
+                    and row.current_schedule_version_id is not None):
+                counts[row.current_schedule_version_id] = counts.get(row.current_schedule_version_id, 0) + 1
+        return counts
 
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,

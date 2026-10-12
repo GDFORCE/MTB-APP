@@ -118,6 +118,14 @@ class MongoAuthoringRepository:
     def add_definition(self, record: ScheduleDefinitionRecord) -> None:
         self._insert(DEFINITIONS, record, what="schedule definition")
 
+    def set_definition_external_id(self, definition_id: UUID, external_id: str) -> None:
+        result = self._db[DEFINITIONS].update_one(
+            {"_id": definition_id},
+            {"$set": {"external_schedule_definition_id": external_id,
+                      "updated_at": datetime.now(timezone.utc)}}, session=self._session)
+        if result.matched_count == 0:
+            raise RecordNotFoundError("schedule definition not found")
+
     def get_definition(self, definition_id: UUID) -> ScheduleDefinitionRecord:
         return self._require(
             DEFINITIONS, {"_id": definition_id}, ScheduleDefinitionRecord, "schedule definition")

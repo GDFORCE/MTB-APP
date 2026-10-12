@@ -103,6 +103,17 @@ class MongoPatientRepository(_Base):
             PATIENTS, PatientRecord, {"organization_id": organization_id, "trial_id": trial_id},
             [("patient_code", ASCENDING)])
 
+    def count_by_schedule_version(
+        self, organization_id: UUID, trial_id: UUID,
+    ) -> dict[UUID, int]:
+        pipeline = [
+            {"$match": {"organization_id": organization_id, "trial_id": trial_id,
+                       "current_schedule_version_id": {"$ne": None}}},
+            {"$group": {"_id": "$current_schedule_version_id", "count": {"$sum": 1}}},
+        ]
+        return {row["_id"]: int(row["count"])
+                for row in self._db[PATIENTS].aggregate(pipeline, session=self._session)}
+
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
     ) -> PatientRecord:
