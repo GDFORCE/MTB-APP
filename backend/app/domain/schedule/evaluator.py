@@ -9,6 +9,8 @@ from .calendar_math import _is_aware, _normalise_wall_clock, add_amount  # noqa:
 from .condition import TruthValue, evaluate_condition
 from .conditional import ConditionalPlan, EventActivation, build_conditional_plan
 from .exceptions import ScheduleNotApprovedError, UnsupportedTimingError
+from .temporal_basis import effective_temporal_basis
+from .timing import TemporalBasis
 from .feasibility import (
     KNOWN_CALENDAR_POLICIES,
     BaseWindow,
@@ -32,6 +34,7 @@ from .facts import (
 from .identity import activity_logical_key, episode_occurrence_index, occurrence_identity
 from .processes import ProcessStates, apply_process_states, build_process_states
 from .models import (
+    LogicalOccurrenceState,
     Activity,
     ApplicabilityRule,
     BlockState,
@@ -94,6 +97,7 @@ from .timing import (
     Window,
     WithinTiming,
 )
+from .validator import own_event_references
 from .validator import (
     ScheduleValidator,
     event_temporal_references,
@@ -779,6 +783,149 @@ def _resolve_termination(
 activity_actual_key = activity_logical_key
 
 
+# --------------------------------------------------------------------------
+# P1-02: an event reference counts from the date its temporal basis names.
+# --------------------------------------------------------------------------
+
+
+def _basis_key(reference: EventReference) -> str:
+    basis = reference.temporal_basis
+    if basis == TemporalBasis.ACTUAL_OR_PLANNED and reference.fallback_basis is not None:
+        return f"{basis.value}/{reference.fallback_basis.value}:{reference.event_code}"
+    return f"{basis.value}:{reference.event_code}"
+
+
+def _history_by_code(context: PatientContext) -> dict[str, dict[int, LogicalOccurrenceState]]:
+    index: dict[str, dict[int, LogicalOccurrenceState]] = {}
+    for state in context.occurrence_history:
+        index.setdefault(state.event_code, {})[state.occurrence_index] = state
+    return index
+
+
+def _select_position(values: list[Temporal], occurrence: str) -> int | None:
+    if not values:
+        return None
+    if occurrence == "FIRST":
+        return values.index(min(values))
+    if occurrence == "LAST":
+        return values.index(max(values))
+    return len(values) - 1
+
+
+def _manual_value(context: PatientContext, code: str) -> Temporal | None:
+    manual = context.state.get("manual_dependency_dates")
+    value = manual.get(code) if isinstance(manual, dict) else None
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return date.fromisoformat(value)
+    return value
+
+
+def _basis_series(
+    reference: EventReference, context: PatientContext,
+    history: dict[str, dict[int, LogicalOccurrenceState]],
+    planned: dict[str, dict[int, Temporal]],
+) -> tuple[list[Temporal], list[str]]:
+    """The dates a reference's basis resolves to, by occurrence index, and
+    where each came from. A missing date is absent - never filled in."""
+    basis, code = reference.temporal_basis, reference.event_code
+    states = history.get(code, {})
+    current = {index: value for index, value in planned.get(code, {}).items() if value is not None}
+    # D3: the original is what the FIRST dating evaluation produced; when this
+    # is that evaluation, the date it is producing now IS the original.
+    original = {index: state.original_planned_date for index, state in states.items()
+                if state.original_planned_date is not None}
+    for index, value in current.items():
+        original.setdefault(index, value)
+    if states:
+        actual_visit = {index: state.actual_visit_date for index, state in states.items()
+                        if state.actual_visit_date is not None}
+    else:  # a context built without history: the legacy per-code list
+        actual_visit = dict(enumerate(sorted(context.actual_event_values.get(code) or [])))
+    entries: dict[int, tuple[Temporal, str]] = {}
+    if basis == TemporalBasis.CURRENT_PLANNED:
+        entries = {index: (value, "CURRENT_PLANNED") for index, value in current.items()}
+    elif basis == TemporalBasis.ORIGINAL_PLANNED:
+        entries = {index: (value, "ORIGINAL_PLANNED") for index, value in original.items()}
+    elif basis == TemporalBasis.ACTUAL_VISIT:
+        entries = {index: (value, "ACTUAL_VISIT") for index, value in actual_visit.items()}
+    elif basis == TemporalBasis.ACTUAL_TREATMENT:
+        entries = {index: (state.actual_treatment_date, "ACTUAL_TREATMENT")
+                   for index, state in states.items() if state.actual_treatment_date is not None}
+    elif basis == TemporalBasis.ACTUAL_OR_PLANNED:
+        entries = {index: (value, "ACTUAL_VISIT") for index, value in actual_visit.items()}
+        fallback = original if reference.fallback_basis == TemporalBasis.ORIGINAL_PLANNED else current
+        label = f"FALLBACK_{(reference.fallback_basis or TemporalBasis.CURRENT_PLANNED).value}"
+        for index, value in fallback.items():
+            entries.setdefault(index, (value, label))
+    elif basis == TemporalBasis.MANUAL_ANCHOR:
+        value = _manual_value(context, code)
+        if value is not None:
+            entries = {0: (value, "MANUAL_ANCHOR")}
+    ordered = [entries[index] for index in sorted(entries)]
+    return [item[0] for item in ordered], [item[1] for item in ordered]
+
+
+def _prepare_basis_values(
+    event: Event, context: PatientContext, run: "_Run | None",
+) -> tuple[PatientContext, list[dict[str, object]]]:
+    """Resolve every event reference of ``event`` to the series its basis names
+    and report, per reference, which date was used and where it came from."""
+    references = own_event_references(event)
+    if not references:
+        return context, []
+    history = run.history if run is not None else _history_by_code(context)
+    planned = run.planned_series if run is not None else {}
+    dependencies = {item.source_event_code for item in event.dependencies}
+    values = dict(context.resolved_basis_values)
+    sources = dict(context.resolved_basis_sources)
+    report: list[dict[str, object]] = []
+    for reference in references:
+        key = _basis_key(reference)
+        if key not in values:
+            effective = effective_temporal_basis(
+                reference, owner_mode=event.dependency_mode,
+                is_dependency=reference.event_code in dependencies)
+            if effective is None:
+                values[key], sources[key] = [], []   # basis unstated: never dated
+            else:
+                resolved = reference.model_copy(update={
+                    "temporal_basis": effective,
+                    "fallback_basis": (reference.fallback_basis
+                                       if effective == TemporalBasis.ACTUAL_OR_PLANNED else None)})
+                values[key], sources[key] = _basis_series(resolved, context, history, planned)
+        series, origin = values[key], sources[key]
+        position = _select_position(series, reference.occurrence)
+        report.append({
+            "event_code": reference.event_code,
+            "temporal_basis": reference.temporal_basis.value,
+            "fallback_basis": reference.fallback_basis.value if reference.fallback_basis else None,
+            "occurrence": reference.occurrence,
+            "value": series[position].isoformat() if position is not None else None,
+            "source": origin[position] if position is not None else None,
+            "fallback_used": bool(position is not None and origin[position].startswith("FALLBACK")),
+        })
+    return context.model_copy(
+        update={"resolved_basis_values": values, "resolved_basis_sources": sources}), report
+
+
+def _actual_recorded(
+    event: Event, code: str, context: PatientContext, run: "_Run | None",
+) -> bool:
+    """Is the actual that ACTUAL_PREVIOUS_EVENT waits for on ``code`` recorded?
+    A rule counting from the treatment date waits for THAT date, not the visit."""
+    history = run.history if run is not None else _history_by_code(context)
+    states = history.get(code, {})
+    bases = {item.temporal_basis for item in own_event_references(event) if item.event_code == code}
+    if TemporalBasis.ACTUAL_TREATMENT in bases and TemporalBasis.ACTUAL_VISIT not in bases:
+        return any(state.actual_treatment_date is not None for state in states.values())
+    if states and any(state.actual_visit_date is not None for state in states.values()):
+        return True
+    return bool(context.actual_event_values.get(code))
+
+
 def _resolve_reference(
     reference: TemporalReference,
     context: PatientContext,
@@ -800,14 +947,13 @@ def _resolve_reference(
         return context.activity_actuals.get(
             activity_actual_key(event_code, occurrence_index, reference.activity_code)
         )
-    values = context.event_values.get(reference.event_code, [])
-    if not values:
-        return None
-    if reference.occurrence == "FIRST":
-        return min(values)
-    if reference.occurrence == "LAST":
-        return max(values)
-    return values[-1]
+    key = _basis_key(reference)
+    if key in context.resolved_basis_values:
+        values = context.resolved_basis_values[key]
+    else:  # not prepared by the evaluator (direct calls, older contexts): legacy list
+        values = context.event_values.get(reference.event_code, [])
+    position = _select_position(values, reference.occurrence)
+    return values[position] if position is not None else None
 
 
 def evaluate_timing(
@@ -1519,6 +1665,19 @@ class ContextValueSource:
             kind="ANCHOR", code=value.code, accepts=value.accepts.value,
             reason="PLANNED_ONLY" if planned is not None else "NOT_RECORDED")])
 
+    def _actual_by_index(self, code: str) -> dict[int, Temporal]:
+        """Recorded actual dates keyed by the occurrence they belong to.
+
+        Positional (the n-th recorded date is occurrence n) only for a context
+        built without occurrence history; with history an occurrence that was
+        missed or skipped can no longer shift the later ones (D5).
+        """
+        history = [item for item in self.context.occurrence_history if item.event_code == code]
+        if history:
+            return {item.occurrence_index: item.actual_visit_date for item in history
+                    if item.actual_visit_date is not None}
+        return dict(enumerate(sorted(self.context.actual_event_values.get(code) or [])))
+
     def _planned_series(self, code: str) -> dict[int, Temporal | None]:
         if code == self.event_code:
             return dict(self.own_planned)
@@ -1534,7 +1693,7 @@ class ContextValueSource:
 
     def event(self, value: EventValue) -> Resolved:
         code, selector = value.event_code, value.occurrence
-        actual = sorted(self.context.actual_event_values.get(code) or [])
+        actual = self._actual_by_index(code)
         planned = self._planned_series(code)
         occurrence = selector.type if selector.type != "NUMBER" else f"NUMBER:{selector.number}"
 
@@ -1557,9 +1716,9 @@ class ContextValueSource:
                 return missing("LAST_NOT_FINAL")
             counted = self._counted(code)
             indexes = [index for index in planned if counted is None or index in counted]
-            count = max([len(actual), *(index + 1 for index in indexes)])
-            if actual and len(actual) >= count:
-                return found(actual[-1], "ACTUAL", len(actual) - 1)
+            count = max([(max(actual) + 1) if actual else 0, *(index + 1 for index in indexes)])
+            if actual and all(position in actual for position in range(count)):
+                return found(actual[count - 1], "ACTUAL", count - 1)
             if value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL and count:
                 last = planned.get(count - 1)
                 if last is not None:
@@ -1576,7 +1735,7 @@ class ContextValueSource:
             return Resolved(None, vacuous=True, inputs=[{
                 "kind": "EVENT", "code": code, "occurrence": occurrence,
                 "note": "no previous occurrence; the restriction does not apply"}])
-        if index < len(actual):
+        if index in actual:
             return found(actual[index], "ACTUAL", index)
         planned_value = planned.get(index)
         if value.accepts == AnchorAcceptance.PLANNED_OR_ACTUAL:
@@ -1846,6 +2005,10 @@ class _Run:
     periods: list[AssignmentPeriod]
     #: Events whose series has no final occurrence yet (LAST stays unknown).
     open_series: set[str] = field(default_factory=set)
+    #: Dates planned so far in THIS evaluation, by event code and occurrence index.
+    planned_series: dict[str, dict[int, Temporal]] = field(default_factory=dict)
+    #: What is already known about each logical occurrence (P1-02).
+    history: dict[str, dict[int, LogicalOccurrenceState]] = field(default_factory=dict)
 
 
 def _open_series(
@@ -2059,6 +2222,7 @@ class ScheduleEvaluator:
             processes=build_process_states(
                 schedule, [*context.process_transitions, *plan.process_transitions]),
             periods=assignment_periods(context.assignment_history),
+            history=_history_by_code(context),
         )
         run.open_series = _open_series(schedule, plan, cycle_plans, run.processes)
 
@@ -2083,6 +2247,9 @@ class ScheduleEvaluator:
             dates = [item.timing.nominal_start for item in event_results if item.timing and item.timing.nominal_start]
             if dates:
                 working_context.event_values[code] = dates
+                run.planned_series[code] = {
+                    item.occurrence_index: item.timing.nominal_start
+                    for item in event_results if item.timing and item.timing.nominal_start}
             self._derive_event_anchors(schedule, code, event_results, context, working_context)
             if cycle_plans:
                 # A cycle's Cycle 1 anchor may itself come from a visit just dated.
@@ -2508,7 +2675,7 @@ class ScheduleEvaluator:
         if event.dependency_mode == DependencyMode.ACTUAL_PREVIOUS_EVENT:
             missing_actuals = [
                 dependency.source_event_code for dependency in event.dependencies
-                if not context.actual_event_values.get(dependency.source_event_code)
+                if not _actual_recorded(event, dependency.source_event_code, context, run)
             ]
             if missing_actuals:
                 return [EvaluatedEvent(
@@ -2519,8 +2686,9 @@ class ScheduleEvaluator:
                 )]
             timing_context = context.model_copy(deep=True)
             for dependency in event.dependencies:
-                timing_context.event_values[dependency.source_event_code] = list(
-                    context.actual_event_values[dependency.source_event_code])
+                if context.actual_event_values.get(dependency.source_event_code):
+                    timing_context.event_values[dependency.source_event_code] = list(
+                        context.actual_event_values[dependency.source_event_code])
         elif event.dependency_mode == DependencyMode.MANUAL:
             manual = context.state.get("manual_dependency_dates")
             manual_values = manual if isinstance(manual, dict) else {}
@@ -2545,6 +2713,9 @@ class ScheduleEvaluator:
                         value = date.fromisoformat(value)
                 timing_context.event_values[dependency.source_event_code] = [value]
         waiting_for_actual = _record_anchor_basis(event, timing_context, explanation)
+        timing_context, basis_report = _prepare_basis_values(event, timing_context, run)
+        if basis_report:
+            explanation["temporal_basis"] = basis_report
         cycle_plan = _cycle_plan_for(event, cycle_plans or {})
         if cycle_plan is not None:
             return self._expand_cycle_days(
@@ -2568,6 +2739,12 @@ class ScheduleEvaluator:
             if waiting_for_actual:
                 explanation["reason"] = _waiting_for_actual_reason(waiting_for_actual)
                 explanation["waiting_for_actual_anchor"] = waiting_for_actual
+            missing_basis = [item for item in basis_report if item["value"] is None]
+            if missing_basis and not waiting_for_actual:
+                explanation["waiting_for_temporal_basis"] = missing_basis
+                explanation["reason"] = "waiting for " + ", ".join(
+                    f"the {str(item['temporal_basis']).lower().replace('_', ' ')} date of "
+                    f"{item['event_code']}" for item in missing_basis)
             return [EvaluatedEvent(status=PatientEventStatus.WAITING_FOR_ANCHOR, **base)]
         activation = plan.activations.get(event.code)
         if activation is not None and activation.repeat_interval is not None:

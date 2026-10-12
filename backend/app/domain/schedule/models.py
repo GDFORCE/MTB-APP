@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from .condition import ConditionExpression
 from .timing import (
@@ -1169,6 +1169,28 @@ class UniversalSchedule(StrictModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class LogicalOccurrenceState(StrictModel):
+    """What is already known about ONE logical visit occurrence (P1-02).
+
+    Keyed by (event_code, occurrence_index) within the patient's schedule
+    version. ``original_planned_date`` is the date the FIRST evaluation that
+    dated this occurrence produced and never changes afterwards (D3);
+    ``latest_planned_date`` is what the latest evaluation planned. The actual
+    visit and the actual treatment are independent facts (D7): a patient can
+    attend without being treated, and a treatment-based rule then waits.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, frozen=True)
+
+    event_code: str = Field(min_length=1)
+    occurrence_index: int = Field(default=0, ge=0)
+    original_planned_date: date | None = None
+    latest_planned_date: date | None = None
+    actual_visit_date: date | None = None
+    actual_treatment_date: date | None = None
+    status: str | None = None
+
+
 class PatientContext(StrictModel):
     patient_id: UUID
     schedule_version_id: UUID
@@ -1199,6 +1221,14 @@ class PatientContext(StrictModel):
     # calculated in elapsed (UTC) time; dates stay dates. None keeps the
     # previous naive arithmetic.
     time_zone: str | None = None
+    #: P1-02: per logical occurrence, the planned and actual dates known before
+    #: this evaluation starts. Empty keeps every earlier context evaluating as
+    #: before; an EventReference then reads the legacy per-code lists.
+    occurrence_history: list[LogicalOccurrenceState] = Field(default_factory=list)
+    #: Derived by the evaluator per event (never an input, never serialised):
+    #: the date list a reference's temporal basis resolves to, and where each came from.
+    resolved_basis_values: dict[str, list[date | datetime]] = Field(default_factory=dict, exclude=True)
+    resolved_basis_sources: dict[str, list[str]] = Field(default_factory=dict, exclude=True)
     #: WP3 facts. All default empty, which evaluates exactly as before (NF-08).
     #: Per-occurrence performed / missed / booked facts with supersession.
     occurrence_facts: list[OccurrenceFact] = Field(default_factory=list)

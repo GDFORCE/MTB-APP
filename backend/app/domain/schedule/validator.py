@@ -119,7 +119,7 @@ def _graph_references(event: object) -> list[object]:
     return [*legacy, *constrained]
 
 
-def _own_event_references(event: object) -> list[EventReference]:
+def own_event_references(event: object) -> list[EventReference]:
     """The stored (legacy-timing) event references an event carries: its timing,
     its repeat rule's start / end, and its activities' timing. Constraint values
     state their own acceptance and are validated with the constraints."""
@@ -272,23 +272,29 @@ class ScheduleValidator:
                 ))
         return issues
 
-    #: Bases the evaluator honours today. P1-02 widens this as it learns to
-    #: resolve the others; until then approving one would date a visit from a
-    #: different source than the schedule states.
-    _EXECUTABLE_BASES = frozenset({
-        TemporalBasis.CURRENT_PLANNED, TemporalBasis.ACTUAL_VISIT, TemporalBasis.MANUAL_ANCHOR,
-    })
+    #: Which bases a listed dependency may use under each stated dependency mode.
+    #: The mode decides whether a missing source BLOCKS the event; the reference's
+    #: basis decides which date counts. They must tell one story.
+    _MODE_BASES = {
+        "NOMINAL": frozenset({
+            TemporalBasis.CURRENT_PLANNED, TemporalBasis.ORIGINAL_PLANNED,
+            TemporalBasis.ACTUAL_OR_PLANNED}),
+        "ACTUAL_PREVIOUS_EVENT": frozenset({
+            TemporalBasis.ACTUAL_VISIT, TemporalBasis.ACTUAL_TREATMENT}),
+        "MANUAL": frozenset({TemporalBasis.MANUAL_ANCHOR}),
+    }
 
     def _temporal_basis(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
-        """P1-01: every event reference says which date it counts from, and the
-        statement must be one the engine will actually carry out."""
-        from .temporal_basis import legacy_basis, mode_is_stated
+        """P1-01 / P1-02: every event reference says which date it counts from,
+        and what it says must be coherent with the rest of the rule."""
+        from .temporal_basis import mode_is_stated
 
         issues: list[ValidationIssue] = []
         types = {item.code: str(item.event_type).upper() for item in schedule.events}
         for event in schedule.events:
             dependencies = {item.source_event_code for item in event.dependencies}
             stated = mode_is_stated(event.dependency_mode)
+            mode_name = getattr(event.dependency_mode, "value", event.dependency_mode)
             legacy_codes: set[str] = set()
 
             def block(code: str, message: str, ref: EventReference, **extra: object) -> None:
@@ -297,7 +303,7 @@ class ScheduleValidator:
                     details={"event_code": event.code, "referenced_event": ref.event_code,
                              "temporal_basis": ref.temporal_basis.value, **extra}))
 
-            for ref in _own_event_references(event):
+            for ref in own_event_references(event):
                 is_dependency = ref.event_code in dependencies
                 if ref.basis_source == BasisSource.LEGACY_EQUIVALENT:
                     legacy_codes.add(ref.event_code)
@@ -317,35 +323,19 @@ class ScheduleValidator:
                           f"{event.display_name!r} counts from the actual treatment date of "
                           f"{ref.event_code!r}, which is not a treatment event", ref)
                     continue
-                if ref.temporal_basis not in self._EXECUTABLE_BASES:
-                    block("TEMPORAL_BASIS_NOT_EXECUTABLE",
-                          f"{event.display_name!r} uses {ref.temporal_basis.value} for "
-                          f"{ref.event_code!r}, which the schedule engine cannot evaluate yet; "
-                          "approving it would date the visit from a different source", ref)
-                    continue
                 if (ref.temporal_basis == TemporalBasis.MANUAL_ANCHOR
                         and event.dependency_mode != DependencyMode.MANUAL):
                     block("TEMPORAL_BASIS_MANUAL_REQUIRES_MANUAL_MODE",
                           f"{event.display_name!r} counts from a manually entered date of "
                           f"{ref.event_code!r} but its dependency mode is not MANUAL", ref)
                     continue
-                expected = legacy_basis(event.dependency_mode, is_dependency=is_dependency)
-                if stated and is_dependency and ref.temporal_basis != expected:
+                allowed = self._MODE_BASES.get(str(mode_name))
+                if stated and is_dependency and allowed is not None and ref.temporal_basis not in allowed:
                     block("TEMPORAL_BASIS_MODE_MISMATCH",
                           f"{event.display_name!r} states {ref.temporal_basis.value} for "
-                          f"{ref.event_code!r} but its dependency mode "
-                          f"{event.dependency_mode.value} counts from {expected.value}",
-                          ref, expected_basis=expected.value)
-                elif stated and not is_dependency and ref.temporal_basis != TemporalBasis.CURRENT_PLANNED:
-                    issues.append(self._issue(
-                        "TEMPORAL_BASIS_NOT_A_DEPENDENCY",
-                        f"{event.display_name!r} states {ref.temporal_basis.value} for "
-                        f"{ref.event_code!r}, which is not one of its listed dependencies, "
-                        "so the engine counts it from the planned date; list it as a "
-                        "dependency if the actual date is meant",
-                        entity_type="EVENT", entity_id=event.id,
-                        severity=Severity.WARNING, blocking=False,
-                        details={"event_code": event.code, "referenced_event": ref.event_code}))
+                          f"{ref.event_code!r} but its dependency mode {mode_name} counts from "
+                          + " / ".join(sorted(item.value for item in allowed)),
+                          ref, allowed_bases=sorted(item.value for item in allowed))
             if legacy_codes:
                 issues.append(self._issue(
                     "TEMPORAL_BASIS_LEGACY_EQUIVALENT",

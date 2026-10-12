@@ -225,11 +225,12 @@ def codes(schedule, *, blocking_only=False) -> set[str]:
     # actual treatment date of a non-treatment event
     (TemporalBasis.ACTUAL_TREATMENT, DependencyMode.ACTUAL_PREVIOUS_EVENT, True, "VISIT",
      {"TEMPORAL_BASIS_TREATMENT_ON_NON_TREATMENT"}),
-    # stated, valid, but the engine cannot carry it out yet -> must not be approved
-    (TemporalBasis.ORIGINAL_PLANNED, DependencyMode.NOMINAL, True, "TREATMENT",
-     {"TEMPORAL_BASIS_NOT_EXECUTABLE"}),
-    (TemporalBasis.ACTUAL_TREATMENT, DependencyMode.ACTUAL_PREVIOUS_EVENT, True, "TREATMENT",
-     {"TEMPORAL_BASIS_NOT_EXECUTABLE"}),
+    # P1-02: these are executed now, so they are approvable when coherent
+    (TemporalBasis.ORIGINAL_PLANNED, DependencyMode.NOMINAL, True, "TREATMENT", set()),
+    (TemporalBasis.ACTUAL_TREATMENT, DependencyMode.ACTUAL_PREVIOUS_EVENT, True, "TREATMENT", set()),
+    # a planned basis under a mode that counts from the actual previous event
+    (TemporalBasis.ORIGINAL_PLANNED, DependencyMode.ACTUAL_PREVIOUS_EVENT, True, "TREATMENT",
+     {"TEMPORAL_BASIS_MODE_MISMATCH"}),
 ])
 def test_approval_blocks_a_basis_the_schedule_cannot_honestly_carry_out(
         basis, mode, dependencies, source_type, expected):
@@ -237,10 +238,14 @@ def test_approval_blocks_a_basis_the_schedule_cannot_honestly_carry_out(
     assert codes(schedule, blocking_only=True) == expected
 
 
-def test_actual_or_planned_is_blocked_until_the_evaluator_can_explain_the_fallback():
-    schedule = build(ref(TemporalBasis.ACTUAL_OR_PLANNED,
-                         fallback_basis=TemporalBasis.CURRENT_PLANNED))
-    assert "TEMPORAL_BASIS_NOT_EXECUTABLE" in codes(schedule, blocking_only=True)
+def test_actual_or_planned_is_approvable_under_a_nominal_mode_only():
+    nominal = build(ref(TemporalBasis.ACTUAL_OR_PLANNED, fallback_basis=TemporalBasis.CURRENT_PLANNED),
+                    mode=DependencyMode.NOMINAL)
+    assert codes(nominal, blocking_only=True) == set()
+    blocked_until_actual = build(
+        ref(TemporalBasis.ACTUAL_OR_PLANNED, fallback_basis=TemporalBasis.CURRENT_PLANNED),
+        mode=DependencyMode.ACTUAL_PREVIOUS_EVENT)
+    assert codes(blocked_until_actual, blocking_only=True) == {"TEMPORAL_BASIS_MODE_MISMATCH"}
 
 
 def test_unconfirmed_basis_blocks_only_while_the_mode_is_unstated():
@@ -259,12 +264,10 @@ def test_legacy_equivalent_is_flagged_for_review_but_does_not_block():
     assert not ScheduleValidator.blocking(ScheduleValidator().validate(schedule))
 
 
-def test_a_basis_on_a_non_dependency_is_surfaced_not_silently_honoured():
+def test_a_basis_on_a_reference_that_is_not_a_listed_dependency_is_honoured_not_flagged():
     schedule = build(ref(TemporalBasis.ACTUAL_VISIT), mode=DependencyMode.NOMINAL,
                      dependencies=False)
-    issues = [i for i in ScheduleValidator().validate(schedule)
-              if i.issue_code == "TEMPORAL_BASIS_NOT_A_DEPENDENCY"]
-    assert len(issues) == 1 and issues[0].blocking is False
+    assert codes(schedule) == set()
 
 
 # ---------------------------------------------------------------------------
