@@ -25,6 +25,8 @@ from uuid import UUID
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
+from app.application.ports import UnitOfWork
+
 from app.db import models as db
 from app.services.extraction_service import ExtractionService
 from .compiler import compile_document
@@ -224,5 +226,41 @@ async def execute_run(session: Session, run_id: UUID) -> list[UUID] | None:
                 "type": type(error).__name__, "message": str(error)[:2000],
             }
             session.commit()
+        log.exception("extraction run %s failed", run_id)
+        return None
+
+
+async def execute_run_on_ports(uow: "UnitOfWork", run_id: UUID) -> list[UUID] | None:
+    """``execute_run`` on the repository ports (no SQLAlchemy session).
+
+    Every state change is its own unit of work, and none is held open across the
+    model calls: the run is marked RUNNING and committed, the slow blocking read
+    happens with no transaction, and completion commits all drafts together.
+    Failures are recorded on the run rather than raised.
+    """
+    from app.application.extraction import ExtractionService as PortExtraction
+
+    service = PortExtraction(uow)
+    try:
+        run = uow.read(lambda tx: tx.authoring.get_run(run_id))
+    except KeyError as error:
+        raise KeyError("extraction run not found") from error
+    try:
+        version = uow.read(lambda tx: tx.authoring.get_protocol_version(run.protocol_version_id))
+    except KeyError as error:
+        raise KeyError("protocol version not found") from error
+
+    try:
+        pages, pdf_bytes = await load_pages(version.document_uri)
+        service.start(run_id)
+        results = await run_in_threadpool(
+            extract_schedules, pages, pdf_bytes=pdf_bytes,
+            document_hash=run.document_hash,
+            schedule_name=version.document_name or "Schedule of Assessments",
+            artifacts=storage_artifacts(),
+        )
+        return service.complete_many(run_id, results)
+    except (ExtractionModelError, Exception) as error:  # noqa: BLE001
+        service.fail(run_id, error)
         log.exception("extraction run %s failed", run_id)
         return None
