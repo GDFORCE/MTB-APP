@@ -23,6 +23,7 @@ from app.application.patients import (
     EvaluationRecord,
     ImpactProposalRecord,
     OccurrenceRecord,
+    ParityRunRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
     PatientEventRecord,
@@ -50,6 +51,7 @@ CONFINEMENTS = "patient_confinement_episodes"
 POINTERS = "patient_schedules"
 PROPOSALS = "schedule_impact_proposals"
 ASSIGNMENTS = "patient_schedule_assignments"
+PARITY_RUNS = "parity_runs"
 RECEIPTS = "command_receipts"
 OUTBOX = "outbox"
 
@@ -290,6 +292,29 @@ class MongoImpactRepository(_Base):
     def list_assignments(self, patient_id: UUID) -> list[AssignmentRecord]:
         return self._list(ASSIGNMENTS, AssignmentRecord, {"patient_id": patient_id},
                           [("assigned_at", ASCENDING), ("_id", ASCENDING)])
+
+
+class MongoParityRepository(_Base):
+    def add(self, record: ParityRunRecord) -> None:
+        self._insert(PARITY_RUNS, record, "parity run")
+
+    def get(self, organization_id: UUID, run_id: UUID) -> ParityRunRecord:
+        doc = self._db[PARITY_RUNS].find_one(
+            {"_id": run_id, "organization_id": organization_id}, session=self._session)
+        if doc is None:
+            raise RecordNotFoundError("parity run not found")
+        return from_document(ParityRunRecord, doc)
+
+    def save(self, record: ParityRunRecord) -> None:
+        result = self._db[PARITY_RUNS].replace_one(
+            {"_id": record.id}, to_document(record), session=self._session)
+        if result.matched_count == 0:
+            raise RecordNotFoundError("parity run not found")
+
+    def list_for_trial(self, organization_id: UUID, trial_id: UUID) -> list[ParityRunRecord]:
+        return self._list(PARITY_RUNS, ParityRunRecord,
+                          {"organization_id": organization_id, "trial_id": trial_id},
+                          [("ran_at", ASCENDING), ("_id", ASCENDING)])
 
 
 class MongoCommandRepository(_Base):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 from typing import Iterable
 
-from app.services.operational_bridge import BridgeActivity, BridgeEvent
+from app.application.operational_bridge import BridgeActivity, BridgeEvent
 
 
 def _activity_detail(item: BridgeActivity) -> dict:

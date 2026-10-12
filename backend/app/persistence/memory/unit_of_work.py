@@ -28,6 +28,7 @@ from app.application.patients import (
     ConfinementEpisodeRecord,
     EvaluationRecord,
     ImpactProposalRecord,
+    ParityRunRecord,
     OccurrenceRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
@@ -68,6 +69,7 @@ class _Store:
         self.pointers: dict[tuple[UUID, UUID], PatientScheduleRecord] = {}
         self.receipts: list[CommandReceiptRecord] = []
         self.proposals: dict[UUID, ImpactProposalRecord] = {}
+        self.parity_runs: dict[UUID, ParityRunRecord] = {}
         self.assignments: list[AssignmentRecord] = []
         self.outbox: list[OutboxRecord] = []
 
@@ -741,6 +743,33 @@ class InMemoryImpactRepository:
         return [item.model_copy(deep=True) for item in rows]
 
 
+class InMemoryParityRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def add(self, record: ParityRunRecord) -> None:
+        if record.id in self._s.parity_runs:
+            raise DuplicateRecordError("parity run already exists", key=str(record.id))
+        self._s.parity_runs[record.id] = record.model_copy(deep=True)
+
+    def get(self, organization_id: UUID, run_id: UUID) -> ParityRunRecord:
+        row = self._s.parity_runs.get(run_id)
+        if row is None or row.organization_id != organization_id:
+            raise RecordNotFoundError("parity run not found")
+        return row.model_copy(deep=True)
+
+    def save(self, record: ParityRunRecord) -> None:
+        if record.id not in self._s.parity_runs:
+            raise RecordNotFoundError("parity run not found")
+        self._s.parity_runs[record.id] = record.model_copy(deep=True)
+
+    def list_for_trial(self, organization_id: UUID, trial_id: UUID) -> list[ParityRunRecord]:
+        rows = [item for item in self._s.parity_runs.values()
+                if item.organization_id == organization_id and item.trial_id == trial_id]
+        rows.sort(key=lambda item: (item.ran_at, str(item.id)))
+        return [item.model_copy(deep=True) for item in rows]
+
+
 class InMemoryCommandRepository:
     def __init__(self, store: _Store):
         self._s = store
@@ -786,6 +815,7 @@ class InMemoryUnitOfWork:
         self.evaluations = InMemoryEvaluationRepository(self._store)
         self.commands = InMemoryCommandRepository(self._store)
         self.impacts = InMemoryImpactRepository(self._store)
+        self.parity = InMemoryParityRepository(self._store)
         self.outbox = InMemoryOutboxRepository(self._store)
 
     def run(self, fn: Callable[["InMemoryUnitOfWork"], T]) -> T:

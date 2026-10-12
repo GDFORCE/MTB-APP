@@ -25,6 +25,7 @@ from .patient_repository import (
     MongoOutboxRepository,
     MongoEvaluationRepository,
     MongoImpactRepository,
+    MongoParityRepository,
     MongoPatientFactsRepository,
     MongoPatientRepository,
 )
@@ -49,6 +50,7 @@ class BoundUnitOfWork:
         self.evaluations = MongoEvaluationRepository(database, session)
         self.commands = MongoCommandRepository(database, session)
         self.impacts = MongoImpactRepository(database, session)
+        self.parity = MongoParityRepository(database, session)
         self.outbox = MongoOutboxRepository(database, session)
 
     def run(self, fn):  # pragma: no cover - guard

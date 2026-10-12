@@ -225,6 +225,30 @@ class AssignmentRecord(Record):
     assigned_at: datetime = Field(default_factory=utc_now)
 
 
+class ParityRunRecord(Record):
+    """One recorded comparison of the engine against the operational schedule.
+
+    Tied to the schedule version it compared, so a later amendment invalidates
+    it rather than silently carrying an old approval forward.
+    """
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    trial_id: UUID
+    patient_id: UUID | None = None
+    schedule_version_id: UUID | None = None
+    verdict: str
+    compared: int = 0
+    matched: int = 0
+    differences: list[Any] = Field(default_factory=list)
+    note: str | None = None
+    ran_by: UUID | None = None
+    ran_at: datetime = Field(default_factory=utc_now)
+    accepted_at: datetime | None = None
+    accepted_by: UUID | None = None
+    accepted_reason: str | None = None
+
+
 class CalendarEntry(Record):
     """One visit as the latest calendar shows it: the plan, and what happened."""
 

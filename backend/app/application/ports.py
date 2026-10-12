@@ -35,6 +35,7 @@ from .patients import (
     ConfinementEpisodeRecord,
     EvaluationRecord,
     ImpactProposalRecord,
+    ParityRunRecord,
     OccurrenceRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
@@ -259,6 +260,17 @@ class ImpactRepository(Protocol):
     ) -> list[ImpactProposalRecord]: ...
 
 
+class ParityRepository(Protocol):
+    def add(self, record: ParityRunRecord) -> None: ...
+    def get(self, organization_id: UUID, run_id: UUID) -> ParityRunRecord:
+        """Raises ``RecordNotFoundError``."""
+        ...
+    def save(self, record: ParityRunRecord) -> None: ...
+    def list_for_trial(self, organization_id: UUID, trial_id: UUID) -> list[ParityRunRecord]:
+        """Oldest first."""
+        ...
+
+
 class CommandRepository(Protocol):
     def find_receipt(
         self, organization_id: UUID, patient_id: UUID, idempotency_key: str,
@@ -291,6 +303,7 @@ class UnitOfWork(Protocol):
     evaluations: EvaluationRepository
     commands: CommandRepository
     impacts: ImpactRepository
+    parity: ParityRepository
     outbox: OutboxRepository
 
     def run(self, fn: "Callable[[UnitOfWork], T]") -> T: ...
