@@ -466,6 +466,13 @@ class InMemoryPatientRepository:
         rows.sort(key=lambda item: item.patient_code)
         return [item.model_copy(deep=True) for item in rows]
 
+    def list_for_organization(self, organization_id: UUID, *, trial_id: UUID | None = None):
+        rows = [item for item in self._s.patients.values()
+                if item.organization_id == organization_id
+                and (trial_id is None or item.trial_id == trial_id)]
+        rows.sort(key=lambda item: (item.patient_code, str(item.id)))
+        return [item.model_copy(deep=True) for item in rows]
+
     def count_by_schedule_version(self, organization_id: UUID, trial_id: UUID) -> dict[UUID, int]:
         counts: dict[UUID, int] = {}
         for row in self._s.patients.values():
@@ -703,6 +710,12 @@ class InMemoryImpactRepository:
 
     def add_assignment(self, record: AssignmentRecord) -> None:
         self._s.assignments.append(record.model_copy(deep=True))
+
+    def list_for_patient(self, patient_id: UUID, *, status: str | None = None):
+        rows = [item for item in self._s.proposals.values()
+                if item.patient_id == patient_id and (status is None or item.status == status)]
+        rows.sort(key=lambda item: (item.created_at, str(item.id)))
+        return [item.model_copy(deep=True) for item in rows]
 
     def list_assignments(self, patient_id: UUID) -> list[AssignmentRecord]:
         rows = [item for item in self._s.assignments if item.patient_id == patient_id]

@@ -107,6 +107,15 @@ class MongoPatientRepository(_Base):
             PATIENTS, PatientRecord, {"organization_id": organization_id, "trial_id": trial_id},
             [("patient_code", ASCENDING)])
 
+    def list_for_organization(
+        self, organization_id: UUID, *, trial_id: UUID | None = None,
+    ) -> list[PatientRecord]:
+        query: dict[str, Any] = {"organization_id": organization_id}
+        if trial_id is not None:
+            query["trial_id"] = trial_id
+        return self._list(PATIENTS, PatientRecord, query,
+                          [("patient_code", ASCENDING), ("_id", ASCENDING)])
+
     def count_by_schedule_version(
         self, organization_id: UUID, trial_id: UUID,
     ) -> dict[UUID, int]:
@@ -260,6 +269,15 @@ class MongoImpactRepository(_Base):
 
     def add_assignment(self, record: AssignmentRecord) -> None:
         self._insert(ASSIGNMENTS, record, "schedule assignment")
+
+    def list_for_patient(
+        self, patient_id: UUID, *, status: str | None = None,
+    ) -> list[ImpactProposalRecord]:
+        query: dict[str, Any] = {"patient_id": patient_id}
+        if status is not None:
+            query["status"] = status
+        return self._list(PROPOSALS, ImpactProposalRecord, query,
+                          [("created_at", ASCENDING), ("_id", ASCENDING)])
 
     def list_assignments(self, patient_id: UUID) -> list[AssignmentRecord]:
         return self._list(ASSIGNMENTS, AssignmentRecord, {"patient_id": patient_id},
