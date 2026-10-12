@@ -17,25 +17,35 @@ def _db(mongo_uow):
     return mongo_uow._database
 
 
-def test_migrations_are_idempotent_and_recorded(mongo_uow):
-    database = _db(mongo_uow)
+@pytest.fixture
+def fresh_db(mongo_client):
+    """A private database: these tests tamper with the migration ledger."""
+    name = f"uctsm_test_{uuid4().hex[:12]}"
+    database = mongo_client[name]
+    run_migrations(database)
+    yield database
+    mongo_client.drop_database(name)
+
+
+def test_migrations_are_idempotent_and_recorded(fresh_db):
+    database = fresh_db
     assert run_migrations(database) == []  # fixture already applied everything
     rows = list(database[LEDGER].find({}, {"_id": 0, "version": 1, "status": 1}).sort("version"))
-    assert rows == [{"version": 1, "status": "COMPLETED"}, {"version": 2, "status": "COMPLETED"}]
+    assert [r["version"] for r in rows] == [1, 2, 3] and all(r["status"] == "COMPLETED" for r in rows)
 
 
-def test_an_applied_migration_that_was_edited_is_refused(mongo_uow):
-    database = _db(mongo_uow)
+def test_an_applied_migration_that_was_edited_is_refused(fresh_db):
+    database = fresh_db
     database[LEDGER].update_one({"version": 1}, {"$set": {"checksum": "tampered"}})
     with pytest.raises(RuntimeError, match="edited after it was applied"):
         run_migrations(database)
 
 
-def test_a_half_applied_migration_resumes(mongo_uow):
-    database = _db(mongo_uow)
+def test_a_half_applied_migration_resumes(fresh_db):
+    database = fresh_db
     database[LEDGER].update_one({"version": 1}, {"$set": {"status": "RUNNING"}})
     assert run_migrations(database) == [1]
-    assert database[LEDGER].count_documents({"status": "COMPLETED"}) == 2
+    assert database[LEDGER].count_documents({"status": "COMPLETED"}) == 3
 
 
 def test_the_validator_rejects_a_malformed_audit_document(mongo_uow):

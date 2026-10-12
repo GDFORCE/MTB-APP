@@ -20,6 +20,20 @@ from app.application.errors import (
     DuplicateRecordError,
     ImmutableRecordError,
     RecordNotFoundError,
+    StaleRevisionError,
+)
+from app.application.patients import (
+    ActivityEntryRecord,
+    ConfinementEpisodeRecord,
+    EvaluationRecord,
+    OccurrenceRecord,
+    PatientAnchorRecord,
+    PatientConditionRecord,
+    PatientEventRecord,
+    PatientRecord,
+    PatientScheduleRecord,
+    PatientStateRecord,
+    UnscheduledVisitRecord,
 )
 from app.application.records import AuditRecord
 from app.domain.schedule.models import Event, UniversalSchedule, ValidationIssue
@@ -38,6 +52,18 @@ class _Store:
         # schedule version aggregate, kept as the shared stored shape
         self.versions: dict[UUID, dict[str, Any]] = {}
         self.decisions: list[ReviewDecisionRecord] = []
+        # patient plane
+        self.patients: dict[UUID, PatientRecord] = {}
+        self.anchors: list[PatientAnchorRecord] = []
+        self.states: list[PatientStateRecord] = []
+        self.conditions: dict[UUID, PatientConditionRecord] = {}
+        self.activity_entries: dict[UUID, ActivityEntryRecord] = {}
+        self.unscheduled: list[UnscheduledVisitRecord] = []
+        self.occurrences: list[OccurrenceRecord] = []
+        self.evaluations: dict[UUID, EvaluationRecord] = {}
+        self.events: dict[UUID, list[PatientEventRecord]] = {}
+        self.confinements: dict[UUID, list[ConfinementEpisodeRecord]] = {}
+        self.pointers: dict[tuple[UUID, UUID], PatientScheduleRecord] = {}
 
 
 def _now() -> datetime:
@@ -404,6 +430,204 @@ class InMemoryScheduleVersionRepository:
         return [item.model_copy(deep=True) for item in rows]
 
 
+class InMemoryPatientRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def add(self, record: PatientRecord) -> None:
+        if record.id in self._s.patients or any(
+                item.trial_id == record.trial_id and item.patient_code == record.patient_code
+                for item in self._s.patients.values()):
+            raise DuplicateRecordError("patient already exists", key=record.patient_code)
+        self._s.patients[record.id] = record.model_copy(deep=True)
+
+    def get(self, organization_id: UUID, patient_id: UUID) -> PatientRecord:
+        row = self._s.patients.get(patient_id)
+        if row is None or row.organization_id != organization_id:
+            raise RecordNotFoundError("patient not found")
+        return row.model_copy(deep=True)
+
+    def list_for_trial(self, organization_id: UUID, trial_id: UUID) -> list[PatientRecord]:
+        rows = [item for item in self._s.patients.values()
+                if item.organization_id == organization_id and item.trial_id == trial_id]
+        rows.sort(key=lambda item: item.patient_code)
+        return [item.model_copy(deep=True) for item in rows]
+
+    def pin_schedule_version(
+        self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
+    ) -> PatientRecord:
+        row = self._s.patients.get(patient_id)
+        if row is None or row.organization_id != organization_id:
+            raise RecordNotFoundError("patient not found")
+        row.current_schedule_version_id = schedule_version_id
+        row.updated_at = _now()
+        row.revision += 1
+        return row.model_copy(deep=True)
+
+
+class InMemoryPatientFactsRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    @staticmethod
+    def _copies(rows):
+        return [item.model_copy(deep=True) for item in rows]
+
+    def add_anchor(self, record: PatientAnchorRecord) -> None:
+        self._s.anchors.append(record.model_copy(deep=True))
+
+    def list_anchors(self, patient_id: UUID, *, statuses: set[str] | None = None):
+        rows = [item for item in self._s.anchors if item.patient_id == patient_id
+                and (statuses is None or item.status in statuses)]
+        rows.sort(key=lambda item: (item.recorded_at, str(item.id)))
+        return self._copies(rows)
+
+    def append_state(self, record: PatientStateRecord) -> None:
+        self._s.states.append(record.model_copy(deep=True))
+
+    def list_states(self, patient_id: UUID):
+        rows = [item for item in self._s.states if item.patient_id == patient_id]
+        rows.sort(key=lambda item: (item.effective_at, item.created_at, str(item.id)))
+        return self._copies(rows)
+
+    def add_condition(self, record: PatientConditionRecord) -> None:
+        self._s.conditions[record.id] = record.model_copy(deep=True)
+
+    def list_current_conditions(self, patient_id: UUID):
+        rows = [item for item in self._s.conditions.values()
+                if item.patient_id == patient_id and item.superseded_by_id is None]
+        rows.sort(key=lambda item: (item.recorded_at, str(item.id)))
+        return self._copies(rows)
+
+    def supersede_condition(self, condition_id: UUID, superseded_by_id: UUID) -> None:
+        row = self._s.conditions.get(condition_id)
+        if row is None or row.superseded_by_id is not None:
+            raise RecordNotFoundError("current condition record not found")
+        row.superseded_by_id = superseded_by_id
+
+    def add_activity_entry(self, record: ActivityEntryRecord) -> None:
+        self._s.activity_entries[record.id] = record.model_copy(deep=True)
+
+    def list_current_activity_entries(self, patient_id: UUID):
+        rows = [item for item in self._s.activity_entries.values()
+                if item.patient_id == patient_id and item.superseded_by_id is None]
+        rows.sort(key=lambda item: (item.recorded_at, str(item.id)))
+        return self._copies(rows)
+
+    def supersede_activity_entries(self, patient_id: UUID, logical_key: str, superseded_by_id: UUID):
+        previous = [item for item in self._s.activity_entries.values()
+                    if item.patient_id == patient_id and item.logical_key == logical_key
+                    and item.superseded_by_id is None and item.id != superseded_by_id]
+        previous.sort(key=lambda item: (item.recorded_at, str(item.id)))
+        copies = self._copies(previous)
+        for item in previous:
+            item.superseded_by_id = superseded_by_id
+        return copies
+
+    def add_unscheduled_visit(self, record: UnscheduledVisitRecord) -> None:
+        self._s.unscheduled.append(record.model_copy(deep=True))
+
+    def list_unscheduled_visits(self, patient_id: UUID):
+        rows = [item for item in self._s.unscheduled if item.patient_id == patient_id]
+        rows.sort(key=lambda item: (item.occurred_on, str(item.id)))
+        return self._copies(rows)
+
+    def add_occurrence(self, record: OccurrenceRecord) -> None:
+        self._s.occurrences.append(record.model_copy(deep=True))
+
+    def list_occurrences(self, patient_id: UUID, *, schedule_version_id: UUID | None = None):
+        rows = [item for item in self._s.occurrences if item.patient_id == patient_id
+                and (schedule_version_id is None or item.schedule_version_id == schedule_version_id)]
+        rows.sort(key=lambda item: (item.recorded_at, str(item.id)))
+        return self._copies(rows)
+
+
+class InMemoryEvaluationRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def find_by_idempotency(self, patient_id: UUID, key: str) -> EvaluationRecord | None:
+        for row in self._s.evaluations.values():
+            if row.patient_id == patient_id and row.idempotency_key == key:
+                return row.model_copy(deep=True)
+        return None
+
+    def get_evaluation(self, evaluation_id: UUID) -> EvaluationRecord:
+        row = self._s.evaluations.get(evaluation_id)
+        if row is None:
+            raise RecordNotFoundError("evaluation not found")
+        return row.model_copy(deep=True)
+
+    def get_pointer(self, patient_id: UUID, schedule_version_id: UUID):
+        row = self._s.pointers.get((patient_id, schedule_version_id))
+        return row.model_copy(deep=True) if row else None
+
+    def count_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> int:
+        return sum(1 for row in self._s.evaluations.values()
+                   if row.patient_id == patient_id and row.schedule_version_id == schedule_version_id)
+
+    def save_evaluation(
+        self, evaluation: EvaluationRecord, events: list[PatientEventRecord],
+        confinements: list[ConfinementEpisodeRecord], *, expected_pointer_revision: int | None,
+    ) -> PatientScheduleRecord:
+        if evaluation.id in self._s.evaluations:
+            raise DuplicateRecordError("evaluation already exists", key=str(evaluation.id))
+        for row in self._s.evaluations.values():
+            if row.patient_id == evaluation.patient_id and row.idempotency_key is not None \
+                    and row.idempotency_key == evaluation.idempotency_key:
+                raise DuplicateRecordError("idempotency key already used", key=row.idempotency_key)
+            if (row.patient_id, row.schedule_version_id, row.sequence) == (
+                    evaluation.patient_id, evaluation.schedule_version_id, evaluation.sequence):
+                raise DuplicateRecordError("evaluation sequence already used", key=str(row.sequence))
+        seen = set()
+        for item in events:
+            key = (item.event_code, item.occurrence_index)
+            if key in seen:
+                raise DuplicateRecordError("duplicate projection in one evaluation", key=str(key))
+            seen.add(key)
+        pointer_key = (evaluation.patient_id, evaluation.schedule_version_id)
+        pointer = self._s.pointers.get(pointer_key)
+        if expected_pointer_revision is None:
+            if pointer is not None:
+                raise StaleRevisionError("the patient schedule was created by a concurrent evaluation")
+        elif pointer is None or pointer.revision != expected_pointer_revision:
+            raise StaleRevisionError("the patient schedule changed since it was read")
+        self._s.evaluations[evaluation.id] = evaluation.model_copy(deep=True)
+        self._s.events[evaluation.id] = [item.model_copy(deep=True) for item in events]
+        self._s.confinements[evaluation.id] = [item.model_copy(deep=True) for item in confinements]
+        if pointer is None:
+            pointer = PatientScheduleRecord(
+                organization_id=evaluation.organization_id, patient_id=evaluation.patient_id,
+                schedule_version_id=evaluation.schedule_version_id)
+        pointer.current_evaluation_id = evaluation.id
+        pointer.generation_run_id = evaluation.id
+        pointer.status = "ACTIVE"
+        pointer.updated_at = pointer.generated_at = _now()
+        pointer.revision += 1
+        self._s.pointers[pointer_key] = pointer
+        return pointer.model_copy(deep=True)
+
+    @staticmethod
+    def _order(item: PatientEventRecord):
+        return (item.nominal_start_date is not None, item.nominal_start_date or date.min,
+                item.occurrence_index, item.event_code, str(item.id))
+
+    def list_events(self, evaluation_id: UUID) -> list[PatientEventRecord]:
+        rows = sorted(self._s.events.get(evaluation_id, []), key=self._order)
+        return [item.model_copy(deep=True) for item in rows]
+
+    def list_confinements(self, evaluation_id: UUID) -> list[ConfinementEpisodeRecord]:
+        rows = sorted(self._s.confinements.get(evaluation_id, []),
+                      key=lambda item: (item.episode_code, str(item.id)))
+        return [item.model_copy(deep=True) for item in rows]
+
+    def list_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> list[EvaluationRecord]:
+        rows = [item for item in self._s.evaluations.values()
+                if item.patient_id == patient_id and item.schedule_version_id == schedule_version_id]
+        rows.sort(key=lambda item: (item.sequence, item.evaluated_at))
+        return [item.model_copy(deep=True) for item in rows]
+
+
 class InMemoryUnitOfWork:
     """Atomic like the real store: an exception restores the pre-run state."""
 
@@ -412,6 +636,9 @@ class InMemoryUnitOfWork:
         self.audit = InMemoryAuditRepository(self._store)
         self.authoring = InMemoryAuthoringRepository(self._store)
         self.schedules = InMemoryScheduleVersionRepository(self._store)
+        self.patients = InMemoryPatientRepository(self._store)
+        self.facts = InMemoryPatientFactsRepository(self._store)
+        self.evaluations = InMemoryEvaluationRepository(self._store)
 
     def run(self, fn: Callable[["InMemoryUnitOfWork"], T]) -> T:
         snapshot = copy.deepcopy(self._store.__dict__)

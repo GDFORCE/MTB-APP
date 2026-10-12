@@ -29,6 +29,19 @@ from .authoring import (
     ScheduleVersionHeader,
     TrialRecord,
 )
+from .patients import (
+    ActivityEntryRecord,
+    ConfinementEpisodeRecord,
+    EvaluationRecord,
+    OccurrenceRecord,
+    PatientAnchorRecord,
+    PatientConditionRecord,
+    PatientEventRecord,
+    PatientRecord,
+    PatientScheduleRecord,
+    PatientStateRecord,
+    UnscheduledVisitRecord,
+)
 from .records import AuditRecord
 
 T = TypeVar("T")
@@ -136,6 +149,75 @@ class ScheduleVersionRepository(Protocol):
     ) -> list[ReviewDecisionRecord]: ...
 
 
+class PatientRepository(Protocol):
+    def add(self, record: PatientRecord) -> None:
+        """Unique per (trial, patient code). Raises ``DuplicateRecordError``."""
+        ...
+    def get(self, organization_id: UUID, patient_id: UUID) -> PatientRecord:
+        """Raises ``RecordNotFoundError`` (also for another organization's patient)."""
+        ...
+    def list_for_trial(self, organization_id: UUID, trial_id: UUID) -> list[PatientRecord]: ...
+    def pin_schedule_version(
+        self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
+    ) -> PatientRecord: ...
+
+
+class PatientFactsRepository(Protocol):
+    """Append-only facts about one patient. No update or delete exists, except
+    that a correction marks the fact it replaces as superseded."""
+
+    def add_anchor(self, record: PatientAnchorRecord) -> None: ...
+    def list_anchors(
+        self, patient_id: UUID, *, statuses: set[str] | None = None) -> list[PatientAnchorRecord]:
+        """Oldest recorded first."""
+        ...
+    def append_state(self, record: PatientStateRecord) -> None: ...
+    def list_states(self, patient_id: UUID) -> list[PatientStateRecord]:
+        """By effective time, then creation time."""
+        ...
+    def add_condition(self, record: PatientConditionRecord) -> None: ...
+    def list_current_conditions(self, patient_id: UUID) -> list[PatientConditionRecord]:
+        """Not superseded, oldest recorded first."""
+        ...
+    def supersede_condition(self, condition_id: UUID, superseded_by_id: UUID) -> None: ...
+    def add_activity_entry(self, record: ActivityEntryRecord) -> None: ...
+    def list_current_activity_entries(self, patient_id: UUID) -> list[ActivityEntryRecord]: ...
+    def supersede_activity_entries(
+        self, patient_id: UUID, logical_key: str, superseded_by_id: UUID,
+    ) -> list[ActivityEntryRecord]:
+        """Mark every current entry of ``logical_key`` (except the new one) as
+        superseded; return what was superseded, oldest first."""
+        ...
+    def add_unscheduled_visit(self, record: UnscheduledVisitRecord) -> None: ...
+    def list_unscheduled_visits(self, patient_id: UUID) -> list[UnscheduledVisitRecord]: ...
+    def add_occurrence(self, record: OccurrenceRecord) -> None: ...
+    def list_occurrences(
+        self, patient_id: UUID, *, schedule_version_id: UUID | None = None,
+    ) -> list[OccurrenceRecord]:
+        """Oldest recorded first."""
+        ...
+
+
+class EvaluationRepository(Protocol):
+    def find_by_idempotency(self, patient_id: UUID, key: str) -> EvaluationRecord | None: ...
+    def get_evaluation(self, evaluation_id: UUID) -> EvaluationRecord: ...
+    def get_pointer(self, patient_id: UUID, schedule_version_id: UUID) -> PatientScheduleRecord | None: ...
+    def count_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> int: ...
+    def save_evaluation(
+        self, evaluation: EvaluationRecord, events: list[PatientEventRecord],
+        confinements: list[ConfinementEpisodeRecord], *, expected_pointer_revision: int | None,
+    ) -> PatientScheduleRecord:
+        """Insert the evaluation and its projections and advance the pointer in
+        one step. ``expected_pointer_revision`` None means "no pointer yet".
+        Raises ``StaleRevisionError`` when the pointer moved underneath."""
+        ...
+    def list_events(self, evaluation_id: UUID) -> list[PatientEventRecord]: ...
+    def list_confinements(self, evaluation_id: UUID) -> list[ConfinementEpisodeRecord]: ...
+    def list_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> list[EvaluationRecord]:
+        """Oldest first - the full, never-rewritten history."""
+        ...
+
+
 class UnitOfWork(Protocol):
     """One atomic business operation.
 
@@ -147,6 +229,9 @@ class UnitOfWork(Protocol):
     audit: AuditRepository
     authoring: AuthoringRepository
     schedules: ScheduleVersionRepository
+    patients: PatientRepository
+    facts: PatientFactsRepository
+    evaluations: EvaluationRepository
 
     def run(self, fn: "Callable[[UnitOfWork], T]") -> T: ...
 

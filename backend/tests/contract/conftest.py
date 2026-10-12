@@ -52,15 +52,28 @@ def mongo_client():
     client.close()
 
 
-@pytest.fixture
-def mongo_uow(mongo_client):
+@pytest.fixture(scope="session")
+def _mongo_database(mongo_client):
+    """One migrated database per test session; tests clean it between runs."""
     name = f"uctsm_test_{uuid4().hex[:12]}"
     database = mongo_client[name]
     run_migrations(database)
-    try:
-        yield MongoUnitOfWork(mongo_client, database)
-    finally:
-        mongo_client.drop_database(name)
+    yield database
+    mongo_client.drop_database(name)
+
+
+@pytest.fixture
+def mongo_uow(mongo_client, _mongo_database):
+    from app.persistence.mongodb.migrate import LEDGER
+
+    def wipe():
+        for name in _mongo_database.list_collection_names():
+            if name != LEDGER and not name.startswith("system."):
+                _mongo_database[name].delete_many({})
+
+    wipe()
+    yield MongoUnitOfWork(mongo_client, _mongo_database)
+    wipe()
 
 
 @pytest.fixture(params=["memory", "mongo"])
