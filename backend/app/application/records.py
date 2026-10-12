@@ -5,21 +5,34 @@ Plain pydantic models with application-generated UUIDs; no database types.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
+_clock_lock = threading.Lock()
+_last_instant: datetime | None = None
+
+
 def utc_now() -> datetime:
-    """Current instant at MILLISECOND precision.
+    """Current instant: millisecond precision and strictly increasing per process.
 
     BSON dates carry milliseconds, so a finer clock would read back different
-    from what was written. Truncating here keeps every store identical.
+    from what was written. Strict monotonicity keeps two facts recorded in the
+    same millisecond in the order they were recorded (a correction must sort
+    after the record it corrects).
     """
+    global _last_instant
     now = datetime.now(timezone.utc)
-    return now.replace(microsecond=(now.microsecond // 1000) * 1000)
+    now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
+    with _clock_lock:
+        if _last_instant is not None and now <= _last_instant:
+            now = _last_instant + timedelta(milliseconds=1)
+        _last_instant = now
+    return now
 
 
 class Record(BaseModel):
