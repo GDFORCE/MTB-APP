@@ -147,6 +147,17 @@ class InMemoryAuthoringRepository:
         row.schedule_read_mode = mode
         row.updated_at = _now()
 
+    def set_trial_external_id(self, organization_id: UUID, trial_id: UUID, external_trial_id: str) -> None:
+        row = self._s.trials.get(trial_id)
+        if row is None or row.organization_id != organization_id:
+            raise RecordNotFoundError("trial not found")
+        if any(item.id != trial_id and item.organization_id == organization_id
+               and item.external_trial_id == external_trial_id for item in self._s.trials.values()):
+            raise DuplicateRecordError(
+                "another trial already uses this external trial id", key=external_trial_id)
+        row.external_trial_id = external_trial_id
+        row.updated_at = _now()
+
     # protocols
     def add_protocol(self, record: ProtocolRecord) -> None:
         self._unique(self._s.protocols, record, "protocol")
@@ -465,6 +476,13 @@ class InMemoryPatientRepository:
                 if item.organization_id == organization_id and item.trial_id == trial_id]
         rows.sort(key=lambda item: item.patient_code)
         return [item.model_copy(deep=True) for item in rows]
+
+    def find_by_external_id(self, organization_id: UUID, trial_id: UUID, external_patient_id: str):
+        for item in self._s.patients.values():
+            if (item.organization_id == organization_id and item.trial_id == trial_id
+                    and item.external_patient_id == external_patient_id):
+                return item.model_copy(deep=True)
+        return None
 
     def list_for_organization(self, organization_id: UUID, *, trial_id: UUID | None = None):
         rows = [item for item in self._s.patients.values()

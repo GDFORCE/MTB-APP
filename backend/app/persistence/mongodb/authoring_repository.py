@@ -75,6 +75,20 @@ class MongoAuthoringRepository:
         if result.matched_count == 0:
             raise RecordNotFoundError("trial not found")
 
+    def set_trial_external_id(
+        self, organization_id: UUID, trial_id: UUID, external_trial_id: str,
+    ) -> None:
+        try:
+            result = self._db[TRIALS].update_one(
+                {"_id": trial_id, "organization_id": organization_id},
+                {"$set": {"external_trial_id": external_trial_id,
+                          "updated_at": datetime.now(timezone.utc)}}, session=self._session)
+        except DuplicateKeyError as error:
+            raise DuplicateRecordError(
+                "another trial already uses this external trial id", key=external_trial_id) from error
+        if result.matched_count == 0:
+            raise RecordNotFoundError("trial not found")
+
     # -- protocols --------------------------------------------------------
     def add_protocol(self, record: ProtocolRecord) -> None:
         self._insert(PROTOCOLS, record, what="protocol")

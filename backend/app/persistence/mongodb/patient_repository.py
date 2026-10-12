@@ -107,6 +107,14 @@ class MongoPatientRepository(_Base):
             PATIENTS, PatientRecord, {"organization_id": organization_id, "trial_id": trial_id},
             [("patient_code", ASCENDING)])
 
+    def find_by_external_id(
+        self, organization_id: UUID, trial_id: UUID, external_patient_id: str,
+    ) -> PatientRecord | None:
+        doc = self._db[PATIENTS].find_one(
+            {"organization_id": organization_id, "trial_id": trial_id,
+             "external_patient_id": external_patient_id}, session=self._session)
+        return from_document(PatientRecord, doc) if doc else None
+
     def list_for_organization(
         self, organization_id: UUID, *, trial_id: UUID | None = None,
     ) -> list[PatientRecord]:
