@@ -75,6 +75,10 @@ class MongoAuthoringRepository:
         if result.matched_count == 0:
             raise RecordNotFoundError("trial not found")
 
+    def find_trial_by_protocol_id(self, organization_id: UUID, protocol_id: str) -> TrialRecord | None:
+        return self._one(
+            TRIALS, {"organization_id": organization_id, "protocol_id": protocol_id}, TrialRecord)
+
     def set_trial_external_id(
         self, organization_id: UUID, trial_id: UUID, external_trial_id: str,
     ) -> None:

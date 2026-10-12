@@ -149,6 +149,12 @@ class InMemoryAuthoringRepository:
         row.schedule_read_mode = mode
         row.updated_at = _now()
 
+    def find_trial_by_protocol_id(self, organization_id: UUID, protocol_id: str):
+        for item in self._s.trials.values():
+            if item.organization_id == organization_id and item.protocol_id == protocol_id:
+                return item.model_copy(deep=True)
+        return None
+
     def set_trial_external_id(self, organization_id: UUID, trial_id: UUID, external_trial_id: str) -> None:
         row = self._s.trials.get(trial_id)
         if row is None or row.organization_id != organization_id:
