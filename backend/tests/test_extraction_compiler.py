@@ -73,6 +73,32 @@ def codes(result, *, blocking_only: bool = True) -> set[str]:
     return {item.issue_code for item in result.issues if item.blocking or not blocking_only}
 
 
+def reviewed(result):
+    """The schedule after a reviewer EXPLICITLY states each recurrence basis the compiler could
+    only propose (``basis_status == UNCONFIRMED``), re-validated with the current rules.
+
+    The protocol text rarely says what each repeat counts from, so compilation never states it
+    (P4-02): an unconfirmed basis blocks approval until a person does. This models that explicit
+    edit; it is not a default the compiler or the validator may apply."""
+    from app.domain.schedule.models import RecurrenceBasis
+    from app.domain.schedule.validator import ScheduleValidator
+
+    schedule = result.schedule.model_copy(deep=True)
+    for item in schedule.events:
+        rule = item.recurrence
+        if rule is not None and rule.basis_status == "UNCONFIRMED":
+            rule.basis = rule.basis or RecurrenceBasis.FIRST_RESOLVED_OCCURRENCE
+            rule.basis_status = "STATED"
+    return schedule, ScheduleValidator().validate(schedule)
+
+
+def reviewed_codes(result) -> set[str]:
+    return {item.issue_code for item in reviewed(result)[1] if item.blocking}
+
+
+UNCONFIRMED_BASIS = {"RECURRENCE_BASIS_UNCONFIRMED"}
+
+
 def issues_for(result, entity_id) -> set[str]:
     return {item.issue_code for item in result.issues if item.entity_id == entity_id and item.blocking}
 
@@ -691,7 +717,9 @@ def test_toxicity_hold_and_resume_become_pause_and_resume_block_actions():
     assert [a.action_type for a in definitions["GRADE_3_TOXICITY_RESUMED"].actions] == ["RESUME_BLOCK"]
     block = next(item for item in result.schedule.repeat_blocks if item.code == "TREATMENT")
     assert block.resume_mode == "NOMINAL"
-    assert not codes(result)
+    # the repeat's basis is not stated by the protocol text: review is required, and only that
+    assert codes(result) == UNCONFIRMED_BASIS
+    assert not reviewed_codes(result)
 
 
 def test_hold_with_no_stated_resume_rule_leaves_resume_unclear():
@@ -722,7 +750,8 @@ def test_discontinuation_stops_the_treatment_block_and_adds_follow_up():
     assert isinstance(survival.timing, TriggeredTiming)
     anchor = next(item for item in result.schedule.anchors if item.code == survival.timing.trigger.code)
     assert anchor.source_condition_code == "PROGRESSION"
-    assert not codes(result)
+    assert codes(result) == UNCONFIRMED_BASIS
+    assert not reviewed_codes(result)
 
 
 def test_repeat_until_resolved_needs_its_interval_and_a_checkable_resolution():
@@ -757,10 +786,11 @@ def test_trial_level_fatal_toxicity_rule_never_becomes_a_patient_action():
     recorded = [item for item in result.schedule.schedule_metadata.extensions
                 if item.get("type") == "NON_PATIENT_RULE"]
     assert [item["scope"] for item in recorded] == ["TRIAL"]
-    assert not codes(result)
+    assert codes(result) == UNCONFIRMED_BASIS
+    assert not reviewed_codes(result)
 
     # Even with the condition confirmed for a patient, no treatment visit moves.
-    schedule = result.schedule.model_copy(deep=True)
+    schedule, _ = reviewed(result)
     schedule.schedule_metadata.status = ScheduleStatus.APPROVED
     context = PatientContext(
         patient_id=uuid4(), schedule_version_id=schedule.schedule_version_id,
@@ -779,7 +809,8 @@ def test_a_trial_rule_naming_nothing_patient_level_is_recorded_without_blocking(
         quote="accrual is suspended and the DSMC reviews"), blocks=BLOCKS)
 
     assert result.schedule.conditional_definitions == []
-    assert not codes(result)
+    assert codes(result) == UNCONFIRMED_BASIS          # the treatment repeat still needs its basis
+    assert not reviewed_codes(result)
     notice = next(item for item in result.issues if item.issue_code == "NON_PATIENT_RULE")
     assert notice.blocking is False
 
@@ -907,8 +938,12 @@ def session():
 def test_compiled_facts_approve_and_date_a_real_patient(session):
     [(option, result)] = compile_document(journey_facts(), schedule_name="Primary")
     assert option is None
-    assert not [item for item in result.issues if item.blocking], [
-        (item.issue_code, item.message) for item in result.issues if item.blocking]
+    # Unstated recurrence basis: the compiled draft needs a person to state it, nothing else.
+    assert {item.issue_code for item in result.issues if item.blocking} == UNCONFIRMED_BASIS
+    stated, issues = reviewed(result)
+    assert not [item for item in issues if item.blocking], [
+        (item.issue_code, item.message) for item in issues if item.blocking]
+    result = result.model_copy(update={"schedule": stated, "issues": issues})
 
     trial, [row] = import_native_schedules(
         session, organization_id=ORG, actor_id=REVIEWER, external_trial_id="trial-extract",
@@ -985,8 +1020,9 @@ def test_a_window_on_a_repeating_visit_is_applied_to_every_occurrence():
         "Quarterly follow-up", timing={"pattern": "REPEAT", "from": "End of therapy"},
         window={"before": "14 DAY", "after": "14 DAY"},
         repeat={"interval": "3 MONTH", "includes_start": False, "end": {"type": "COUNT", "count": 3}}))
-    assert not codes(result)
-    schedule = result.schedule.model_copy(deep=True)
+    assert codes(result) == UNCONFIRMED_BASIS
+    schedule, issues = reviewed(result)
+    assert not [item for item in issues if item.blocking]
     schedule.schedule_metadata.status = ScheduleStatus.APPROVED
     context = PatientContext(
         patient_id=uuid4(), schedule_version_id=schedule.schedule_version_id,

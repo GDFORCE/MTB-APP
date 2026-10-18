@@ -130,6 +130,12 @@ def test_precreation_extraction_reports_the_engine_is_unavailable(headers, monke
     """With no extraction provider configured, a valid upload must get a
     clear 503 so the sponsor falls back to manual entry."""
     monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
+    # Identity verification needs no provider and runs first, so the document must
+    # be readable (a corrupt PDF is a 400, not "extraction unavailable").
+    from app.extraction import documents
+    from app.extraction.contracts import DocumentPage
+    monkeypatch.setattr(documents, "pages_from_pdf", lambda data: [DocumentPage(
+        page_number=1, text="PROTOCOL\nProtocol Number: PRE-1\nA study.")])
 
     async def exercise():
         async with client() as cli:

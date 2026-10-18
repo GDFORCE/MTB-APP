@@ -34,9 +34,20 @@ class PatientRecord(Record):
     dimension_values: dict[str, Any] = Field(default_factory=dict)
     status: str = "ACTIVE"
     external_patient_id: str | None = None
+    #: Which store is AUTHORITATIVE for this patient's clinical schedule. Only the
+    #: explicit "MONGO" (set by trusted native enrolment) lets this plane change the
+    #: schedule. None = UNCLASSIFIED (for example an operational-bridge mirror) and
+    #: any other value ("SQL", "LEGACY") are refused by the command plane, so a mirror
+    #: can never be commanded into disagreement with the store that is displayed.
+    authority_plane: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     revision: int = 0
+    #: Bumped by EVERY write of a clinical input (anchor, state, condition, occurrence,
+    #: activity, unscheduled visit), by the repositories themselves. ``save`` never rewrites it,
+    #: so a stale patient copy cannot undo a bump; ``guard_inputs`` makes a transaction that
+    #: decided from the inputs it read conflict with a concurrent correction.
+    input_revision: int = 0
 
 
 class PatientAnchorRecord(Record):
@@ -210,6 +221,47 @@ class ImpactProposalRecord(Record):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class PatientCommandRecord(Record):
+    """One typed clinical intent (P5-03). Written once, never updated or deleted.
+
+    ``payload`` is the typed command exactly as requested; ``before`` is what the
+    schedule showed for the target when it was accepted and ``requested`` the
+    values it asked for. Effects are not stored here - they are recomputed from
+    the ACTIVE commands (``domain.schedule.commands.command_inputs``) - and a
+    reversal is a further row (``command_type = REVERSE``) that points back.
+    """
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    patient_id: UUID
+    schedule_version_id: UUID
+    #: Per-patient, strictly increasing; the order commands take effect in.
+    sequence: int = Field(ge=1)
+    command_type: str
+    track_code: str | None = None
+    logical_key: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    #: When the change takes effect clinically (a date), and when it was recorded.
+    effective_at: date
+    recorded_at: datetime = Field(default_factory=utc_now)
+    #: Derived from authentication, never from the request body.
+    actor_id: UUID
+    authority: str | None = None
+    reason: str
+    before: dict[str, Any] = Field(default_factory=dict)
+    requested: dict[str, Any] = Field(default_factory=dict)
+    proposal_id: UUID | None = None
+    #: The patient's evaluation revision the command was calculated against.
+    base_revision: str | None = None
+    idempotency_key: str | None = None
+    payload_hash: str
+    reverses_command_id: UUID | None = None
+    #: Links to the underlying fact(s) a FACT command wrote (occurrence id, ...).
+    fact_refs: dict[str, Any] = Field(default_factory=dict)
+    result_evaluation_id: UUID | None = None
+    semantics_version: str = "patient-commands.v1"
+
+
 class AssignmentRecord(Record):
     """Append-only: which schedule version a patient was put on, and why."""
 
@@ -219,6 +271,8 @@ class AssignmentRecord(Record):
     schedule_version_id: UUID
     previous_schedule_version_id: UUID | None = None
     impact_proposal_id: UUID | None = None
+    #: P6: the authenticated adoption / return decision that made this assignment
+    amendment_decision_id: UUID | None = None
     assignment_type: str = "ENROLMENT"
     reason: str | None = None
     assigned_by: UUID | None = None
@@ -265,6 +319,31 @@ class CalendarEntry(Record):
     original_planned: date | None = None
     actual_visit_date: date | None = None
     actual_treatment_date: date | None = None
+    # --- P5 operational layers: kept apart from the protocol target/window ----
+    schedule_version_id: UUID | None = None
+    #: True when the protocol states a window (even a zero-width one). False =
+    #: no window is known; ``earliest``/``latest`` are then None, not "equal".
+    window_known: bool = False
+    #: Operational appointment (a booking) and whether it is inside the window.
+    appointment_date: date | None = None
+    appointment_outside_window: bool | None = None
+    #: Patient-specific exception; the protocol window above is NOT altered by it.
+    override_target: date | None = None
+    override_window_earliest: date | None = None
+    override_window_latest: date | None = None
+    override_outside_window: bool | None = None
+    override_authority: str | None = None
+    override_reason: str | None = None
+    cancelled: bool = False
+    cancelled_reason: str | None = None
+    track_code: str | None = None
+    track_name: str | None = None
+    track_rebase_policy: str | None = None
+    track_movement: str | None = None
+    #: the series this occurrence belongs to ends at an undated event
+    provisional: bool = False
+    #: the last ledger command applying to this occurrence / its track (staff only)
+    last_command_id: UUID | None = None
 
 
 class ScheduleChange(Record):
@@ -288,6 +367,8 @@ class OccurrenceOutcome(Record):
 
     occurrence_id: UUID
     evaluation_id: UUID | None = None
+    #: The schedule version this request was resolved against (P1-02 scope).
+    schedule_version_id: UUID | None = None
     reevaluated: bool
     #: True when this response replays an earlier identical request.
     replayed: bool = False

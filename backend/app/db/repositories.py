@@ -35,6 +35,11 @@ def _repeat_rule_fields(rule: object) -> dict[str, object]:
 #: under reserved keys (no migration; a version without them loads as before).
 PROCESSES_METADATA_KEY = "_uctsm_processes"
 HOLIDAY_CALENDARS_METADATA_KEY = "_uctsm_holiday_calendars"
+#: P5-01: tracks and cross-track rules live in the version's metadata, and an
+#: event's membership in its own metadata - no schema change, read back typed.
+TRACKS_METADATA_KEY = "_uctsm_tracks"
+TRACK_LINKS_METADATA_KEY = "_uctsm_track_links"
+EVENT_TRACK_KEY = "_uctsm_track"
 
 
 def _repeat_rule(event: object) -> object | None:
@@ -56,7 +61,24 @@ def _metadata_with_constraints(metadata: dict | None, constraints: object | None
 
 def _split_constraints(metadata: dict | None) -> tuple[dict, object | None]:
     values = dict(metadata or {})
+    values.pop(EVENT_TRACK_KEY, None)
     return values, values.pop(CONSTRAINTS_METADATA_KEY, None)
+
+
+def _event_metadata(event: "domain.Event") -> dict | None:
+    stored = _metadata_with_constraints(event.metadata, event.constraints)
+    if event.track_scope is None:
+        return stored
+    return {**(stored or {}), EVENT_TRACK_KEY: {
+        "scope": event.track_scope,
+        "track_id": str(event.track_id) if event.track_id else None}}
+
+
+def _track_fields(metadata: dict | None) -> dict[str, object]:
+    track = (metadata or {}).get(EVENT_TRACK_KEY)
+    if not track:
+        return {}
+    return {"track_scope": track.get("scope"), "track_id": track.get("track_id")}
 
 
 class ScheduleRepository:
@@ -86,6 +108,9 @@ class ScheduleRepository:
                 **({PROCESSES_METADATA_KEY: _json(schedule.processes)} if schedule.processes else {}),
                 **({HOLIDAY_CALENDARS_METADATA_KEY: _json(schedule.holiday_calendars)}
                    if schedule.holiday_calendars else {}),
+                **({TRACKS_METADATA_KEY: _json(schedule.tracks)} if schedule.tracks else {}),
+                **({TRACK_LINKS_METADATA_KEY: _json(schedule.track_links)}
+                   if schedule.track_links else {}),
             },
             dimensions=_json(schedule.dimensions),
             conditional_definitions=_json(schedule.conditional_definitions),
@@ -135,7 +160,7 @@ class ScheduleRepository:
                 dependency_mode=item.dependency_mode.value if item.dependency_mode else None,
                 conditional_actions=_json(item.conditional_actions),
                 qualifiers=_json(item.qualifiers), confinement=_json(item.confinement),
-                metadata_json=_metadata_with_constraints(item.metadata, item.constraints),
+                metadata_json=_event_metadata(item),
                 interpretation_status=item.interpretation_status.value,
                 requires_review=item.requires_review, evidence_refs=_json(item.evidence_refs),
             ))
@@ -230,7 +255,7 @@ class ScheduleRepository:
         row.conditional_actions = _json(event.conditional_actions)
         row.qualifiers = _json(event.qualifiers)
         row.confinement = _json(event.confinement)
-        row.metadata_json = _metadata_with_constraints(event.metadata, event.constraints)
+        row.metadata_json = _event_metadata(event)
         row.interpretation_status = event.interpretation_status.value
         row.requires_review = event.requires_review
         row.evidence_refs = _json(event.evidence_refs)
@@ -279,6 +304,8 @@ class ScheduleRepository:
         metadata = dict(version.metadata_json or {})
         processes = metadata.pop(PROCESSES_METADATA_KEY, None) or []
         holiday_calendars = metadata.pop(HOLIDAY_CALENDARS_METADATA_KEY, None) or []
+        tracks = metadata.pop(TRACKS_METADATA_KEY, None) or []
+        track_links = metadata.pop(TRACK_LINKS_METADATA_KEY, None) or []
         metadata.update({
             "name": metadata.get("name", definition.name),
             "description": metadata.get("description", definition.description),
@@ -342,7 +369,8 @@ class ScheduleRepository:
                 })
         def event_payload(row: db.Event) -> dict[str, object]:
             metadata, constraints = _split_constraints(row.metadata_json)
-            return {"metadata": metadata, "constraints": constraints}
+            return {"metadata": metadata, "constraints": constraints,
+                    **_track_fields(row.metadata_json)}
 
         # P1-01: events stored before ``temporal_basis`` existed get the basis
         # the engine already used for them, marked LEGACY_EQUIVALENT. Read-time
@@ -397,6 +425,8 @@ class ScheduleRepository:
             confinement_episodes=[domain.ConfinementEpisodeDefinition.model_validate(item) for item in (version.confinement_episodes or [])],
             processes=[domain.ProcessDefinition.model_validate(item) for item in processes],
             holiday_calendars=[domain.HolidayCalendar.model_validate(item) for item in holiday_calendars],
+            tracks=[domain.ScheduleTrack.model_validate(item) for item in tracks],
+            track_links=[domain.TrackLink.model_validate(item) for item in track_links],
             evidence=evidence, claim_evidence=claims, validation_issues=issues,
             created_at=version.created_at,
         )

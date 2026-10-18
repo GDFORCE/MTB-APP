@@ -21,6 +21,7 @@ from app.domain.schedule.models import (
 from app.domain.schedule.validator import ScheduleValidator
 
 from .authoring import ReviewDecisionRecord
+from .schedule_documents import approval_stamp
 from .errors import DuplicateRecordError, ImmutableRecordError, StaleRevisionError
 from .ports import UnitOfWork
 from .records import AuditRecord, utc_now
@@ -63,7 +64,11 @@ def _accountability(run, schedule_version_id: UUID):
 
 
 class ScheduleReviewService:
-    def __init__(self, uow: UnitOfWork):
+    # P3-04: deployment-owned policy, resolved per approval unless injected.
+    _maker_checker = None
+
+    def __init__(self, uow: UnitOfWork, maker_checker=None):
+        self._maker_checker = maker_checker
         self._uow = uow
 
     def _run(self, work: Callable[[UnitOfWork], T]) -> T:
@@ -126,6 +131,13 @@ class ScheduleReviewService:
             tx.schedules.replace_validation_issues(schedule_version_id, issues)
             tx.schedules.transition(
                 schedule_version_id, to_status=ScheduleStatus.VALIDATION_REQUIRED.value)
+            from app.authorization.maker_checker import is_material_event_change
+            changed = [key for key, value in event.model_dump(mode="json").items()
+                       if before.model_dump(mode="json").get(key) != value
+                       and key not in {"metadata", "evidence_refs", "updated_at", "created_at"}]
+            if is_material_event_change(changed):
+                tx.schedules.record_material_edit(
+                    schedule_version_id, editor_id=reviewer_id, at=utc_now())
             tx.schedules.add_decision(ReviewDecisionRecord(
                 schedule_version_id=schedule_version_id, entity_type="EVENT", entity_id=event.id,
                 decision="CORRECT", previous_value=before.model_dump(mode="json"),
@@ -240,6 +252,12 @@ class ScheduleReviewService:
             tx.schedules.transition(
                 schedule_version_id, to_status=ScheduleStatus.VALIDATION_REQUIRED.value)
             after = target.model_dump(mode="json")
+            # Accepting the extracted reading is a confirmation; changing what the
+            # footnote MEANS is a material edit (maker-checker provenance).
+            if {k: v for k, v in before.items() if k != "resolved"} != {
+                    k: v for k, v in after.items() if k != "resolved"}:
+                tx.schedules.record_material_edit(
+                    schedule_version_id, editor_id=reviewer_id, at=utc_now())
             tx.schedules.add_decision(ReviewDecisionRecord(
                 schedule_version_id=schedule_version_id, entity_type="QUALIFIER",
                 entity_id=qualifier_id, field_path="resolved", decision=decision,
@@ -354,6 +372,10 @@ class ScheduleReviewService:
         header = tx.schedules.get_header(schedule_version_id)
         if header.status != ScheduleStatus.IN_REVIEW.value:
             raise ValueError("only an in-review schedule can be approved")
+        # P3-04: segregation of duties at the lowest shared approval boundary of
+        # the repository-port plane (approve and approve_reviewed_table both
+        # end here).
+        maker_checker = self._enforce_maker_checker(tx, header, reviewer_id)
         schedule = tx.schedules.get(schedule_version_id)
         issues = ScheduleValidator().validate(schedule)
         tx.schedules.replace_validation_issues(schedule_version_id, issues)
@@ -382,9 +404,16 @@ class ScheduleReviewService:
             raise ValueError(f"approval requires {len(missing)} outstanding field review(s)")
         before = {"status": header.status}
         approved_at = utc_now()
+        # P6-01: the content hash and the header integrity hash are computed from the
+        # content just read and stamped in the SAME guarded write that approves it;
+        # ``expected_revision`` makes that write fail if the version was edited after
+        # this read, so a stored hash can never describe other content.
+        stamp = approval_stamp(
+            header, schedule, reviewer_id=reviewer_id, approved_at=approved_at,
+            effective_from=effective_from)
         approved = tx.schedules.mark_approved(
             schedule_version_id, reviewer_id=reviewer_id, approved_at=approved_at,
-            effective_from=effective_from)
+            effective_from=effective_from, expected_revision=header.revision, **stamp)
         protocol = tx.authoring.get_protocol(header.protocol_id)
         protocol_version = tx.authoring.get_protocol_version(header.protocol_version_id)
         # A replacement extraction can recover an unapproved first draft; an
@@ -413,8 +442,25 @@ class ScheduleReviewService:
             organization_id=header.organization_id, actor_id=reviewer_id,
             action="SCHEDULE_APPROVED", entity_type="SCHEDULE_VERSION", entity_id=header.id,
             before=before,
-            after={"status": approved.status, "approved_at": approved_at.isoformat()},
+            after={"status": approved.status, "approved_at": approved_at.isoformat(),
+                   "maker_checker": maker_checker.audit(
+                       approver_id=str(reviewer_id), revision=None)},
             reason=comment))
+
+    def _enforce_maker_checker(self, tx: UnitOfWork, header, approver_id: UUID):
+        from app.authorization.maker_checker import MakerCheckerPolicy, Provenance, enforce
+
+        editors = tuple(str(item) for item in header.material_editor_ids)
+        last = str(header.last_material_editor_id) if header.last_material_editor_id else None
+        legacy: tuple[str, ...] = ()
+        if last is None and not editors:
+            from app.authorization.maker_checker import legacy_correctors
+            legacy = legacy_correctors(
+                (item.reviewer_id, item.field_path, item.previous_value, item.new_value)
+                for item in tx.schedules.list_decisions(
+                    header.id, decisions={"CORRECT", "ADD"}))
+        policy = self._maker_checker or MakerCheckerPolicy.from_environment()
+        return enforce(policy, str(approver_id), Provenance(last, editors, legacy))
 
     def reject(self, schedule_version_id: UUID, *, reviewer_id: UUID, reason: str) -> None:
         def work(tx: UnitOfWork) -> None:

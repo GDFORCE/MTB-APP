@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -166,13 +166,18 @@ def test_schedule_under_a_superseded_protocol_version_is_not_enrollable():
                 # The trial has MOVED ON to the new protocol version.
                 current_version_id=new_protocol_version_id,
             ),
+            # Explicit upload times: "superseded" means uploaded BEFORE the current version, and
+            # two rows flushed together get the same server timestamp (second resolution on
+            # sqlite), which made this test depend on whether they straddled a second.
             db.ProtocolVersion(
                 id=old_protocol_version_id, protocol_id=protocol_id, version_label="1",
                 document_name="p1.pdf", document_uri="private://p1.pdf", document_hash="a" * 64,
+                created_at=datetime(2026, 1, 5, 9, 0, tzinfo=timezone.utc),
             ),
             db.ProtocolVersion(
                 id=new_protocol_version_id, protocol_id=protocol_id, version_label="2",
                 document_name="p2.pdf", document_uri="private://p2.pdf", document_hash="b" * 64,
+                created_at=datetime(2026, 2, 5, 9, 0, tzinfo=timezone.utc),
             ),
             # Only the OLD protocol version has an approved schedule -- the
             # new one has not been reviewed/approved yet.

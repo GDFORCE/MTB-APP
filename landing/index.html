@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Trial Board — Clinical trial visits, connected</title>
+    <meta
+      name="description"
+      content="My Trial Board turns a trial protocol into a reviewed visit schedule and a dated calendar for every patient, with reminders, visit status, reports and an audit trail for sponsors, CROs, SMOs, sites and patients."
+    />
+    <meta name="theme-color" content="#FFFFFF" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/Figtree-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
+  </head>
+  <body>
+    <!-- Icon sprite -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="logoTile" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#2F7BFF" />
+          <stop offset="0.55" stop-color="#1B5FC1" />
+          <stop offset="1" stop-color="#0D2A4F" />
+        </linearGradient>
+        <symbol id="logo" viewBox="0 0 64 64">
+          <rect width="64" height="64" rx="14.5" fill="url(#logoTile)" />
+          <path d="M15 45.5 L22.5 21.5 L32 39 L41.5 21.5 L49 45.5" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+          <circle cx="32" cy="20" r="3.6" fill="#FF8A4C" />
+        </symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></symbol>
+        <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0" /></symbol>
+        <symbol id="i-call" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92zM14.05 2a9 9 0 0 1 8 7.94M14.05 6A5 5 0 0 1 18 10" /></symbol>
+        <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-5M12 16V8M17 16V6" /></symbol>
+        <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /><circle cx="9" cy="7" r="4" /></symbol>
+        <symbol id="i-site" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2" /><path d="M9 22v-4h6v4M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01" /></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10zM9 12l2 2 4-4" /></symbol>
+        <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l4 2" /></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7" /></symbol>
+        <symbol id="i-counter" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-8M22 20v-5" /></symbol>
+        <symbol id="i-pill" viewBox="0 0 24 24"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7ZM8.5 8.5l7 7" /></symbol>
+        <symbol id="i-bubble" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></symbol>
+        <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M16 13H8M16 17H8" /></symbol>
+        <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" /></symbol>
+      </defs>
+    </svg>
+
+    <a class="skip" href="#main">Skip to content</a>
+    <div class="progress" aria-hidden="true"><i></i></div>
+    <div class="backdrop" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <canvas id="scene" aria-hidden="true"></canvas>
+
+    <header class="nav" id="nav">
+      <a class="brand" href="#top" aria-label="My Trial Board, back to top">
+        <svg class="brand-mark" aria-hidden="true"><use href="#logo" /></svg>
+        <span>My Trial Board</span>
+      </a>
+      <nav class="nav-links" id="nav-links" aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a href="#roles">Roles</a>
+        <a href="#platform">Platform</a>
+        <a href="#trust">Compliance</a>
+      </nav>
+      <a class="btn btn-primary btn-sm nav-cta" href="#contact">Request a demo</a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Open menu">
+        <span></span><span></span>
+      </button>
+    </header>
+
+    <main id="main">
+      <!-- ───────── Hero ───────── -->
+      <section class="hero" id="top">
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <p class="tag rise" style="--d: 0"><i></i>Patient visit schedules for clinical trials</p>
+            <h1 class="rise" style="--d: 1">Every visit,<br /><span class="grad">on schedule</span>,<br />for every patient.</h1>
+            <p class="lede rise" style="--d: 2">
+              My Trial Board turns a trial protocol into a reviewed visit schedule, then into a dated calendar for
+              each patient, with reminders, visit status and an audit trail behind every step.
+            </p>
+            <div class="cta-row rise" style="--d: 3">
+              <a class="btn btn-primary" href="#contact">Request a demo</a>
+              <a class="btn btn-secondary" href="#how">
+                See how it works
+                <svg class="ico" aria-hidden="true"><use href="#i-arrow" /></svg>
+              </a>
+            </div>
+            <ul class="audience rise" style="--d: 4" aria-label="Built for">
+              <li>Sponsors</li><li>CROs</li><li>SMOs</li><li>Sites &amp; hospitals</li><li>Patients</li>
+            </ul>
+          </div>
+
+          <div class="hero-visual">
+            <div class="phone-slot" data-screen="home"></div>
+            <div class="float-card fc-1" style="--fx: -14px; --fd: 7s">
+              <span class="fc-ico ico-blue"><svg class="ico" aria-hidden="true"><use href="#i-calendar" /></svg></span>
+              <div><small>Next visit</small><b>Wed 11 Nov</b><em>Window 9 – 14 Nov</em></div>
+            </div>
+            <div class="float-card fc-2" style="--fx: 12px; --fd: 8s">
+              <span class="fc-ico ico-teal"><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg></span>
+              <div><small>Schedule approved</small><b>Template v3</b><em>12 visits</em></div>
+            </div>
+            <div class="float-card fc-3" style="--fx: -10px; --fd: 6.5s">
+              <span class="fc-ico ico-apricot"><svg class="ico" aria-hidden="true"><use href="#i-bell" /></svg></span>
+              <div><small>Reminder sent</small><b>8:00 AM</b><em>1 day before visit</em></div>
+            </div>
+            <div class="float-card fc-4" style="--fx: 10px; --fd: 9s">
+              <div>
+                <small>Randomized</small><b>164 <span>/ 240</span></b>
+                <span class="fc-bar"><i></i></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="wrap facts reveal" aria-label="My Trial Board at a glance">
+          <li><b data-count="5">5</b><span>role-based dashboards for one trial</span></li>
+          <li><b data-count="3">3</b><span>reminders before every visit</span></li>
+          <li><b data-count="7">7</b><span>recruitment counters, updated automatically</span></li>
+          <li><b data-count="8">8</b><span>reports for sponsors, SMOs and sites</span></li>
+        </ul>
+      </section>
+
+      <!-- ───────── Capability marquee ───────── -->
+      <div class="marquee" aria-hidden="true">
+        <ul>
+          <li>Protocol upload</li><li>AI-drafted schedule</li><li>Human review</li><li>Patient calendars</li>
+          <li>Visit reminders</li><li>Voice call reminders</li><li>Trial chat</li><li>Recruitment counters</li>
+          <li>Role-based reports</li><li>Audit trail</li>
+          <li>Protocol upload</li><li>AI-drafted schedule</li><li>Human review</li><li>Patient calendars</li>
+          <li>Visit reminders</li><li>Voice call reminders</li><li>Trial chat</li><li>Recruitment counters</li>
+          <li>Role-based reports</li><li>Audit trail</li>
+        </ul>
+      </div>
+
+      <!-- ───────── How it works ───────── -->
+      <section class="story" id="how" aria-labelledby="how-title">
+        <header class="wrap section-head center reveal">
+          <p class="eyebrow">How it works</p>
+          <h2 id="how-title">From a protocol PDF to a patient's calendar</h2>
+          <p class="lede">Five steps, one continuous record. Scroll to follow a trial through the app.</p>
+        </header>
+
+        <div class="wrap steps">
+          <article class="step" data-step="1">
+            <div class="step-text reveal">
+              <span class="step-no">01</span>
+              <h3>Upload the protocol</h3>
+              <p>Add a trial and upload its protocol document. The trial details are read from it and shown for you to check before anything is saved.</p>
+              <ul class="ticks">
+                <li>Protocol ID, CTRI number, phase, indication and drug filled in</li>
+                <li>Sample size, duration and total visits captured</li>
+                <li>You review every field before the trial is saved</li>
+              </ul>
+              <dl class="meta">
+                <div><dt>Done by</dt><dd>Sponsor, CRO, SMO or site team</dd></div>
+                <div><dt>You get</dt><dd>A trial with reviewed details</dd></div>
+              </dl>
+            </div>
+            <div class="step-visual">
+              <div class="phone-slot" data-screen="addTrial"></div>
+              <p class="chip chip-a"><svg class="ico" aria-hidden="true"><use href="#i-file" /></svg>10 fields extracted</p>
+            </div>
+          </article>
+
+          <article class="step" data-step="2">
+            <div class="step-text reveal">
+              <span class="step-no">02</span>
+              <h3>AI drafts the visit schedule</h3>
+              <p>The schedule of assessments is rebuilt as a structured template that you can read, check and edit on your phone.</p>
+              <ul class="ticks">
+                <li>Visit number, name and type</li>
+                <li>Gap between visits, positive and negative windows</li>
+                <li>Activities due at each visit</li>
+              </ul>
+              <p class="note note-amber">“This is an AI-generated schedule and may contain mistakes. Please check carefully before saving.”</p>
+              <dl class="meta">
+                <div><dt>Done by</dt><dd>The app, from your protocol</dd></div>
+                <div><dt>You get</dt><dd>A draft visit schedule template</dd></div>
+              </dl>
+            </div>
+            <div class="step-visual">
+              <div class="phone-slot" data-screen="draft"></div>
+              <p class="chip chip-b chip-amber"><svg class="ico" aria-hidden="true"><use href="#i-spark" /></svg>AI draft · 2 items to review</p>
+            </div>
+          </article>
+
+          <article class="step" data-step="3">
+            <div class="step-text reveal">
+              <span class="step-no">03</span>
+              <h3>You review and approve it</h3>
+              <p>Nothing is approved automatically. Items that need a human check are marked, and the template is yours to correct.</p>
+              <ul class="ticks">
+                <li>Edit visits, gaps, windows and activities</li>
+                <li>Add comments for your team</li>
+                <li>Every save creates a version; earlier versions are never destroyed</li>
+              </ul>
+              <dl class="meta">
+                <div><dt>Done by</dt><dd>You and your team</dd></div>
+                <div><dt>You get</dt><dd>An approved, versioned template</dd></div>
+              </dl>
+            </div>
+            <div class="step-visual">
+              <div class="phone-slot" data-screen="approved"></div>
+              <p class="chip chip-a chip-teal"><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>Template v3 saved</p>
+            </div>
+          </article>
+
+          <article class="step" data-step="4">
+            <div class="step-text reveal">
+              <span class="step-no">04</span>
+              <h3>An anchor date becomes a schedule</h3>
+              <p>Add a patient with a Subject ID and initials, enter the anchor date and generate. Each visit gets its date and window from the approved template.</p>
+              <ul class="ticks">
+                <li>Screening or randomization date as the anchor</li>
+                <li>Visit dates and window periods calculated for you</li>
+                <li>Add one patient, or upload many at once</li>
+              </ul>
+              <dl class="meta">
+                <div><dt>Done by</dt><dd>PI or research team</dd></div>
+                <div><dt>You get</dt><dd>A dated calendar for the patient</dd></div>
+              </dl>
+            </div>
+            <div class="step-visual">
+              <div class="phone-slot" data-screen="patient"></div>
+              <p class="chip chip-b"><svg class="ico" aria-hidden="true"><use href="#i-calendar" /></svg>12 visits generated</p>
+            </div>
+          </article>
+
+          <article class="step" data-step="5">
+            <div class="step-text reveal">
+              <span class="step-no">05</span>
+              <h3>Visits happen on time</h3>
+              <p>The site records the actual visit date and status. The next visit moves up, and the right people hear about it.</p>
+              <ul class="ticks">
+                <li>Reminders 1 week before the window opens, 1 day before and on the day</li>
+                <li>Overdue visits alert the team daily for three days, then weekly</li>
+                <li>Recruitment counters update with every status change</li>
+              </ul>
+              <dl class="meta">
+                <div><dt>Done by</dt><dd>PI or research team</dd></div>
+                <div><dt>You get</dt><dd>Updated status, counters and reminders</dd></div>
+              </dl>
+            </div>
+            <div class="step-visual">
+              <div class="phone-slot" data-screen="visit"></div>
+              <p class="chip chip-a chip-apricot"><svg class="ico" aria-hidden="true"><use href="#i-bell" /></svg>Reminder · 8:00 AM</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ───────── Roles ───────── -->
+      <section class="roles" id="roles" aria-labelledby="roles-title">
+        <div class="wrap">
+          <header class="section-head center reveal">
+            <p class="eyebrow">Role-based access</p>
+            <h2 id="roles-title">One trial. Each role sees its own view.</h2>
+            <p class="lede">Every screen shows only what the signed-in person is permitted to see. Pick a role to see its app.</p>
+          </header>
+
+          <div class="role-tabs reveal" role="tablist" aria-label="Choose a role">
+            <button role="tab" id="tab-sponsor" aria-controls="panel-sponsor" aria-selected="true" data-screen="sponsor">Sponsor &amp; CRO</button>
+            <button role="tab" id="tab-site" aria-controls="panel-site" aria-selected="false" tabindex="-1" data-screen="site">Site &amp; SMO admin</button>
+            <button role="tab" id="tab-pi" aria-controls="panel-pi" aria-selected="false" tabindex="-1" data-screen="pi">PI &amp; research team</button>
+            <button role="tab" id="tab-patient" aria-controls="panel-patient" aria-selected="false" tabindex="-1" data-screen="home">Patient</button>
+            <button role="tab" id="tab-admin" aria-controls="panel-admin" aria-selected="false" tabindex="-1" data-screen="admin">Platform admin</button>
+          </div>
+
+          <div class="roles-body">
+            <div class="roles-visual">
+              <div class="phone-slot" id="roles-slot" data-screen="sponsor"></div>
+            </div>
+
+            <div class="role-panels">
+              <div class="role-panel" role="tabpanel" id="panel-sponsor" aria-labelledby="tab-sponsor">
+                <h3>Recruitment across every site, with no patient identity</h3>
+                <p>Create trials, review the schedule, add sites and follow enrolment as it happens.</p>
+                <div class="sees">
+                  <div>
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>Sees</h4>
+                    <ul>
+                      <li>Trials, sites and principal investigators</li>
+                      <li>Screened, randomized, withdrawn and completed counts, per trial and per site</li>
+                      <li>Schedule template, version history and protocol deviations</li>
+                    </ul>
+                  </div>
+                  <div class="never">
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>Never sees</h4>
+                    <ul>
+                      <li>Patient names or Subject IDs</li>
+                      <li>Patient phone numbers or email</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div class="role-panel" role="tabpanel" id="panel-site" aria-labelledby="tab-site" hidden>
+                <h3>Every trial and investigator at your hospitals</h3>
+                <p>Site and SMO admins see today's visits and what is overdue, across the hospitals they manage.</p>
+                <div class="sees">
+                  <div>
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>Sees</h4>
+                    <ul>
+                      <li>Trials, PIs, sponsors and patients within their sites</li>
+                      <li>Today's, upcoming and overdue visits, with the site name</li>
+                      <li>Organization members and invitation status</li>
+                    </ul>
+                  </div>
+                  <div class="never">
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>Limited until granted</h4>
+                    <ul>
+                      <li>Adding patients needs Patient Management access to that trial</li>
+                      <li>Without it: basic trial details, the schedule, Subject ID and initials only</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div class="role-panel" role="tabpanel" id="panel-pi" aria-labelledby="tab-pi" hidden>
+                <h3>Today's visits, by subject</h3>
+                <p>Investigators and coordinators add patients, generate schedules and record what happened at each visit.</p>
+                <div class="sees">
+                  <div>
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>Sees and does</h4>
+                    <ul>
+                      <li>Patients on their authorized trials, by Subject ID and initials</li>
+                      <li>Records the actual visit date and status</li>
+                      <li>Gives a reason for screen failure, withdrawal or dropout</li>
+                    </ul>
+                  </div>
+                  <div class="never">
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>Never sees</h4>
+                    <ul>
+                      <li>Patients on trials or sites they are not assigned to</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div class="role-panel" role="tabpanel" id="panel-patient" aria-labelledby="tab-patient" hidden>
+                <h3>The next visit, and what to expect</h3>
+                <p>Patients join from an invitation, verify their phone number and land on their own trial.</p>
+                <div class="sees">
+                  <div>
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>Sees</h4>
+                    <ul>
+                      <li>Their visits with dates, window periods and activities</li>
+                      <li>Their site and investigator</li>
+                      <li>Reminders and messages from the research team</li>
+                    </ul>
+                  </div>
+                  <div class="never">
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>View only</h4>
+                    <ul>
+                      <li>Visit status is updated by the research team, not the patient</li>
+                      <li>No access to any other patient's information</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div class="role-panel" role="tabpanel" id="panel-admin" aria-labelledby="tab-admin" hidden>
+                <h3>Runs the service without reading the trial</h3>
+                <p>Platform admins manage users, organizations, master data, notification delivery and support tickets.</p>
+                <div class="sees">
+                  <div>
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-check" /></svg>Sees</h4>
+                    <ul>
+                      <li>Users, organizations and account status</li>
+                      <li>Pending approvals, open tickets and notification failures</li>
+                      <li>Masked patient information where a record must be shown</li>
+                    </ul>
+                  </div>
+                  <div class="never">
+                    <h4><svg class="ico" aria-hidden="true"><use href="#i-x" /></svg>Not in routine access</h4>
+                    <ul>
+                      <li>Patient data, confidential protocols or chat content</li>
+                      <li>Emergency access needs a documented reason, approval and a time limit, and is fully audited</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              <p class="mock-note">App screens show illustrative data.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── Platform ───────── -->
+      <section class="platform" id="platform" aria-labelledby="platform-title">
+        <div class="wrap">
+          <header class="section-head center reveal">
+            <p class="eyebrow">The platform</p>
+            <h2 id="platform-title">Everything that happens around a visit</h2>
+            <p class="lede">Scheduling is the core. These are the tools that keep sponsors, sites and patients moving together.</p>
+          </header>
+
+          <div class="bento">
+            <article class="tile tile-wide reveal">
+              <div class="tile-text">
+                <span class="tile-ico ico-blue"><svg class="ico-lg" aria-hidden="true"><use href="#i-calendar" /></svg></span>
+                <h3>A calendar for each role</h3>
+                <p>Day, week and month views. Research teams see every subject's visit across their trials; patients see only their own. Scheduled, completed and overdue visits are told apart at a glance.</p>
+              </div>
+              <div class="mini-cal" aria-hidden="true">
+                <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+                <i></i><i></i><i class="d-done"></i><i></i><i></i><i></i><i></i>
+                <i></i><i class="d-done"></i><i></i><i></i><i class="d-over"></i><i></i><i></i>
+                <i class="d-win"></i><i class="d-win"></i><i class="d-next"></i><i class="d-win"></i><i class="d-win"></i><i></i><i></i>
+                <i></i><i></i><i></i><i class="d-sched"></i><i></i><i></i><i></i>
+                <ul>
+                  <li><b class="d-sched"></b>Scheduled</li>
+                  <li><b class="d-done"></b>Completed</li>
+                  <li><b class="d-over"></b>Overdue</li>
+                  <li><b class="d-win"></b>Window</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="tile reveal">
+              <span class="tile-ico ico-apricot"><svg class="ico-lg" aria-hidden="true"><use href="#i-bell" /></svg></span>
+              <h3>Reminders that follow the window</h3>
+              <p>In-app reminders reach patients and research teams at 8:00 AM by default. Each person chooses which ones they receive.</p>
+              <ol class="remind-line" aria-label="Reminder timing">
+                <li><b>−7 d</b><span>window opens</span></li>
+                <li><b>−1 d</b><span>before visit</span></li>
+                <li class="is-day"><b>Day 0</b><span>visit day</span></li>
+                <li class="is-late"><b>+1…3 d</b><span>overdue</span></li>
+              </ol>
+            </article>
+
+            <article class="tile tile-call reveal">
+              <span class="tile-ico"><svg class="ico-lg" aria-hidden="true"><use href="#i-call" /></svg></span>
+              <h3>Voice call reminders</h3>
+              <p>An automated call tells the patient the visit date, the visit type and which hospital to go to.</p>
+              <div class="wave" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              </div>
+            </article>
+
+            <article class="tile reveal">
+              <span class="tile-ico ico-blue"><svg class="ico-lg" aria-hidden="true"><use href="#i-chat" /></svg></span>
+              <h3>Trial chat</h3>
+              <p>Sponsors and CROs talk to investigators. Patients talk to their research team. Text, voice messages and documents stay linked to the trial.</p>
+              <div class="bubbles" aria-hidden="true">
+                <p class="b-in"><small>Research team</small>Your visit 4 is on Wed 11 Nov. Please come fasting.</p>
+                <p class="b-out">Thank you, I will be there at 9.</p>
+              </div>
+            </article>
+
+            <article class="tile reveal">
+              <span class="tile-ico ico-teal"><svg class="ico-lg" aria-hidden="true"><use href="#i-chart" /></svg></span>
+              <h3>Reports for each role</h3>
+              <p>Filter, review and export to PDF or Excel. Every export is recorded.</p>
+              <ul class="tags">
+                <li>Recruitment status</li><li>Trial management</li><li>Site-wise trial</li><li>Patient list</li>
+                <li>Upcoming visits</li><li>Protocol deviation</li>
+              </ul>
+            </article>
+
+            <article class="tile tile-full reveal">
+              <div class="tile-text">
+                <span class="tile-ico ico-teal"><svg class="ico-lg" aria-hidden="true"><use href="#i-counter" /></svg></span>
+                <h3>Recruitment counters that update themselves</h3>
+                <p>Changing a patient's status updates the trial and site totals. Sponsors get one consolidated update per trial, only when the numbers changed.</p>
+              </div>
+              <ul class="counters">
+                <li><b data-count="212">212</b>Screened</li>
+                <li><b data-count="31">31</b>Screen failures</li>
+                <li><b data-count="164">164</b>Randomized</li>
+                <li><b data-count="5">5</b>Withdrawn</li>
+                <li><b data-count="3">3</b>Dropouts</li>
+                <li><b data-count="108">108</b>Follow-up</li>
+                <li><b data-count="48">48</b>Completed</li>
+              </ul>
+            </article>
+
+            <article class="tile tile-half reveal">
+              <span class="tile-ico ico-blue"><svg class="ico-lg" aria-hidden="true"><use href="#i-site" /></svg></span>
+              <h3>Add sites and share trials</h3>
+              <p>Add a site by the investigator's email, or upload a list from Excel, CSV, PDF, Word or an image and review it before saving. Inside your organization, share a trial with View, Edit or Patient Management access.</p>
+            </article>
+
+            <article class="tile tile-half reveal">
+              <span class="tile-ico ico-apricot"><svg class="ico-lg" aria-hidden="true"><use href="#i-users" /></svg></span>
+              <h3>Your organization, managed by you</h3>
+              <p>The first person to register becomes the organization admin. Invite members one at a time or by spreadsheet, see who has accepted, and transfer ownership when responsibilities change.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── Compliance ───────── -->
+      <section class="trust" id="trust" aria-labelledby="trust-title">
+        <div class="wrap trust-grid">
+          <div class="trust-copy reveal">
+            <p class="eyebrow">Compliance</p>
+            <h2 id="trust-title">Built for regulated work</h2>
+            <p class="lede">Every significant action leaves a time-stamped record that no one can edit or delete, including the platform's own administrators.</p>
+            <ul class="trust-list">
+              <li>
+                <span class="tile-ico ico-teal"><svg class="ico-lg" aria-hidden="true"><use href="#i-history" /></svg></span>
+                <div><h3>Audit trail</h3><p>Who, when, which role and organization, the previous value, the new value and the reason for critical changes.</p></div>
+              </li>
+              <li>
+                <span class="tile-ico ico-blue"><svg class="ico-lg" aria-hidden="true"><use href="#i-shield" /></svg></span>
+                <div><h3>Least-privilege access</h3><p>Access follows role and assignment. Confidential protocols stay with authorized trial users, and chat stays with its participants.</p></div>
+              </li>
+              <li>
+                <span class="tile-ico ico-apricot"><svg class="ico-lg" aria-hidden="true"><use href="#i-lock" /></svg></span>
+                <div><h3>Account security</h3><p>Phone and email verification by one-time code, security questions, strong password rules, lockout after repeated failed sign-ins and session expiry.</p></div>
+              </li>
+            </ul>
+            <p class="standards">
+              Designed to align with <b>ICH-GCP</b>, <b>NDCT Rules 2019</b>, Indian data privacy requirements,
+              <b>HIPAA</b>, <b>GDPR</b> and <b>21 CFR Part 11</b>, as applicable to your deployment.
+            </p>
+          </div>
+
+          <figure class="audit reveal" aria-label="Example audit record">
+            <figcaption><span></span>Audit record</figcaption>
+            <dl>
+              <div><dt>Timestamp</dt><dd>2026-11-11 09:42:10</dd></div>
+              <div><dt>User</dt><dd>Research team · City General Hospital</dd></div>
+              <div><dt>Module</dt><dd>Visits</dd></div>
+              <div><dt>Action</dt><dd>Visit status changed</dd></div>
+              <div><dt>Reference</dt><dd>MTB-ONC-204 · S-0142 · V4</dd></div>
+              <div class="was"><dt>Previous</dt><dd>Scheduled</dd></div>
+              <div class="now"><dt>Updated</dt><dd>Visit completed</dd></div>
+              <div><dt>Source</dt><dd>User-generated</dd></div>
+            </dl>
+            <p class="audit-lock"><svg class="ico" aria-hidden="true"><use href="#i-lock" /></svg>Immutable. Cannot be edited or deleted.</p>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ───────── Coming next ───────── -->
+      <section class="next" id="roadmap" aria-labelledby="next-title">
+        <div class="wrap">
+          <header class="section-head center reveal">
+            <p class="eyebrow">Coming next</p>
+            <h2 id="next-title">What we are building after the mobile app</h2>
+          </header>
+          <ul class="next-list">
+            <li class="reveal">
+              <span class="tile-ico ico-apricot"><svg class="ico-lg" aria-hidden="true"><use href="#i-pill" /></svg></span>
+              <h3>Medication reminders</h3>
+              <p>Dose reminders for patients, alongside their visit reminders.</p>
+            </li>
+            <li class="reveal">
+              <span class="tile-ico ico-teal"><svg class="ico-lg" aria-hidden="true"><use href="#i-bubble" /></svg></span>
+              <h3>WhatsApp notifications</h3>
+              <p>Visit reminders on the channel many patients already use every day.</p>
+            </li>
+            <li class="reveal">
+              <span class="tile-ico ico-blue"><svg class="ico-lg" aria-hidden="true"><use href="#i-monitor" /></svg></span>
+              <h3>Web application</h3>
+              <p>The same trials and schedules in a browser, for teams who work at a desk.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ───────── Contact ───────── -->
+      <section class="contact" id="contact" aria-labelledby="contact-title">
+        <div class="wrap">
+          <div class="contact-panel reveal">
+            <div class="contact-copy">
+              <p class="eyebrow">Request a demo</p>
+              <h2 id="contact-title">Bring a protocol. Leave with a schedule.</h2>
+              <p class="lede">Tell us about your organization and we will walk you through My Trial Board with a trial like yours.</p>
+              <ul class="ticks ticks-light">
+                <li>See your own protocol become a visit schedule</li>
+                <li>Walk through each role's view</li>
+                <li>Ask anything about access, audit and compliance</li>
+              </ul>
+            </div>
+
+            <form class="form" id="demo-form" novalidate>
+              <div class="field">
+                <label for="f-name">Full name</label>
+                <input id="f-name" name="name" type="text" autocomplete="name" required />
+                <p class="err" hidden>Enter your name.</p>
+              </div>
+              <div class="field">
+                <label for="f-email">Work email</label>
+                <input id="f-email" name="email" type="email" autocomplete="email" required />
+                <p class="err" hidden>Enter a valid email address.</p>
+              </div>
+              <div class="field">
+                <label for="f-org">Organization</label>
+                <input id="f-org" name="org" type="text" autocomplete="organization" required />
+                <p class="err" hidden>Enter your organization's name.</p>
+              </div>
+              <div class="field">
+                <label for="f-type">Organization type</label>
+                <select id="f-type" name="type" required>
+                  <option value="">Select one</option>
+                  <option>Sponsor</option>
+                  <option>CRO</option>
+                  <option>SMO</option>
+                  <option>Site / Hospital</option>
+                </select>
+                <p class="err" hidden>Choose an organization type.</p>
+              </div>
+              <div class="field field-wide">
+                <label for="f-msg">What would you like to see? <span>(optional)</span></label>
+                <textarea id="f-msg" name="message" rows="2"></textarea>
+              </div>
+              <button class="btn btn-primary" type="submit">Request a demo</button>
+              <p class="form-status" role="status" aria-live="polite"></p>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-grid">
+        <a class="brand" href="#top">
+          <svg class="brand-mark" aria-hidden="true"><use href="#logo" /></svg>
+          <span>My Trial Board</span>
+        </a>
+        <p>Clinical trial visits, connected.</p>
+        <nav aria-label="Footer">
+          <a href="#how">How it works</a>
+          <a href="#roles">Roles</a>
+          <a href="#platform">Platform</a>
+          <a href="#trust">Compliance</a>
+          <a href="#contact">Request a demo</a>
+        </nav>
+        <small>© <span id="year">2026</span> My Trial Board</small>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -10,9 +10,13 @@ What changes is the storage model, not the clinical logic:
 * the evaluation pointer carries a revision, and two concurrent evaluations are
   serialized by the store rather than by a row lock.
 
-Deliberately NOT changed (they belong to P1-02 / P6 and are covered by their own
-tests): actual dates are still collected per event code across every version of
-the patient's history, positionally by date.
+Version scoping (P1-02): every read of occurrence history is filtered by the
+schedule version being evaluated. Inside one validated version an event code is
+unique (``DuplicateRecordError`` on a clash), so (event code, occurrence index) is
+a sound logical key *within* a version; across versions it is not, which is why
+the filter is mandatory. Cross-version carry-over needs an explicit approved
+mapping and does not happen implicitly. Activity entries and unscheduled visits
+are patient-level and not yet version-scoped (not part of P1).
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, TypeVar
+from typing import Callable, Sequence, TypeVar
 from uuid import UUID, uuid4
 
 from app.domain.schedule.anchor_status import record_is_actual
@@ -31,10 +35,19 @@ from app.domain.schedule.models import (
     AssignmentFact, ConditionState, EvaluationResult, HolidayCalendar, LogicalOccurrenceState,
     OccurrenceFact,
     OccurrenceFactKind, PatientConditionStatus, PatientContext, ProcessTransition,
-    RollingHorizon, UnscheduledOccurrence,
+    PatientEventStatus, RollingHorizon, UnscheduledOccurrence,
 )
 
-from .errors import DuplicateRecordError, IdempotencyConflictError, StaleRevisionError
+from app.domain.schedule.commands import CommandType, LedgerEntry, command_inputs
+
+from .authority import require_command_plane_authority
+from .command_ledger import (
+    append as command_append, entries_for, material_hash as command_material_hash,
+)
+from .errors import (
+    DuplicateRecordError, IdempotencyConflictError, ScheduleVersionChangedError,
+    StaleRevisionError,
+)
 from .patients import (
     ActivityEntryRecord, CalendarEntry, ConfinementEpisodeRecord, EvaluationRecord,
     OccurrenceOutcome, OccurrenceRecord, PatientActivityEntry, PatientEventRecord, PatientRecord,
@@ -52,7 +65,13 @@ RESERVED_STATE_CODES = frozenset({
     PROCESS_TRANSITION_STATE_CODE, ASSIGNMENT_FACT_STATE_CODE, SITE_HOLIDAY_CALENDAR_STATE_CODE,
 })
 
+#: assignment types whose facts travel through a reviewed mapping, not version lineage
+MAPPED_ASSIGNMENT_TYPES = frozenset({"AMENDMENT_ADOPTION", "AMENDMENT_RETURN"})
+
 FACT_KIND_KEY = "fact_kind"
+#: Written by the reversal of a RESCHEDULE_APPOINTMENT that replaced no earlier
+#: booking: it supersedes the booking and records that none is in force.
+BOOKING_WITHDRAWN = "BOOKING_WITHDRAWN"
 SUPERSEDES_KEY = "supersedes_occurrence_id"
 EFFECTIVE_AT_KEY = "effective_at"
 BOOKED_KEY = "booked_date"
@@ -70,6 +89,9 @@ def occurrence_fact_from_record(row: OccurrenceRecord) -> OccurrenceFact | None:
     nothing the engine acts on."""
     metadata = row.metadata or {}
     kind = metadata.get(FACT_KIND_KEY)
+    if kind == BOOKING_WITHDRAWN:
+        # A reversal's marker: it supersedes a booking and states no fact itself.
+        return None
     value: date | datetime | None = row.actual_date
     if kind == OccurrenceFactKind.BOOKED.value or row.occurrence_type == "BOOKING":
         kind = OccurrenceFactKind.BOOKED.value
@@ -82,7 +104,10 @@ def occurrence_fact_from_record(row: OccurrenceRecord) -> OccurrenceFact | None:
             kind = OccurrenceFactKind.MISSED.value
         else:
             return None
-    if kind in {OccurrenceFactKind.PERFORMED.value, OccurrenceFactKind.BOOKED.value} and value is None:
+    if kind == OccurrenceFactKind.TREATMENT.value:
+        value = row.treatment_date
+    if kind in {OccurrenceFactKind.PERFORMED.value, OccurrenceFactKind.BOOKED.value,
+                OccurrenceFactKind.TREATMENT.value} and value is None:
         return None
     end = metadata.get(END_KEY)
     effective = metadata.get(EFFECTIVE_AT_KEY)
@@ -149,12 +174,61 @@ class PatientScheduleService:
         if pointer is None or pointer.current_evaluation_id is None:
             return []
         events = tx.evaluations.list_events(pointer.current_evaluation_id)
-        outcomes = self._outcomes(tx, patient_id)
+        outcomes = self._outcomes(tx, patient_id, schedule_version_id)
         return [self._overlay(item, outcomes) for item in events]
 
-    def _outcomes(self, tx: UnitOfWork, patient_id: UUID) -> dict[tuple[str, int], str]:
-        """logical visit -> COMPLETED | MISSED, from the newest effective fact."""
-        rows = tx.facts.list_occurrences(patient_id)
+    @staticmethod
+    def version_lineage(
+        tx: UnitOfWork, patient_id: UUID, schedule_version_id: UUID,
+        carry_from: Sequence[UUID] = (),
+    ) -> set[UUID]:
+        """The schedule versions whose occurrence facts apply to ``schedule_version_id``.
+
+        (event code, occurrence index) is a logical identity only WITHIN a version,
+        so a fact belongs to a version's history when and only when that is
+        explicit: it was recorded against the version itself, OR the patient was
+        approved to move from the version that holds it (the assignment history
+        written by an impact confirm), OR a pending proposal names it as the source
+        (``carry_from``: the preview/confirm evaluation of the target). A version
+        that merely reuses an event code contributes nothing (P1-02).
+        """
+        versions = {schedule_version_id, *carry_from}
+        came_from: dict[UUID, set[UUID]] = {}
+        for item in tx.impacts.list_assignments(patient_id):
+            if item.assignment_type in MAPPED_ASSIGNMENT_TYPES:
+                # P6: an amendment adoption / return carries facts ONLY through the
+                # reviewed event mapping (as explicit, provenance-marked rows). The
+                # earlier version's event codes are never treated as equivalent.
+                continue
+            if item.previous_schedule_version_id is not None:
+                came_from.setdefault(item.schedule_version_id, set()).add(
+                    item.previous_schedule_version_id)
+        frontier = list(versions)
+        while frontier:
+            for previous in came_from.get(frontier.pop(), ()):
+                if previous not in versions:
+                    versions.add(previous)
+                    frontier.append(previous)
+        return versions
+
+    def occurrences_for(
+        self, tx: UnitOfWork, patient_id: UUID, schedule_version_id: UUID,
+        carry_from: Sequence[UUID] = (),
+    ) -> list[OccurrenceRecord]:
+        """The patient's occurrence facts that apply to one version, oldest first
+        (one indexed query per version in its lineage, never one per event)."""
+        rows: list[OccurrenceRecord] = []
+        for version in self.version_lineage(tx, patient_id, schedule_version_id, carry_from):
+            rows.extend(tx.facts.list_occurrences(patient_id, schedule_version_id=version))
+        rows.sort(key=lambda item: (item.recorded_at or _EPOCH, str(item.id)))
+        return rows
+
+    def _outcomes(
+        self, tx: UnitOfWork, patient_id: UUID, schedule_version_id: UUID,
+    ) -> dict[tuple[str, int], str]:
+        """logical visit -> COMPLETED | MISSED, from the newest effective fact,
+        over the version's explicit lineage only (see ``version_lineage``)."""
+        rows = self.occurrences_for(tx, patient_id, schedule_version_id)
         superseded = {str((row.metadata or {}).get(SUPERSEDES_KEY))
                       for row in rows if (row.metadata or {}).get(SUPERSEDES_KEY)}
         outcome: dict[tuple[str, int], str] = {}
@@ -172,11 +246,24 @@ class PatientScheduleService:
 
     def protected_event_keys(
         self, tx: UnitOfWork, patient_id: UUID, events: list[PatientEventRecord],
+        schedule_version_id: UUID | None = None,
+        extra_occurrences: Sequence[OccurrenceRecord] = (),
     ) -> set[tuple[str, int]]:
-        """Visits whose dates and status a re-evaluation must carry forward."""
+        """Visits whose dates and status a re-evaluation must carry forward.
+
+        Only facts of the version the ``events`` belong to count; a version-less
+        call takes it from the events themselves.
+        """
+        versions = {schedule_version_id} if schedule_version_id is not None else {
+            item.schedule_version_id for item in events}
+        if not events:
+            return set()
         with_actual = {
             (row.event_code, row.occurrence_index)
-            for row in tx.facts.list_occurrences(patient_id) if row.actual_date is not None}
+            for version in versions
+            for row in [*self.occurrences_for(tx, patient_id, version),
+                        *[item for item in extra_occurrences if item.schedule_version_id == version]]
+            if row.actual_date is not None}
         protected = {
             (item.event_code, item.occurrence_index) for item in events
             if item.status in {"COMPLETED", "MISSED"} or item.protected_history}
@@ -209,6 +296,10 @@ class PatientScheduleService:
         planned_anchor_overrides: dict[str, date | datetime] | None = None,
         process_transition_overrides: list[ProcessTransition] | None = None,
         assignment_fact_overrides: list[AssignmentFact] | None = None,
+        carry_from_versions: Sequence[UUID] = (),
+        extra_occurrences: Sequence[OccurrenceRecord] = (),
+        extra_unscheduled: Sequence[UnscheduledVisitRecord] = (),
+        extra_ledger: Sequence[LedgerEntry] = (),
     ) -> PatientContext:
         # Doc C6: planned and actual anchor values are kept apart.
         anchors: dict[str, date | datetime] = {}
@@ -225,7 +316,13 @@ class PatientScheduleService:
         anchors.update(anchor_overrides or {})
         planned_anchors.update(planned_anchor_overrides or {})
 
-        occurrences = tx.facts.list_occurrences(patient.id)
+        occurrences = self.occurrences_for(
+            tx, patient.id, schedule_version_id, carry_from_versions)
+        if extra_occurrences:
+            # A PROPOSED fact (previewing a command): never stored, evaluated as if it were.
+            occurrences = sorted(
+                [*occurrences, *extra_occurrences],
+                key=lambda item: (item.recorded_at or _EPOCH, str(item.id)))
         # PT-02: a correction supersedes by id; the corrected record stays stored.
         superseded = {
             str((row.metadata or {}).get(SUPERSEDES_KEY))
@@ -235,7 +332,7 @@ class PatientScheduleService:
         occurrence_facts: list[OccurrenceFact] = []
         for row in occurrences:
             fact = occurrence_fact_from_record(row)
-            if fact is not None:
+            if fact is not None and str(row.id) not in superseded:
                 occurrence_facts.append(fact)
             if row.actual_date is None or str(row.id) in superseded:
                 continue
@@ -274,6 +371,12 @@ class PatientScheduleService:
             state_effective_at[row.state_code] = row.effective_at
         process_transitions.extend(process_transition_overrides or [])
         assignment_history.extend(assignment_fact_overrides or [])
+        # P5-03: the ACTIVE patient commands (and a proposed one while previewing)
+        # become ordinary evaluator inputs - the single calculation path.
+        ledger = [*entries_for(tx, patient.organization_id, patient.id, schedule_version_id),
+                  *extra_ledger]
+        command_in = command_inputs(schedule, ledger)
+        process_transitions.extend(command_in.process_transitions)
         for code, (value, effective_at) in (state_overrides or {}).items():
             state[code] = value
             state_effective_at[code] = effective_at
@@ -283,7 +386,7 @@ class PatientScheduleService:
             UnscheduledOccurrence(
                 event_code=row.event_code, occurred_on=row.occurred_on, reason=row.reason,
                 visit_mode=row.visit_mode, created_by=row.created_by, recorded_at=row.recorded_at)
-            for row in tx.facts.list_unscheduled_visits(patient.id)
+            for row in [*tx.facts.list_unscheduled_visits(patient.id), *extra_unscheduled]
         ]
         arm_code = patient.arm_code or self._code_of(schedule.arms, patient.arm_id)
         cohort_code = patient.cohort_code or self._code_of(schedule.cohorts, patient.cohort_id)
@@ -303,6 +406,9 @@ class PatientScheduleService:
             occurrence_facts=occurrence_facts, process_transitions=process_transitions,
             assignment_history=assignment_history, holiday_calendars=list(site_calendars.values()),
             occurrence_history=self._history(tx, patient, schedule_version_id, occurrences),
+            track_rebases=command_in.track_rebases,
+            occurrence_overrides=command_in.occurrence_overrides,
+            occurrence_cancellations=command_in.occurrence_cancellations,
         )
 
     @staticmethod
@@ -320,6 +426,11 @@ class PatientScheduleService:
         planned_anchor_overrides: dict[str, date | datetime] | None = None,
         process_transition_overrides: list[ProcessTransition] | None = None,
         assignment_fact_overrides: list[AssignmentFact] | None = None,
+        carry_from_versions: Sequence[UUID] = (),
+        extra_occurrences: Sequence[OccurrenceRecord] = (),
+        extra_unscheduled: Sequence[UnscheduledVisitRecord] = (),
+        extra_ledger: Sequence[LedgerEntry] = (),
+        today: date | None = None,
     ) -> EvaluationResult:
         schedule = tx.schedules.get(schedule_version_id)
         context = self.build_context(
@@ -327,8 +438,11 @@ class PatientScheduleService:
             condition_overrides=condition_overrides, anchor_overrides=anchor_overrides,
             state_overrides=state_overrides, planned_anchor_overrides=planned_anchor_overrides,
             process_transition_overrides=process_transition_overrides,
-            assignment_fact_overrides=assignment_fact_overrides)
-        return ScheduleEvaluator().evaluate(schedule, context, horizon=horizon, rolling=rolling)
+            assignment_fact_overrides=assignment_fact_overrides,
+            carry_from_versions=carry_from_versions, extra_occurrences=extra_occurrences,
+            extra_unscheduled=extra_unscheduled, extra_ledger=extra_ledger)
+        return ScheduleEvaluator().evaluate(
+            schedule, context, horizon=horizon, rolling=rolling, today=today)
 
     # ------------------------------------------------------------------ evaluate
     def evaluate(
@@ -336,7 +450,7 @@ class PatientScheduleService:
         schedule_version_id: UUID | None = None, idempotency_key: str | None = None,
         prior_events_override: list[PatientEventRecord] | None = None,
         rolling: RollingHorizon | None = None, actor_id: UUID | None = None,
-        reason: str | None = None,
+        reason: str | None = None, today: date | None = None,
     ) -> tuple[EvaluationRecord, list[PatientEventRecord]]:
         """Evaluate one patient against a schedule version (AD-4d: the caller may
         name the version explicitly; otherwise the pinned one is used)."""
@@ -344,39 +458,34 @@ class PatientScheduleService:
             tx, patient_id, organization_id=organization_id, horizon=horizon,
             schedule_version_id=schedule_version_id, idempotency_key=idempotency_key,
             prior_events_override=prior_events_override, rolling=rolling,
-            actor_id=actor_id, reason=reason))
+            actor_id=actor_id, reason=reason, today=today))
 
-    def _evaluate(
-        self, tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID, horizon: date,
-        schedule_version_id: UUID | None, idempotency_key: str | None,
-        prior_events_override: list[PatientEventRecord] | None,
-        rolling: RollingHorizon | None, actor_id: UUID | None, reason: str | None,
-    ) -> tuple[EvaluationRecord, list[PatientEventRecord]]:
-        patient = tx.patients.get(organization_id, patient_id)  # KeyError -> "patient not found"
-        resolved = schedule_version_id if schedule_version_id is not None \
-            else patient.current_schedule_version_id
-        if resolved is None:
-            raise ValueError("patient is not pinned to an approved schedule")
-        if idempotency_key:
-            existing = tx.evaluations.find_by_idempotency(patient_id, idempotency_key)
-            if existing is not None:
-                return existing, tx.evaluations.list_events(existing.id)
-        schedule = tx.schedules.get(resolved)
-        prior = prior_events_override if prior_events_override is not None \
-            else self.current_events(tx, patient.id, schedule.schedule_version_id)
-        started = utc_now()
-        result = self.evaluate_result(tx, patient, schedule.schedule_version_id, horizon=horizon,
-                                      rolling=rolling)
-        pointer = tx.evaluations.get_pointer(patient.id, schedule.schedule_version_id)
-        evaluation_id = uuid4()
-        protocol_version_id = schedule.schedule_metadata.protocol_version_id
-
+    def reconcile_projection(
+        self, result: EvaluationResult, prior: list[PatientEventRecord],
+        protected: set[tuple[str, int]], *, organization_id: UUID, patient_id: UUID,
+        evaluation_id: UUID, schedule_version_id: UUID, protocol_version_id: UUID | None,
+    ) -> tuple[list[PatientEventRecord], dict[str, int]]:
+        """THE reconciliation: a raw evaluation plus the patient's prior projection (and the
+        keys whose history must be kept) become the rows that are PERSISTED. Pure and free of
+        side effects, so a preview (amendment simulation) and the commit consume exactly the
+        same semantics - protected history, effective-point boundaries, additions, removals,
+        statuses and windows - instead of two calculations that can drift apart."""
         prior_by_key = {event_logical_key(item.event_code, item.occurrence_index): item for item in prior}
-        protected = self.protected_event_keys(tx, patient.id, prior)
         reconciliation = {key: 0 for key in (
             "UNCHANGED", "ADDED", "MOVED", "STATUS_CHANGED", "CANCELLED", "PROTECTED")}
         events: list[PatientEventRecord] = []
-        for item in result.events:
+        # An on-demand DEFINITION row and the first visit a site created share
+        # (code, index 0). The projection holds one row per logical occurrence, so
+        # the created visit - which carries the definition's activities - is kept
+        # and the placeholder is not written once a visit exists.
+        created_keys = {
+            (item.event_code, item.occurrence_index) for item in result.events
+            if item.status != PatientEventStatus.AVAILABLE_ON_DEMAND}
+        result_events = [
+            item for item in result.events
+            if not (item.status == PatientEventStatus.AVAILABLE_ON_DEMAND
+                    and (item.event_code, item.occurrence_index) in created_keys)]
+        for item in result_events:
             timing = item.timing
             logical_key = event_logical_key(item.event_code, item.occurrence_index)
             previous = prior_by_key.pop(logical_key, None)
@@ -406,8 +515,8 @@ class PatientScheduleService:
                 "supersedes_patient_event_id": str(previous.id) if previous else None,
             }
             events.append(PatientEventRecord(
-                organization_id=organization_id, patient_id=patient.id, evaluation_id=evaluation_id,
-                schedule_version_id=schedule.schedule_version_id, protocol_version_id=protocol_version_id,
+                organization_id=organization_id, patient_id=patient_id, evaluation_id=evaluation_id,
+                schedule_version_id=schedule_version_id, protocol_version_id=protocol_version_id,
                 event_definition_id=item.event_definition_id, event_code=item.event_code,
                 occurrence_index=item.occurrence_index,
                 logical_occurrence_id=(previous.logical_occurrence_id if previous else uuid4()),
@@ -427,15 +536,15 @@ class PatientScheduleService:
                 dependency_result=item.dependency_result, generation_reason=explanation,
                 visit_mode=item.visit_mode, unscheduled_reason=item.unscheduled_reason,
                 activities=self._activity_entries(
-                    item, schedule.schedule_version_id, protocol_version_id),
+                    item, schedule_version_id, protocol_version_id),
             ))
         for logical_key, previous in prior_by_key.items():
             keep = (previous.event_code, previous.occurrence_index) in protected
             change = "PROTECTED" if keep else "CANCELLED"
             reconciliation[change] += 1
             events.append(PatientEventRecord(
-                organization_id=organization_id, patient_id=patient.id, evaluation_id=evaluation_id,
-                schedule_version_id=schedule.schedule_version_id, protocol_version_id=protocol_version_id,
+                organization_id=organization_id, patient_id=patient_id, evaluation_id=evaluation_id,
+                schedule_version_id=schedule_version_id, protocol_version_id=protocol_version_id,
                 event_definition_id=previous.event_definition_id, event_code=previous.event_code,
                 occurrence_index=previous.occurrence_index,
                 logical_occurrence_id=previous.logical_occurrence_id, logical_key=logical_key,
@@ -452,6 +561,39 @@ class PatientScheduleService:
                 generation_reason={**(previous.generation_reason or {}), "reconciliation": {
                     "change": change, "supersedes_patient_event_id": str(previous.id)}},
             ))
+        return events, reconciliation
+
+    def _evaluate(
+        self, tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID, horizon: date,
+        schedule_version_id: UUID | None, idempotency_key: str | None,
+        prior_events_override: list[PatientEventRecord] | None,
+        rolling: RollingHorizon | None, actor_id: UUID | None, reason: str | None,
+        today: date | None = None,
+    ) -> tuple[EvaluationRecord, list[PatientEventRecord]]:
+        patient = tx.patients.get(organization_id, patient_id)  # KeyError -> "patient not found"
+        resolved = schedule_version_id if schedule_version_id is not None \
+            else patient.current_schedule_version_id
+        if resolved is None:
+            raise ValueError("patient is not pinned to an approved schedule")
+        if idempotency_key:
+            existing = tx.evaluations.find_by_idempotency(patient_id, idempotency_key)
+            if existing is not None:
+                return existing, tx.evaluations.list_events(existing.id)
+        schedule = tx.schedules.get(resolved)
+        prior = prior_events_override if prior_events_override is not None \
+            else self.current_events(tx, patient.id, schedule.schedule_version_id)
+        started = utc_now()
+        result = self.evaluate_result(tx, patient, schedule.schedule_version_id, horizon=horizon,
+                                      rolling=rolling, today=today)
+        pointer = tx.evaluations.get_pointer(patient.id, schedule.schedule_version_id)
+        evaluation_id = uuid4()
+        protocol_version_id = schedule.schedule_metadata.protocol_version_id
+
+        protected = self.protected_event_keys(tx, patient.id, prior)
+        events, reconciliation = self.reconcile_projection(
+            result, prior, protected, organization_id=organization_id, patient_id=patient.id,
+            evaluation_id=evaluation_id, schedule_version_id=schedule.schedule_version_id,
+            protocol_version_id=protocol_version_id)
         confinements = self._confinements(
             tx, patient, evaluation_id, result.confinements, pointer=pointer,
             schedule_version_id=schedule.schedule_version_id, protocol_version_id=protocol_version_id)
@@ -549,30 +691,42 @@ class PatientScheduleService:
                 "reviewed against the protocol later")
 
         def work(tx: UnitOfWork) -> UnscheduledVisitRecord:
-            patient = tx.patients.get(organization_id, patient_id)
-            if patient.current_schedule_version_id is None:
-                raise ValueError("patient has no active schedule version")
-            schedule = tx.schedules.get(patient.current_schedule_version_id)
-            definition = next((item for item in schedule.events if item.code == event_code), None)
-            if definition is None:
-                raise KeyError(f"event {event_code} is not defined in this patient's schedule")
-            if (definition.activation or "SCHEDULED") != "ON_DEMAND":
-                raise ValueError(
-                    f"{event_code} is a scheduled protocol visit; only a protocol-defined "
-                    "unscheduled visit can be created on demand")
-            allowed = list(definition.allowed_visit_modes or [])
-            if visit_mode is not None and allowed and visit_mode not in allowed:
-                raise ValueError(
-                    f"visit mode {visit_mode!r} is not permitted for {event_code}; "
-                    f"the protocol allows {', '.join(sorted(allowed))}")
-            record = UnscheduledVisitRecord(
-                organization_id=organization_id, patient_id=patient.id,
-                event_definition_id=definition.id, event_code=event_code, occurred_on=occurred_on,
-                reason=reason.strip(), visit_mode=visit_mode, created_by=actor_id)
+            record = self.build_unscheduled_visit(
+                tx, patient_id, organization_id=organization_id, event_code=event_code,
+                occurred_on=occurred_on, reason=reason, visit_mode=visit_mode, actor_id=actor_id)
             tx.facts.add_unscheduled_visit(record)
             return record
 
         return self._run(work)
+
+    @staticmethod
+    def build_unscheduled_visit(
+        tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID, event_code: str,
+        occurred_on: date, reason: str, visit_mode: str | None, actor_id: UUID | None,
+    ) -> UnscheduledVisitRecord:
+        """Validate and build (not store) an unscheduled visit - shared with the
+        command preview so it cannot accept what the commit would refuse."""
+        patient = tx.patients.get(organization_id, patient_id)
+        require_command_plane_authority(patient)
+        if patient.current_schedule_version_id is None:
+            raise ValueError("patient has no active schedule version")
+        schedule = tx.schedules.get(patient.current_schedule_version_id)
+        definition = next((item for item in schedule.events if item.code == event_code), None)
+        if definition is None:
+            raise KeyError(f"event {event_code} is not defined in this patient's schedule")
+        if (definition.activation or "SCHEDULED") != "ON_DEMAND":
+            raise ValueError(
+                f"{event_code} is a scheduled protocol visit; only a protocol-defined "
+                "unscheduled visit can be created on demand")
+        allowed = list(definition.allowed_visit_modes or [])
+        if visit_mode is not None and allowed and visit_mode not in allowed:
+            raise ValueError(
+                f"visit mode {visit_mode!r} is not permitted for {event_code}; "
+                f"the protocol allows {', '.join(sorted(allowed))}")
+        return UnscheduledVisitRecord(
+            organization_id=organization_id, patient_id=patient.id,
+            event_definition_id=definition.id, event_code=event_code, occurred_on=occurred_on,
+            reason=reason.strip(), visit_mode=visit_mode, created_by=actor_id)
 
     def record_activity(
         self, patient_id: UUID, *, organization_id: UUID, event_code: str, occurrence_index: int,
@@ -587,6 +741,7 @@ class PatientScheduleService:
 
         def work(tx: UnitOfWork) -> ActivityEntryRecord:
             patient = tx.patients.get(organization_id, patient_id)
+            require_command_plane_authority(patient)
             logical_key = activity_logical_key(event_code, occurrence_index, activity_code)
             record = ActivityEntryRecord(
                 organization_id=organization_id, patient_id=patient.id, event_code=event_code,
@@ -633,7 +788,39 @@ class PatientScheduleService:
         actor_id: UUID | None, reason: str | None, source: str | None,
         treatment_date: date | None = None,
     ) -> OccurrenceRecord:
+        occurrence, previous, row = self._build_fact(
+            tx, patient_id, organization_id=organization_id, logical_key=logical_key, kind=kind,
+            value=value, end_value=end_value, effective_at=effective_at,
+            supersedes_occurrence_id=supersedes_occurrence_id, actor_id=actor_id, source=source,
+            treatment_date=treatment_date)
+        tx.facts.add_occurrence(occurrence)
+        metadata = occurrence.metadata
+        tx.audit.append(AuditRecord(
+            organization_id=organization_id, actor_id=actor_id,
+            action=("PATIENT_OCCURRENCE_FACT_CORRECTED" if previous is not None
+                    else "PATIENT_OCCURRENCE_FACT_RECORDED"),
+            entity_type="PATIENT_EVENT", entity_id=row.id,
+            before=({"occurrence_id": str(previous.id),
+                     "actual_date": previous.actual_date.isoformat() if previous.actual_date else None,
+                     "status": previous.status, "metadata": previous.metadata}
+                    if previous is not None else None),
+            after={"occurrence_id": str(occurrence.id), "logical_key": logical_key,
+                   "kind": kind.value, "value": value.isoformat() if value else None,
+                   "metadata": metadata},
+            reason=reason))
+        return occurrence
+
+    def _build_fact(
+        self, tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID, logical_key: str,
+        kind: OccurrenceFactKind, value: date | None, end_value: date | None,
+        effective_at: date | None, supersedes_occurrence_id: UUID | None,
+        actor_id: UUID | None, source: str | None, treatment_date: date | None = None,
+    ) -> tuple[OccurrenceRecord, OccurrenceRecord | None, PatientEventRecord]:
+        """Validate and BUILD one occurrence fact without storing it. The same
+        function backs the real write and a command preview, so the preview can
+        not accept what the commit would refuse."""
         patient = tx.patients.get(organization_id, patient_id)
+        require_command_plane_authority(patient)
         if patient.current_schedule_version_id is None:
             raise ValueError("patient has no active schedule version")
         version_id = patient.current_schedule_version_id
@@ -641,13 +828,18 @@ class PatientScheduleService:
                     if item.logical_key == logical_key), None)
         if row is None:
             raise KeyError(f"occurrence {logical_key} is not in the patient's current plan")
-        if kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED} and value is None:
+        if kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED,
+                    OccurrenceFactKind.TREATMENT} and value is None:
             raise ValueError(f"a {kind.value.lower()} fact needs its date")
-        if treatment_date is not None and kind != OccurrenceFactKind.PERFORMED:
+        if kind == OccurrenceFactKind.TREATMENT:
+            treatment_date = value        # the value IS the treatment date
+        elif treatment_date is not None and kind != OccurrenceFactKind.PERFORMED:
             raise ValueError("a treatment date can only accompany a performed visit")
         previous: OccurrenceRecord | None = None
         if supersedes_occurrence_id is not None:
-            previous = next((item for item in tx.facts.list_occurrences(patient.id)
+            # Scoped to the applicable version's explicit lineage: a record that
+            # belongs to an unrelated version is, for this correction, not there.
+            previous = next((item for item in self.occurrences_for(tx, patient.id, version_id)
                              if item.id == supersedes_occurrence_id), None)
             if previous is None:
                 raise KeyError("the occurrence record being corrected does not exist")
@@ -673,23 +865,10 @@ class PatientScheduleService:
             actual_date=value if kind == OccurrenceFactKind.PERFORMED else None,
             treatment_date=treatment_date,
             status={OccurrenceFactKind.PERFORMED: "COMPLETED", OccurrenceFactKind.MISSED: "MISSED",
-                    OccurrenceFactKind.BOOKED: "BOOKED"}[kind],
+                    OccurrenceFactKind.BOOKED: "BOOKED",
+                    OccurrenceFactKind.TREATMENT: "TREATMENT_RECORDED"}[kind],
             recorded_by=actor_id, metadata=metadata)
-        tx.facts.add_occurrence(occurrence)
-        tx.audit.append(AuditRecord(
-            organization_id=organization_id, actor_id=actor_id,
-            action=("PATIENT_OCCURRENCE_FACT_CORRECTED" if previous is not None
-                    else "PATIENT_OCCURRENCE_FACT_RECORDED"),
-            entity_type="PATIENT_EVENT", entity_id=row.id,
-            before=({"occurrence_id": str(previous.id),
-                     "actual_date": previous.actual_date.isoformat() if previous.actual_date else None,
-                     "status": previous.status, "metadata": previous.metadata}
-                    if previous is not None else None),
-            after={"occurrence_id": str(occurrence.id), "logical_key": logical_key,
-                   "kind": kind.value, "value": value.isoformat() if value else None,
-                   "metadata": metadata},
-            reason=reason))
-        return occurrence
+        return occurrence, previous, row
 
     def record_patient_fact(
         self, patient_id: UUID, *, organization_id: UUID, state_code: str,
@@ -705,6 +884,7 @@ class PatientScheduleService:
 
         def work(tx: UnitOfWork) -> PatientStateRecord:
             patient = tx.patients.get(organization_id, patient_id)
+            require_command_plane_authority(patient)
             record = PatientStateRecord(
                 organization_id=organization_id, patient_id=patient.id, state_code=state_code,
                 state_value=value, effective_at=effective, recorded_by=actor_id,
@@ -742,10 +922,15 @@ class PatientScheduleService:
             if fact.kind == OccurrenceFactKind.PERFORMED and row.actual_date is not None:
                 visit[key] = row.actual_date
                 outcome[key] = "COMPLETED"
+                # An omitted treatment date does not erase a treatment fact that
+                # was recorded independently: a later visit-only record leaves it
+                # standing. Replacing a combined fact is done by SUPERSEDING it
+                # (the superseded row no longer acts), never by omission.
                 if row.treatment_date is not None:
                     treatment[key] = row.treatment_date
-                else:
-                    treatment.pop(key, None)
+            elif fact.kind == OccurrenceFactKind.TREATMENT and row.treatment_date is not None:
+                # treatment administered; attendance and completion stay unknown
+                treatment[key] = row.treatment_date
             elif fact.kind == OccurrenceFactKind.MISSED:
                 visit.pop(key, None)
                 treatment.pop(key, None)
@@ -780,13 +965,50 @@ class PatientScheduleService:
             history = {
                 (item.event_code, item.occurrence_index): item
                 for item in self._history(
-                    tx, patient, version_id, tx.facts.list_occurrences(patient.id))}
+                    tx, patient, version_id,
+                    self.occurrences_for(tx, patient.id, version_id))}
             entries = []
+            bookings = self._current_bookings(
+                self.occurrences_for(tx, patient.id, version_id))
+            commands = [row for row in tx.ledger.list_for_patient(organization_id, patient.id)
+                        if row.schedule_version_id == version_id]
             for item in tx.evaluations.list_events(pointer.current_evaluation_id):
                 state = history.get((item.event_code, item.occurrence_index))
                 status = state.status if state and state.status in {"COMPLETED", "MISSED"} \
                     else item.status
+                reason = item.generation_reason or {}
+                operational = reason.get("operational") or {}
+                override = operational.get("override") or {}
+                cancelled = operational.get("cancelled")
+                track = reason.get("track") or {}
+                booked = bookings.get(item.logical_key)
+                low, high = item.earliest_date, item.latest_date
+                outside = None
+                if booked is not None and (low is not None or high is not None):
+                    outside = bool((low is not None and booked < low)
+                                   or (high is not None and booked > high))
+
+                def _d(value):
+                    return date.fromisoformat(value) if value else None
+                touching = [row for row in commands if row.logical_key == item.logical_key
+                            or (row.track_code and row.track_code == track.get("code"))]
                 entries.append(CalendarEntry(
+                    schedule_version_id=item.schedule_version_id,
+                    window_known=low is not None or high is not None,
+                    appointment_date=booked, appointment_outside_window=outside,
+                    override_target=_d(override.get("target_date")),
+                    override_window_earliest=_d(override.get("window_earliest")),
+                    override_window_latest=_d(override.get("window_latest")),
+                    override_outside_window=override.get("outside_protocol_window"),
+                    override_authority=override.get("authority"),
+                    override_reason=override.get("reason"),
+                    cancelled=bool(cancelled), cancelled_reason=(cancelled or {}).get("reason"),
+                    track_code=track.get("code"), track_name=track.get("display_name"),
+                    track_rebase_policy=track.get("rebase_policy"),
+                    track_movement=track.get("movement"),
+                    provisional=bool(((reason.get("recurrence") or {}).get("termination") or {})
+                                     .get("provisional")),
+                    last_command_id=touching[-1].id if touching else None,
                     logical_key=item.logical_key, event_code=item.event_code,
                     occurrence_index=item.occurrence_index,
                     logical_occurrence_id=item.logical_occurrence_id,
@@ -800,6 +1022,23 @@ class PatientScheduleService:
 
         return self._uow.read(work)
 
+    @staticmethod
+    def _current_bookings(rows: list[OccurrenceRecord]) -> dict[str, date]:
+        """logical key -> the booking in force (newest un-superseded, not withdrawn)."""
+        superseded = {str((row.metadata or {}).get(SUPERSEDES_KEY))
+                      for row in rows if (row.metadata or {}).get(SUPERSEDES_KEY)}
+        booked: dict[str, date] = {}
+        for row in rows:                                   # oldest first
+            if str(row.id) in superseded:
+                continue
+            kind = (row.metadata or {}).get(FACT_KIND_KEY)
+            if kind == OccurrenceFactKind.BOOKED.value or row.occurrence_type == "BOOKING":
+                fact = occurrence_fact_from_record(row)
+                if fact is not None and fact.value is not None:
+                    value = fact.value
+                    booked[row.logical_key] = value.date() if isinstance(value, datetime) else value
+        return booked
+
     # ----------------------------------------------------------------- command
     def record_actual_occurrence(
         self, patient_id: UUID, *, organization_id: UUID, logical_key: str,
@@ -808,7 +1047,7 @@ class PatientScheduleService:
         supersedes_occurrence_id: UUID | None = None, actor_id: UUID | None = None,
         reason: str | None = None, idempotency_key: str | None = None,
         today: date | None = None, horizon: date | None = None,
-        source: str = "SITE_ENTRY",
+        source: str = "SITE_ENTRY", expected_schedule_version_id: UUID | None = None,
     ) -> OccurrenceOutcome:
         """Record an actual occurrence and bring the schedule up to date, atomically.
 
@@ -820,6 +1059,10 @@ class PatientScheduleService:
         * the same idempotency key with the same payload replays the first
           result and writes nothing;
         * the same key with a different payload is refused (409);
+        * the schedule version the request was resolved against is recorded on
+          the receipt; a replay after the patient moved to another version, or a
+          request naming an ``expected_schedule_version_id`` the patient is no
+          longer on, is refused (409) rather than silently replayed or applied;
         * an occurrence nothing depends on is saved and audited but triggers no
           evaluation (empty change list, reason "no dependent rules").
 
@@ -827,41 +1070,55 @@ class PatientScheduleService:
         reversal command belongs to epic P5.
         """
         clock = today or date.today()
-        payload_hash = hashlib.sha256(json.dumps({
+        # Material inputs: the logical occurrence, the fact, and the calculation
+        # parameter (horizon). The clock and free-text reason are not material.
+        # ``horizon`` joins the hash only when given, so receipts stored before it
+        # was material still replay.
+        material: dict[str, object] = {
             "patient": str(patient_id), "logical_key": logical_key, "kind": kind.value,
             "visit_date": visit_date.isoformat() if visit_date else None,
             "treatment_date": treatment_date.isoformat() if treatment_date else None,
             "effective_at": effective_at.isoformat() if effective_at else None,
             "supersedes": str(supersedes_occurrence_id) if supersedes_occurrence_id else None,
-        }, sort_keys=True).encode("utf-8")).hexdigest()
+        }
+        if horizon is not None:
+            material["horizon"] = horizon.isoformat()
+        if expected_schedule_version_id is not None:
+            material["expected_schedule_version_id"] = str(expected_schedule_version_id)
+        payload_hash = hashlib.sha256(
+            json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()
 
         def work(tx: UnitOfWork) -> OccurrenceOutcome:
+            # Resolve the patient (tenant-scoped) BEFORE any receipt is honoured, so
+            # another organization can never learn that a key exists.
+            patient = tx.patients.get(organization_id, patient_id)
+            # one trusted decision, BEFORE any receipt is replayed: authority changing
+            # after the first commit also stops a replay from re-presenting a change
+            require_command_plane_authority(patient)
             if idempotency_key:
                 receipt = tx.commands.find_receipt(organization_id, patient_id, idempotency_key)
                 if receipt is not None:
                     if receipt.payload_hash != payload_hash:
                         raise IdempotencyConflictError(
                             "this idempotency key was already used for a different request")
+                    first_version = (receipt.result or {}).get("schedule_version_id")
+                    if first_version is not None and first_version != str(
+                            patient.current_schedule_version_id):
+                        raise ScheduleVersionChangedError(
+                            "this idempotency key was used under a different schedule "
+                            "version; the patient has since moved. Reload the calendar "
+                            "and send a new request")
                     return OccurrenceOutcome.model_validate(
                         {**receipt.result, "replayed": True})
-            patient = tx.patients.get(organization_id, patient_id)
             if patient.current_schedule_version_id is None:
                 raise ValueError("patient has no active schedule version")
             version_id = patient.current_schedule_version_id
-            for label, value in (("visit", visit_date), ("treatment", treatment_date)):
-                if value is not None and value > clock:
-                    raise ValueError(f"an actual {label} date cannot be in the future")
-            if visit_date is not None:
-                anchors = tx.facts.list_anchors(patient.id, statuses={"CONFIRMED", "PROVISIONAL"})
-                earliest = min(
-                    (item.value_datetime.date() if item.value_datetime else item.value_date
-                     for item in anchors if item.value_datetime or item.value_date), default=None)
-                if earliest is not None and visit_date < earliest - timedelta(
-                        days=MAX_DAYS_BEFORE_FIRST_ANCHOR):
-                    raise ValueError(
-                        f"an actual date of {visit_date.isoformat()} is more than "
-                        f"{MAX_DAYS_BEFORE_FIRST_ANCHOR} days before this patient's earliest "
-                        f"recorded anchor ({earliest.isoformat()})")
+            if expected_schedule_version_id is not None \
+                    and expected_schedule_version_id != version_id:
+                raise ScheduleVersionChangedError(
+                    "the patient is no longer on the schedule version this request was "
+                    "prepared against; reload the calendar")
+            self.check_actual_dates(tx, patient, visit_date, treatment_date, clock)
             before = self.current_events(tx, patient.id, version_id)
             occurrence = self._record_fact(
                 tx, patient_id, organization_id=organization_id, logical_key=logical_key,
@@ -873,7 +1130,8 @@ class PatientScheduleService:
             relevant = references_event(schedule, recorded.event_code)
             if not relevant:
                 outcome = OccurrenceOutcome(
-                    occurrence_id=occurrence.id, reevaluated=False, reason="no dependent rules")
+                    occurrence_id=occurrence.id, reevaluated=False, reason="no dependent rules",
+                    schedule_version_id=version_id)
             else:
                 evaluation, after = self._evaluate(
                     tx, patient.id, organization_id=organization_id,
@@ -885,7 +1143,7 @@ class PatientScheduleService:
                 changes = self._changes(before, after, recorded.event_code)
                 outcome = OccurrenceOutcome(
                     occurrence_id=occurrence.id, evaluation_id=evaluation.id, reevaluated=True,
-                    reason="recalculated", changes=changes)
+                    reason="recalculated", changes=changes, schedule_version_id=version_id)
                 tx.outbox.add(OutboxRecord(
                     organization_id=organization_id, aggregate_type="PATIENT_SCHEDULE",
                     aggregate_id=patient.id, event_type="PATIENT_SCHEDULE_CHANGED",
@@ -898,9 +1156,76 @@ class PatientScheduleService:
                     organization_id=organization_id, patient_id=patient.id,
                     idempotency_key=idempotency_key, command_type="RECORD_ACTUAL_OCCURRENCE",
                     payload_hash=payload_hash, result=outcome.model_dump(mode="json")))
+            # P5-03: one audit trail. The fact is also a ledger entry (same
+            # logical key, same reason, the evaluation it produced - or None
+            # when "no dependent rules" made re-evaluation unnecessary).
+            if actor_id is not None:
+                self._ledger_fact(
+                    tx, patient, version_id, logical_key=logical_key, kind=kind,
+                    visit_date=visit_date, treatment_date=treatment_date,
+                    supersedes=supersedes_occurrence_id, effective_at=effective_at or clock,
+                    actor_id=actor_id, reason=reason, occurrence_id=occurrence.id,
+                    evaluation_id=outcome.evaluation_id, horizon=horizon)
             return outcome
 
         return self._run(work)
+
+    @staticmethod
+    def check_actual_dates(
+        tx: UnitOfWork, patient: PatientRecord, visit_date: date | None,
+        treatment_date: date | None, clock: date,
+    ) -> None:
+        """The rules every recorded actual obeys, whichever entry point carries it."""
+        for label, value in (("visit", visit_date), ("treatment", treatment_date)):
+            if value is not None and value > clock:
+                raise ValueError(f"an actual {label} date cannot be in the future")
+        if visit_date is not None:
+            anchors = tx.facts.list_anchors(patient.id, statuses={"CONFIRMED", "PROVISIONAL"})
+            earliest = min(
+                (item.value_datetime.date() if item.value_datetime else item.value_date
+                 for item in anchors if item.value_datetime or item.value_date), default=None)
+            if earliest is not None and visit_date < earliest - timedelta(
+                    days=MAX_DAYS_BEFORE_FIRST_ANCHOR):
+                raise ValueError(
+                    f"an actual date of {visit_date.isoformat()} is more than "
+                    f"{MAX_DAYS_BEFORE_FIRST_ANCHOR} days before this patient's earliest "
+                    f"recorded anchor ({earliest.isoformat()})")
+
+    @staticmethod
+    def _ledger_fact(
+        tx: UnitOfWork, patient: PatientRecord, version_id: UUID, *, logical_key: str,
+        kind: OccurrenceFactKind, visit_date: date | None, treatment_date: date | None,
+        supersedes: UUID | None, effective_at: date, actor_id: UUID, reason: str | None,
+        occurrence_id: UUID, evaluation_id: UUID | None, horizon: date | None,
+    ) -> None:
+        mapping = {
+            OccurrenceFactKind.PERFORMED: CommandType.RECORD_ACTUAL,
+            OccurrenceFactKind.MISSED: CommandType.MARK_MISSED,
+            OccurrenceFactKind.BOOKED: CommandType.RESCHEDULE_APPOINTMENT,
+            OccurrenceFactKind.TREATMENT: CommandType.RECORD_ACTUAL,
+        }
+        command_type = mapping[kind]
+        if command_type is CommandType.RECORD_ACTUAL:
+            payload = {"type": "RECORD_ACTUAL", "logical_key": logical_key,
+                       "visit_date": visit_date.isoformat() if visit_date else None,
+                       "treatment_date": treatment_date.isoformat() if treatment_date else None,
+                       "supersedes_occurrence_id": str(supersedes) if supersedes else None}
+        elif command_type is CommandType.MARK_MISSED:
+            payload = {"type": "MARK_MISSED", "logical_key": logical_key}
+        else:
+            payload = {"type": "RESCHEDULE_APPOINTMENT", "logical_key": logical_key,
+                       "new_date": visit_date.isoformat() if visit_date else None}
+        command_append(
+            tx, organization_id=patient.organization_id, patient_id=patient.id,
+            schedule_version_id=version_id, command_type=command_type, payload=payload,
+            effective_at=effective_at, actor_id=actor_id,
+            reason=reason or "recorded through the occurrence API", logical_key=logical_key,
+            payload_hash=command_material_hash(
+                patient_id=patient.id, schedule_version_id=version_id,
+                command_type=command_type.value, payload=payload, effective_at=effective_at,
+                horizon=horizon),
+            fact_refs={"occurrence_id": str(occurrence_id), "via": "record_actual_occurrence"},
+            result_evaluation_id=evaluation_id)
 
     @staticmethod
     def _changes(
@@ -955,14 +1280,14 @@ class PatientScheduleService:
         schedule_version_id: UUID | None = None, idempotency_key: str | None = None,
         prior_events_override: list[PatientEventRecord] | None = None,
         rolling: RollingHorizon | None = None, actor_id: UUID | None = None,
-        reason: str | None = None,
+        reason: str | None = None, today: date | None = None,
     ) -> tuple[EvaluationRecord, list[PatientEventRecord]]:
         """``evaluate`` for a caller that already holds the unit of work."""
         return self._evaluate(
             tx, patient_id, organization_id=organization_id, horizon=horizon,
             schedule_version_id=schedule_version_id, idempotency_key=idempotency_key,
             prior_events_override=prior_events_override, rolling=rolling,
-            actor_id=actor_id, reason=reason)
+            actor_id=actor_id, reason=reason, today=today)
 
     @staticmethod
     def record_patient_fact_in(

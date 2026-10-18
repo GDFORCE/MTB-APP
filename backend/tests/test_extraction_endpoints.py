@@ -149,6 +149,11 @@ def upload_pdf():
 
 def test_every_extraction_endpoint_says_503_when_no_provider_is_configured(headers, monkeypatch):
     monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
+    # A readable document: identity verification (which needs no provider) runs
+    # first, so only a document that passes it is told extraction is unavailable.
+    monkeypatch.setattr(documents, "pages_from_pdf", lambda data: [
+        DocumentPage(page_number=index + 1, text=text)
+        for index, text in enumerate(PROTOCOL_TEXT.split("\f"))])
 
     async def exercise():
         async with client() as cli:
@@ -186,7 +191,8 @@ def test_extract_returns_the_add_trial_contract_and_caches_a_native_draft(header
     body = run(exercise())
 
     assert set(body) == {"details", "extraction_id", "schedule_visit_count", "needs_schedule_selection",
-                         "verification", "preview"}
+                         "verification", "preview", "identity"}
+    assert body["identity"]["classification"] == "MATCH" and body["identity"]["permitted"]
     assert body["details"]["ctri_number"] == "CTRI/2026/02/000002"
     assert body["details"]["status"] == "active"
     assert body["needs_schedule_selection"] is False
@@ -229,7 +235,7 @@ def test_multiple_schedules_come_back_as_extractions(headers, model):
         return response.json()
     body = run(exercise())
 
-    assert set(body) == {"details", "extractions", "needs_schedule_selection"}
+    assert set(body) == {"details", "extractions", "needs_schedule_selection", "identity"}
     assert [item["option_label"] for item in body["extractions"]] == ["Substudy A", "Substudy B"]
     assert [item["schedule_visit_count"] for item in body["extractions"]] == [1, 1]
     for item in body["extractions"]:
@@ -258,7 +264,9 @@ def test_extract_details_returns_only_trial_details(headers, model):
     response = run(exercise())
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"details": {
+    body = response.json()
+    assert body.pop("identity")["classification"] == "MATCH"
+    assert body == {"details": {
         "ctri_number": "CTRI/2026/02/000002", "title": "A Phase II study of Drug Y",
         "phase": "Phase II", "indications": ["Oncology"], "drug": "Drug Y", "duration": "",
         "target_enrollment": None, "total_visits": None, "status": "active"}}
@@ -301,7 +309,11 @@ def test_the_cached_draft_is_consumed_by_the_new_trial_without_another_model_cal
 def test_extract_schedule_for_an_existing_trial_stores_a_draft_definition(headers, model):
     async def exercise():
         async with client() as cli:
-            trial = await create_trial(cli, headers)
+            # the trial is recorded under the protocol number the document prints
+            trial = await cli.post("/api/trials", headers=headers, json={
+                "title": "Extraction endpoint trial", "protocol_id": "EXT-1",
+                "phase": "Phase II", "condition": "Oncology", "indications": ["Oncology"],
+                "drug": "Drug Y"})
             assert trial.status_code == 200, trial.text
             trial_id = trial.json()["id"]
             TRIAL_IDS.append(trial_id)

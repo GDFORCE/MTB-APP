@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  approvalState, buildAddVisitRequest, buildEditRequest, buildQuestionRequest, buildWindow,
+  approvalState, buildAddVisitRequest, buildEditRequest, buildQuestionRequest, buildRecurrenceBasisChange,
+  buildWindow,
   extractionBadge, exportFileName, filterCounts, filterRows, groupRows, recoveryNotice,
   reviewErrorMessage, isStaleRevision, rowAccessibilityLabel, statusIndicator, timingFormFromRule,
 } from "../src/features/uctsm/visitSchedule.ts";
@@ -302,4 +303,61 @@ test("occurrence lines show session identity, process state, booking flag and pe
     ["Session 7 — missed (keeps its number)"]);
   assert.deepEqual(occurrenceFactLines({ held_after_resolution: "NEUTROPENIA" }),
     ["Still on hold: NEUTROPENIA resolved, but a resume must be recorded"]);
+});
+
+
+// ---------------------------------------------------------------- P4/P5 basis control
+
+const INTERVAL_RULE = {
+  type: "INTERVAL", interval: { value: 28, unit: "DAY" }, start_reference: { kind: "ANCHOR", code: "BASELINE" },
+  termination: { type: "COUNT", count: 3 }, include_start: true,
+  basis: "FIRST_RESOLVED_OCCURRENCE", basis_status: "UNCONFIRMED", actual_source: null,
+};
+
+function repeating(): ReviewRow {
+  return row("labs", "PENDING", {
+    group: "REPEATING",
+    details: {
+      ...row("labs", "PENDING").details,
+      recurrence: { type: "INTERVAL", summary: "Every 28 days; what each repeat counts from: Needs review",
+                    rule: INTERVAL_RULE },
+    },
+  });
+}
+
+test("stating the recurrence basis sends the whole rule with STATED status and nothing else changed", () => {
+  const target = repeating();
+  const built = buildEditRequest(target, {
+    visitName: target.visit_name, timing: null, window: null, confirmRow: false,
+    rationale: "Section 6: every 28 days from the first dose",
+    recurrence: { basis: "PREVIOUS_PLANNED_OCCURRENCE", actualSource: "" },
+  }, "rev-7");
+  assert.equal(built.error, undefined);
+  const changes = built.body!.changes as Record<string, any>;
+  assert.deepEqual(Object.keys(changes), ["recurrence"]);
+  assert.equal(changes.recurrence.basis, "PREVIOUS_PLANNED_OCCURRENCE");
+  assert.equal(changes.recurrence.basis_status, "STATED");
+  assert.equal(changes.recurrence.actual_source, null);
+  assert.deepEqual(changes.recurrence.interval, INTERVAL_RULE.interval);   // the rule is otherwise untouched
+  assert.equal(built.body!.expected_revision, "rev-7");
+});
+
+test("an actual-based basis must name the actual source and a basis is never defaulted", () => {
+  assert.match(buildRecurrenceBasisChange(INTERVAL_RULE,
+    { basis: "", actualSource: "" }).error!, /Choose what each repeat counts from/);
+  assert.match(buildRecurrenceBasisChange(INTERVAL_RULE,
+    { basis: "PREVIOUS_ACTUAL_OCCURRENCE", actualSource: "" }).error!, /actual visit or the actual treatment/);
+  const ok = buildRecurrenceBasisChange(INTERVAL_RULE,
+    { basis: "PREVIOUS_ACTUAL_OCCURRENCE", actualSource: "ACTUAL_TREATMENT" });
+  assert.equal((ok.recurrence as any).actual_source, "ACTUAL_TREATMENT");
+  assert.match(buildRecurrenceBasisChange(null,
+    { basis: "FIXED_ANCHOR_SERIES", actualSource: "" }).error!, /no repeat rule/);
+});
+
+test("a basis edit still needs a rationale", () => {
+  const target = repeating();
+  assert.match(buildEditRequest(target, {
+    visitName: target.visit_name, timing: null, window: null, confirmRow: false, rationale: " ",
+    recurrence: { basis: "FIXED_ANCHOR_SERIES", actualSource: "" },
+  }, "r").error!, /Say why/);
 });

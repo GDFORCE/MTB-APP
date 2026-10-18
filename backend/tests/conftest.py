@@ -19,6 +19,7 @@ still reports exactly what it finds.
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 
@@ -48,6 +49,26 @@ def _ignore_close() -> None:
 
 asyncio.new_event_loop = _shared_event_loop  # type: ignore[assignment]
 _SESSION_LOOP.close = _ignore_close          # type: ignore[method-assign]
+
+
+@pytest.fixture(autouse=True)
+def _identity_store_is_in_memory_by_default():
+    """The protocol identity gate (P2) builds a MongoDB store lazily from
+    ``MONGO_URL`` - which in a developer checkout is the SHARED cluster. A test
+    must never reach it by accident, so every test starts with a fresh in-memory
+    store; tests that need real MongoDB install their own with ``configure``."""
+    import sys
+    from pathlib import Path
+
+    backend = str(Path(__file__).resolve().parents[1])
+    if backend not in sys.path:
+        sys.path.insert(0, backend)
+    import protocol_identity_runtime as runtime
+    from app.persistence.memory.identity_store import InMemoryIdentityStore
+
+    runtime.configure(store=InMemoryIdentityStore())
+    yield
+    runtime.configure(store=None)
 
 
 @pytest.fixture(scope="session", autouse=True)

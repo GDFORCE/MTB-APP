@@ -79,6 +79,7 @@ from app.domain.schedule.models import (
     QualifierCategory,
     QualifierScope,
     RecurrencePlan,
+    RecurrenceBasis,
     RecurrenceRule,
     RecurrenceSegment,
     RecurrenceTermination,
@@ -922,6 +923,13 @@ class _Compiler:
             start_offset=_amount(start_offset) if start_offset.value else None,
             termination=self._termination(repeat.end, fact, compiled),
             include_start=includes_start,
+            # P4-02: the protocol text rarely says what each repeat counts from.
+            # When the fact's own timing IS the first occurrence the natural
+            # reading is proposed, but it is an interpretation without evidence
+            # of that choice: UNCONFIRMED, never dated, approval blocked until a
+            # reviewer states it.
+            basis=RecurrenceBasis.FIRST_RESOLVED_OCCURRENCE if first_is_stated else None,
+            basis_status="UNCONFIRMED",
         )
 
     def _cycle_day(self, fact: ScheduleFact) -> _Compiled:

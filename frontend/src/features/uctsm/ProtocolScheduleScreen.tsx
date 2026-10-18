@@ -15,13 +15,14 @@ import { Body, Button, Card, Small } from "@/src/components/ui";
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import {
   addScheduleVisit, approveScheduleVersion, buildCanonicalSchedule, decideSchedule,
-  editScheduleVisit, exportScheduleVersion, getApprovedSchedules, getReviewView,
-  resolveReviewQuestion, submitScheduleReview,
+  editScheduleVisit, exportScheduleVersion, getApprovedSchedules, getMyCapabilities, getReviewView,
+  resolveReviewQuestion, reviewScheduleTracks, submitScheduleReview,
 } from "./api";
 import {
   DocumentIssues, FilterChips, SharedQuestionsPanel, SourceCoveragePanel, VisitScheduleSummary, VisitTable,
   type QuestionDraft,
 } from "./VisitScheduleReview";
+import { TrackReviewSheet } from "./TrackReviewSheet";
 import { AddVisitSheet, EditVisitSheet } from "./VisitScheduleSheets";
 import {
   approvalState, buildQuestionRequest, exportFileName, isStaleRevision, recoveryNotice,
@@ -49,6 +50,16 @@ export default function ProtocolScheduleScreen() {
   const [versionId, setVersionId] = useState<string | null>(null);
   const [view, setView] = useState<ReviewView | null>(null);
   const [busy, setBusy] = useState("load");
+  // Informational only (the server rechecks): hides the rule-correction control
+  // from an account that lacks schedule.correct. Unknown (null) = show it.
+  const [canCorrect, setCanCorrect] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    getMyCapabilities().then(
+      (mine) => { if (live) setCanCorrect("schedule.correct" in mine.capabilities); },
+      () => { if (live) setCanCorrect(null); });
+    return () => { live = false; };
+  }, []);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<RowFilter>("ALL");
@@ -101,6 +112,11 @@ export default function ProtocolScheduleScreen() {
   const onEdit = (row: ReviewRow, body: Record<string, unknown>) => write("edit", async () => {
     const result = await editScheduleVisit(versionId!, row.id, body);
     return `${row.visit_name} saved and revalidated · ${result.changed_row_ids.length} row(s) changed.`;
+  });
+  const [tracking, setTracking] = useState(false);
+  const onTracks = (body: Record<string, unknown>) => write("tracks", async () => {
+    await reviewScheduleTracks(versionId!, body);
+    return "Track rules saved and revalidated.";
   });
   const onAdd = (body: Record<string, unknown>) => write("add", async () => {
     await addScheduleVisit(versionId!, body);
@@ -228,6 +244,9 @@ export default function ProtocolScheduleScreen() {
             {editable && <Button variant="secondary" onPress={() => setAdding(true)} style={styles.grow}>
               + Add Visit
             </Button>}
+            {editable && canCorrect !== false && <Button variant="secondary" onPress={() => setTracking(true)} style={styles.grow}>
+              Tracks and rules
+            </Button>}
             <Button variant="secondary" onPress={() => onExport("json")} loading={busy === "export-json"} style={styles.grow}>
               Export JSON
             </Button>
@@ -272,7 +291,9 @@ export default function ProtocolScheduleScreen() {
           </Card>}
         </>}
       </ScrollView>
-      {!!view && <EditVisitSheet row={editing} view={view} busy={busy === "edit"} onClose={() => setEditing(null)} onSubmit={onEdit} />}
+      {!!view && <EditVisitSheet row={editing} view={view} busy={busy === "edit"} onClose={() => setEditing(null)} onSubmit={onEdit} canCorrect={canCorrect !== false} />}
+      {!!view && <TrackReviewSheet visible={tracking} view={view} busy={busy === "tracks"}
+        onClose={() => setTracking(false)} onSubmit={onTracks} />}
       {!!view && <AddVisitSheet visible={adding} view={view} busy={busy === "add"} onClose={() => setAdding(false)} onSubmit={onAdd} />}
     </ScreenContainer>
   );

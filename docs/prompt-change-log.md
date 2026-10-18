@@ -339,3 +339,19 @@ builds), but the user wanted it gone from the screen entirely regardless.
 - The Sign In screen no longer shows the "Development Accounts" hint under
   any circumstance.
 - Verified: `tsc --noEmit` passes clean project-wide.
+
+## 2026-10-16 - P6 completion slice
+
+* Executed [claude-code-p6-domain-to-app-completion-prompt.md](claude-code-p6-domain-to-app-completion-prompt.md); result in [p6-completion-record.md](p6-completion-record.md).
+* Added [claude-code-p7-p8-after-p6-prompt.md](claude-code-p7-p8-after-p6-prompt.md) as the new current launcher; [claude-code-next-prompt.md](claude-code-next-prompt.md) and the [index](claude-code-prompts-index.md) updated. The previous launchers and the P6 prompt are preserved and marked superseded/completed.
+* Created the master's tracking artifacts: [pdf-remaining-implementation-plan.md](pdf-remaining-implementation-plan.md) and [pdf-requirements-acceptance-matrix.md](pdf-requirements-acceptance-matrix.md).
+
+
+## 2026-10-16: independent P6 review and repair continuation
+
+Saved [P6 audit repairs before P7/P8](claude-code-p6-audit-repairs-before-p7-p8-prompt.md) with [the independent review](p6-end-to-end-independent-review.md) and memory/real-Mongo reproductions. Archived the previous P7/P8 launcher, updated the current launcher/index and reopened the affected P6 acceptance rows. Application code was not changed by this audit.
+
+
+## 2026-10-16: owner-requested single detailed P7/P8 prompt
+
+Merged all P6 F1-F4 repairs and integration triage into [the P7/P8 prompt](claude-code-p7-p8-after-p6-prompt.md), with detailed instructions for each P7/P8 task, evidence and manual-only workflow, scoring, fixed-clock scenarios, CI gates and verification. Preserved the earlier short prompt and standalone-repair launcher, marked the standalone prompt historical, and updated the index, launcher and checkpoint. Documentation only; no application changes.

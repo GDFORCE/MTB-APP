@@ -72,6 +72,22 @@ def engine_available() -> bool:
     return configured_provider() is not None
 
 
+def engine_signature() -> str | None:
+    """What a stored extraction result must have been produced by to be reused:
+    provider, model, prompt/reader, reconciler and compiler versions. None when no
+    provider is configured, so no stored result is ever called "compatible"
+    against an engine that cannot be identified."""
+    provider = configured_provider()
+    if provider is None:
+        return None
+    from .compiler import COMPILER_VERSION
+    from .reader import PROMPT_VERSION
+    from .reconcile import RECONCILER_VERSION
+    return "|".join([
+        provider, (os.getenv("UCTSM_EXTRACTION_MODEL") or "").strip(), PROMPT_VERSION,
+        RECONCILER_VERSION, COMPILER_VERSION, "uctsm.v1"])
+
+
 def build_client(*, pdf_bytes: bytes | None = None) -> LLMClient:
     """The configured model client. ``pdf_bytes`` is attached only when some
     page has no usable text, so scanned pages can be read from the image."""
@@ -190,6 +206,26 @@ def storage_artifacts() -> ArtifactStore:
     return StorageArtifactStore(get_storage())
 
 
+async def _clear_identity(
+    *, organization_id: UUID, version, pages: list[DocumentPage], pdf_bytes: bytes | None,
+    document_hash: str, expected: list[str],
+) -> None:
+    """P2-02 worker gate: the stored document must pass protocol identity
+    verification before a run starts, whatever queued it. Raises
+    ``IdentityBlockedError`` (recorded on the run as FAILED, no model call)."""
+    import hashlib
+
+    import protocol_identity_runtime as gate
+
+    binary = hashlib.sha256(pdf_bytes).hexdigest() if pdf_bytes else document_hash
+    content_type = "application/pdf" if pdf_bytes else "text/plain"
+    await run_in_threadpool(lambda: gate.clear_stored_document(
+        organization_id=organization_id, owner=str(getattr(version, "uploaded_by", "") or ""),
+        filename=version.document_name or "protocol", pages=pages, binary_sha256=binary,
+        content_type=content_type, expected_values=expected,
+        protocol_id=version.protocol_id, protocol_version_id=version.id))
+
+
 async def execute_run(session: Session, run_id: UUID) -> list[UUID] | None:
     """Run one queued extraction to completion.
 
@@ -205,6 +241,11 @@ async def execute_run(session: Session, run_id: UUID) -> list[UUID] | None:
 
     try:
         pages, pdf_bytes = await load_pages(version.document_uri)
+        protocol = session.get(db.Protocol, version.protocol_id)
+        await _clear_identity(
+            organization_id=run.organization_id, version=version, pages=pages,
+            pdf_bytes=pdf_bytes, document_hash=run.document_hash,
+            expected=[protocol.protocol_number] if protocol is not None else [])
         service = ExtractionService(session)
         service.start(run_id)
         # Engines make blocking model calls; keep them off the event loop.
@@ -252,6 +293,14 @@ async def execute_run_on_ports(uow: "UnitOfWork", run_id: UUID) -> list[UUID] | 
 
     try:
         pages, pdf_bytes = await load_pages(version.document_uri)
+        try:
+            protocol = uow.read(lambda tx: tx.authoring.get_protocol(version.protocol_id))
+            expected = [protocol.protocol_number]
+        except KeyError:
+            expected = []
+        await _clear_identity(
+            organization_id=run.organization_id, version=version, pages=pages,
+            pdf_bytes=pdf_bytes, document_hash=run.document_hash, expected=expected)
         service.start(run_id)
         results = await run_in_threadpool(
             extract_schedules, pages, pdf_bytes=pdf_bytes,

@@ -434,6 +434,10 @@ export type RepeatRuleSummary = {
 
 export type PatientScheduleResponse = {
   patient_id: string;
+  /** Canonical trial and operational patient id: how this patient is found in the
+   * MongoDB patient plane (P5 commands). */
+  trial_id?: string;
+  external_patient_id?: string | null;
   status: string;
   schedule_version_id?: string;
   evaluation_id?: string;

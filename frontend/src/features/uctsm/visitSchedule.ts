@@ -320,17 +320,58 @@ export function buildWindow(form: WindowForm): { window?: Record<string, unknown
   return { window: { before: { value: b, unit: form.unit }, after: { value: a, unit: form.unit } } };
 }
 
+export type RecurrenceBasisValue =
+  | "FIRST_RESOLVED_OCCURRENCE" | "PREVIOUS_PLANNED_OCCURRENCE"
+  | "PREVIOUS_ACTUAL_OCCURRENCE" | "FIXED_ANCHOR_SERIES";
+export type ActualSourceValue = "ACTUAL_VISIT" | "ACTUAL_TREATMENT";
+
+export const RECURRENCE_BASES: { value: RecurrenceBasisValue; label: string; hint: string }[] = [
+  { value: "FIRST_RESOLVED_OCCURRENCE", label: "The first visit",
+    hint: "Every repeat is counted from the first occurrence's date." },
+  { value: "PREVIOUS_PLANNED_OCCURRENCE", label: "The previous planned visit",
+    hint: "Each repeat is the previous planned date plus one interval." },
+  { value: "PREVIOUS_ACTUAL_OCCURRENCE", label: "The previous actual visit",
+    hint: "Each repeat waits for the previous one to actually happen." },
+  { value: "FIXED_ANCHOR_SERIES", label: "A fixed schedule from the anchor",
+    hint: "Visits sit on a fixed grid counted from the anchor." },
+];
+
+/** What a repeat counts from (P4-02). null = not edited. */
+export type RecurrenceBasisForm = { basis: RecurrenceBasisValue | ""; actualSource: ActualSourceValue | "" };
+
 export type EditForm = {
   visitName: string;
   timing: TimingForm | null;      // null = timing not edited
   window: WindowForm | null;      // null = window not edited
   confirmRow: boolean;
   rationale: string;
+  recurrence?: RecurrenceBasisForm | null;   // null/undefined = basis not edited
 };
+
+/** The recurrence rule with the reviewer's stated basis. Nothing else in the rule
+ * is rewritten, and a basis is never defaulted: it is chosen or not sent. */
+export function buildRecurrenceBasisChange(rule: unknown, form: RecurrenceBasisForm) {
+  if (!rule || typeof rule !== "object") return { error: "This visit has no repeat rule to change." };
+  if (!form.basis) return { error: "Choose what each repeat counts from." };
+  if (form.basis === "PREVIOUS_ACTUAL_OCCURRENCE" && !form.actualSource) {
+    return { error: "Say whether the repeat counts from the actual visit or the actual treatment date." };
+  }
+  return {
+    recurrence: {
+      ...(rule as Record<string, unknown>),
+      basis: form.basis,
+      basis_status: "STATED",
+      actual_source: form.basis === "PREVIOUS_ACTUAL_OCCURRENCE" ? form.actualSource : null,
+    },
+  };
+}
 
 /** Only the fields the reviewer actually changed are sent, so a label edit
  * can never carry a timing change with it. */
-export function buildEditRequest(row: Pick<ReviewRow, "visit_name">, form: EditForm, revision: string) {
+export function buildEditRequest(
+  row: Pick<ReviewRow, "visit_name"> & { details?: { recurrence?: { rule: unknown } | null } },
+  form: EditForm, revision: string,
+) {
   const rationale = form.rationale.trim();
   if (!rationale) return { error: "Say why this change is being made." };
   const changes: Record<string, unknown> = {};
@@ -346,6 +387,11 @@ export function buildEditRequest(row: Pick<ReviewRow, "visit_name">, form: EditF
     const built = buildWindow(form.window);
     if (built.error) return { error: built.error };
     changes.window = built.window;
+  }
+  if (form.recurrence) {
+    const built = buildRecurrenceBasisChange(row.details?.recurrence?.rule, form.recurrence);
+    if (built.error) return { error: built.error };
+    changes.recurrence = built.recurrence;
   }
   if (!Object.keys(changes).length && !form.confirmRow) return { error: "Nothing has changed." };
   return { body: { expected_revision: revision, rationale, changes, confirm_row: form.confirmRow } };

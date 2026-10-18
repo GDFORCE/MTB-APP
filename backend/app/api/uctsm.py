@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticVa
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.authorization.guard import RouteAuthorizer
+from app.authorization.maker_checker import MakerCheckerViolation
 from app.db import models as db
 from app.db.base import get_session
 from app.db.repositories import ScheduleRepository
@@ -86,6 +88,38 @@ class HolidayCalendarIn(_ReviewWriteIn):
     calendar: HolidayCalendar
 
 
+class TrackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    track_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]*$")
+    display_name: str = Field(min_length=1)
+    anchor_code: str | None = None
+    rebase_policy: str | None = None
+    process_code: str | None = None
+    stoppable: bool | None = None
+    review_state: Literal["PROPOSED", "CONFIRMED"] = "PROPOSED"
+
+
+class TrackLinkIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_track_code: str = Field(min_length=1)
+    target_track_code: str = Field(min_length=1)
+    relation: Literal["FOLLOWS_ACTUAL", "FOLLOWS_PLANNED"]
+    review_state: Literal["PROPOSED", "CONFIRMED"] = "PROPOSED"
+
+
+class TrackMembershipIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope: Literal["TRACK", "GLOBAL", "UNCLASSIFIED"]
+    track_code: str | None = None
+
+
+class TracksIn(_ReviewWriteIn):
+    tracks: list[TrackIn] = Field(default_factory=list)
+    track_links: list[TrackLinkIn] = Field(default_factory=list)
+    membership: dict[str, TrackMembershipIn] = Field(default_factory=dict)
+
+
 class EventEditIn(_ReviewWriteIn):
     changes: EventChangesIn = Field(default_factory=EventChangesIn)
     #: The reviewer confirms this row's interpretation (clears its review flag).
@@ -121,6 +155,34 @@ class ApproveVersionIn(BaseModel):
     expected_revision: str = Field(min_length=8)
     reason: str = Field(min_length=1)
     effective_from: date | None = None
+
+
+def _maker_checker_http(error: MakerCheckerViolation) -> HTTPException:
+    outcome = error.outcome
+    return HTTPException(403, str(error), headers={
+        "X-Authz-Code": "MAKER_CHECKER", "X-Authz-Reason": outcome.reason_code,
+        "X-Authz-Policy": outcome.policy_version})
+
+
+def _maker_checker_refused(
+        session: Session, error: MakerCheckerViolation, *, schedule_version_id: UUID,
+        actor_id: UUID, organization_id: UUID) -> HTTPException:
+    """Refuse an approval that violates segregation of duties.
+
+    The business transaction is rolled back first (status and pointers stay
+    unchanged); the refusal is then recorded in its OWN committed transaction so
+    a rollback can never erase the evidence that it happened. It is recorded as
+    a denial, never as an approval."""
+    session.rollback()
+    outcome = error.outcome
+    session.add(db.AuditEvent(
+        organization_id=organization_id, actor_id=actor_id,
+        action="SCHEDULE_APPROVAL_DENIED_MAKER_CHECKER", entity_type="SCHEDULE_VERSION",
+        entity_id=schedule_version_id, before=None,
+        after=outcome.audit(approver_id=str(actor_id), revision=None),
+        reason=outcome.reason_code))
+    session.commit()
+    return _maker_checker_http(error)
 
 
 def _stale(error: StaleRevisionError) -> HTTPException:
@@ -485,9 +547,38 @@ async def _run_extraction_task(run_id: UUID) -> None:
         break
 
 
-def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRouter:
+def _require_high_impact(user: dict[str, Any]) -> None:
+    """A persisted process transition (hold / resume / stop) is a high-impact
+    operation: the generic impact preview/confirm right is not enough, exactly as for
+    the typed command plane. Re-evaluated from the caller's CURRENT principal and
+    the already-resolved patient relationship, never from the request body."""
+    from app.authorization.catalog import Capability
+    from app.authorization.policy import authorize
+
+    outcome = user.get("_authz")
+    if outcome is None:                       # unguarded caller: fail closed
+        raise HTTPException(403, "You do not have permission to perform this action.")
+    decision = authorize(
+        outcome.principal, Capability.PATIENT_COMMAND_HIGH_IMPACT, outcome.resource)
+    if not decision.allowed:
+        raise HTTPException(
+            decision.status,
+            "You do not have permission to perform this action." if decision.status == 403
+            else "Not found",
+            headers=({"X-Authz-Capability": decision.capability,
+                      "X-Authz-Reason": decision.reason_code}
+                     if decision.status == 403 else None))
+
+
+def create_uctsm_router(
+    current_user_dependency: Callable[..., Any], *, authorizer: RouteAuthorizer,
+) -> APIRouter:
+    """Every route authenticates through ``current_user_dependency`` and is then
+    authorised by ``authorizer`` (capability + persisted scope, P3) before its
+    handler runs. There is deliberately no default: an unguarded router cannot be
+    built, and a route missing from ``app.authorization.manifest`` is refused."""
     router = APIRouter(prefix="/api/uctsm", tags=["universal-schedule"])
-    User = Annotated[dict[str, Any], Depends(current_user_dependency)]
+    User = Annotated[dict[str, Any], Depends(authorizer.scoped_user_sql(current_user_dependency))]
     Db = Annotated[Session, Depends(get_session)]
 
     @router.post("/demo/seed", status_code=201)
@@ -774,7 +865,8 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         _, organization_id = _identity(user)
         return {
             "pending": ScheduleReviewService(session).list_pending_review(
-                organization_id=organization_id),
+                organization_id=organization_id,
+                trial_ids=user["_authz"].allowed_trial_ids),
         }
 
     @router.get("/schedule-versions/{schedule_version_id}")
@@ -855,6 +947,10 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             ScheduleReviewService(session).approve_reviewed_table(
                 schedule_version_id, reviewer_id=actor_id, reason=body.reason)
             session.commit()
+        except MakerCheckerViolation as error:
+            raise _maker_checker_refused(
+                session, error, schedule_version_id=schedule_version_id,
+                actor_id=actor_id, organization_id=organization_id) from error
         except (KeyError, ValueError, ImmutableScheduleError) as error:
             session.rollback()
             raise HTTPException(409, str(error)) from error
@@ -1011,6 +1107,10 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             else:
                 raise ValueError("decision must be APPROVE or REJECT")
             session.commit()
+        except MakerCheckerViolation as error:
+            raise _maker_checker_refused(
+                session, error, schedule_version_id=schedule_version_id,
+                actor_id=actor_id, organization_id=organization_id) from error
         except (ValueError, ImmutableScheduleError) as error:
             session.rollback()
             raise HTTPException(409, str(error)) from error
@@ -1027,11 +1127,22 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         _assert_schedule_tenant(session, schedule_version_id, organization_id)
         return ReviewWorkflow(session).view(schedule_version_id)
 
-    def _review_write(session: Session, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    def _review_write(
+        session: Session, action: Callable[[], dict[str, Any]],
+        *, approval: tuple[UUID, UUID, UUID] | None = None,
+    ) -> dict[str, Any]:
         try:
             result = action()
             session.commit()
             return result
+        except MakerCheckerViolation as error:
+            if approval is None:
+                session.rollback()
+                raise _maker_checker_http(error) from error
+            version_id, actor, organization = approval
+            raise _maker_checker_refused(
+                session, error, schedule_version_id=version_id, actor_id=actor,
+                organization_id=organization) from error
         except StaleRevisionError as error:
             session.rollback()
             raise _stale(error) from error
@@ -1082,6 +1193,18 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             schedule_version_id, reviewer_id=actor_id, expected_revision=body.expected_revision,
             rationale=body.rationale, calendar=body.calendar.model_dump(mode="json")))
 
+    @router.post("/schedule-versions/{schedule_version_id}/tracks", status_code=201)
+    def review_tracks(schedule_version_id: UUID, body: TracksIn, user: User, session: Db):
+        """Reviewed track definitions, cross-track rules and event membership."""
+        actor_id, organization_id = _identity(user)
+        _assert_schedule_tenant(session, schedule_version_id, organization_id)
+        return _review_write(session, lambda: ReviewWorkflow(session).set_tracks(
+            schedule_version_id, reviewer_id=actor_id, expected_revision=body.expected_revision,
+            rationale=body.rationale,
+            tracks=[item.model_dump(mode="json") for item in body.tracks],
+            track_links=[item.model_dump(mode="json") for item in body.track_links],
+            membership={key: value.model_dump(mode="json") for key, value in body.membership.items()}))
+
     @router.post("/schedule-versions/{schedule_version_id}/review-questions/{question_id}/resolve")
     def resolve_review_question(schedule_version_id: UUID, question_id: str,
                                 body: QuestionResolutionIn, user: User, session: Db):
@@ -1102,9 +1225,12 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         or any blocker is refused and nothing is partially activated."""
         actor_id, organization_id = _identity(user)
         _assert_schedule_tenant(session, schedule_version_id, organization_id)
-        return _review_write(session, lambda: ReviewWorkflow(session).approve(
-            schedule_version_id, reviewer_id=actor_id, expected_revision=body.expected_revision,
-            reason=body.reason, effective_from=body.effective_from))
+        return _review_write(
+            session, lambda: ReviewWorkflow(session).approve(
+                schedule_version_id, reviewer_id=actor_id,
+                expected_revision=body.expected_revision, reason=body.reason,
+                effective_from=body.effective_from),
+            approval=(schedule_version_id, actor_id, organization_id))
 
     @router.get("/schedule-versions/{schedule_version_id}/export")
     def export_schedule(schedule_version_id: UUID, user: User, session: Db,
@@ -1245,7 +1371,9 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             db.PatientSchedule.status == "ACTIVE",
         ).order_by(db.PatientSchedule.generated_at.desc()))
         if patient_schedule is None or patient_schedule.current_evaluation_id is None:
-            return {"patient_id": str(patient_id), "status": "NOT_EVALUATED", "events": []}
+            return {"patient_id": str(patient_id), "status": "NOT_EVALUATED", "events": [],
+                    "trial_id": str(patient.trial_id),
+                    "external_patient_id": patient.external_patient_id}
         events = list(session.scalars(select(db.PatientEvent).where(
             db.PatientEvent.schedule_evaluation_id == patient_schedule.current_evaluation_id,
         ).order_by(db.PatientEvent.nominal_start_date, db.PatientEvent.occurrence_index)))
@@ -1311,6 +1439,8 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
             ).repeat_summaries
             repeat_rules = [item.model_dump(mode="json") for item in summaries]
         return {
+            "trial_id": str(patient.trial_id),
+            "external_patient_id": patient.external_patient_id,
             "patient_id": str(patient_id), "status": patient_schedule.status,
             "schedule_version_id": str(patient_schedule.schedule_version_id),
             "evaluation_id": str(patient_schedule.current_evaluation_id),
@@ -1432,7 +1562,8 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         """
         _, organization_id = _identity(user)
         result = DashboardService(session).actions(
-            organization_id=organization_id, trial_id=trial_id, today=today)
+            organization_id=organization_id, trial_id=trial_id, today=today,
+            trial_ids=user["_authz"].allowed_trial_ids)
         payload = result.model_dump(mode="json")
         counts: dict[str, int] = {}
         for action in result.actions:
@@ -1803,6 +1934,8 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         patient_id: UUID, body: ImpactPreviewIn, user: User, session: Db,
     ):
         actor_id, organization_id = _identity(user)
+        if body.process_transition is not None:
+            _require_high_impact(user)           # before anything is built or stored
         patient = session.scalar(select(db.Patient).where(
             db.Patient.id == patient_id, db.Patient.organization_id == organization_id,
         ))
@@ -1843,6 +1976,11 @@ def create_uctsm_router(current_user_dependency: Callable[..., Any]) -> APIRoute
         proposal_id: UUID, body: ImpactConfirmIn, user: User, session: Db,
     ):
         actor_id, organization_id = _identity(user)
+        # The right is derived from the TRUSTED stored proposal (not the request), on
+        # every confirm including a replay of an already-confirmed one.
+        stored = session.get(db.ScheduleImpactProposal, proposal_id)   # scoped by the guard
+        if stored is not None and (stored.impact or {}).get("process_transition"):
+            _require_high_impact(user)
         try:
             proposal, evaluation, events = PatientScheduleImpactService(session).confirm(
                 proposal_id, organization_id=organization_id,

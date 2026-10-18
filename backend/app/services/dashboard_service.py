@@ -90,6 +90,7 @@ class DashboardService:
         organization_id: UUID,
         trial_id: UUID | None = None,
         today: date | None = None,
+        trial_ids: "frozenset[UUID] | None" = None,
     ) -> DashboardResult:
         today = today or date.today()
         result = DashboardResult(
@@ -97,6 +98,9 @@ class DashboardService:
         query = select(db.Patient).where(db.Patient.organization_id == organization_id)
         if trial_id is not None:
             query = query.where(db.Patient.trial_id == trial_id)
+        if trial_ids is not None:
+            # Constrained in the query: unauthorised patients are never loaded.
+            query = query.where(db.Patient.trial_id.in_(list(trial_ids)))
         patients = list(self.session.scalars(query))
         if not patients:
             return result

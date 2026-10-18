@@ -40,10 +40,12 @@ def references_event(schedule: UniversalSchedule, code: str) -> bool:
             # an event may count from its own previous occurrence
             payload.pop("code", None)
             payload.pop("activities", None)
-            timing = payload.get("timing")
-            if _mentions(timing, code, skip=_IDENTITY_KEYS) \
-                    or _mentions(payload.get("recurrence"), code, skip=_IDENTITY_KEYS) \
-                    or _mentions(payload.get("constraints"), code, skip=_IDENTITY_KEYS):
+            # Every field through which this event can count from ITS OWN earlier
+            # occurrence: timing, any recurrence form, constraints, and an
+            # explicit dependency on itself.
+            if any(_mentions(payload.get(field), code, skip=_IDENTITY_KEYS) for field in (
+                    "timing", "recurrence", "recurrence_plan", "calendar_recurrence",
+                    "constraints", "dependencies")):
                 return True
             continue
         if _mentions(payload, code, skip=_IDENTITY_KEYS):

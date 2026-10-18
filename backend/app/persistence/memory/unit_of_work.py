@@ -6,6 +6,13 @@ from typing import Any, Callable, TypeVar
 from uuid import UUID
 
 from app.application import schedule_documents as parts
+from app.application.amendments import (
+    AdoptionDecisionRecord,
+    AmendmentMappingSetRecord,
+    AmendmentPairRecord,
+    AmendmentSimulationRecord,
+    MappingDecisionRecord,
+)
 from app.application.authoring import (
     FROZEN_STATUSES,
     ExtractionRunRecord,
@@ -30,6 +37,7 @@ from app.application.patients import (
     ImpactProposalRecord,
     ParityRunRecord,
     OccurrenceRecord,
+    PatientCommandRecord,
     PatientAnchorRecord,
     PatientConditionRecord,
     PatientEventRecord,
@@ -40,6 +48,8 @@ from app.application.patients import (
 )
 from app.application.records import AuditRecord, CommandReceiptRecord, OutboxRecord
 from app.domain.schedule.models import Event, UniversalSchedule, ValidationIssue
+
+from .amendment_repository import InMemoryAmendmentRepository
 
 T = TypeVar("T")
 
@@ -68,10 +78,17 @@ class _Store:
         self.confinements: dict[UUID, list[ConfinementEpisodeRecord]] = {}
         self.pointers: dict[tuple[UUID, UUID], PatientScheduleRecord] = {}
         self.receipts: list[CommandReceiptRecord] = []
+        self.patient_commands: list[PatientCommandRecord] = []
         self.proposals: dict[UUID, ImpactProposalRecord] = {}
         self.parity_runs: dict[UUID, ParityRunRecord] = {}
         self.assignments: list[AssignmentRecord] = []
         self.outbox: list[OutboxRecord] = []
+        # amendment plane (P6)
+        self.amendment_pairs: dict[UUID, AmendmentPairRecord] = {}
+        self.amendment_mapping_sets: dict[UUID, AmendmentMappingSetRecord] = {}
+        self.amendment_mapping_decisions: list[MappingDecisionRecord] = []
+        self.amendment_simulations: dict[UUID, AmendmentSimulationRecord] = {}
+        self.amendment_decisions: dict[UUID, AdoptionDecisionRecord] = {}
 
 
 def _now() -> datetime:
@@ -296,6 +313,14 @@ class InMemoryScheduleVersionRepository:
             raise ImmutableRecordError("approved schedule versions cannot be edited")
         return row
 
+    @staticmethod
+    def _bump(row: dict[str, Any]) -> None:
+        """A content edit moves the header revision, so an approval that hashed the
+        content before the edit cannot be committed over it."""
+        header: ScheduleVersionHeader = row["header"]
+        row["header"] = header.model_copy(update={
+            "revision": header.revision + 1, "updated_at": _now()})
+
     def get_header(self, schedule_version_id: UUID) -> ScheduleVersionHeader:
         return self._version(schedule_version_id)["header"].model_copy(deep=True)
 
@@ -370,16 +395,42 @@ class InMemoryScheduleVersionRepository:
         if stored is None:
             raise RecordNotFoundError("event definition not found")
         codes = {item["code"] for item in row["events"].values()} | {event.code}
+        parts.check_track_references(
+            [event], {UUID(str(item["id"])) for item in row["content"].get("tracks", [])})
         if any(item["code"] == event.code and key != event.id for key, item in row["events"].items()):
             raise DuplicateRecordError(
                 f"event code {event.code!r} already exists in this schedule version", key=event.code)
         document = parts._event_document(event, valid_codes=codes)
         old_code = stored["code"]
+        self._bump(row)
         row["events"][event.id] = copy.deepcopy(document)
         if old_code != event.code:
             for key, other in row["events"].items():
                 if key != event.id:
                     parts.rename_dependency_source(other["event"], old_code, event.code)
+
+    def add_event(self, schedule_version_id: UUID, event: Event) -> None:
+        row = self._editable(schedule_version_id)
+        if any(item["code"] == event.code for item in row["events"].values()):
+            raise DuplicateRecordError(
+                f"event code {event.code!r} already exists in this schedule version", key=event.code)
+        codes = {item["code"] for item in row["events"].values()} | {event.code}
+        parts.check_track_references(
+            [event], {UUID(str(item["id"])) for item in row["content"].get("tracks", [])})
+        self._bump(row)
+        row["events"][event.id] = copy.deepcopy(parts._event_document(event, valid_codes=codes))
+
+    def replace_support(self, schedule_version_id: UUID, schedule: UniversalSchedule) -> None:
+        row = self._editable(schedule_version_id)
+        header: ScheduleVersionHeader = row["header"]
+        built = parts.build_parts(
+            schedule, definition=self._s.definitions[header.schedule_definition_id],
+            extraction_run_id=header.extraction_run_id)
+        row["content"] = copy.deepcopy(built["content"])
+        row["evidence"] = copy.deepcopy(built["evidence"])
+        row["claims"] = copy.deepcopy(built["claims"])
+        row["header"] = header.model_copy(update={
+            "revision": header.revision + 1, "updated_at": _now()})
 
     def replace_validation_issues(
         self, schedule_version_id: UUID, issues: list[ValidationIssue],
@@ -425,6 +476,9 @@ class InMemoryScheduleVersionRepository:
         self, schedule_version_id: UUID, *, to_status: str, expected: set[str] | None = None,
         rejection_reason: str | None = None,
     ) -> ScheduleVersionHeader:
+        if to_status == "APPROVED":
+            raise ImmutableRecordError(
+                "a version is approved only through mark_approved, which stamps its content hash")
         allowed = (lambda status: status in expected) if expected is not None \
             else (lambda status: status not in FROZEN_STATUSES)
         update: dict[str, Any] = {"status": to_status}
@@ -436,13 +490,61 @@ class InMemoryScheduleVersionRepository:
 
     def mark_approved(
         self, schedule_version_id: UUID, *, reviewer_id: UUID, approved_at: datetime,
-        effective_from: date | None,
+        effective_from: date | None, content_hash: str | None = None,
+        content_hash_version: str | None = None, header_integrity_hash: str | None = None,
+        expected_revision: int | None = None,
     ) -> ScheduleVersionHeader:
+        if content_hash is None:
+            header = self._version(schedule_version_id)["header"]
+            if header.status == "IN_REVIEW":
+                stamp = parts.approval_stamp(
+                    header, self.get(schedule_version_id), reviewer_id=reviewer_id,
+                    approved_at=approved_at, effective_from=effective_from)
+                content_hash = stamp["content_hash"]
+                content_hash_version = stamp["content_hash_version"]
+                header_integrity_hash = stamp["header_integrity_hash"]
+        if expected_revision is not None:
+            header = self._version(schedule_version_id)["header"]
+            if header.revision != expected_revision and header.status == "IN_REVIEW":
+                raise StaleRevisionError("the schedule version changed after it was read for approval")
         return self._guarded(
             schedule_version_id, lambda status: status == "IN_REVIEW",
             {"status": "APPROVED", "approved_by": reviewer_id, "approved_at": approved_at,
-             "effective_from": effective_from},
+             "effective_from": effective_from, "content_hash": content_hash,
+             "content_hash_version": content_hash_version,
+             "header_integrity_hash": header_integrity_hash},
             "only an in-review schedule can be approved")
+
+    def set_lineage(
+        self, schedule_version_id: UUID, based_on_schedule_version_id: UUID,
+    ) -> ScheduleVersionHeader:
+        row = self._version(schedule_version_id)
+        header: ScheduleVersionHeader = row["header"]
+        if header.based_on_schedule_version_id == based_on_schedule_version_id:
+            return header.model_copy(deep=True)
+        if header.status in FROZEN_STATUSES or header.based_on_schedule_version_id is not None:
+            raise ImmutableRecordError("the amendment lineage of this version is fixed")
+        return self._guarded(
+            schedule_version_id, lambda status: status not in FROZEN_STATUSES,
+            {"based_on_schedule_version_id": based_on_schedule_version_id},
+            "cannot set the lineage of a frozen version")
+
+    def record_material_edit(
+        self, schedule_version_id: UUID, *, editor_id: UUID, at: datetime,
+    ) -> ScheduleVersionHeader:
+        row = self._version(schedule_version_id)
+        header: ScheduleVersionHeader = row["header"]
+        if header.status in FROZEN_STATUSES:
+            raise ImmutableRecordError(
+                f"cannot record an edit on a frozen version (current status {header.status})")
+        editors = [*header.material_editor_ids]
+        if editor_id not in editors:
+            editors.append(editor_id)
+        row["header"] = header.model_copy(update={
+            "last_material_editor_id": editor_id, "last_material_edit_at": at,
+            "material_editor_ids": editors, "updated_at": _now(),
+            "revision": header.revision + 1})
+        return row["header"].model_copy(deep=True)
 
     def add_decision(self, record: ReviewDecisionRecord) -> None:
         self._version(record.schedule_version_id)
@@ -492,6 +594,19 @@ class InMemoryPatientRepository:
                 return item.model_copy(deep=True)
         return None
 
+    def list_page_for_trial(self, organization_id: UUID, trial_id: UUID, *,
+                            after_code: str | None, limit: int):
+        rows = [item for item in self._s.patients.values()
+                if item.organization_id == organization_id and item.trial_id == trial_id
+                and (after_code is None or item.patient_code > after_code)]
+        rows.sort(key=lambda item: (item.patient_code, str(item.id)))
+        return [item.model_copy(deep=True) for item in rows[:limit]]
+
+    def find_owner_by_external_id(self, trial_id: UUID, external_patient_id: str):
+        rows = [item for item in self._s.patients.values()
+                if item.trial_id == trial_id and item.external_patient_id == external_patient_id]
+        return rows[0].model_copy(deep=True) if len(rows) == 1 else None
+
     def list_for_organization(self, organization_id: UUID, *, trial_id: UUID | None = None):
         rows = [item for item in self._s.patients.values()
                 if item.organization_id == organization_id
@@ -511,9 +626,18 @@ class InMemoryPatientRepository:
         row = self._s.patients.get(record.id)
         if row is None or row.organization_id != record.organization_id or row.revision != record.revision:
             raise StaleRevisionError("the patient changed since it was read")
-        stored = record.model_copy(update={"revision": record.revision + 1, "updated_at": _now()}, deep=True)
+        stored = record.model_copy(update={
+            "revision": record.revision + 1, "updated_at": _now(),
+            "input_revision": row.input_revision}, deep=True)
         self._s.patients[record.id] = stored
         return stored.model_copy(deep=True)
+
+    def guard_inputs(self, organization_id: UUID, patient_id: UUID, expected_input_revision: int) -> None:
+        row = self._s.patients.get(patient_id)
+        if row is None or row.organization_id != organization_id:
+            raise RecordNotFoundError("patient not found")
+        if row.input_revision != expected_input_revision:
+            raise StaleRevisionError("the patient's clinical inputs changed since they were read")
 
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
@@ -535,8 +659,14 @@ class InMemoryPatientFactsRepository:
     def _copies(rows):
         return [item.model_copy(deep=True) for item in rows]
 
+    def _bump(self, patient_id: UUID) -> None:
+        row = self._s.patients.get(patient_id)
+        if row is not None:
+            row.input_revision += 1
+
     def add_anchor(self, record: PatientAnchorRecord) -> None:
         self._s.anchors.append(record.model_copy(deep=True))
+        self._bump(record.patient_id)
 
     def get_anchor(self, anchor_id: UUID) -> PatientAnchorRecord:
         for item in self._s.anchors:
@@ -551,6 +681,7 @@ class InMemoryPatientFactsRepository:
                     raise StaleRevisionError("anchor candidate is no longer pending confirmation")
                 item.status = "CONFIRMED"
                 item.metadata = dict(metadata)
+                self._bump(item.patient_id)
                 return item.model_copy(deep=True)
         raise StaleRevisionError("anchor candidate is no longer pending confirmation")
 
@@ -562,6 +693,7 @@ class InMemoryPatientFactsRepository:
 
     def append_state(self, record: PatientStateRecord) -> None:
         self._s.states.append(record.model_copy(deep=True))
+        self._bump(record.patient_id)
 
     def list_states(self, patient_id: UUID):
         rows = [item for item in self._s.states if item.patient_id == patient_id]
@@ -570,6 +702,7 @@ class InMemoryPatientFactsRepository:
 
     def add_condition(self, record: PatientConditionRecord) -> None:
         self._s.conditions[record.id] = record.model_copy(deep=True)
+        self._bump(record.patient_id)
 
     def list_current_conditions(self, patient_id: UUID):
         rows = [item for item in self._s.conditions.values()
@@ -585,6 +718,7 @@ class InMemoryPatientFactsRepository:
 
     def add_activity_entry(self, record: ActivityEntryRecord) -> None:
         self._s.activity_entries[record.id] = record.model_copy(deep=True)
+        self._bump(record.patient_id)
 
     def list_current_activity_entries(self, patient_id: UUID):
         rows = [item for item in self._s.activity_entries.values()
@@ -604,6 +738,7 @@ class InMemoryPatientFactsRepository:
 
     def add_unscheduled_visit(self, record: UnscheduledVisitRecord) -> None:
         self._s.unscheduled.append(record.model_copy(deep=True))
+        self._bump(record.patient_id)
 
     def list_unscheduled_visits(self, patient_id: UUID):
         rows = [item for item in self._s.unscheduled if item.patient_id == patient_id]
@@ -612,6 +747,7 @@ class InMemoryPatientFactsRepository:
 
     def add_occurrence(self, record: OccurrenceRecord) -> None:
         self._s.occurrences.append(record.model_copy(deep=True))
+        self._bump(record.patient_id)
 
     def list_occurrences(self, patient_id: UUID, *, schedule_version_id: UUID | None = None):
         rows = [item for item in self._s.occurrences if item.patient_id == patient_id
@@ -793,6 +929,46 @@ class InMemoryCommandRepository:
         self._s.receipts.append(record.model_copy(deep=True))
 
 
+class InMemoryPatientCommandRepository:
+    """Same uniqueness rules as the Mongo indexes, so memory tests prove them."""
+
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def add(self, record: PatientCommandRecord) -> None:
+        for row in self._s.patient_commands:
+            if row.patient_id == record.patient_id and row.sequence == record.sequence:
+                raise DuplicateRecordError(
+                    "patient command sequence already used", key=str(record.sequence))
+            if (record.idempotency_key and row.organization_id == record.organization_id
+                    and row.patient_id == record.patient_id
+                    and row.idempotency_key == record.idempotency_key):
+                raise DuplicateRecordError(
+                    "patient command idempotency key already used", key=record.idempotency_key)
+            if row.id == record.id:
+                raise DuplicateRecordError("patient command already exists", key=str(record.id))
+        self._s.patient_commands.append(record.model_copy(deep=True))
+
+    def get(self, organization_id: UUID, command_id: UUID) -> PatientCommandRecord:
+        for row in self._s.patient_commands:
+            if row.id == command_id and row.organization_id == organization_id:
+                return row.model_copy(deep=True)
+        raise RecordNotFoundError("patient command not found")
+
+    def list_for_patient(self, organization_id: UUID, patient_id: UUID):
+        rows = [row for row in self._s.patient_commands
+                if row.organization_id == organization_id and row.patient_id == patient_id]
+        rows.sort(key=lambda row: row.sequence)
+        return [row.model_copy(deep=True) for row in rows]
+
+    def find_by_idempotency(self, organization_id: UUID, patient_id: UUID, idempotency_key: str):
+        for row in self._s.patient_commands:
+            if (row.organization_id, row.patient_id, row.idempotency_key) == (
+                    organization_id, patient_id, idempotency_key):
+                return row.model_copy(deep=True)
+        return None
+
+
 class InMemoryOutboxRepository:
     def __init__(self, store: _Store):
         self._s = store
@@ -820,9 +996,11 @@ class InMemoryUnitOfWork:
         self.facts = InMemoryPatientFactsRepository(self._store)
         self.evaluations = InMemoryEvaluationRepository(self._store)
         self.commands = InMemoryCommandRepository(self._store)
+        self.ledger = InMemoryPatientCommandRepository(self._store)
         self.impacts = InMemoryImpactRepository(self._store)
         self.parity = InMemoryParityRepository(self._store)
         self.outbox = InMemoryOutboxRepository(self._store)
+        self.amendments = InMemoryAmendmentRepository(self._store)
 
     def run(self, fn: Callable[["InMemoryUnitOfWork"], T]) -> T:
         snapshot = copy.deepcopy(self._store.__dict__)

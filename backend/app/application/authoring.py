@@ -105,10 +105,25 @@ class ScheduleVersionHeader(Record):
     schedule_definition_id: UUID
     version_number: int
     status: str
+    #: P6-01: the earlier APPROVED version this one amends (set once, before approval).
+    #: The protocol/amendment reference is ``protocol_version_id`` (its version label,
+    #: amendment number and document hash live on the protocol version).
     based_on_schedule_version_id: UUID | None = None
+    #: P6-01: SHA-256 of the version's content, written in the SAME guarded write that
+    #: approves it. A later change to an approved version is detectable against it.
+    content_hash: str | None = None
+    #: the algorithm contract ``content_hash`` was computed under (None = hashless legacy)
+    content_hash_version: str | None = None
+    #: digest of the approval header (lineage, effective date, approver, hash), written
+    #: in the same guarded write; ``effective_from`` is not part of the content hash.
+    header_integrity_hash: str | None = None
     extraction_run_id: UUID | None = None
     approved_by: UUID | None = None
     approved_at: datetime | None = None
+    #: P3-04 maker-checker provenance (see ``app.authorization.maker_checker``).
+    last_material_editor_id: UUID | None = None
+    last_material_edit_at: datetime | None = None
+    material_editor_ids: list[UUID] = Field(default_factory=list)
     effective_from: date | None = None
     rejection_reason: str | None = None
     model_name: str | None = None

@@ -33,7 +33,7 @@ from app.db.base import Base
 from app.db.repositories import ScheduleRepository
 from app.domain.schedule.models import (
     Anchor, ClaimEvidence, Dependency, DependencyMode, Event, Evidence, OccurrenceFactKind,
-    RecurrenceRule, RecurrenceTermination, ScheduleMetadata, ScheduleStatus, UniversalSchedule,
+    RecurrenceBasis, RecurrenceRule, RecurrenceTermination, ScheduleMetadata, ScheduleStatus, UniversalSchedule,
 )
 from app.domain.schedule.timing import (
     AnchorReference, EventReference, OffsetTiming, PositiveTemporalAmount, TemporalAmount,
@@ -239,7 +239,10 @@ class RepoStack:
     def enrol(self, code: str, anchors: dict[str, date]) -> UUID:
         patient = PatientRecord(
             organization_id=self.organization_id, trial_id=self.trial_id, patient_code=code,
-            current_schedule_version_id=self.version_id)
+            current_schedule_version_id=self.version_id,
+            # A natively enrolled patient is explicitly authoritative in this plane; an
+            # unclassified one is (deliberately) refused clinical writes.
+            authority_plane="MONGO")
         self.uow.run(lambda tx: tx.patients.add(patient))
         for anchor_code, value in anchors.items():
             self.anchor(patient.id, anchor_code, value)
@@ -399,11 +402,15 @@ def test_completion_survives_a_baseline_change_that_moves_everything_else(sql_st
 
 def test_a_repeating_visit_protects_only_the_occurrence_that_happened(sql_stack, repo_stack):
     def build():
-        weekly = from_baseline("WEEKLY", 7, sequence=1)
+        # The first occurrence is the baseline itself and the series counts from the baseline:
+        # state that basis explicitly (an unstated one now blocks approval) instead of relying
+        # on a legacy start that disagrees with the event's own +7 day timing.
+        weekly = from_baseline("WEEKLY", 0, sequence=1)
         weekly.recurrence = RecurrenceRule(
             interval=PositiveTemporalAmount(value=7, unit="DAY"),
             start_reference=AnchorReference(code="BASELINE"),
-            termination=RecurrenceTermination(type="COUNT", count=4))
+            termination=RecurrenceTermination(type="COUNT", count=4),
+            basis=RecurrenceBasis.FIXED_ANCHOR_SERIES, basis_status="STATED")
         return schedule_of(weekly)
 
     def script(stack, patient, step):

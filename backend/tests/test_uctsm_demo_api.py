@@ -10,7 +10,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 from app.api.uctsm import create_uctsm_router
+from _authz_fixtures import map_operational_ids, permissive_authorizer
 from app.db import models as _models  # noqa: F401
 from app.db.base import Base, get_session
 
@@ -18,6 +24,7 @@ from app.db.base import Base, get_session
 USER = {
     "id": "00000000-0000-0000-0000-000000000001",
     "organization_id": "00000000-0000-0000-0000-000000000002",
+    "role": "pi", "status": "Active",
 }
 
 
@@ -40,11 +47,14 @@ def test_demo_screen_workflow_from_seed_through_patient_evaluation(monkeypatch):
             yield session
 
     app = FastAPI()
-    app.include_router(create_uctsm_router(authenticated_user))
+    app.include_router(create_uctsm_router(
+        authenticated_user,
+        authorizer=permissive_authorizer(USER["id"], USER["organization_id"])))
     app.dependency_overrides[get_session] = session_override
     client = TestClient(app)
 
     seeded = client.post("/api/uctsm/demo/seed")
+    map_operational_ids(client)
     assert seeded.status_code == 201, seeded.text
     workspace = seeded.json()
     version_id = workspace["schedule_version_id"]

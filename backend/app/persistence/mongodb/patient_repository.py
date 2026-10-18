@@ -117,6 +117,25 @@ class MongoPatientRepository(_Base):
              "external_patient_id": external_patient_id}, session=self._session)
         return from_document(PatientRecord, doc) if doc else None
 
+    def list_page_for_trial(
+        self, organization_id: UUID, trial_id: UUID, *, after_code: str | None, limit: int,
+    ) -> list[PatientRecord]:
+        query: dict[str, Any] = {"organization_id": organization_id, "trial_id": trial_id}
+        if after_code is not None:
+            query["patient_code"] = {"$gt": after_code}
+        cursor = self._db[PATIENTS].find(query, session=self._session).sort(
+            [("patient_code", ASCENDING), ("_id", ASCENDING)]).limit(limit)
+        return [from_document(PatientRecord, doc) for doc in cursor]
+
+    def find_owner_by_external_id(
+        self, trial_id: UUID, external_patient_id: str,
+    ) -> PatientRecord | None:
+        docs = list(self._db[PATIENTS].find(
+            {"trial_id": trial_id, "external_patient_id": external_patient_id},
+            session=self._session).limit(2))
+        # ambiguity (two owners for one external id) is refused, never first-match
+        return from_document(PatientRecord, docs[0]) if len(docs) == 1 else None
+
     def list_for_organization(
         self, organization_id: UUID, *, trial_id: UUID | None = None,
     ) -> list[PatientRecord]:
@@ -140,12 +159,28 @@ class MongoPatientRepository(_Base):
     def save(self, record: PatientRecord) -> PatientRecord:
         document = to_document(record.model_copy(update={
             "revision": record.revision + 1, "updated_at": datetime.now(timezone.utc)}))
-        result = self._db[PATIENTS].replace_one(
+        # ``input_revision`` belongs to the clinical-input writers: a stale copy never rewrites it.
+        fields = {key: value for key, value in document.items()
+                  if key not in {"_id", "input_revision"}}
+        stored = self._db[PATIENTS].find_one_and_update(
             {"_id": record.id, "organization_id": record.organization_id,
-             "revision": record.revision}, document, session=self._session)
-        if result.matched_count == 0:
+             "revision": record.revision}, {"$set": fields},
+            return_document=ReturnDocument.AFTER, session=self._session)
+        if stored is None:
             raise StaleRevisionError("the patient changed since it was read")
-        return from_document(PatientRecord, document)
+        return from_document(PatientRecord, stored)
+
+    def guard_inputs(self, organization_id: UUID, patient_id: UUID, expected_input_revision: int) -> None:
+        match: dict[str, Any] = {"_id": patient_id, "organization_id": organization_id}
+        if expected_input_revision == 0:
+            match["$or"] = [{"input_revision": 0}, {"input_revision": {"$exists": False}}]
+        else:
+            match["input_revision"] = expected_input_revision
+        # A real write (not a read): it conflicts with any concurrent input writer.
+        result = self._db[PATIENTS].update_one(
+            match, {"$inc": {"input_revision": 0}}, session=self._session)
+        if result.matched_count == 0:
+            raise StaleRevisionError("the patient's clinical inputs changed since they were read")
 
     def pin_schedule_version(
         self, organization_id: UUID, patient_id: UUID, schedule_version_id: UUID,
@@ -161,9 +196,16 @@ class MongoPatientRepository(_Base):
 
 
 class MongoPatientFactsRepository(_Base):
+    def _bump(self, patient_id: UUID) -> None:
+        """Every clinical-input write advances the patient's input sequence in the same
+        transaction (see ``PatientRecord.input_revision``)."""
+        self._db[PATIENTS].update_one(
+            {"_id": patient_id}, {"$inc": {"input_revision": 1}}, session=self._session)
+
     # anchors
     def add_anchor(self, record: PatientAnchorRecord) -> None:
         self._insert(ANCHORS, record, "patient anchor")
+        self._bump(record.patient_id)
 
     def get_anchor(self, anchor_id: UUID) -> PatientAnchorRecord:
         doc = self._db[ANCHORS].find_one({"_id": anchor_id}, session=self._session)
@@ -180,6 +222,7 @@ class MongoPatientFactsRepository(_Base):
             return_document=ReturnDocument.AFTER, session=self._session)
         if doc is None:
             raise StaleRevisionError("anchor candidate is no longer pending confirmation")
+        self._bump(doc["patient_id"])
         return from_document(PatientAnchorRecord, doc)
 
     def list_anchors(
@@ -194,6 +237,7 @@ class MongoPatientFactsRepository(_Base):
     # states
     def append_state(self, record: PatientStateRecord) -> None:
         self._insert(STATES, record, "patient state")
+        self._bump(record.patient_id)
 
     def list_states(self, patient_id: UUID) -> list[PatientStateRecord]:
         return self._list(STATES, PatientStateRecord, {"patient_id": patient_id},
@@ -202,6 +246,7 @@ class MongoPatientFactsRepository(_Base):
     # conditions
     def add_condition(self, record: PatientConditionRecord) -> None:
         self._insert(CONDITIONS, record, "patient condition")
+        self._bump(record.patient_id)
 
     def list_current_conditions(self, patient_id: UUID) -> list[PatientConditionRecord]:
         return self._list(
@@ -219,6 +264,7 @@ class MongoPatientFactsRepository(_Base):
     # intra-day activity entries
     def add_activity_entry(self, record: ActivityEntryRecord) -> None:
         self._insert(ACTIVITY_ENTRIES, record, "activity record")
+        self._bump(record.patient_id)
 
     def list_current_activity_entries(self, patient_id: UUID) -> list[ActivityEntryRecord]:
         return self._list(
@@ -242,6 +288,7 @@ class MongoPatientFactsRepository(_Base):
     # unscheduled visits
     def add_unscheduled_visit(self, record: UnscheduledVisitRecord) -> None:
         self._insert(UNSCHEDULED, record, "unscheduled visit")
+        self._bump(record.patient_id)
 
     def list_unscheduled_visits(self, patient_id: UUID) -> list[UnscheduledVisitRecord]:
         return self._list(UNSCHEDULED, UnscheduledVisitRecord, {"patient_id": patient_id},
@@ -250,6 +297,7 @@ class MongoPatientFactsRepository(_Base):
     # occurrence facts, keyed by the LOGICAL visit
     def add_occurrence(self, record: OccurrenceRecord) -> None:
         self._insert(OCCURRENCES, record, "occurrence fact")
+        self._bump(record.patient_id)
 
     def list_occurrences(
         self, patient_id: UUID, *, schedule_version_id: UUID | None = None,

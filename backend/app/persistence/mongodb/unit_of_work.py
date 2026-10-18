@@ -18,6 +18,7 @@ from pymongo.read_concern import ReadConcern
 from pymongo.read_preferences import ReadPreference
 from pymongo.write_concern import WriteConcern
 
+from .amendment_repository import MongoAmendmentRepository
 from .audit_repository import MongoAuditRepository
 from .authoring_repository import MongoAuthoringRepository
 from .patient_repository import (
@@ -29,6 +30,7 @@ from .patient_repository import (
     MongoPatientFactsRepository,
     MongoPatientRepository,
 )
+from .command_repository import MongoPatientCommandRepository
 from .schedule_repository import MongoScheduleVersionRepository
 
 T = TypeVar("T")
@@ -49,9 +51,11 @@ class BoundUnitOfWork:
         self.facts = MongoPatientFactsRepository(database, session)
         self.evaluations = MongoEvaluationRepository(database, session)
         self.commands = MongoCommandRepository(database, session)
+        self.ledger = MongoPatientCommandRepository(database, session)
         self.impacts = MongoImpactRepository(database, session)
         self.parity = MongoParityRepository(database, session)
         self.outbox = MongoOutboxRepository(database, session)
+        self.amendments = MongoAmendmentRepository(database, session)
 
     def run(self, fn):  # pragma: no cover - guard
         raise RuntimeError("nested units of work are not allowed")

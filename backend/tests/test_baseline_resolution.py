@@ -314,8 +314,10 @@ def test_ambiguous_baseline_blocks_approval_even_after_the_symptom_is_patched():
 
         service.submit_for_review(row.schedule_version_id, actor_id=journey.REVIEWER)
         journey.review_every_field(session, row.schedule_version_id)
+        # The editor made the material change, so (default-on maker-checker) they could not
+        # approve at all; an INDEPENDENT approver is used so the assertion is about the ambiguity.
         with pytest.raises(ValueError, match="approval blocked"):
-            service.approve(row.schedule_version_id, reviewer_id=journey.REVIEWER)
+            service.approve(row.schedule_version_id, reviewer_id=journey.uuid4())
 
 
 def test_a_plan_with_no_anchors_states_its_origin_explicitly():

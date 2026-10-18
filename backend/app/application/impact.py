@@ -28,6 +28,7 @@ from app.domain.schedule.models import (
     AssignmentFact, ConditionState, EvaluationResult, PatientConditionStatus, ProcessTransition,
 )
 
+from .authority import require_command_plane_authority
 from .errors import DuplicateRecordError, StaleRevisionError
 from .patient_schedule import (
     ASSIGNMENT_FACT_STATE_CODE, PROCESS_TRANSITION_STATE_CODE, PatientScheduleService,
@@ -87,6 +88,7 @@ class PatientScheduleImpactService:
     ) -> ImpactProposalRecord:
         def work(tx: UnitOfWork) -> ImpactProposalRecord:
             patient = tx.patients.get(organization_id, patient_id)
+            require_command_plane_authority(patient)
             source_id = patient.current_schedule_version_id
             if source_id is None:
                 raise ValueError("patient is not pinned to an approved schedule")
@@ -108,7 +110,10 @@ class PatientScheduleImpactService:
                 condition_overrides=overrides, **self._anchor_override_kwargs(anchor_change),
                 state_overrides=state_override,
                 process_transition_overrides=[transition] if transition else None,
-                assignment_fact_overrides=facts or None)
+                assignment_fact_overrides=facts or None,
+                # The proposed move is the explicit mapping: the source version's
+                # recorded visits carry into the target's evaluation.
+                carry_from_versions=[source_id])
             prior = self.patient_schedules.current_events(tx, patient.id, source_id)
             protected = self.patient_schedules.protected_event_keys(tx, patient.id, prior)
             impact = compute_schedule_diff(prior, result, protected)
@@ -162,6 +167,7 @@ class PatientScheduleImpactService:
     ):
         proposal = tx.impacts.get(proposal_id)
         patient = tx.patients.get(organization_id, proposal.patient_id)
+        require_command_plane_authority(patient)
         if proposal.status != "PENDING":
             raise ValueError(f"impact proposal is {proposal.status.lower()}")
         expires_at = proposal.expires_at
@@ -196,7 +202,8 @@ class PatientScheduleImpactService:
             horizon=proposal.horizon, condition_overrides=overrides,
             **self._anchor_override_kwargs(anchor_change), state_overrides=state_override,
             process_transition_overrides=[transition] if transition else None,
-            assignment_fact_overrides=facts or None)
+            assignment_fact_overrides=facts or None,
+            carry_from_versions=[proposal.from_schedule_version_id])
         prior = self.patient_schedules.current_events(
             tx, patient.id, proposal.from_schedule_version_id)
         protected = self.patient_schedules.protected_event_keys(tx, patient.id, prior)

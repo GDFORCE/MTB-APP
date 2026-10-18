@@ -17,7 +17,7 @@ from _scenario_harness import check_invariants, new_trial, reminder_keys, status
 from app.domain.schedule.condition import ComparisonCondition, FieldOperand, LiteralOperand
 from app.domain.schedule.deviation import DeviationType
 from app.domain.schedule.models import (
-    ConditionalAction, ConditionalDefinition, ConditionState, RecurrenceRule,
+    ConditionalAction, ConditionalDefinition, ConditionState, RecurrenceBasis, RecurrenceRule,
     RecurrenceTermination, RepeatBlock, RuleScope,
 )
 from app.domain.schedule.timing import (
@@ -301,8 +301,14 @@ def response_schedule():
         reference=AnchorReference(code="CR_DATE"), offset=TemporalAmount(value=8, unit=TimeUnit.WEEK),
     ), recurrence=RecurrenceRule(
         interval=PositiveTemporalAmount(value=8, unit=TimeUnit.WEEK),
-        start_reference=AnchorReference(code="CR_DATE"), include_start=False,
+        start_reference=AnchorReference(code="CR_DATE"),
         termination=RecurrenceTermination(type="HORIZON"),
+        # Maintenance "every 8 weeks, the first one 8 weeks after CR". A start offset that
+        # disagrees with the event's own timing, or an unstated basis, is ambiguous and cannot
+        # be approved; the first occurrence (CR + 8 weeks) and the series basis are stated
+        # here explicitly, as a reviewer would, instead of left to a legacy reading.
+        start_offset=TemporalAmount(value=8, unit=TimeUnit.WEEK),
+        basis=RecurrenceBasis.FIXED_ANCHOR_SERIES, basis_status="STATED",
     ), event_type="TREATMENT")
     survival = visit("SURVIVAL_FOLLOW_UP", OffsetTiming(
         reference=AnchorReference(code="PROGRESSION_DATE"), offset=days(30)),

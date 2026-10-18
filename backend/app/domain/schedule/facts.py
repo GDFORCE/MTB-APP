@@ -56,6 +56,8 @@ class OccurrenceFacts:
         booking: dict[tuple[str, int], OccurrenceFact] = {}
         for item in effective_occurrence_facts(facts):
             key = (item.event_code, item.occurrence_index)
+            if item.kind == OccurrenceFactKind.TREATMENT:
+                continue       # a treatment-only fact is neither an outcome nor a booking
             if item.kind == OccurrenceFactKind.BOOKED:
                 booking[key] = item
             else:
@@ -116,10 +118,10 @@ def _outside_permitted(item: EvaluatedEvent, booked: date | datetime | None) -> 
     if timing is None:
         return None
     value = _as_date(booked)
-    lower = timing.earliest if timing.earliest is not None else (
-        timing.nominal_start if timing.latest is None else None)
-    upper = timing.latest if timing.latest is not None else (
-        timing.nominal_end or timing.nominal_start if timing.earliest is None else None)
+    # Only bounds the protocol actually STATES count. A target with no stated
+    # window is not a zero-width window: with neither bound known the verdict is
+    # "cannot be evaluated" (None), never a fabricated outside-window flag.
+    lower, upper = timing.earliest, timing.latest
     if lower is None and upper is None:
         return None
     if lower is not None and value < _as_date(lower):

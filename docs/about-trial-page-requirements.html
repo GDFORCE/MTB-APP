@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>About Trial page &mdash; requirements and role visibility</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <span id="markdown-mermaid" aria-hidden="true" data-config="{&quot;darkModeTheme&quot;:&quot;vscode&quot;,&quot;lightModeTheme&quot;:&quot;vscode&quot;,&quot;maxTextSize&quot;:50000,&quot;clickDrag&quot;:&quot;alt&quot;,&quot;showControls&quot;:&quot;onHoverOrFocus&quot;,&quot;resizable&quot;:true,&quot;maxHeight&quot;:&quot;&quot;}"></span>
+				<h1 id="about-trial-page--requirements-and-role-visibility">About Trial page — requirements and role visibility</h1>
+<p>As of 2026-10-06</p>
+<p>The About Trial page shows one trial only to people who have a relationship with it. Patients see plain-language study information and their own schedule; site staff and sponsors see operational data with subjects de-identified; platform admins see aggregates only. The server must send each role only its own fields. Hiding a field in the app is not enough.</p>
+<h2 id="who-sees-what">Who sees what</h2>
+<table>
+<thead>
+<tr>
+<th>Information</th>
+<th>Patient</th>
+<th>PI / CRC</th>
+<th>Sponsor / CRO</th>
+<th>Platform admin</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Study identity: title, protocol ID, CTRI number, phase, condition, sponsor, status, duration</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Overview text, risks, side effects</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Study medication name</td>
+<td>Yes, unless blinded (Q2)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Study emergency contact</td>
+<td>Yes, with call button</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Visits</td>
+<td>Own visits only</td>
+<td>Per subject</td>
+<td>Current visit per subject</td>
+<td>Counts only</td>
+</tr>
+<tr>
+<td>Protocol schedule and versions</td>
+<td>No</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Version and status only</td>
+</tr>
+<tr>
+<td>Medication dose and times</td>
+<td>Own only</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Care team contacts</td>
+<td>Own PI and CRC only</td>
+<td>Whole trial team</td>
+<td>Whole trial team</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Sites</td>
+<td>Own site name only</td>
+<td>All sites</td>
+<td>All sites</td>
+<td>Count only</td>
+</tr>
+<tr>
+<td>Recruitment funnel and enrolment target</td>
+<td>No</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Totals only</td>
+</tr>
+<tr>
+<td>Subject list</td>
+<td>No</td>
+<td>Subject ID and initials</td>
+<td>Subject ID and initials</td>
+<td>Masked ID and initials</td>
+</tr>
+<tr>
+<td>Trial documents, including the protocol</td>
+<td>No (Q3)</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Created by, last modified</td>
+<td>No</td>
+<td>Yes</td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>FAQ</td>
+<td>Yes</td>
+<td>No</td>
+<td>No</td>
+<td>No</td>
+</tr>
+</tbody>
+</table>
+<p>SMO and Site organisation accounts are left out of this table because what they should see is not decided (Q1).</p>
+<h2 id="page-content">Page content</h2>
+<p><strong>Patient view:</strong> six tabs in plain language: Overview, Visit schedule, Medication, Risks and side effects, Contacts, FAQ.</p>
+<p><strong>Staff and sponsor view:</strong> one shared screen with header, recruitment funnel, sites, trial team, patients, visit schedule and documents.</p>
+<ul>
+<li>A value nobody entered shows &quot;Not provided&quot;. The page never fills it with a default or an estimate.</li>
+<li>If one part fails to load, the rest still shows, with a notice and a retry button.</li>
+<li>A patient with no enrolment sees &quot;No enrolled study found&quot;, never another trial.</li>
+</ul>
+<h2 id="access-rules">Access rules</h2>
+<ul>
+<li><strong>Who can open it.</strong> Patient: enrolled in the trial through their own account. PI: created the trial, belongs to its organisation, is assigned to one of its subjects, or accepted an invitation. CRC: the same, without the organisation route. Sponsor and CRO: the trial is owned by or granted to their organisation. Platform admin: every trial, through the admin console only.</li>
+<li><strong>Everyone else</strong> is refused, and the trial does not appear in their lists.</li>
+<li><strong>Patient privacy.</strong> Nobody sees a patient's name, phone, email or date of birth on this page. Subjects appear as subject ID and initials.</li>
+<li><strong>Actions.</strong> Edit trial details: the owning sponsor or CRO, or the PI who created the trial. Add patient: PI and CRC. Add site: sponsor and CRO. Upload document: sponsor, CRO, PI and CRC. Patients and platform admins have no edit actions.</li>
+</ul>
+<h2 id="not-met-today">Not met today</h2>
+<ul>
+<li>The trial list the patient app calls (<code>GET /trials</code>) returns the full trial record, including enrolment count, target, creator and site names. The patient screen does not show them, but the server sends them.</li>
+<li>The contact lookup behind the Contacts tab (<code>GET /messaging/recipients</code>) returns full user records for the care team, not only name, role, phone and email.</li>
+<li>SMO and Site accounts pass the trial access check but are refused by the recruitment, subjects, team, documents and versions calls, so the staff view cannot load for them. Found by reading the code, not reproduced in the running app.</li>
+<li>When duration is not entered, the patient view shows a figure worked out from the first and last visit dates, without saying it is an estimate.</li>
+<li>The patient screen is English only. Hindi translations exist in the app, but this screen does not use them.</li>
+</ul>
+<h2 id="open-questions">Open questions</h2>
+<ul class="contains-task-list">
+<li class="task-list-item enabled"><input class="task-list-item-checkbox"type="checkbox"> Q1. What should SMO and Site organisation accounts see?</li>
+<li class="task-list-item enabled"><input class="task-list-item-checkbox"type="checkbox"> Q2. In a blinded trial, may the patient see the study medication name?</li>
+<li class="task-list-item enabled"><input class="task-list-item-checkbox"type="checkbox"> Q3. Should patients get documents here, such as the consent form and information sheet, and who publishes them?</li>
+<li class="task-list-item enabled"><input class="task-list-item-checkbox"type="checkbox"> Q4. Who approves the overview, risks and side-effect text before patients see it? Today the text typed into the trial form goes straight to patients.</li>
+<li class="task-list-item enabled"><input class="task-list-item-checkbox"type="checkbox"> Q5. Is the FAQ one list for all trials, as today, or one per trial?</li>
+</ul>
+
+            
+            
+        </body>
+        </html>

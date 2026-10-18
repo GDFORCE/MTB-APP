@@ -16,7 +16,7 @@ from app.application.authoring import ProtocolRecord, ProtocolVersionRecord, Tri
 from app.application.extraction import ExtractionService
 from app.domain.schedule.models import UniversalSchedule
 from app.extraction import runner
-from app.extraction.contracts import ExtractionResult
+from app.extraction.contracts import DocumentPage, ExtractionResult
 from app.extraction.llm_client import ExtractionNotConfigured
 from test_mongo_parity_extraction import native_schedule
 
@@ -45,11 +45,20 @@ def queued(uow):
     return uow, run, version
 
 
-def fake_pages(monkeypatch, *, results=None, error=None):
+#: The stored document states the protocol number the version was created with,
+#: so it passes the worker's identity gate (P2-02).
+IDENTIFIED = [DocumentPage(
+    page_number=1, text="PROTOCOL\nProtocol Number: ABC-1\nSchedule of Assessments follows.")]
+
+
+def fake_pages(monkeypatch, *, results=None, error=None, pages=None):
+    calls = {"extract": 0}
+
     async def load(_uri):
-        return [], None
+        return (IDENTIFIED if pages is None else pages), None
 
     def extract(*_args, **_kwargs):
+        calls["extract"] += 1
         if error is not None:
             raise error
         return results
@@ -57,6 +66,7 @@ def fake_pages(monkeypatch, *, results=None, error=None):
     monkeypatch.setattr(runner, "load_pages", load)
     monkeypatch.setattr(runner, "extract_schedules", extract)
     monkeypatch.setattr(runner, "storage_artifacts", lambda: None)
+    return calls
 
 
 def test_a_successful_run_completes_and_returns_the_new_draft_versions(queued, monkeypatch):
@@ -98,6 +108,39 @@ def test_an_unconfigured_engine_fails_the_run_with_the_reason(queued, monkeypatc
     stored = uow.read(lambda tx: tx.authoring.get_run(run.id))
     assert stored.status == "FAILED"
     assert "not configured" in stored.error_details["message"]
+
+
+@pytest.mark.parametrize("pages,issue", [
+    ([DocumentPage(page_number=1, text="PROTOCOL\nProtocol Number: OTHER-9\nbody " * 4)],
+     "EXPECTED_IDENTIFIER_CONFLICT"),
+    ([DocumentPage(page_number=1, text="A study with no stated identity. " * 6)],
+     "EXPECTED_IDENTIFIER_NOT_STATED"),
+    ([DocumentPage(page_number=1, text="", text_status="image_or_empty")], "NO_USABLE_TEXT"),
+])
+def test_a_document_that_fails_identity_never_reaches_the_extraction_engine(
+        queued, monkeypatch, pages, issue):
+    uow, run, _version = queued
+    calls = fake_pages(monkeypatch, results=[], pages=pages)
+
+    assert asyncio.run(runner.execute_run_on_ports(uow, run.id)) is None
+
+    assert calls["extract"] == 0                         # no model call, no compile
+    stored = uow.read(lambda tx: tx.authoring.get_run(run.id))
+    assert stored.status == "FAILED"
+    assert "ProtocolIdentityBlocked" in stored.error_details["message"]
+    assert uow.read(lambda tx: tx.schedules.list_headers(organization_id=ORG)) == []
+    import protocol_identity_runtime as gate
+    blocked = gate.service().list_for_review(ORG)
+    assert any(issue in [i.code for i in row.issues] and row.stage == "WORKER" for row in blocked)
+
+
+def test_a_document_that_states_the_expected_protocol_passes_the_worker_gate(queued, monkeypatch):
+    uow, run, _version = queued
+    schedule = UniversalSchedule.model_validate(native_schedule())
+    calls = fake_pages(monkeypatch, results=[(None, ExtractionResult(
+        schedule=schedule, issues=[], extraction_trace=[]))])
+    assert asyncio.run(runner.execute_run_on_ports(uow, run.id))
+    assert calls["extract"] == 1
 
 
 def test_an_unknown_run_is_reported_not_swallowed(queued):

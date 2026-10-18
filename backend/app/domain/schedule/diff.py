@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field
 
@@ -45,6 +46,29 @@ class ChangeType(StrEnum):
     REPEAT_BLOCK_ADDED = "REPEAT_BLOCK_ADDED"
     REPEAT_BLOCK_REMOVED = "REPEAT_BLOCK_REMOVED"
     REPEAT_BLOCK_CHANGED = "REPEAT_BLOCK_CHANGED"
+    # P6: every other schedule concept an amendment can change. A concept the diff did
+    # not know about would otherwise be a silent difference between two versions.
+    ANCHOR_CHANGED = "ANCHOR_CHANGED"
+    TRACK_ADDED = "TRACK_ADDED"
+    TRACK_REMOVED = "TRACK_REMOVED"
+    TRACK_CHANGED = "TRACK_CHANGED"
+    TRACK_LINK_ADDED = "TRACK_LINK_ADDED"
+    TRACK_LINK_REMOVED = "TRACK_LINK_REMOVED"
+    TRACK_LINK_CHANGED = "TRACK_LINK_CHANGED"
+    TRACK_MEMBERSHIP_CHANGED = "TRACK_MEMBERSHIP_CHANGED"
+    POPULATION_ADDED = "POPULATION_ADDED"
+    POPULATION_REMOVED = "POPULATION_REMOVED"
+    POPULATION_CHANGED = "POPULATION_CHANGED"
+    PROCESS_ADDED = "PROCESS_ADDED"
+    PROCESS_REMOVED = "PROCESS_REMOVED"
+    PROCESS_CHANGED = "PROCESS_CHANGED"
+    CALENDAR_CHANGED = "CALENDAR_CHANGED"
+    EPOCH_CHANGED = "EPOCH_CHANGED"
+    CONDITIONAL_DEFINITION_CHANGED = "CONDITIONAL_DEFINITION_CHANGED"
+    CONFINEMENT_CHANGED = "CONFINEMENT_CHANGED"
+    EVENT_ATTRIBUTE_CHANGED = "EVENT_ATTRIBUTE_CHANGED"
+    # Only the cited source text / location of otherwise identical rules changed.
+    EVIDENCE_CHANGED = "EVIDENCE_CHANGED"
     OTHER = "OTHER"
 
 
@@ -62,6 +86,7 @@ ADMINISTRATIVE_CHANGES = frozenset({
     ChangeType.VISIT_RENAMED,
     ChangeType.WINDOW_WIDENED,
     ChangeType.CONSTRAINT_PROVENANCE_CHANGED,
+    ChangeType.EVIDENCE_CHANGED,
 })
 
 
@@ -169,8 +194,202 @@ def _classify(left: UniversalSchedule, right: UniversalSchedule) -> list[TypedCh
             f"{left_anchors[code].display_name} is no longer an anchor",
             entity_type="ANCHOR",
         ))
+    for code in sorted(left_anchors.keys() & right_anchors.keys()):
+        before, after = _clean(left_anchors[code]), _clean(right_anchors[code])
+        if before != after:
+            output.append(_typed(
+                ChangeType.ANCHOR_CHANGED, code,
+                f"{right_anchors[code].display_name} is derived differently",
+                entity_type="ANCHOR", detail="every date counted from this anchor is recalculated",
+                before=before, after=after))
     output.extend(_classify_repeat_blocks(left, right))
+    output.extend(_classify_structures(left, right))
     return output
+
+
+# --------------------------------------------------------------------------- P6 breadth
+#: keys that are identity or provenance, never schedule meaning
+_IDENTITY_KEYS = {"id", "evidence_refs"}
+
+
+def _clean(value: object) -> Any:
+    """A comparable form: identifiers and evidence links removed (they are regenerated
+    for every version), everything else kept."""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {key: _clean(item) for key, item in value.items() if key not in _IDENTITY_KEYS}
+    if isinstance(value, list):
+        return [_clean(item) for item in value]
+    return value
+
+
+def _by_code(items) -> dict[str, Any]:
+    return {getattr(item, "code"): item for item in items}
+
+
+def _collection_changes(
+    left_items, right_items, *, entity_type: str, noun: str,
+    added: ChangeType, removed: ChangeType, changed: ChangeType,
+    resolve: "dict[str, str] | None" = None, detail: str | None = None,
+) -> list[TypedChange]:
+    """Added / removed / changed rows of one keyed collection, matched by code."""
+    left_map, right_map = _by_code(left_items), _by_code(right_items)
+    output: list[TypedChange] = []
+    for code in sorted(right_map.keys() - left_map.keys()):
+        output.append(_typed(
+            added, code, f"{_label(right_map[code], code)} is a new {noun}",
+            entity_type=entity_type, after=_clean(right_map[code])))
+    for code in sorted(left_map.keys() - right_map.keys()):
+        output.append(_typed(
+            removed, code, f"{_label(left_map[code], code)} is no longer a {noun}",
+            entity_type=entity_type, before=_clean(left_map[code])))
+    for code in sorted(left_map.keys() & right_map.keys()):
+        before, after = _clean(left_map[code]), _clean(right_map[code])
+        if before == after:
+            continue
+        keys = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+        output.append(_typed(
+            changed, code, f"{_label(right_map[code], code)} changed ({', '.join(keys)})",
+            entity_type=entity_type, detail=detail,
+            before={key: before.get(key) for key in keys}, after={key: after.get(key) for key in keys}))
+    return output
+
+
+def _label(item: object, fallback: str) -> str:
+    return str(getattr(item, "display_name", None) or fallback)
+
+
+def _track_codes(schedule: UniversalSchedule) -> dict[object, str]:
+    return {track.id: track.code for track in schedule.tracks}
+
+
+def _classify_structures(left: UniversalSchedule, right: UniversalSchedule) -> list[TypedChange]:
+    """Every schedule concept beyond events/anchors/repeat blocks (P6-03).
+
+    Track and epoch references are compared by CODE, because their identifiers are
+    regenerated for every version."""
+    out: list[TypedChange] = []
+    out += _collection_changes(
+        left.tracks, right.tracks, entity_type="TRACK", noun="track",
+        added=ChangeType.TRACK_ADDED, removed=ChangeType.TRACK_REMOVED,
+        changed=ChangeType.TRACK_CHANGED,
+        detail="what may move this track's visits, and who may stop it, changed")
+    left_links = {(i.source_track_code, i.target_track_code): i for i in left.track_links}
+    right_links = {(i.source_track_code, i.target_track_code): i for i in right.track_links}
+    for key in sorted(right_links.keys() - left_links.keys()):
+        out.append(_typed(
+            ChangeType.TRACK_LINK_ADDED, f"{key[0]}->{key[1]}",
+            f"{key[0]} now affects {key[1]}", entity_type="TRACK_LINK",
+            after=_clean(right_links[key])))
+    for key in sorted(left_links.keys() - right_links.keys()):
+        out.append(_typed(
+            ChangeType.TRACK_LINK_REMOVED, f"{key[0]}->{key[1]}",
+            f"{key[0]} no longer affects {key[1]}", entity_type="TRACK_LINK",
+            before=_clean(left_links[key])))
+    for key in sorted(left_links.keys() & right_links.keys()):
+        if _clean(left_links[key]) != _clean(right_links[key]):
+            out.append(_typed(
+                ChangeType.TRACK_LINK_CHANGED, f"{key[0]}->{key[1]}",
+                f"how {key[0]} affects {key[1]} changed", entity_type="TRACK_LINK",
+                before=_clean(left_links[key]), after=_clean(right_links[key])))
+
+    left_tracks, right_tracks = _track_codes(left), _track_codes(right)
+    left_epochs = {item.id: item.code for item in left.epochs}
+    right_epochs = {item.id: item.code for item in right.epochs}
+    left_events, right_events = _by_code(left.events), _by_code(right.events)
+    for code in sorted(left_events.keys() & right_events.keys()):
+        before, after = left_events[code], right_events[code]
+        member_before = (before.track_scope, left_tracks.get(before.track_id))
+        member_after = (after.track_scope, right_tracks.get(after.track_id))
+        if member_before != member_after:
+            out.append(_typed(
+                ChangeType.TRACK_MEMBERSHIP_CHANGED, code,
+                f"{after.display_name} moved from {member_before[1] or member_before[0] or 'no track'} "
+                f"to {member_after[1] or member_after[0] or 'no track'}",
+                detail="the track decides what can move this visit",
+                before=list(member_before), after=list(member_after)))
+        if (left_epochs.get(before.epoch_id) != right_epochs.get(after.epoch_id)):
+            out.append(_typed(
+                ChangeType.EPOCH_CHANGED, code, f"{after.display_name} belongs to a different epoch",
+                before=left_epochs.get(before.epoch_id), after=right_epochs.get(after.epoch_id)))
+        out.extend(_residual_event_changes(before, after))
+        out.extend(_evidence_change(left, right, before, after))
+
+    for noun, ours, theirs in (
+            ("arm", left.arms, right.arms), ("cohort", left.cohorts, right.cohorts),
+            ("population", left.populations, right.populations),
+            ("dimension", left.dimensions, right.dimensions)):
+        out += _collection_changes(
+            ours, theirs, entity_type=noun.upper(), noun=noun,
+            added=ChangeType.POPULATION_ADDED, removed=ChangeType.POPULATION_REMOVED,
+            changed=ChangeType.POPULATION_CHANGED,
+            detail="who this applies to changed, so patients may be assigned differently")
+    out += _collection_changes(
+        left.processes, right.processes, entity_type="PROCESS", noun="process",
+        added=ChangeType.PROCESS_ADDED, removed=ChangeType.PROCESS_REMOVED,
+        changed=ChangeType.PROCESS_CHANGED,
+        detail="how a hold, pause or resume moves obligations changed")
+    for entity, ours, theirs, kind in (
+            ("HOLIDAY_CALENDAR", left.holiday_calendars, right.holiday_calendars,
+             ChangeType.CALENDAR_CHANGED),
+            ("EPOCH", left.epochs, right.epochs, ChangeType.EPOCH_CHANGED),
+            ("CONDITIONAL_DEFINITION", left.conditional_definitions, right.conditional_definitions,
+             ChangeType.CONDITIONAL_DEFINITION_CHANGED),
+            ("CONFINEMENT", left.confinement_episodes, right.confinement_episodes,
+             ChangeType.CONFINEMENT_CHANGED)):
+        out += _collection_changes(
+            ours, theirs, entity_type=entity, noun=entity.lower().replace("_", " "),
+            added=kind, removed=kind, changed=kind)
+    return out
+
+
+#: event fields compared by the dedicated rules in ``_classify_event`` / above
+_EVENT_COVERED = {
+    "id", "evidence_refs", "display_name", "timing", "window", "activities", "applicability",
+    "conditions", "dependencies", "recurrence", "recurrence_plan", "calendar_recurrence",
+    "constraints", "visit_mode", "allowed_visit_modes", "track_id", "track_scope", "epoch_id",
+    # provenance of how a rule was read, not what it says
+    "interpretation_status", "requires_review", "metadata", "normalized_name",
+}
+
+
+def _residual_event_changes(before, after) -> list[TypedChange]:
+    """Any event attribute no dedicated rule covers (event type, sequence, activation,
+    qualifiers, conditional actions, confinement, protocol label, ...). Reported as
+    clinical: an unclassified difference is one nobody has looked at yet."""
+    left_dump = before.model_dump(mode="json")
+    right_dump = after.model_dump(mode="json")
+    keys = sorted(key for key in (set(left_dump) | set(right_dump)) - _EVENT_COVERED
+                  if _clean(left_dump.get(key)) != _clean(right_dump.get(key)))
+    if not keys:
+        return []
+    if keys == ["protocol_label"]:
+        return [_typed(
+            ChangeType.VISIT_RENAMED, before.code,
+            f"the protocol now calls {after.display_name} {after.protocol_label!r}",
+            before=left_dump.get("protocol_label"), after=right_dump.get("protocol_label"))]
+    return [_typed(
+        ChangeType.EVENT_ATTRIBUTE_CHANGED, before.code,
+        f"{after.display_name} changed ({', '.join(keys)})",
+        before={key: _clean(left_dump.get(key)) for key in keys},
+        after={key: _clean(right_dump.get(key)) for key in keys})]
+
+
+def _evidence_change(left, right, before, after) -> list[TypedChange]:
+    def cited(schedule, event):
+        index = {item.id: item for item in schedule.evidence}
+        return sorted(
+            (item.page_number or 0, item.section_title or "", item.source_text or "")
+            for ref in event.evidence_refs if (item := index.get(ref)) is not None)
+
+    if cited(left, before) == cited(right, after):
+        return []
+    return [_typed(
+        ChangeType.EVIDENCE_CHANGED, before.code,
+        f"the protocol text cited for {after.display_name} changed",
+        detail="the schedule rules are unchanged by this alone",
+        before=cited(left, before), after=cited(right, after))]
 
 
 #: Repeat-block fields that are identity or provenance, not schedule meaning.
@@ -435,3 +654,84 @@ def _window_change(code: str, before_timing, after_timing) -> TypedChange | None
         after={"before": after_window[0], "after": after_window[1]},
     )
 
+
+
+# ------------------------------------------------------------------- source tracing
+_COLLECTION_OF = {
+    "EVENT": "events", "ANCHOR": "anchors", "REPEAT_BLOCK": "repeat_blocks", "TRACK": "tracks",
+    "PROCESS": "processes", "ARM": "arms", "COHORT": "cohorts", "POPULATION": "populations",
+    "DIMENSION": "dimensions", "EPOCH": "epochs", "HOLIDAY_CALENDAR": "holiday_calendars",
+    "CONDITIONAL_DEFINITION": "conditional_definitions", "CONFINEMENT": "confinement_episodes",
+}
+_EVIDENCE_FIELDS = ("page_number", "section_title", "table_title", "row_identifier",
+                    "column_identifier")
+
+
+def _sources(schedule: UniversalSchedule, entity_type: str, code: str) -> list[dict[str, Any]]:
+    """The protocol text one entity of ONE version was extracted from."""
+    if entity_type == "TRACK_LINK":
+        source, _, target = code.partition("->")
+        owner = next((item for item in schedule.track_links
+                      if (item.source_track_code, item.target_track_code) == (source, target)), None)
+    else:
+        owner = next((item for item in getattr(schedule, _COLLECTION_OF.get(entity_type, ""), [])
+                      if getattr(item, "code", None) == code), None)
+    if owner is None:
+        return []
+    index = {item.id: item for item in schedule.evidence}
+    out: list[dict[str, Any]] = []
+    for ref in getattr(owner, "evidence_refs", []) or []:
+        item = index.get(ref)
+        if item is None:
+            continue
+        text = (item.source_text or "").strip()
+        out.append({**{field: getattr(item, field) for field in _EVIDENCE_FIELDS},
+                    "evidence_type": item.evidence_type,
+                    "source_text": text if len(text) <= 400 else text[:397] + "..."})
+    return out
+
+
+def trace_changes(
+    left: UniversalSchedule, right: UniversalSchedule, changes: "list[TypedChange]",
+) -> list[dict[str, Any]]:
+    """Every material change with the protocol text it traces to on EACH side (P6-02), so a
+    reviewer reads the amendment's own words, not only a summary of them."""
+    out: list[dict[str, Any]] = []
+    for change in changes:
+        row = change.model_dump(mode="json")
+        row["sources"] = {
+            "from": _sources(left, change.entity_type, change.entity_code),
+            "to": _sources(right, change.entity_type, change.entity_code)}
+        out.append(row)
+    return out
+
+
+def mapping_aware_changes(
+    left: UniversalSchedule, right: UniversalSchedule, changes: "list[dict[str, Any]]",
+    renames: "list[tuple[str, str, str]]",
+) -> list[dict[str, Any]]:
+    """Present a visit a mapping says was RE-CODED as ONE change, not a removal plus an
+    addition (P6-02). ``renames`` are (earlier code, later code, review state). The two
+    visits are compared rule by rule, so a re-coded visit whose timing also changed shows
+    both facts. The stored change set is untouched: this is a reading of it through the
+    current mapping, recomputed whenever the mapping is."""
+    left_events, right_events = _by_code(left.events), _by_code(right.events)
+    drop = {(kind, code) for source, target, _ in renames
+            for kind, code in (("VISIT_REMOVED", source), ("VISIT_ADDED", target))}
+    out = [item for item in changes if (item["change_type"], item["entity_code"]) not in drop]
+    for source, target, state in renames:
+        before, after = left_events.get(source), right_events.get(target)
+        if before is None or after is None or source == target:
+            continue
+        label = f"{source}→{target}"
+        pair = [_typed(
+            ChangeType.VISIT_RENAMED, label,
+            f"{before.display_name} is now coded {target!r} (match {state.lower()})",
+            detail="a reviewer decides whether these are the same visit; until then no recorded "
+                   "visit is carried across"), *_classify_event(before, after)]
+        for item in pair:
+            row = item.model_copy(update={"entity_code": label}).model_dump(mode="json")
+            row["sources"] = {"from": _sources(left, "EVENT", source),
+                              "to": _sources(right, "EVENT", target)}
+            out.append(row)
+    return out

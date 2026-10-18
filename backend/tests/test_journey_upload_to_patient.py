@@ -324,7 +324,34 @@ def environment():
 
     sponsor = register("sponsor")
     pi = register("pi")
-    J.update(sponsor=sponsor, pi=pi)
+    # Maker-checker is ON by default: the editor (sponsor) never approves; a SEPARATE
+    # designated approver does.
+    approver = register("cro")
+    J.update(sponsor=sponsor, pi=pi, approver=approver)
+
+    # P3: correcting, reviewing and approving a schedule are explicit grants, not
+    # something every sponsor account holds. The organization's first registrant
+    # is its admin, who designates the reviewer/approver - exactly as in the app.
+    async def designate_reviewer():
+        organization = await server.find_organization_by_name(ORG)
+        for capability in ("schedule.correct", "schedule.review", "schedule.approve",
+                           "schedule.reject"):
+            await server.uctsm_grant_store.add(
+                organization_id=str(organization["id"]), user_id=sponsor["_user_id"],
+                capability=capability, trial_id=None, granted_by=sponsor["_user_id"],
+                reason="journey fixture: designated schedule editor/reviewer")
+        await server.uctsm_grant_store.add(
+            organization_id=str(organization["id"]), user_id=approver["_user_id"],
+            capability="schedule.approve", trial_id=None, granted_by=sponsor["_user_id"],
+            reason="journey fixture: designated independent approver")
+        # A process stop is a high-impact patient command: the PI needs the explicit grant
+        # (no role default); the organization admin designates it, never the PI themselves.
+        await server.uctsm_grant_store.add(
+            organization_id=str(organization["id"]), user_id=pi["_user_id"],
+            capability="patient.command.high_impact", trial_id=None,
+            granted_by=sponsor["_user_id"],
+            reason="journey fixture: PI designated for high-impact patient commands")
+    run(designate_reviewer())
     yield
     server.app.dependency_overrides.pop(get_session, None)
     server._operational_session_factory = previous_factory
@@ -344,6 +371,7 @@ def environment():
         await server.db.audit_logs.delete_many({"actor_id": {"$in": MONGO["users"]}})
         await server.db.users.delete_many({"id": {"$in": MONGO["users"]}})
         await server.db.organizations.delete_many({"name": ORG})
+        await server.db.uctsm_capability_grants.delete_many({"user_id": {"$in": MONGO["users"]}})
     run(clean())
     engine.dispose()
 
@@ -520,7 +548,10 @@ def test_j2_review_view_counts_rows_questions_and_statements_honestly():
     pending = {item["code"] for item in view["rows"] if item["review_status"] == "PENDING"}
     # Each Pending row has a reason derived from the protocol: the shared question,
     # the unstated holiday policy, the one-sided window.
-    assert pending == {"INFORMED_CONSENT", "PREGNANCY_TEST", "RADIOTHERAPY", "END_OF_TREATMENT_VISIT"}
+    # P4: the weekly dose repeat's basis is an interpretation the extraction cannot
+    # evidence, so it is pending until a reviewer states it.
+    assert pending == {"INFORMED_CONSENT", "PREGNANCY_TEST", "RADIOTHERAPY", "END_OF_TREATMENT_VISIT",
+                       "VELTRACIN_DOSE"}
     assert summary["pending_rows"] == len(pending)
     assert summary["ready_rows"] == len(ROW_CODES) - len(pending)
     assert "Window needs review" in row(view, "END_OF_TREATMENT_VISIT")["pending_reasons"]
@@ -570,7 +601,7 @@ def test_j2_review_view_counts_rows_questions_and_statements_honestly():
 
     # Approval: backend says no, with reasons, and refuses the attempt.
     assert view["can_approve"] is False and view["approval_blockers"]
-    blocked = call("POST", f"{API}/schedule-versions/{version_id}/approve-version", hdr("sponsor"),
+    blocked = call("POST", f"{API}/schedule-versions/{version_id}/approve-version", hdr("approver"),
                    json={"expected_revision": view["revision"], "reason": "Looks fine"})
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["code"] == "APPROVAL_BLOCKED"
@@ -624,10 +655,22 @@ def test_j2_resolve_the_shared_question_once_edit_pending_rows_and_refuse_stale_
     assert any(item["is_reviewer_decision"] for item in eot_after["details"]["evidence"])
     assert eot_after["window_status"] == "STATED" and eot["id"] in edited["changed_row_ids"]
 
+    # P4-02: state what each weekly dose counts from (the first dose), a material
+    # reviewer decision with its own rationale.
+    dose_stored = next(item for item in schedule_json(version_id)["events"] if item["code"] == "VELTRACIN_DOSE")
+    assert dose_stored["recurrence"]["basis_status"] == "UNCONFIRMED"
+    dose_rule = {**dose_stored["recurrence"], "basis": "FIRST_RESOLVED_OCCURRENCE", "basis_status": "STATED"}
+    based = ok(call("PATCH", f"{API}/schedule-versions/{version_id}/events/{row(edited['view'], 'VELTRACIN_DOSE')['id']}",
+                    hdr("sponsor"), json={
+        "expected_revision": edited["revision"],
+        "rationale": "Section 5: weekly from the first dose",
+        "changes": {"recurrence": dose_rule}}))
+    assert row(based["view"], "VELTRACIN_DOSE")["review_status"] == "READY",         row(based["view"], "VELTRACIN_DOSE")["pending_reasons"]
+
     # State the holiday policy: sessions on a site holiday are skipped, using the
     # site's calendar. UI-07's typed edit is tried first.
-    revision = edited["revision"]
-    rt_row = row(edited["view"], "RADIOTHERAPY")
+    revision = based["revision"]
+    rt_row = row(based["view"], "RADIOTHERAPY")
     stored = next(item for item in schedule_json(version_id)["events"] if item["code"] == "RADIOTHERAPY")
     calendar = {**stored["calendar_recurrence"], "holiday_policy": "SKIP", "holiday_calendar_ref": "SITE_HOLIDAYS"}
     typed = call("PATCH", f"{API}/schedule-versions/{version_id}/events/{rt_row['id']}", hdr("sponsor"), json={
@@ -699,7 +742,14 @@ def test_j2_whole_version_approval_at_the_reviewed_revision():
     version_id = J["version_id"]
     view = review_view(version_id)
     assert view["revision"] == J["reviewed_revision"]
-    attempt = call("POST", f"{API}/schedule-versions/{version_id}/approve-version", hdr("sponsor"),
+    # the material editor DOES hold schedule.approve here, so this refusal is the
+    # maker-checker default (ON, LAST_EDITOR) - not a missing capability
+    refused = call("POST", f"{API}/schedule-versions/{version_id}/approve-version", hdr("sponsor"),
+                   json={"expected_revision": view["revision"], "reason": "Whole table reviewed"})
+    assert refused.status_code == 403 and "Maker-checker" in refused.text, refused.text
+    assert call("GET", f"{API}/schedule-versions/{version_id}/review-view",
+                hdr("sponsor")).json()["status"] != "APPROVED"
+    attempt = call("POST", f"{API}/schedule-versions/{version_id}/approve-version", hdr("approver"),
                    json={"expected_revision": view["revision"], "reason": "Whole table reviewed against source"})
     # B1/B4 fixed: a fully reviewed draft is approved by approve-version itself.
     assert attempt.status_code == 200, attempt.text
@@ -972,9 +1022,17 @@ def test_j4_an_amendment_is_a_new_draft_and_its_approval_leaves_the_enrolled_pat
         ok(call("PUT", f"{API}/schedule-versions/{amended}/events/{rt_id}",
                 {**hdr("sponsor"), "X-Review-Reason": "Protocol 5.2: holidays skipped",
                  "X-Expected-Revision": view["revision"]}, json={**stored, "calendar_recurrence": calendar}))
+    # P4: the re-extracted weekly dose repeat again needs its basis stated.
+    view = review_view(amended)
+    dose = next(item for item in schedule_json(amended)["events"] if item["code"] == "VELTRACIN_DOSE")
+    ok(call("PATCH", f"{API}/schedule-versions/{amended}/events/{row(view, 'VELTRACIN_DOSE')['id']}",
+            hdr("sponsor"), json={
+        "expected_revision": view["revision"], "rationale": "Section 5: weekly from the first dose",
+        "changes": {"recurrence": {**dose["recurrence"], "basis": "FIRST_RESOLVED_OCCURRENCE",
+                                   "basis_status": "STATED"}}}))
     view = review_view(amended)
     assert view["can_approve"] is True, view["approval_blockers"]
-    approved = ok(call("POST", f"{API}/schedule-versions/{amended}/approve-version", hdr("sponsor"),
+    approved = ok(call("POST", f"{API}/schedule-versions/{amended}/approve-version", hdr("approver"),
                        json={"expected_revision": view["revision"], "reason": "Amendment 1 reviewed"}))
     assert approved["status"] == "APPROVED"
 

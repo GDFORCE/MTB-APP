@@ -17,7 +17,7 @@ from pymongo import ReturnDocument, UpdateOne
 from pymongo.errors import DuplicateKeyError
 import os, re, json, logging, uuid, asyncio, hashlib, secrets
 from pathlib import Path
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Any, List, Optional, Dict, Literal
 from datetime import datetime, date, timezone, timedelta
 from passlib.context import CryptContext
@@ -25,6 +25,7 @@ import jwt
 
 import otp_service
 import protocol_extraction as pe
+import protocol_identity_runtime as identity_runtime
 from schedule_schema import apply_temporal_amount, classify_visit_activities, TemporalAmount
 import storage as file_storage
 import google_places
@@ -2262,28 +2263,153 @@ def _extraction_verification(result) -> dict:
     }
 
 
-async def _run_protocol_extraction(data: bytes, filename: str, user: dict, *,
-                                   is_text: bool = False,
-                                   trial_id: str | None = None) -> tuple[dict, list[dict]]:
-    """Read one uploaded protocol with the fact reader + deterministic
-    compiler (app/extraction/), store the document, and cache every schedule
-    option as a 2-hour protocol_extractions draft.
+def _identity_org_uuid_for(organization: dict | None) -> uuid.UUID:
+    if not organization or not organization.get('id'):
+        raise HTTPException(403, 'No organization context is available')
+    return identity_runtime.organization_uuid(organization['id'])
 
-    Returns the trial details and one entry per schedule option carrying the
-    stored draft document and its API preview.
+
+async def _gate_protocol_upload(
+    data: bytes, filename: str, content_type: str, user: dict, *, is_text: bool,
+    trial_id: str | None = None, trial_record_ids: list[str] | None = None,
+    expected_protocol_id: str | None = None, stage: str = 'UPLOAD',
+):
+    """The protocol identity gate (P2). Runs AFTER file/MIME/size validation and
+    BEFORE any model call:
+
+        binary hash -> page text -> normalized-text fingerprint -> cited identity
+        -> deterministic classification -> (quarantine 409 | return the identity)
+
+    A MISMATCH or UNCERTAIN upload is stored privately for review, never
+    attached to a trial or protocol, and never reaches a model. Provider
+    availability is deliberately not consulted here.
+
+    Returns ``(identity, pages)``; raises 409 ``PROTOCOL_IDENTITY_BLOCKED``.
     """
-    from app.extraction import runner as extraction_runner
-    from app.extraction.llm_client import ExtractionModelError, ExtractionNotConfigured
-
-    if not extraction_runner.engine_available():
-        raise_extraction_unavailable()
     try:
         pages = await run_in_threadpool(_extraction_pages, data, is_text=is_text)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    organization = await find_organization_by_name(user.get('organization'))
+    organization_id = _identity_org_uuid_for(organization)
+    service = await run_in_threadpool(identity_runtime.service)
+    claims = identity_runtime.expected_claims(
+        submitted=expected_protocol_id, filename=filename or '',
+        trial_record_ids=trial_record_ids)
+    identity = await run_in_threadpool(
+        lambda: service.assess(
+            organization_id=organization_id, owner_user_id=user['id'],
+            filename=filename or 'protocol.pdf', content_type=content_type,
+            size_bytes=len(data), binary_sha256=hashlib.sha256(data).hexdigest(),
+            pages=identity_runtime.pages_input(pages), expected=claims, trial_id=trial_id,
+            stage=stage))
+    if identity.blocked:
+        key = f'protocol-identity/{identity.id}.{"txt" if is_text else "pdf"}'
+        await file_storage.get_storage().save(
+            key, data, 'text/plain' if is_text else 'application/pdf')
+        identity = await run_in_threadpool(service.attach_storage, identity, key)
+        await write_audit(
+            user, 'protocol.identity_quarantined',
+            f'{identity.effective_classification.value} '
+            f'({", ".join(identity_runtime.identity_view(identity)["issue_codes"])}) for '
+            f'{filename or "protocol document"}', target_id=str(identity.id),
+            **({'trial_id': trial_id} if trial_id else {}))
+        raise HTTPException(409, detail=identity_runtime.blocked_detail(identity))
+    return identity, pages
+
+
+def _extraction_payload(extraction, details: dict, storage_key: str, document_hash: str) -> dict:
+    """The durable, reusable form of one full extraction (every schedule option)."""
+    options = []
+    for option, result in extraction.results:
+        schedule_dict = result.schedule.model_dump(mode='json') if result.schedule else None
+        options.append({
+            'option': option,
+            'native_schedule': schedule_dict,
+            'native_issues': [item.model_dump(mode='json') for item in result.issues],
+            'native_accountability': result.accountability,
+            'visit_count': len(schedule_dict.get('events', [])) if schedule_dict else 0,
+            'preview': _extraction_table_preview(result),
+            'verification': _extraction_verification(result),
+        })
+    return {'details': details, 'options': options, 'pdf_storage_key': storage_key,
+            'pdf_document_hash': document_hash}
+
+
+async def _materialize_drafts(
+    payload: dict, filename: str, owner_user_id: str, identity, *, trial_id: str | None,
+) -> tuple[dict, list[dict]]:
+    """Cache each schedule option of a (new or reused) result as a 2-hour,
+    user-scoped draft carrying the identity it was verified under. No model call."""
+    created_at = now()
+    await db.protocol_extractions.delete_many({'expires_at': {'$lte': created_at}})
+    entries = []
+    for item in payload['options']:
+        option = item.get('option')
+        document = {
+            'id': str(uuid.uuid4()),
+            'user_id': owner_user_id,
+            'file_name': filename or 'protocol.pdf',
+            'details': payload['details'],
+            'native_schedule': item['native_schedule'],
+            'native_issues': item['native_issues'],
+            'native_accountability': item['native_accountability'],
+            'pdf_storage_key': payload['pdf_storage_key'],
+            'pdf_document_hash': payload['pdf_document_hash'],
+            'option_id': option['id'] if option else '',
+            'option_label': option['label'] if option else '',
+            'option_description': (option.get('description') or '') if option else '',
+            'identity_id': str(identity.id),
+            'identity_classification': identity.effective_classification.value,
+            'created_at': created_at,
+            'expires_at': created_at + timedelta(hours=2),
+        }
+        effective_trial = trial_id or identity.trial_id
+        if effective_trial:
+            document['trial_id'] = effective_trial
+        await db.protocol_extractions.insert_one(dict(document))
+        entries.append({
+            'document': document, 'option': option, 'visit_count': item['visit_count'],
+            'preview': item['preview'], 'verification': item['verification'],
+        })
+    return payload['details'], entries
+
+
+async def _extract_for_identity(
+    data: bytes, pages, filename: str, user: dict, identity, *, is_text: bool,
+    trial_id: str | None = None, owner_user_id: str | None = None,
+) -> tuple[dict, list[dict], bool]:
+    """Full extraction for a document that PASSED the identity gate, or reuse of
+    a stored compatible result. Returns ``(details, entries, reused)``.
+
+    Exactly one model run exists per (organization, document content, engine
+    signature): the claim is storage-enforced. Another request for the same
+    content gets the stored result, or 409 ``EXTRACTION_IN_PROGRESS``.
+    """
+    from app.extraction import runner as extraction_runner
+    from app.extraction.llm_client import ExtractionModelError, ExtractionNotConfigured
+    from app.extraction.artifacts import StorageArtifactStore
+
+    signature = extraction_runner.engine_signature()
+    if signature is None:
+        raise_extraction_unavailable()
+    service = await run_in_threadpool(identity_runtime.service)
+    plan = await run_in_threadpool(service.begin_extraction, identity, signature)
+    owner = owner_user_id or user['id']
+    if plan.kind == 'BLOCKED':  # pragma: no cover - the caller already gated
+        raise HTTPException(409, detail=identity_runtime.blocked_detail(identity))
+    if plan.kind == 'IN_PROGRESS':
+        raise HTTPException(409, detail={
+            'code': 'EXTRACTION_IN_PROGRESS', 'workflow_state': 'EXTRACTION_IN_PROGRESS',
+            'message': 'This protocol is already being extracted. Try again shortly; '
+                       'the result will be reused.',
+            'identity': identity_runtime.identity_view(identity)})
+    if plan.kind == 'REUSE' and plan.result is not None:
+        details, entries = await _materialize_drafts(
+            plan.result.payload, filename, owner, identity, trial_id=trial_id)
+        return details, entries, True
 
     document_hash = hashlib.sha256(data).hexdigest()
-    from app.extraction.artifacts import StorageArtifactStore
     try:
         # Blocking model calls; offloaded so a multi-minute read does not
         # stall this process's event loop. Every model call is stored as an
@@ -2295,66 +2421,71 @@ async def _run_protocol_extraction(data: bytes, filename: str, user: dict, *,
             schedule_name=filename or 'Schedule of Assessments',
             artifacts=StorageArtifactStore(file_storage.get_storage()),
         )
+        if not extraction.results:
+            raise HTTPException(502, 'Could not analyse protocol: no schedule could be extracted')
+        if not any(result.schedule is not None and result.schedule.events
+                   for _, result in extraction.results):
+            # Never an empty-success draft (AT-20): completed reads are kept as
+            # artifacts, so uploading the same file again resumes.
+            coverage = (extraction.results[0][1].accountability or {}).get('summary') or {}
+            raise HTTPException(
+                502, 'Could not analyse protocol: no visit could be extracted '
+                     f'(source coverage {coverage.get("coverage_status") or "unknown"}). '
+                     'Completed reading is kept; upload the same file again to resume.')
+        # The document is kept so the protocol version built at consume time
+        # points at a real, auditable file (native_import.py).
+        storage_key = f'protocol-uploads/{uuid.uuid4()}.{"txt" if is_text else "pdf"}'
+        await file_storage.get_storage().save(
+            storage_key, data, 'text/plain' if is_text else 'application/pdf')
+        payload = _extraction_payload(
+            extraction, _extraction_details(extraction.details), storage_key, document_hash)
+        await run_in_threadpool(
+            lambda: service.complete_extraction(plan, signature=signature, payload=payload))
     except ExtractionNotConfigured as exc:
+        await run_in_threadpool(service.fail_extraction, plan, str(exc))
         raise_extraction_unavailable(f'Protocol extraction is not configured: {exc}')
     except (ExtractionModelError, ValueError) as exc:
+        await run_in_threadpool(service.fail_extraction, plan, str(exc))
         raise HTTPException(502, f'Could not analyse protocol: {exc}') from exc
-    if not extraction.results:
-        raise HTTPException(502, 'Could not analyse protocol: no schedule could be extracted')
-    if not any(result.schedule is not None and result.schedule.events for _, result in extraction.results):
-        # Never an empty-success draft (AT-20): completed reads are kept as
-        # artifacts, so uploading the same file again resumes.
-        coverage = (extraction.results[0][1].accountability or {}).get('summary') or {}
-        raise HTTPException(
-            502, 'Could not analyse protocol: no visit could be extracted '
-                 f'(source coverage {coverage.get("coverage_status") or "unknown"}). '
-                 'Completed reading is kept; upload the same file again to resume.')
+    except BaseException as exc:
+        await run_in_threadpool(service.fail_extraction, plan, f'{type(exc).__name__}: {exc}')
+        raise
+    details, entries = await _materialize_drafts(
+        payload, filename, owner, identity, trial_id=trial_id)
+    return details, entries, False
 
-    # The document is kept so the protocol version built at consume time
-    # points at a real, auditable file (native_import.py).
-    storage_key = f'protocol-uploads/{uuid.uuid4()}.{"txt" if is_text else "pdf"}'
-    await file_storage.get_storage().save(
-        storage_key, data, 'text/plain' if is_text else 'application/pdf')
 
-    details = _extraction_details(extraction.details)
-    created_at = now()
-    await db.protocol_extractions.delete_many({'expires_at': {'$lte': created_at}})
-    entries = []
-    for option, result in extraction.results:
-        schedule_dict = result.schedule.model_dump(mode='json') if result.schedule else None
-        document = {
-            'id': str(uuid.uuid4()),
-            'user_id': user['id'],
-            'file_name': filename or 'protocol.pdf',
-            'details': details,
-            'native_schedule': schedule_dict,
-            'native_issues': [item.model_dump(mode='json') for item in result.issues],
-            'native_accountability': result.accountability,
-            'pdf_storage_key': storage_key,
-            'pdf_document_hash': document_hash,
-            'option_id': option['id'] if option else '',
-            'option_label': option['label'] if option else '',
-            'option_description': (option.get('description') or '') if option else '',
-            'created_at': created_at,
-            'expires_at': created_at + timedelta(hours=2),
-        }
-        if trial_id:
-            document['trial_id'] = trial_id
-        await db.protocol_extractions.insert_one(dict(document))
-        entries.append({
-            'document': document,
-            'option': option,
-            'visit_count': len(schedule_dict.get('events', [])) if schedule_dict else 0,
-            'preview': _extraction_table_preview(result),
-            'verification': _extraction_verification(result),
-        })
-    return details, entries
+async def _run_protocol_extraction(data: bytes, filename: str, user: dict, *,
+                                   is_text: bool = False,
+                                   trial_id: str | None = None,
+                                   content_type: str | None = None,
+                                   trial_record_ids: list[str] | None = None,
+                                   expected_protocol_id: str | None = None,
+                                   ) -> tuple[dict, list[dict], dict]:
+    """Gate one uploaded protocol, then read it with the fact reader +
+    deterministic compiler (app/extraction/) - or reuse a stored result - and
+    cache every schedule option as a 2-hour protocol_extractions draft.
+
+    Returns the trial details, one entry per schedule option carrying the
+    stored draft document and its API preview, and the identity view.
+    """
+    identity, pages = await _gate_protocol_upload(
+        data, filename, content_type or ('text/plain' if is_text else 'application/pdf'),
+        user, is_text=is_text, trial_id=trial_id, trial_record_ids=trial_record_ids,
+        expected_protocol_id=expected_protocol_id)
+    details, entries, reused = await _extract_for_identity(
+        data, pages, filename, user, identity, is_text=is_text, trial_id=trial_id)
+    view = identity_runtime.identity_view(identity, detail=True)
+    view['reused_extraction'] = reused
+    return details, entries, view
 
 
 @api.post('/protocols/extract-details',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_protocol_details(file: UploadFile = File(...),
+                                   expected_protocol_id: Optional[str] = Form(None),
                                    user=Depends(current_user)):
+    await _require_uctsm_capability(user, authz_catalog.Capability.SCHEDULE_EXTRACT)
     content_type = (file.content_type or '').lower()
     filename = (file.filename or '').lower()
     if content_type != 'application/pdf' and not filename.endswith('.pdf'):
@@ -2368,12 +2499,13 @@ async def extract_protocol_details(file: UploadFile = File(...),
     from app.extraction import runner as extraction_runner
     from app.extraction.llm_client import ExtractionModelError, ExtractionNotConfigured
 
+    # Identity first (no model call, and independent of provider availability):
+    # details of the wrong document must never pre-fill the form.
+    identity, pages = await _gate_protocol_upload(
+        data, file.filename or 'protocol.pdf', 'application/pdf', user, is_text=False,
+        expected_protocol_id=expected_protocol_id, stage='UPLOAD')
     if not extraction_runner.engine_available():
         raise_extraction_unavailable()
-    try:
-        pages = await run_in_threadpool(_extraction_pages, data, is_text=False)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
     try:
         metadata = await run_in_threadpool(
             extraction_runner.extract_trial_details, pages, pdf_bytes=data)
@@ -2385,13 +2517,15 @@ async def extract_protocol_details(file: UploadFile = File(...),
     await write_audit(
         user, 'trial.extract_details',
         f'Extracted creation details from {file.filename or "protocol PDF"}')
-    return {'details': details}
+    return {'details': details, 'identity': identity_runtime.identity_view(identity)}
 
 
 @api.post('/protocols/extract',
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_protocol_alias(file: UploadFile = File(...),
                                  schedule_option_id: Optional[str] = Form(None),
+                                 expected_protocol_id: Optional[str] = Form(None),
+                                 trial_id: Optional[str] = Form(None),
                                  user=Depends(current_user)):
     """Add Trial protocol upload: trial details plus every schedule the
     protocol prints, each compiled from cited facts and cached for 2 hours so
@@ -2400,6 +2534,7 @@ async def extract_protocol_alias(file: UploadFile = File(...),
     ``schedule_option_id`` is accepted for backward compatibility; every
     independent Schedule of Assessments is extracted and returned together.
     """
+    await _require_uctsm_capability(user, authz_catalog.Capability.SCHEDULE_EXTRACT)
     content_type = (file.content_type or '').lower()
     filename = (file.filename or '').lower()
     is_text = content_type == 'text/plain' or filename.endswith('.txt')
@@ -2419,8 +2554,28 @@ async def extract_protocol_alias(file: UploadFile = File(...),
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    # Uploading INTO an existing trial (re-extraction): the expected identity is the
+    # persisted, authorized trial record - the client's trial id is checked for
+    # access first and never trusted for the identifiers.
+    recorded: list[str] = []
+    if trial_id:
+        trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
+        if not trial:
+            raise HTTPException(404, 'Trial not found')
+        if user['role'] in ('sponsor', 'cro'):
+            owns = await _trial_in_caller_org(user, trial_id)
+        else:
+            owns = await _pi_owns_trial(user, trial)
+        if not owns:
+            raise HTTPException(403, 'You do not have access to this trial')
+        recorded = [str(trial[key]).strip() for key in ('protocol_id', 'ctri_number')
+                    if str(trial.get(key) or '').strip()]
+
     display_name = file.filename or 'protocol.pdf'
-    details, entries = await _run_protocol_extraction(data, display_name, user, is_text=is_text)
+    details, entries, identity_view = await _run_protocol_extraction(
+        data, display_name, user, is_text=is_text, content_type=content_type or None,
+        trial_id=trial_id or None, trial_record_ids=recorded or None,
+        expected_protocol_id=expected_protocol_id)
     extractions = [{
         'extraction_id': entry['document']['id'],
         'option_id': entry['document']['option_id'],
@@ -2444,11 +2599,13 @@ async def extract_protocol_alias(file: UploadFile = File(...),
             'needs_schedule_selection': False,
             'verification': only['verification'],
             'preview': only['preview'],
+            'identity': identity_view,
         }
     return {
         'details': details,
         'extractions': extractions,
         'needs_schedule_selection': False,
+        'identity': identity_view,
     }
 
 
@@ -4070,11 +4227,13 @@ def _schedule_extraction_payload(
           dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
 async def extract_schedule(trial_id: str, file: UploadFile = File(...),
                            schedule_option_id: Optional[str] = Form(None),
+                           expected_protocol_id: Optional[str] = Form(None),
                            user=Depends(current_user)):
     """Protocol upload for an existing trial. Trial-ownership scoped. Every
     schedule the protocol prints is compiled from cited facts and stored as a
     draft schedule definition for review (``POST /trials/{id}/uctsm-schedule``
     then builds the canonical draft); nothing is approved here."""
+    await _require_uctsm_capability(user, authz_catalog.Capability.SCHEDULE_EXTRACT)
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -4094,8 +4253,24 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
     if data[:5] != b'%PDF-':
         raise HTTPException(400, 'The uploaded file does not look like a PDF')
 
-    _, entries = await _run_protocol_extraction(
-        data, file.filename or 'protocol.pdf', user, trial_id=trial_id)
+    # Expected identity comes from the authorized, persisted trial record; a
+    # supplied identifier is validated against it, never trusted over it.
+    recorded = [str(trial[key]).strip() for key in ('protocol_id', 'ctri_number')
+                if str(trial.get(key) or '').strip()]
+    if expected_protocol_id and recorded:
+        supplied = identity_runtime.claim_from_text(
+            expected_protocol_id, identity_runtime.ClaimSource.SUBMITTED)
+        known = {identity_runtime.claim_from_text(
+            value, identity_runtime.ClaimSource.TRIAL_RECORD).normalized for value in recorded}
+        if supplied is not None and supplied.normalized not in known:
+            raise HTTPException(422, detail={
+                'code': 'EXPECTED_IDENTITY_CONFLICT',
+                'message': 'The supplied protocol identifier does not match this trial\'s '
+                           'recorded protocol identifier.'})
+    _, entries, identity_view = await _run_protocol_extraction(
+        data, file.filename or 'protocol.pdf', user, trial_id=trial_id,
+        content_type=ctype or 'application/pdf', trial_record_ids=recorded,
+        expected_protocol_id=expected_protocol_id)
     variants = []
     for entry in entries:
         document = entry['document']
@@ -4124,8 +4299,9 @@ async def extract_schedule(trial_id: str, file: UploadFile = File(...),
         f'{len(variants)} schedule(s) from protocol PDF for '
         f'{trial.get("protocol_id") or trial_id}', trial_id=trial_id)
     if len(variants) == 1 and entries[0]['option'] is None:
-        return {**variants[0], 'needs_schedule_selection': False}
-    return {'needs_schedule_selection': False, 'schedule_variants': variants}
+        return {**variants[0], 'needs_schedule_selection': False, 'identity': identity_view}
+    return {'needs_schedule_selection': False, 'schedule_variants': variants,
+            'identity': identity_view}
 
 
 @api.post('/trials/{trial_id}/protocol-extractions/{extraction_id}/consume',
@@ -4136,6 +4312,7 @@ async def consume_protocol_extraction(
     user=Depends(current_user),
 ):
     """Return the schedule produced during Add Trial without another AI call."""
+    await _require_uctsm_capability(user, authz_catalog.Capability.SCHEDULE_EXTRACT)
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -4158,6 +4335,11 @@ async def consume_protocol_extraction(
     linked_trial = draft.get('trial_id')
     if linked_trial and linked_trial != trial_id:
         raise HTTPException(409, 'This protocol extraction belongs to another trial')
+
+    # Identity is rechecked at consumption: a draft that never passed the gate
+    # (or whose identity is no longer permitted / belongs to another trial) is
+    # never attached, whatever the client sends.
+    await _require_verified_draft(draft, user, trial_id)
 
     if draft.get('native_schedule'):
         # Cut Add-Trial over (Phase 2): a native draft has no legacy
@@ -4201,6 +4383,242 @@ async def consume_protocol_extraction(
         'option_label': draft.get('option_label') or '',
         'option_description': draft.get('option_description') or '',
     }
+
+
+async def _require_verified_draft(draft: dict, user: dict, trial_id: str | None) -> None:
+    """Consumption-time identity recheck (P2-02): the draft must carry an identity
+    that is still permitted for this organization and trial."""
+    from app.application.protocol_identity import IdentityBlockedError, IdentityStateError
+    identity_id = draft.get('identity_id')
+    unverified = {
+        'code': 'PROTOCOL_IDENTITY_UNVERIFIED', 'workflow_state': 'UNVERIFIED',
+        'message': 'This prepared schedule was not produced under protocol identity '
+                   'verification. Upload the protocol again.'}
+    if not identity_id:
+        raise HTTPException(409, detail=unverified)
+    organization = await find_organization_by_name(user.get('organization'))
+    organization_id = _identity_org_uuid_for(organization)
+    service = await run_in_threadpool(identity_runtime.service)
+    try:
+        await run_in_threadpool(
+            service.require_permitted, organization_id, uuid.UUID(str(identity_id)),
+            trial_id=trial_id)
+    except IdentityBlockedError as exc:
+        if exc.identity.owner_user_id == '':       # no such identity in this organization
+            raise HTTPException(409, detail=unverified) from exc
+        raise HTTPException(409, detail=identity_runtime.blocked_detail(exc.identity)) from exc
+    except IdentityStateError as exc:
+        raise HTTPException(409, detail={
+            'code': 'PROTOCOL_IDENTITY_TRIAL_MISMATCH', 'workflow_state': 'QUARANTINED',
+            'message': str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(409, detail=unverified) from exc
+
+
+class IdentityResolveIn(BaseModel):
+    action: Literal['CORRECT_EXPECTED_IDENTITY', 'CONFIRM_DOCUMENT_IDENTITY',
+                    'REJECT', 'KEEP_QUARANTINED']
+    reason: str = Field(min_length=1, max_length=2000)
+    expected_revision: int = Field(ge=1)
+    corrected_identifier: Optional[str] = Field(default=None, max_length=200)
+
+
+async def _identity_scope(user: dict, identity_id: str):
+    """Load an identity inside the caller's organization and trial scope. Anything
+    outside it is a plain 404, so existence is never disclosed."""
+    organization = await find_organization_by_name(user.get('organization'))
+    organization_id = _identity_org_uuid_for(organization)
+    try:
+        parsed = uuid.UUID(identity_id)
+    except ValueError as exc:
+        raise HTTPException(404, 'Protocol identity not found') from exc
+    service = await run_in_threadpool(identity_runtime.service)
+    from app.application.errors import RecordNotFoundError
+    try:
+        identity, reviews = await run_in_threadpool(service.detail, organization_id, parsed)
+    except RecordNotFoundError as exc:
+        raise HTTPException(404, 'Protocol identity not found') from exc
+    reviewer = await _identity_reviewer(user)
+    if not (reviewer or identity.owner_user_id == user['id']):
+        raise HTTPException(404, 'Protocol identity not found')
+    if identity.trial_id:
+        trial = await db.trials.find_one({'id': identity.trial_id}, {'_id': 0})
+        if not trial or not await _can_access_trial(user, trial):
+            raise HTTPException(404, 'Protocol identity not found')
+    return service, organization_id, identity, reviews, reviewer
+
+
+def _review_view(review) -> dict:
+    return {
+        'id': str(review.id), 'action': review.action.value, 'actor_id': review.actor_id,
+        'reason': review.reason, 'expected_revision': review.expected_revision,
+        'resulting_revision': review.resulting_revision,
+        'classification_before': review.classification_before.value,
+        'classification_after': (
+            review.classification_after.value if review.classification_after else None),
+        'review_status_after': review.review_status_after.value,
+        'corrected_identifier': review.corrected_identifier,
+        'created_at': review.created_at.isoformat(),
+    }
+
+
+@api.get('/protocol-identities',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def list_protocol_identities(
+    review_status: str = Query('PENDING_REVIEW'), user=Depends(current_user),
+):
+    """The review queue. Reviewers see their organization's items (within trial
+    scope); everyone else sees only their own uploads, read-only."""
+    from app.application.protocol_identity import ReviewStatus
+    organization = await find_organization_by_name(user.get('organization'))
+    organization_id = _identity_org_uuid_for(organization)
+    wanted = None if review_status.upper() == 'ALL' else review_status.upper()
+    try:
+        status_filter = ReviewStatus(wanted) if wanted else None
+    except ValueError as exc:
+        raise HTTPException(422, 'Unknown review status') from exc
+    service = await run_in_threadpool(identity_runtime.service)
+    rows = await run_in_threadpool(
+        lambda: service.list_for_review(organization_id, review_status=status_filter))
+    reviewer = await _identity_reviewer(user)
+    visible, scope_cache = [], {}
+    for row in rows:
+        if not reviewer and row.owner_user_id != user['id']:
+            continue
+        if row.trial_id:
+            if row.trial_id not in scope_cache:
+                trial = await db.trials.find_one({'id': row.trial_id}, {'_id': 0})
+                scope_cache[row.trial_id] = bool(trial and await _can_access_trial(user, trial))
+            if not scope_cache[row.trial_id]:
+                continue
+        visible.append(identity_runtime.identity_view(row, reviewer=reviewer))
+    return {'items': visible, 'can_review': reviewer}
+
+
+@api.get('/protocol-identities/{identity_id}',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def get_protocol_identity(identity_id: str, user=Depends(current_user)):
+    _, _, identity, reviews, reviewer = await _identity_scope(user, identity_id)
+    view = identity_runtime.identity_view(identity, detail=True, reviewer=reviewer)
+    view['reviews'] = [_review_view(item) for item in reviews]
+    view['can_review'] = reviewer
+    return view
+
+
+async def _resume_identity(service, identity, user: dict) -> dict:
+    """Execute the durable resume intent of an APPROVED identity, exactly once.
+
+    The decision and its intent were already committed; this is the side effect
+    (reading the stored bytes, one extraction) run outside any database
+    transaction. A failure leaves the intent retryable."""
+    job = await run_in_threadpool(
+        service.claim_resume, identity.organization_id, identity.id)
+    if job is None:
+        return {'status': 'ALREADY_HANDLED'}
+    try:
+        if not identity.storage_key:
+            raise HTTPException(409, 'The quarantined document is no longer stored')
+        data, _content_type = await file_storage.get_storage().open(identity.storage_key)
+        is_text = identity.storage_key.endswith('.txt')
+        pages = await run_in_threadpool(_extraction_pages, data, is_text=is_text)
+        _, entries, reused = await _extract_for_identity(
+            data, pages, identity.filename, user, identity, is_text=is_text,
+            trial_id=identity.trial_id, owner_user_id=identity.owner_user_id)
+    except HTTPException as exc:
+        await run_in_threadpool(lambda: service.finish_resume(job, error=str(exc.detail)[:900]))
+        retryable = exc.status_code in (502, 503) or (
+            isinstance(exc.detail, dict) and exc.detail.get('code') == 'EXTRACTION_IN_PROGRESS')
+        return {'status': 'PROVIDER_UNAVAILABLE' if exc.status_code == 503 else 'FAILED',
+                'retryable': retryable, 'message': (
+                    exc.detail if isinstance(exc.detail, str) else exc.detail.get('message'))}
+    except Exception as exc:  # noqa: BLE001
+        await run_in_threadpool(lambda: service.finish_resume(job, error=f'{type(exc).__name__}: {exc}'))
+        return {'status': 'FAILED', 'retryable': True, 'message': 'The extraction could not be resumed.'}
+    await run_in_threadpool(service.finish_resume, job)
+    return {'status': 'COMPLETED', 'reused': reused, 'schedule_count': len(entries)}
+
+
+@api.post('/protocol-identities/{identity_id}/resolve',
+          dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def resolve_protocol_identity(
+    identity_id: str, body: IdentityResolveIn, user=Depends(current_user),
+):
+    """A reviewer's decision on a quarantined document. Needs the review
+    permission, a reason and the revision the reviewer saw. Approval re-runs the
+    deterministic classification and queues extraction once; rejection or an
+    unresolved review never resumes it."""
+    if not await _identity_reviewer(user):
+        raise HTTPException(403, 'Protocol identity review permission is required')
+    service, organization_id, identity, _, _ = await _identity_scope(user, identity_id)
+    from app.application.errors import StaleRevisionError
+    from app.application.protocol_identity import IdentityStateError, ReviewAction
+    try:
+        outcome = await run_in_threadpool(lambda: service.resolve(
+            organization_id=organization_id, identity_id=identity.id, actor_id=user['id'],
+            action=ReviewAction(body.action), reason=body.reason,
+            expected_revision=body.expected_revision,
+            corrected_identifier=body.corrected_identifier))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (StaleRevisionError, IdentityStateError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not outcome.replayed:
+        await write_audit(
+            user, 'protocol.identity_review',
+            f'{body.action}: {body.reason[:200]}', target_id=str(identity.id),
+            **({'trial_id': identity.trial_id} if identity.trial_id else {}))
+    resume = None
+    if outcome.identity.permitted and outcome.resume_intent_id is not None:
+        resume = await _resume_identity(service, outcome.identity, user)
+    view = identity_runtime.identity_view(outcome.identity, detail=True, reviewer=True)
+    return {'identity': view, 'review': _review_view(outcome.review),
+            'replayed': outcome.replayed, 'resume': resume}
+
+
+@api.post('/protocol-identities/{identity_id}/resume',
+          dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def resume_protocol_identity(identity_id: str, user=Depends(current_user)):
+    """Retry the extraction of an APPROVED identity whose resume failed (for
+    example the provider was down). Idempotent: a completed or running resume is
+    reported, never repeated."""
+    _, _, identity, _, _ = await _identity_scope(user, identity_id)
+    service = await run_in_threadpool(identity_runtime.service)
+    if not identity.permitted:
+        raise HTTPException(409, detail=identity_runtime.blocked_detail(identity))
+    return {'identity': identity_runtime.identity_view(identity),
+            'resume': await _resume_identity(service, identity, user)}
+
+
+@api.get('/protocol-identities/{identity_id}/extraction',
+         dependencies=[Depends(require_roles('sponsor', 'cro', 'pi'))])
+async def get_identity_extraction(identity_id: str, user=Depends(current_user)):
+    """The prepared schedule(s) of a resolved upload, for its uploader: fresh
+    2-hour drafts built from the durable result - no model call."""
+    service, organization_id, identity, _, _ = await _identity_scope(user, identity_id)
+    if identity.owner_user_id != user['id']:
+        raise HTTPException(404, 'Protocol identity not found')
+    if identity.blocked:
+        raise HTTPException(409, detail=identity_runtime.blocked_detail(identity))
+    if identity.extraction_result_id is None:
+        raise HTTPException(409, detail={
+            'code': 'EXTRACTION_NOT_READY', 'workflow_state': 'RESUME_PENDING',
+            'message': 'The reviewed protocol has not been extracted yet.',
+            'identity': identity_runtime.identity_view(identity)})
+    result = await run_in_threadpool(
+        service.result, organization_id, identity.extraction_result_id)
+    details, entries = await _materialize_drafts(
+        result.payload, identity.filename, identity.owner_user_id, identity,
+        trial_id=identity.trial_id)
+    extractions = [{
+        'extraction_id': entry['document']['id'],
+        'option_id': entry['document']['option_id'],
+        'option_label': entry['document']['option_label'],
+        'option_description': entry['document']['option_description'],
+        'schedule_visit_count': entry['visit_count'],
+        'preview': entry['preview'], 'verification': entry['verification'],
+    } for entry in entries]
+    return {'details': details, 'extractions': extractions, 'needs_schedule_selection': False,
+            'identity': identity_runtime.identity_view(identity, detail=True)}
 
 
 @api.get('/trials/{trial_id}/schedule-definition',
@@ -6186,6 +6604,7 @@ async def build_canonical_schedule(trial_id: str, user=Depends(current_user)):
     schedule the Sponsor/PI reviews, approves and enrols patients onto. It never
     approves anything - the draft lands in VALIDATION_REQUIRED for human review.
     """
+    await _require_uctsm_capability(user, authz_catalog.Capability.SCHEDULE_EXTRACT)
     trial = await db.trials.find_one({'id': trial_id}, {'_id': 0})
     if not trial:
         raise HTTPException(404, 'Trial not found')
@@ -10671,7 +11090,297 @@ async def current_uctsm_user(user=Depends(current_user)):
         raise HTTPException(403, 'No organization context is available')
     return {**user, 'organization_id': organization['id']}
 
-app.include_router(create_uctsm_router(current_uctsm_user))
+# --- P3: capability-based authorization for every UCTSM route ---------------
+from app.authorization import catalog as authz_catalog          # noqa: E402
+from app.authorization.grants import GrantRecord                 # noqa: E402
+from app.authorization.guard import RouteAuthorizer              # noqa: E402
+from app.authorization.policy import (                           # noqa: E402
+    Grant as AuthzGrant, authorize as authz_authorize, may_grant as authz_may_grant,
+)
+
+
+class _MongoGrantStore:
+    """Capability grants persisted in ``uctsm_capability_grants`` (operational
+    Mongo). Read fresh on every request, so a revocation is effective on the
+    next call. Only an authorised administrator writes here (see the grants API
+    below); nothing a client sends, and nothing in a JWT, is a grant."""
+
+    @staticmethod
+    def _row(doc: dict) -> GrantRecord:
+        return GrantRecord(
+            id=doc['id'], organization_id=doc['organization_id'], user_id=doc['user_id'],
+            capability=doc['capability'], trial_id=doc.get('trial_id'),
+            granted_by=doc['granted_by'], reason=doc.get('reason', ''),
+            created_at=doc['created_at'], revoked_at=doc.get('revoked_at'),
+            revoked_by=doc.get('revoked_by'))
+
+    async def active_for_user(self, user_id: str, organization_id: str):
+        cursor = db.uctsm_capability_grants.find(
+            {'user_id': user_id, 'organization_id': organization_id, 'revoked_at': None},
+            {'_id': 0})
+        return tuple([AuthzGrant(row['capability'], row.get('trial_id')) async for row in cursor])
+
+    async def list_for_organization(self, organization_id: str):
+        cursor = db.uctsm_capability_grants.find(
+            {'organization_id': organization_id}, {'_id': 0}).sort('created_at', -1)
+        return [self._row(row) async for row in cursor]
+
+    async def add(self, *, organization_id, user_id, capability, trial_id, granted_by, reason):
+        doc = {'id': str(uuid.uuid4()), 'organization_id': organization_id, 'user_id': user_id,
+               'capability': capability, 'trial_id': trial_id, 'granted_by': granted_by,
+               'reason': reason, 'created_at': now().isoformat(), 'revoked_at': None,
+               'revoked_by': None}
+        await db.uctsm_capability_grants.insert_one(dict(doc))
+        return self._row(doc)
+
+    async def revoke(self, grant_id, *, organization_id, revoked_by):
+        doc = await db.uctsm_capability_grants.find_one_and_update(
+            {'id': grant_id, 'organization_id': organization_id, 'revoked_at': None},
+            {'$set': {'revoked_at': now().isoformat(), 'revoked_by': revoked_by}},
+            projection={'_id': 0}, return_document=True)
+        return self._row(doc) if doc else None
+
+
+class _OperationalAccess:
+    """The existing operational relationship rules, keyed by the operational ids
+    that canonical trials/patients carry as ``external_*_id``."""
+
+    async def can_access_trial(self, user: dict, external_trial_id: str) -> bool:
+        trial = await db.trials.find_one({'id': external_trial_id}, {'_id': 0})
+        return bool(trial and await _can_access_trial(user, trial))
+
+    async def can_access_patient(self, user: dict, external_patient_id: str) -> bool:
+        patient = await db.patients.find_one({'id': external_patient_id}, {'_id': 0})
+        return bool(patient and await _can_access_patient(user, patient))
+
+    async def is_own_patient_record(self, user: dict, external_patient_id: str) -> bool:
+        patient = await db.patients.find_one(
+            {'id': external_patient_id, 'user_id': user.get('id')}, {'_id': 0, 'id': 1})
+        return patient is not None
+
+
+async def _record_authorization_denial(record: dict) -> None:
+    """Denials go to the operational audit log, outside any SQL/Mongo business
+    transaction, so a rolled-back mutation cannot erase them. No PHI: canonical
+    resource id, capability, reason code and policy version only."""
+    await write_audit(
+        {'id': record['actor_id'], 'role': record['role']}, 'authorization.denied',
+        f"{record['capability']} denied ({record['reason_code']}) on {record['resource_kind']}",
+        status='denied', target_id=record.get('resource_id') or '',
+        capability=record['capability'], reason_code=record['reason_code'],
+        policy_version=record['policy_version'], route=record['route'],
+        method=record['method'], correlation_id=record['correlation_id'],
+        resource_kind=record['resource_kind'], trial_id=record.get('trial_id'),
+        organization_id=record['organization_id'])
+
+
+uctsm_grant_store = _MongoGrantStore()
+uctsm_authorizer = RouteAuthorizer(
+    grants=uctsm_grant_store, access=_OperationalAccess(),
+    denial_sink=_record_authorization_denial)
+
+app.include_router(create_uctsm_router(current_uctsm_user, authorizer=uctsm_authorizer))
+
+# The MongoDB UCTSM patient plane (P1-04). Answers 503 until UCTSM_MONGO_URL and
+# UCTSM_MONGO_DB are set; it neither falls back to SQL nor enrols anyone.
+from app.api.uctsm_mongo import create_uctsm_mongo_router   # noqa: E402
+
+
+async def _provision_pilot_operational(user: dict, description: dict) -> None:
+    """Record the synthetic pilot's OPERATIONAL relationship documents.
+
+    The production relationship provider (``_OperationalAccess``) decides staff
+    access from the operational ``trials``/``patients`` collections, keyed by the
+    ``external_*_id`` that canonical records carry. A native pilot patient has no
+    operational record until this runs, so the seeding user would otherwise be
+    unable to reach it. These are ordinary, clearly synthetic operational documents
+    with the seeding user as creator (and as assigned PI/CRC by role) - the normal
+    relationship rules then apply unchanged. ``$setOnInsert`` keeps a re-seed from
+    re-granting an assignment that was later revoked."""
+    stamp = now().isoformat()
+    actor = str(user.get('id') or '')
+    role = str(user.get('role') or '')
+    organization = (user.get('organization') or '').strip()
+    external_trial = str(description['external_trial_id'])
+    await db.trials.update_one({'id': external_trial}, {'$setOnInsert': {
+        'protocol_id': description['protocol_number'],
+        'study_title': 'MTB UCTSM synthetic pilot', 'sponsor_name': organization,
+        'created_by': actor, 'status': 'active', 'synthetic': True, 'pilot': True,
+        'created_at': stamp}}, upsert=True)
+    for row in description['patients']:
+        external = str(row['external_patient_id'])
+        document = {
+            'trial_id': external_trial, 'name': f"Pilot {row['patient_code']} (synthetic)",
+            'patient_code': row['patient_code'], 'created_by': actor, 'synthetic': True,
+            'pilot': True, 'created_at': stamp}
+        if role == 'pi':
+            document['pi_id'] = actor
+        elif role == 'crc':
+            document['crc_id'] = actor
+        await db.patients.update_one({'id': external}, {'$setOnInsert': document}, upsert=True)
+
+
+app.include_router(create_uctsm_mongo_router(
+    current_uctsm_user, authorizer=uctsm_authorizer,
+    operational_provisioner=_provision_pilot_operational))
+
+
+async def _amendment_decider_still_authorised(decision, patient) -> bool:
+    """The deferred-adoption worker's re-check (P6-05): does the person who DECIDED still hold
+    ``amendment.adopt`` for this patient, today? A missing, suspended or deactivated account, a
+    revoked grant or a lost operational assignment answers no, and the decision is settled as
+    BLOCKED instead of being applied."""
+    from app.authorization.policy import Relationship, ResourceContext, ResourceKind
+
+    user = await db.users.find_one({'id': str(decision.actor_id)}, {'_id': 0})
+    if not user or str(user.get('status') or '').strip().lower() in {
+            'suspended', 'inactive', 'removed', 'deactivated', 'disabled'}:
+        return False
+    if not await uctsm_authorizer.access.can_access_patient(user, patient.external_patient_id or ''):
+        return False
+    principal = await _authz_principal(user)
+    context = ResourceContext(
+        kind=ResourceKind.PATIENT, organization_id=str(decision.organization_id),
+        trial_id=str(decision.trial_id), relationship=Relationship.ASSIGNED,
+        resource_id=patient.external_patient_id)
+    return authz_authorize(principal, authz_catalog.Capability.AMENDMENT_ADOPT, context).allowed
+
+
+def _amendment_worker_interval() -> int:
+    """Seconds between deferred-adoption passes; 0 turns the worker off. Off unless the
+    MongoDB patient plane is configured - it never falls back to anything else."""
+    if not (os.environ.get('UCTSM_MONGO_URL') and os.environ.get('UCTSM_MONGO_DB')):
+        return 0
+    try:
+        return int(os.environ.get('UCTSM_AMENDMENT_WORKER_INTERVAL_SEC', '300'))
+    except ValueError:
+        return 0
+
+
+async def _authz_principal(user: dict):
+    organization = await find_organization_by_name(user.get('organization'))
+    organization_id = str((organization or {}).get('id') or '')
+    return await uctsm_authorizer.principal({**user, 'organization_id': organization_id})
+
+
+async def _require_uctsm_capability(user: dict, capability) -> None:
+    """Capability check for the UCTSM entry points that live in ``server.py``
+    (identity review, grants). Denials are audited like the router's."""
+    principal = await _authz_principal(user)
+    decision = authz_authorize(principal, capability)
+    if decision.allowed:
+        return
+    await _record_authorization_denial({
+        'actor_id': str(user.get('id') or ''), 'role': str(user.get('role') or ''),
+        'organization_id': principal.organization_id, 'capability': str(capability),
+        'reason_code': decision.reason_code, 'policy_version': decision.policy_version,
+        'route': 'server', 'method': 'API', 'correlation_id': '', 'resource_kind': 'NONE',
+        'resource_id': None, 'trial_id': None})
+    raise HTTPException(
+        403, 'You do not have permission to perform this action.',
+        headers={'X-Authz-Reason': decision.reason_code, 'X-Authz-Capability': str(capability),
+                 'X-Authz-Policy': decision.policy_version})
+
+
+uctsm_authz = APIRouter(prefix='/api/uctsm/authorization', tags=['uctsm-authorization'])
+
+
+class CapabilityGrantIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    user_id: str = Field(min_length=1)
+    capability: str = Field(min_length=1)
+    trial_id: Optional[str] = None
+    reason: str = Field(min_length=1)
+
+
+@uctsm_authz.get('/me')
+async def my_uctsm_capabilities(user=Depends(current_user)):
+    """What the signed-in user may do, for the UI to show or hide actions. The
+    server still enforces every route; this is informational."""
+    principal = await _authz_principal(user)
+    held = {}
+    for capability in authz_catalog.Capability:
+        decision = authz_authorize(principal, capability)
+        if decision.allowed:
+            held[capability.value] = decision.held_via
+    return {'policy_version': authz_catalog.POLICY_VERSION,
+            'matrix_status': authz_catalog.MATRIX_STATUS, 'capabilities': held,
+            'trial_scoped_grants': [
+                {'capability': grant.capability, 'trial_id': grant.trial_id}
+                for grant in principal.grants if grant.trial_id]}
+
+
+@uctsm_authz.get('/grants')
+async def list_capability_grants(user=Depends(current_user)):
+    await _require_uctsm_capability(user, authz_catalog.Capability.GRANTS_MANAGE)
+    principal = await _authz_principal(user)
+    rows = await uctsm_grant_store.list_for_organization(principal.organization_id)
+    return {'policy_version': authz_catalog.POLICY_VERSION,
+            'matrix_status': authz_catalog.MATRIX_STATUS,
+            'items': [row.__dict__ | {'active': row.active} for row in rows]}
+
+
+@uctsm_authz.post('/grants', status_code=201)
+async def add_capability_grant(body: CapabilityGrantIn, user=Depends(current_user)):
+    await _require_uctsm_capability(user, authz_catalog.Capability.GRANTS_MANAGE)
+    principal = await _authz_principal(user)
+    try:
+        capability = authz_catalog.Capability(body.capability)
+    except ValueError:
+        raise HTTPException(422, 'Unknown capability')
+    grantee = await db.users.find_one({'id': body.user_id}, {'_id': 0, 'organization': 1, 'id': 1, 'role': 1})
+    grantee_org = await find_organization_by_name((grantee or {}).get('organization'))
+    grantee_org_id = str((grantee_org or {}).get('id') or '')
+    if not grantee or not grantee_org_id:
+        raise HTTPException(404, 'User not found')
+    allowed, reason = authz_may_grant(
+        principal, capability, body.user_id, grantee_org_id,
+        str((grantee or {}).get('role') or ''))
+    if not allowed:
+        # same answer for a foreign user as for a missing one
+        raise HTTPException(
+            404 if reason == 'GRANTEE_OUTSIDE_ORGANIZATION' else 403,
+            'Not found' if reason == 'GRANTEE_OUTSIDE_ORGANIZATION'
+            else 'This grant is not permitted.',
+            headers=None if reason == 'GRANTEE_OUTSIDE_ORGANIZATION'
+            else {'X-Authz-Reason': reason})
+    record = await uctsm_grant_store.add(
+        organization_id=principal.organization_id, user_id=body.user_id,
+        capability=capability.value, trial_id=body.trial_id, granted_by=user['id'],
+        reason=body.reason.strip())
+    await write_audit(user, 'authorization.grant', f'{capability.value} -> {body.user_id}',
+                      target_id=record.id, capability=capability.value,
+                      policy_version=authz_catalog.POLICY_VERSION)
+    return record.__dict__ | {'active': record.active}
+
+
+@uctsm_authz.delete('/grants/{grant_id}')
+async def revoke_capability_grant(grant_id: str, user=Depends(current_user)):
+    await _require_uctsm_capability(user, authz_catalog.Capability.GRANTS_MANAGE)
+    principal = await _authz_principal(user)
+    record = await uctsm_grant_store.revoke(
+        grant_id, organization_id=principal.organization_id, revoked_by=user['id'])
+    if record is None:
+        raise HTTPException(404, 'Grant not found')
+    await write_audit(user, 'authorization.revoke', f'{record.capability} <- {record.user_id}',
+                      target_id=record.id, capability=record.capability,
+                      policy_version=authz_catalog.POLICY_VERSION)
+    return record.__dict__ | {'active': record.active}
+
+
+app.include_router(uctsm_authz)
+
+
+async def _identity_reviewer(user: dict) -> bool:
+    """P2 identity review is the ``protocol_identity.review`` capability: an
+    organization admin (documented compatibility default) or an explicit grant.
+    The old ``user['permissions']`` field has no protected writer and is no
+    longer an authorization source."""
+    if user.get('role') not in ('sponsor', 'cro', 'pi'):
+        return False
+    principal = await _authz_principal(user)
+    return authz_authorize(
+        principal, authz_catalog.Capability.PROTOCOL_IDENTITY_REVIEW).allowed
 
 @app.middleware('http')
 async def disable_legacy_schedule_authoring(request: Request, call_next):
@@ -10823,6 +11532,13 @@ async def startup():
     asyncio.create_task(admin_routes.broadcast_worker_loop())
     # Doc s15: turn the schedule projection into actual in-app reminders.
     asyncio.create_task(reminder_worker_loop())
+
+    # P6: apply deferred amendment adoptions at their approved point (plane configured only).
+    from app.api.uctsm_amendment_worker import amendment_worker_loop
+    from app.api.uctsm_mongo import get_plane_uow
+    asyncio.create_task(amendment_worker_loop(
+        get_plane_uow, _amendment_decider_still_authorised,
+        interval_seconds=_amendment_worker_interval()))
 
 @app.on_event('shutdown')
 async def shutdown(): client.close()

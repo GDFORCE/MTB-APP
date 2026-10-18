@@ -114,6 +114,34 @@ def _operand_value(operand: Operand, context: dict[str, object]) -> tuple[bool, 
     return _field_value(context, operand.field)
 
 
+def unresolved_inputs(expression: ConditionExpression, context: dict[str, object]) -> list[str]:
+    """Why a condition is not decided: the field paths the patient context does not
+    hold and any predicate the condition language cannot express. Informational;
+    ``evaluate_condition`` stays the only truth value."""
+    missing: list[str] = []
+
+    def walk(node: ConditionExpression) -> None:
+        if isinstance(node, (AllCondition, AnyCondition)):
+            for child in node.conditions:
+                walk(child)
+        elif isinstance(node, NotCondition):
+            walk(node.condition)
+        elif isinstance(node, UnsupportedCondition):
+            missing.append(f"unsupported predicate: {node.source_operator}")
+        elif isinstance(node, ExistsCondition):
+            return
+        elif isinstance(node, MembershipCondition):
+            if isinstance(node.value, FieldOperand) and not _field_value(context, node.value.field)[0]:
+                missing.append(node.value.field)
+        elif isinstance(node, ComparisonCondition):
+            for operand in (node.left, node.right):
+                if isinstance(operand, FieldOperand) and not _field_value(context, operand.field)[0]:
+                    missing.append(operand.field)
+
+    walk(expression)
+    return list(dict.fromkeys(missing))
+
+
 def evaluate_condition(expression: ConditionExpression, context: dict[str, object]) -> TruthValue:
     if isinstance(expression, AllCondition):
         values = [evaluate_condition(item, context) for item in expression.conditions]

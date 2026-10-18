@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.uctsm import create_uctsm_router
+from _authz_fixtures import permissive_authorizer
 from app.db import models as db
 from app.db.base import Base, get_session
 from app.db.repositories import ScheduleRepository
@@ -36,6 +37,7 @@ from app.domain.schedule.timing import (
 USER = {
     "id": "00000000-0000-0000-0000-000000000001",
     "organization_id": "00000000-0000-0000-0000-000000000002",
+    "role": "sponsor", "status": "Active",
 }
 API = "/api/uctsm"
 
@@ -44,7 +46,7 @@ async def authenticated_user():
     return USER
 
 
-def build_client() -> tuple[TestClient, sessionmaker, object]:
+def build_client(role: str | None = None) -> tuple[TestClient, sessionmaker, object]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False}, poolclass=StaticPool,
@@ -57,7 +59,15 @@ def build_client() -> tuple[TestClient, sessionmaker, object]:
             yield session
 
     app = FastAPI()
-    app.include_router(create_uctsm_router(authenticated_user))
+    user_dependency = authenticated_user
+    if role is not None:
+        acting = {**USER, "role": role}
+
+        def user_dependency():                     # noqa: F811 - role-specific stand-in
+            return acting
+    app.include_router(create_uctsm_router(
+        user_dependency,
+        authorizer=permissive_authorizer(USER["id"], USER["organization_id"])))
     app.dependency_overrides[get_session] = session_override
     return TestClient(app), factory, engine
 
@@ -80,7 +90,7 @@ def seed_schedule(factory: sessionmaker, *, with_issues: bool) -> str:
     """
     with factory() as session:
         trial = db.Trial(organization_id=UUID(USER["organization_id"]), protocol_id="SYN-1",
-                         study_title="Synthetic review trial")
+                         study_title="Synthetic review trial", external_trial_id="SYN-EXT-1")
         session.add(trial)
         session.flush()
         protocol = db.Protocol(trial_id=trial.id, protocol_number="SYN-1")

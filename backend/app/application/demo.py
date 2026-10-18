@@ -171,6 +171,7 @@ class DemoService:
             patient = PatientRecord(
                 organization_id=organization_id, trial_id=trial.id,
                 patient_code=DEMO_PATIENT_CODE,
+                authority_plane="MONGO",          # native to this plane
                 current_schedule_version_id=schedule.schedule_version_id)
             tx.patients.add(patient)
             tx.audit.append(AuditRecord(

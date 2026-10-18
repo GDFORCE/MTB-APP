@@ -488,6 +488,19 @@ class Dependency(StrictModel):
     source_event_code: str = Field(min_length=1)
     dependency_type: Literal["TEMPORAL", "TRIGGER", "PRECONDITION", "SEQUENCE", "ANCHOR"]
     condition: ConditionExpression | None = None
+    #: Which occurrence of the source the dependency needs. ``ANY`` (the default,
+    #: and what every schedule before P5 meant) is EVENT-LEVEL: one resolved or
+    #: completed occurrence satisfies it. FIRST / LAST (CURRENT is an alias of
+    #: LAST: the latest generated occurrence) / NUMBER require that particular
+    #: occurrence, so one completed cycle never satisfies a later cycle's need.
+    source_occurrence: Literal["ANY", "FIRST", "LAST", "CURRENT", "NUMBER"] = "ANY"
+    source_occurrence_number: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def occurrence_selection(self) -> "Dependency":
+        if (self.source_occurrence == "NUMBER") != (self.source_occurrence_number is not None):
+            raise ValueError("source_occurrence NUMBER needs source_occurrence_number, and only it")
+        return self
 
 
 class Qualifier(StrictModel):
@@ -646,6 +659,30 @@ class RecurrenceTermination(StrictModel):
         return self
 
 
+class RecurrenceBasis(StrEnum):
+    """What drives occurrence n of an interval repeat (P4-02).
+
+    Distinct from ``TemporalBasis``: that one picks WHICH DATE of a referenced
+    visit a rule counts from; this one says how the SERIES progresses.
+
+    FIRST_RESOLVED_OCCURRENCE: occurrence 0 is the date the event's own timing
+    resolves to; occurrence n is that date plus n intervals, always counted from
+    occurrence 0 (so a 31 January series recovers 31 March after February).
+    PREVIOUS_PLANNED_OCCURRENCE: occurrence n is the PLANNED date of occurrence
+    n-1 plus one interval (repeated addition, so a month-end clamp carries on).
+    PREVIOUS_ACTUAL_OCCURRENCE: occurrence n is the ACTUAL date (visit or
+    treatment, per ``actual_source``) of occurrence n-1 plus one interval; it
+    waits, undated, until that actual exists. FIXED_ANCHOR_SERIES: occurrence n
+    sits on the grid ``start_reference (+ start_offset) + n intervals``; the
+    event's own timing must fall on slot 0 of that grid.
+    """
+
+    FIRST_RESOLVED_OCCURRENCE = "FIRST_RESOLVED_OCCURRENCE"
+    PREVIOUS_PLANNED_OCCURRENCE = "PREVIOUS_PLANNED_OCCURRENCE"
+    PREVIOUS_ACTUAL_OCCURRENCE = "PREVIOUS_ACTUAL_OCCURRENCE"
+    FIXED_ANCHOR_SERIES = "FIXED_ANCHOR_SERIES"
+
+
 class RecurrenceRule(StrictModel):
     type: Literal["INTERVAL"] = "INTERVAL"
     interval: PositiveTemporalAmount
@@ -660,6 +697,37 @@ class RecurrenceRule(StrictModel):
     #: approved schedules date exactly as before (NF-08), but every clamped
     #: occurrence then says the policy was not stated, so the gap stays visible.
     calendar_policy_ref: str | None = None
+    #: P4-02. ``None`` is a schedule that predates the field: it keeps dating
+    #: exactly as before (anchor + start_offset + n * interval) and says so in
+    #: every explanation; nothing is retro-claimed as protocol-stated.
+    basis: RecurrenceBasis | None = None
+    #: STATED - a reviewer or the protocol evidence supplied ``basis``.
+    #: UNCONFIRMED - extraction proposes ``basis`` without evidence; the series is
+    #: never dated and approval is blocked until a person states it.
+    basis_status: Literal["STATED", "UNCONFIRMED"] | None = None
+    #: Which actual a PREVIOUS_ACTUAL_OCCURRENCE series counts from. Attendance
+    #: with treatment withheld is a visit date and no treatment date.
+    actual_source: Literal["ACTUAL_VISIT", "ACTUAL_TREATMENT"] | None = None
+
+    @model_validator(mode="after")
+    def coherent_basis(self) -> "RecurrenceRule":
+        if self.basis is None:
+            if self.actual_source is not None:
+                raise ValueError("actual_source needs a recurrence basis")
+            if self.basis_status == "STATED":
+                raise ValueError("a STATED recurrence basis must name the basis")
+            return self
+        if self.basis is RecurrenceBasis.PREVIOUS_ACTUAL_OCCURRENCE:
+            if self.actual_source is None:
+                raise ValueError(
+                    "PREVIOUS_ACTUAL_OCCURRENCE must say whether it counts from the actual "
+                    "visit or the actual treatment date")
+        elif self.actual_source is not None:
+            raise ValueError("actual_source applies only to PREVIOUS_ACTUAL_OCCURRENCE")
+        if self.basis is RecurrenceBasis.FIXED_ANCHOR_SERIES and not isinstance(
+                self.start_reference, AnchorReference):
+            raise ValueError("FIXED_ANCHOR_SERIES counts from an anchor, not from a visit")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +922,65 @@ class Activity(StrictModel):
     evidence_refs: list[UUID] = Field(default_factory=list)
 
 
+class TrackRebasePolicy(StrEnum):
+    """What may move a track's targets (P5-02). Distinct from ``TemporalBasis``
+    (which DATE of a referenced visit a rule counts from) and ``RecurrenceBasis``
+    (how one repeat series progresses): this says what the TRACK as a whole is
+    allowed to be re-based on. A label such as "Imaging" never implies a policy.
+
+    FIXED_FROM_ANCHOR: members count from the track anchor only; no actual,
+    appointment or command moves them. PREVIOUS_PLANNED_OCCURRENCE /
+    PREVIOUS_ACTUAL_OCCURRENCE: the track is a chain, each target counted from
+    the previous planned / actual one (members' repeats must use the matching
+    ``RecurrenceBasis``). MANUAL_REBASE: only an explicit REBASE command moves it,
+    to a stated date for the track anchor. NO_REBASE: nothing may move it.
+    """
+
+    FIXED_FROM_ANCHOR = "FIXED_FROM_ANCHOR"
+    PREVIOUS_PLANNED_OCCURRENCE = "PREVIOUS_PLANNED_OCCURRENCE"
+    PREVIOUS_ACTUAL_OCCURRENCE = "PREVIOUS_ACTUAL_OCCURRENCE"
+    MANUAL_REBASE = "MANUAL_REBASE"
+    NO_REBASE = "NO_REBASE"
+
+
+class ScheduleTrack(StrictModel):
+    """A named group of events that share a rebase / pause / termination policy.
+
+    Membership is explicit (``Event.track_id``); sharing a track never makes
+    events move together - movement follows references and declared
+    ``TrackLink``s. Policies the protocol does not state stay ``None`` and block
+    approval (never defaulted).
+    """
+
+    id: UUID = Field(default_factory=uuid4)
+    code: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_]*$")
+    #: TREATMENT, IMAGING, LABORATORY, SAFETY, SURVIVAL, ... - a label only.
+    track_type: str = Field(min_length=1, pattern=r"^[A-Z][A-Z0-9_]*$")
+    display_name: str = Field(min_length=1)
+    #: The anchor the track counts from (its anchor policy). May be None for a
+    #: track whose members count from different anchors.
+    anchor_code: str | None = None
+    rebase_policy: TrackRebasePolicy | None = None
+    #: The process whose HELD / STOPPED states pause and stop this track, and
+    #: whose ``hold_resume_policy`` says what happens on resume.
+    process_code: str | None = None
+    #: Termination policy: may a STOP command end this track? None = not stated.
+    stoppable: bool | None = None
+    evidence_refs: list[UUID] = Field(default_factory=list)
+    review_state: Literal["PROPOSED", "CONFIRMED"] = "PROPOSED"
+
+
+class TrackLink(StrictModel):
+    """An explicit cross-track rule: the target track's events may count from the
+    source track's events. Without one, a reference across tracks is refused."""
+
+    source_track_code: str = Field(min_length=1)
+    target_track_code: str = Field(min_length=1)
+    relation: Literal["FOLLOWS_ACTUAL", "FOLLOWS_PLANNED"]
+    evidence_refs: list[UUID] = Field(default_factory=list)
+    review_state: Literal["PROPOSED", "CONFIRMED"] = "PROPOSED"
+
+
 class Event(StrictModel):
     id: UUID = Field(default_factory=uuid4)
     code: str = Field(min_length=1)
@@ -900,6 +1027,21 @@ class Event(StrictModel):
     interpretation_status: InterpretationStatus = InterpretationStatus.EXTRACTED
     requires_review: bool = False
     metadata: dict[str, object] = Field(default_factory=dict)
+    #: P5-01. ``TRACK`` = a member of ``track_id``; ``GLOBAL`` = deliberately
+    #: outside every track (study-wide); ``None`` = unclassified (every schedule
+    #: before P5 - evaluated as before, never forced into a default track).
+    track_scope: Literal["TRACK", "GLOBAL"] | None = None
+    track_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def track_membership(self) -> "Event":
+        if self.track_id is not None and self.track_scope is None:
+            self.track_scope = "TRACK"
+        if self.track_scope == "TRACK" and self.track_id is None:
+            raise ValueError("a TRACK event names its track")
+        if self.track_scope == "GLOBAL" and self.track_id is not None:
+            raise ValueError("a GLOBAL event is outside every track")
+        return self
 
     @model_validator(mode="after")
     def one_repeat_rule(self) -> "Event":
@@ -1103,6 +1245,10 @@ class OccurrenceFactKind(StrEnum):
     #: An appointment was booked (``value`` = booked date/time). A booking is
     #: never a performed time and never moves the protocol rule.
     BOOKED = "BOOKED"
+    #: Treatment was administered (``value`` = the treatment date) and NOTHING is
+    #: known about attendance: it never completes the visit, never supplies a
+    #: visit date, and only treatment-relative rules read it.
+    TREATMENT = "TREATMENT"
 
 
 class OccurrenceFact(StrictModel):
@@ -1123,7 +1269,8 @@ class OccurrenceFact(StrictModel):
 
     @model_validator(mode="after")
     def valued(self) -> "OccurrenceFact":
-        if self.kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED} and self.value is None:
+        if self.kind in {OccurrenceFactKind.PERFORMED, OccurrenceFactKind.BOOKED,
+                         OccurrenceFactKind.TREATMENT} and self.value is None:
             raise ValueError(f"a {self.kind.value} fact needs its date")
         return self
 
@@ -1163,6 +1310,10 @@ class UniversalSchedule(StrictModel):
     processes: list[ProcessDefinition] = Field(default_factory=list)
     #: WP3: schedule-level holiday calendars (a site may supply its own).
     holiday_calendars: list[HolidayCalendar] = Field(default_factory=list)
+    #: P5-01: versioned tracks and explicit cross-track rules. Empty = a schedule
+    #: that predates tracks (nothing is classified or forced).
+    tracks: list[ScheduleTrack] = Field(default_factory=list)
+    track_links: list[TrackLink] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claim_evidence: list[ClaimEvidence] = Field(default_factory=list)
     validation_issues: list[ValidationIssue] = Field(default_factory=list)
@@ -1189,6 +1340,52 @@ class LogicalOccurrenceState(StrictModel):
     actual_visit_date: date | None = None
     actual_treatment_date: date | None = None
     status: str | None = None
+
+
+class TrackRebaseInput(StrictModel):
+    """A MANUAL_REBASE command's effect: the track anchor counts from ``value``."""
+
+    command_id: str = Field(min_length=1)
+    track_code: str = Field(min_length=1)
+    anchor_code: str = Field(min_length=1)
+    value: date
+    effective_at: date
+    #: Exclusive end of the command's effect (a later reversal's effective date).
+    #: The command moves only occurrences whose STABLE (un-rebased) target lies in
+    #: [effective_at, ended_at).
+    ended_at: date | None = None
+
+
+class OccurrenceOverrideInput(StrictModel):
+    """A patient-specific exception on ONE logical occurrence. It never replaces
+    the protocol target or window; it is shown beside them."""
+
+    command_id: str = Field(min_length=1)
+    logical_key: str = Field(min_length=1)
+    target_date: date | None = None
+    window_earliest: date | None = None
+    window_latest: date | None = None
+    effective_at: date
+    ended_at: date | None = None
+    authority: str | None = None
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def says_something(self) -> "OccurrenceOverrideInput":
+        if self.target_date is None and self.window_earliest is None and self.window_latest is None:
+            raise ValueError("an override states a date, a window, or both")
+        if (self.window_earliest is not None and self.window_latest is not None
+                and self.window_latest < self.window_earliest):
+            raise ValueError("an override window must not end before it starts")
+        return self
+
+
+class OccurrenceCancellationInput(StrictModel):
+    command_id: str = Field(min_length=1)
+    logical_key: str = Field(min_length=1)
+    effective_at: date
+    ended_at: date | None = None
+    reason: str = Field(min_length=1)
 
 
 class PatientContext(StrictModel):
@@ -1225,6 +1422,10 @@ class PatientContext(StrictModel):
     #: this evaluation starts. Empty keeps every earlier context evaluating as
     #: before; an EventReference then reads the legacy per-code lists.
     occurrence_history: list[LogicalOccurrenceState] = Field(default_factory=list)
+    #: P5-03: inputs derived from the ACTIVE (non-reversed) patient commands.
+    track_rebases: list[TrackRebaseInput] = Field(default_factory=list)
+    occurrence_overrides: list[OccurrenceOverrideInput] = Field(default_factory=list)
+    occurrence_cancellations: list[OccurrenceCancellationInput] = Field(default_factory=list)
     #: Derived by the evaluator per event (never an input, never serialised):
     #: the date list a reference's temporal basis resolves to, and where each came from.
     resolved_basis_values: dict[str, list[date | datetime]] = Field(default_factory=dict, exclude=True)

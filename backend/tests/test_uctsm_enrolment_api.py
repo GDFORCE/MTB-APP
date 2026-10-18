@@ -20,7 +20,13 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 from app.api.uctsm import create_uctsm_router
+from _authz_fixtures import permissive_authorizer
 from app.db import models as db
 from app.db.base import Base, get_session
 from app.services.canonical_bridge import import_schedule_definitions
@@ -33,7 +39,7 @@ ACTOR = "00000000-0000-0000-0000-000000000001"
 
 
 async def authenticated_user():
-    return {"id": ACTOR, "organization_id": ORG}
+    return {"id": ACTOR, "organization_id": ORG, "role": "pi", "status": "Active"}
 
 
 def build_client():
@@ -50,7 +56,8 @@ def build_client():
             yield session
 
     app = FastAPI()
-    app.include_router(create_uctsm_router(authenticated_user))
+    app.include_router(create_uctsm_router(
+        authenticated_user, authorizer=permissive_authorizer(ACTOR, ORG)))
     app.dependency_overrides[get_session] = session_override
     return TestClient(app), factory
 

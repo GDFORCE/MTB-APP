@@ -18,6 +18,7 @@ import {
 import type {
   AnchorStatusResponse, DeviationReportResponse, PatientProjection, ScheduleImpact,
 } from "./api";
+import { PatientCommandsPanel } from "./PatientCommandsPanel";
 import { PatientScheduleActions } from "./PatientScheduleActions";
 import {
   ANCHOR_DATE_KINDS, anchorNamesFrom, anchorSourceType, conditionScopes,
@@ -543,6 +544,16 @@ export default function PatientScheduleScreen() {
                   disabled={!!proposal}
                   onProposal={(next, label) => { setProposal(next); setPendingCondition(null); setProposalLabel(label); }}
                   onRecorded={async (message) => { await load(); setNotice(message); }}
+                />
+              )}
+              {!!patientSchedule?.patient_id && (
+                <PatientCommandsPanel
+                  trialId={patientSchedule.trial_id}
+                  externalPatientId={patientSchedule.external_patient_id}
+                  scheduleVersionId={patientSchedule.schedule_version_id}
+                  displayPlane="SQL"
+                  horizon={horizon()}
+                  onChanged={() => void load()}
                 />
               )}
               {!!proposal && (

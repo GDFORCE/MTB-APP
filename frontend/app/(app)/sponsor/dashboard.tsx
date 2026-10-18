@@ -283,6 +283,8 @@ export default function SponsorDashboard() {
                   first - there is no standalone "share" step to jump into
                   directly the way the legacy flow had. */}
               <QuickAction icon={FileText} color={C.accent} iconColor={C.accentFg} label="Submit Schedule" disabled={!dashboard.capabilities.canShareSchedule} onPress={() => router.push("/(app)/sponsor/trials")} />
+              {/* P2: quarantined protocol uploads awaiting an identity review. */}
+              <QuickAction icon={FileText} color={C.info} label="Protocol Review" onPress={() => router.push("/(app)/sponsor/protocol-identity-review")} />
             </View>
           </MotionItem>
 

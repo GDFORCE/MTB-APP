@@ -8,6 +8,8 @@ from .models import (
     CYCLE_BLOCK_DEPENDENCY_MODES,
     CycleDependencyMode,
     DependencyMode,
+    RecurrenceBasis,
+    TrackRebasePolicy,
     EventType,
     IssueStatus,
     InterpretationStatus,
@@ -198,7 +200,14 @@ def _non_acknowledgeable_codes() -> frozenset[str]:
 class ScheduleValidator:
     version = "uctsm-validator.v1"
 
-    def validate(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+    def validate(
+        self, schedule: UniversalSchedule, *, evaluating_approved: bool = False,
+    ) -> list[ValidationIssue]:
+        """``evaluating_approved``: the engine re-checks an already APPROVED
+        version before dating a patient. Findings about a legacy repeat that
+        predates ``RecurrenceRule.basis`` are then advisory - an approved
+        schedule must keep dating exactly as it was approved (NF-08); they
+        still block approving a NEW or corrected version."""
         # Source coverage cannot be recomputed from the surviving schedule.
         # Preserve these findings until explicitly resolved or re-extracted.
         issues: list[ValidationIssue] = [
@@ -221,6 +230,10 @@ class ScheduleValidator:
         issues.extend(self._planned_anchor_use(schedule))
         issues.extend(self._rule_scopes(schedule))
         issues.extend(self._cycle_plans(schedule))
+        issues.extend(self._interval_recurrences(schedule, tolerant=evaluating_approved))
+        issues.extend(self._tracks(schedule))
+        if not evaluating_approved:
+            issues.extend(self._dependency_selectors(schedule))
         issues.extend(self._recurrence_plans(schedule))
         issues.extend(self._calendar_recurrences(schedule))
         issues.extend(self._processes(schedule))
@@ -228,6 +241,290 @@ class ScheduleValidator:
         from .capabilities import capability_issues
 
         issues.extend(capability_issues(schedule))
+        return issues
+
+    def _interval_recurrences(
+        self, schedule: UniversalSchedule, *, tolerant: bool = False,
+    ) -> list[ValidationIssue]:
+        """P4-02/P4-04: an interval repeat states how its series progresses, and
+        its first occurrence agrees with the event's own timing.
+
+        Structural only: a patient who has not yet got an actual or a condition
+        value does not make the PROTOCOL invalid (that is an evaluation wait).
+        Legacy rules (``basis`` is None) that are unambiguous stay a warning so
+        approved schedules keep working; ambiguous ones block approval.
+        """
+        issues: list[ValidationIssue] = []
+        for event in schedule.events:
+            rule = event.recurrence
+            if rule is None:
+                continue
+            common = {"entity_type": "EVENT", "entity_id": event.id}
+            path = f"events/{event.code}/recurrence"
+            timing = event.timing
+            nominal = timing.nominal if isinstance(timing, NominalWindowTiming) else timing
+            if isinstance(nominal, ProtocolDayTiming) and nominal.day > 0:
+                # "Day N" counted from an anchor is an offset of N-1 days.
+                nominal = OffsetTiming(
+                    reference=nominal.reference,
+                    offset={"value": nominal.day - 1, "unit": "DAY"})
+            same_reference = (
+                isinstance(nominal, OffsetTiming)
+                and nominal.reference.model_dump(include={"kind", "code", "event_code"})
+                == rule.start_reference.model_dump(include={"kind", "code", "event_code"}))
+            comparable = False
+            conflict = False
+            if same_reference:
+                series_offset = rule.start_offset
+                event_family, event_value = _comparable(nominal.offset)
+                if series_offset is None:
+                    series_family, series_value = event_family, 0
+                else:
+                    series_family, series_value = _comparable(series_offset)
+                comparable = series_family == event_family
+                conflict = comparable and series_value != event_value
+            if rule.basis_status == "UNCONFIRMED" or rule.basis is None and rule.basis_status:
+                issues.append(self._issue(
+                    "RECURRENCE_BASIS_UNCONFIRMED",
+                    "The recurrence basis was proposed without protocol evidence; state which "
+                    "occurrence each repeat counts from before approval.",
+                    details={"field_path": f"{path}/basis", "proposed": rule.basis},
+                    **common))
+            elif rule.basis is None:
+                ambiguous = (not same_reference or not comparable or conflict
+                             or event.dependency_mode == DependencyMode.ACTUAL_PREVIOUS_EVENT)
+                issues.append(self._issue(
+                    "RECURRENCE_BASIS_UNSTATED",
+                    "This repeat predates explicit recurrence bases. "
+                    + ("It is ambiguous - state what each occurrence counts from."
+                       if ambiguous else
+                       "It dates as a fixed series from its start reference; confirm that basis."),
+                    blocking=ambiguous and not tolerant,
+                    severity=Severity.ERROR if ambiguous and not tolerant else Severity.WARNING,
+                    details={"field_path": f"{path}/basis", "legacy_equivalent":
+                             None if ambiguous else RecurrenceBasis.FIXED_ANCHOR_SERIES.value},
+                    **common))
+            if rule.basis in (None, RecurrenceBasis.FIXED_ANCHOR_SERIES):
+                check = conflict
+            else:
+                check = rule.start_offset is not None and conflict
+            # An explicit basis must be CHECKABLE at approval. When the event's
+            # own timing and the series start cannot be compared structurally
+            # (different anchors, different calendar unit families, a timing
+            # that is not an offset from the same reference) the contradiction
+            # would only surface as an unusable series for a patient. Blocking
+            # it here names the field to fix; a patient who merely has no
+            # anchor value yet is NOT this case - that stays an evaluation wait.
+            needs_proof = rule.basis is RecurrenceBasis.FIXED_ANCHOR_SERIES or (
+                rule.basis is not None and rule.start_offset is not None)
+            if needs_proof and not conflict and rule.basis_status != "UNCONFIRMED":
+                provable = same_reference and comparable
+                if not provable:
+                    reason = ("they count from different references" if not same_reference
+                              else "their units are different calendar families")
+                    issues.append(self._issue(
+                        "RECURRENCE_START_UNVERIFIABLE",
+                        f"The event's own timing and the recurrence start cannot be shown to "
+                        f"agree ({reason}). State the start in the same reference and unit as "
+                        "the event timing, or remove the start offset so the event timing is "
+                        "the first occurrence.",
+                        details={"field_path": f"{path}/start_reference",
+                                 "reason": "DIFFERENT_REFERENCE" if not same_reference
+                                 else "INCOMPATIBLE_UNITS",
+                                 "basis": rule.basis.value},
+                        **common))
+            if check:
+                legacy = rule.basis is None and tolerant
+                issues.append(self._issue(
+                    "RECURRENCE_START_CONFLICT",
+                    "The event's own timing and the recurrence's start offset put the first "
+                    "occurrence on different dates; neither is chosen until a reviewer decides.",
+                    blocking=not legacy,
+                    severity=Severity.WARNING if legacy else Severity.ERROR,
+                    details={"field_path": f"{path}/start_offset",
+                             "event_offset": nominal.offset.model_dump(mode="json"),
+                             "start_offset": rule.start_offset.model_dump(mode="json")
+                             if rule.start_offset else None},
+                    **common))
+        return issues
+
+    def _dependency_selectors(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """New and edited drafts must say WHICH occurrence of a source a dependency
+        needs. ``CURRENT`` is only an alias of LAST (the latest generated
+        occurrence), not a target-relative reading, so it is refused for approval;
+        approved legacy schedules keep evaluating (this runs on drafts only)."""
+        issues: list[ValidationIssue] = []
+        for event in schedule.events:
+            for index, dependency in enumerate(event.dependencies):
+                if dependency.source_occurrence == "CURRENT":
+                    issues.append(self._issue(
+                        "DEPENDENCY_SELECTOR_AMBIGUOUS",
+                        f"{event.display_name} depends on {dependency.source_event_code} with the "
+                        "selector CURRENT, which only means the latest generated occurrence. "
+                        "Choose FIRST, LAST or a specific occurrence number.",
+                        entity_type="EVENT", entity_id=event.id,
+                        details={"field_path": f"events/{event.code}/dependencies/{index}/source_occurrence",
+                                 "selector": "CURRENT"}))
+        return issues
+
+    def _tracks(self, schedule: UniversalSchedule) -> list[ValidationIssue]:
+        """P5-01/P5-02: track membership, policies and how they compose.
+
+        A schedule with no tracks and no classified events is a legacy schedule:
+        nothing is forced and every date is as before. Once a schedule carries
+        tracks it is TRACK-AWARE and each event must be a member of a track or be
+        explicitly GLOBAL - there is no fabricated default track.
+        """
+        from .tracks import references_of
+
+        issues: list[ValidationIssue] = []
+        aware = bool(schedule.tracks or schedule.track_links) or any(
+            event.track_scope is not None for event in schedule.events)
+        if not aware:
+            return issues
+        by_id = {track.id: track for track in schedule.tracks}
+        by_code: dict[str, object] = {}
+        anchors = {anchor.code: anchor for anchor in schedule.anchors}
+        processes = {item.code: item for item in schedule.processes}
+        events_by_code = {event.code: event for event in schedule.events}
+        for track in schedule.tracks:
+            path = f"tracks/{track.code}"
+            if track.code in by_code:
+                issues.append(self._issue(
+                    "TRACK_CODE_DUPLICATE", f"Two tracks share the code {track.code}.",
+                    entity_type="TRACK", entity_id=track.id, details={"field_path": f"{path}/code"}))
+            by_code[track.code] = track
+            common = {"entity_type": "TRACK", "entity_id": track.id}
+            if track.review_state != "CONFIRMED":
+                issues.append(self._issue(
+                    "TRACK_NOT_CONFIRMED", f"Track {track.code} is proposed and has not been "
+                    "confirmed in review.", details={"field_path": f"{path}/review_state"}, **common))
+            if track.rebase_policy is None:
+                issues.append(self._issue(
+                    "TRACK_POLICY_UNRESOLVED", f"Track {track.code} does not state what may move "
+                    "its targets (rebase policy). It is not inferred from the track's name.",
+                    details={"field_path": f"{path}/rebase_policy"}, **common))
+            if track.anchor_code is not None and track.anchor_code not in anchors:
+                issues.append(self._issue(
+                    "TRACK_ANCHOR_UNKNOWN", f"Track {track.code} counts from anchor "
+                    f"{track.anchor_code}, which this schedule does not define.",
+                    details={"field_path": f"{path}/anchor_code"}, **common))
+            if track.rebase_policy is TrackRebasePolicy.MANUAL_REBASE and not track.anchor_code:
+                issues.append(self._issue(
+                    "TRACK_REBASE_ANCHOR_MISSING", f"Track {track.code} is rebased manually but "
+                    "names no anchor to rebase.", details={"field_path": f"{path}/anchor_code"},
+                    **common))
+            members = {event.code for event in schedule.events if event.track_id == track.id}
+            if track.process_code is not None:
+                process = processes.get(track.process_code)
+                if process is None:
+                    issues.append(self._issue(
+                        "TRACK_PROCESS_UNKNOWN", f"Track {track.code} pauses/stops through process "
+                        f"{track.process_code}, which this schedule does not define.",
+                        details={"field_path": f"{path}/process_code"}, **common))
+                elif set(process.event_codes) != members:
+                    issues.append(self._issue(
+                        "TRACK_PROCESS_MISMATCH", f"The events of track {track.code} and the "
+                        f"events of process {process.code} differ, so pausing the track would "
+                        "pause the wrong visits.",
+                        details={"field_path": f"{path}/process_code",
+                                 "track_events": sorted(members),
+                                 "process_events": sorted(process.event_codes)}, **common))
+                if track.stoppable is None:
+                    issues.append(self._issue(
+                        "TRACK_TERMINATION_UNSTATED", f"Track {track.code} does not say whether it "
+                        "may be stopped; stopping it is refused until it does.", blocking=False,
+                        severity=Severity.WARNING,
+                        details={"field_path": f"{path}/stoppable"}, **common))
+        for link in schedule.track_links:
+            for side, code in (("source_track_code", link.source_track_code),
+                               ("target_track_code", link.target_track_code)):
+                if code not in by_code:
+                    issues.append(self._issue(
+                        "TRACK_LINK_UNKNOWN", f"A cross-track rule names track {code}, which "
+                        "does not exist.", details={"field_path": f"track_links/{side}"}))
+            if link.review_state != "CONFIRMED":
+                issues.append(self._issue(
+                    "TRACK_LINK_NOT_CONFIRMED", f"The cross-track rule {link.source_track_code} -> "
+                    f"{link.target_track_code} is proposed and has not been confirmed.",
+                    details={"field_path": "track_links"}))
+        linked = {(item.source_track_code, item.target_track_code) for item in schedule.track_links}
+        track_code_of = {track.id: track.code for track in schedule.tracks}
+        actual_bases = ("ACTUAL_VISIT", "ACTUAL_TREATMENT", "ACTUAL_OR_PLANNED", "MANUAL_ANCHOR")
+        for event in schedule.events:
+            common = {"entity_type": "EVENT", "entity_id": event.id}
+            path = f"events/{event.code}"
+            if event.track_scope is None:
+                issues.append(self._issue(
+                    "TRACK_MEMBERSHIP_MISSING", f"{event.display_name} is not in a track and is "
+                    "not marked as study-wide. Choose its track or mark it global.",
+                    details={"field_path": f"{path}/track_id"}, **common))
+                continue
+            if event.track_scope == "TRACK" and event.track_id not in by_id:
+                issues.append(self._issue(
+                    "TRACK_REFERENCE_UNKNOWN", f"{event.display_name} names a track that is not "
+                    "part of this schedule version.",
+                    details={"field_path": f"{path}/track_id"}, **common))
+                continue
+            track = by_id.get(event.track_id) if event.track_id else None
+            refs = references_of(event)
+            if track is not None and track.rebase_policy is not None:
+                actual_refs = [r for r in refs if r["kind"] == "EVENT"
+                               and r.get("temporal_basis") in actual_bases]
+                policy = track.rebase_policy
+                if policy in (TrackRebasePolicy.FIXED_FROM_ANCHOR, TrackRebasePolicy.NO_REBASE) \
+                        and actual_refs:
+                    issues.append(self._issue(
+                        "TRACK_POLICY_BASIS_CONFLICT",
+                        f"{event.display_name} counts from an actual date but track {track.code} "
+                        f"is {policy.value}: nothing may move it.",
+                        details={"field_path": f"{path}/timing", "track": track.code,
+                                 "policy": policy.value}, **common))
+                if event.recurrence is not None and event.recurrence.basis is not None:
+                    basis = event.recurrence.basis.value
+                    allowed = {
+                        TrackRebasePolicy.FIXED_FROM_ANCHOR: {
+                            "FIXED_ANCHOR_SERIES", "FIRST_RESOLVED_OCCURRENCE"},
+                        TrackRebasePolicy.NO_REBASE: {
+                            "FIXED_ANCHOR_SERIES", "FIRST_RESOLVED_OCCURRENCE"},
+                        TrackRebasePolicy.MANUAL_REBASE: {
+                            "FIXED_ANCHOR_SERIES", "FIRST_RESOLVED_OCCURRENCE"},
+                        TrackRebasePolicy.PREVIOUS_PLANNED_OCCURRENCE: {
+                            "PREVIOUS_PLANNED_OCCURRENCE"},
+                        TrackRebasePolicy.PREVIOUS_ACTUAL_OCCURRENCE: {
+                            "PREVIOUS_ACTUAL_OCCURRENCE"},
+                    }[policy]
+                    if basis not in allowed:
+                        issues.append(self._issue(
+                            "TRACK_POLICY_BASIS_CONFLICT",
+                            f"{event.display_name} repeats {basis} but track {track.code} is "
+                            f"{policy.value}; they do not describe the same series.",
+                            details={"field_path": f"{path}/recurrence/basis", "track": track.code,
+                                     "policy": policy.value, "recurrence_basis": basis}, **common))
+            # references across tracks need an explicit, confirmed rule
+            sources: list[str] = [r["code"] for r in refs if r["kind"] == "EVENT"]
+            sources += [dep.source_event_code for dep in event.dependencies]
+            for ref in refs:
+                if ref["kind"] == "ANCHOR":
+                    anchor = anchors.get(ref["code"])
+                    if anchor is not None and anchor.source_event_code:
+                        sources.append(anchor.source_event_code)
+            if event.track_scope == "TRACK" and track is not None:
+                for source_code in dict.fromkeys(sources):
+                    source = events_by_code.get(source_code)
+                    if source is None or source.track_scope != "TRACK" \
+                            or source.track_id == event.track_id:
+                        continue
+                    source_track = track_code_of.get(source.track_id)
+                    if source_track is not None and (source_track, track.code) not in linked:
+                        issues.append(self._issue(
+                            "TRACK_CROSS_REFERENCE_UNDECLARED",
+                            f"{event.display_name} (track {track.code}) counts from "
+                            f"{source.display_name} (track {source_track}) with no declared "
+                            "cross-track rule.",
+                            details={"field_path": f"{path}/timing", "source_track": source_track,
+                                     "target_track": track.code, "source_event": source_code},
+                            **common))
         return issues
 
     def _constraints(self, schedule: UniversalSchedule) -> list[ValidationIssue]:

@@ -152,6 +152,13 @@ class ScheduleVersion(IdMixin, TimestampMixin, Base):
     extraction_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("uctsm_extraction_runs.id"))
     approved_by: Mapped[UUID | None] = mapped_column(Uuid)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # P3-04 maker-checker provenance. Set where a MATERIAL edit happens (timing,
+    # window, recurrence, applicability, activities, qualifier/anchor meaning,
+    # calendars, an added visit), in the same transaction. NULL/empty means no
+    # material edit has been recorded - never "unknown author is the approver".
+    last_material_editor_id: Mapped[UUID | None] = mapped_column(Uuid)
+    last_material_edit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    material_editor_ids: Mapped[list[Any] | None] = mapped_column(JsonType, default=list)
     # Doc 9 s8. When this version starts applying to NEW enrolments. Approval and
     # effect are different moments: an amendment approved today may not be in
     # force until a stated date, and conflating them enrols patients onto a

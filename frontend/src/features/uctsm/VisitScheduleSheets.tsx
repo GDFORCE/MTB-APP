@@ -5,8 +5,9 @@ import { Button } from "@/src/components/ui";
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import { Choice, Field } from "./VisitScheduleReview";
 import {
-  TIME_UNITS, buildAddVisitRequest, buildEditRequest, timingFormFromRule,
-  type ReviewRow, type ReviewView, type TimeUnit, type TimingForm, type WindowForm,
+  RECURRENCE_BASES, TIME_UNITS, buildAddVisitRequest, buildEditRequest, timingFormFromRule,
+  type ActualSourceValue, type RecurrenceBasisForm, type ReviewRow, type ReviewView, type TimeUnit,
+  type TimingForm, type WindowForm,
 } from "./visitSchedule";
 
 function Sheet({ visible, title, onClose, children }: {
@@ -72,10 +73,14 @@ function windowFormFromRule(rule: unknown): WindowForm {
   return { before: String(window.before.value), after: String(window.after.value), unit: window.before.unit || "DAY" };
 }
 
-export function EditVisitSheet({ row, view, busy, onClose, onSubmit }: {
+export function EditVisitSheet({ row, view, busy, onClose, onSubmit, canCorrect = true }: {
   row: ReviewRow | null; view: ReviewView; busy: boolean; onClose: () => void;
   onSubmit: (row: ReviewRow, body: Record<string, unknown>) => Promise<boolean>;
+  /** From /authorization/me (schedule.correct). Informational: the server decides. */
+  canCorrect?: boolean;
 }) {
+  const [editBasis, setEditBasis] = useState(false);
+  const [basis, setBasis] = useState<RecurrenceBasisForm>({ basis: "", actualSource: "" });
   const [name, setName] = useState("");
   const [editTiming, setEditTiming] = useState(false);
   const [timing, setTiming] = useState<TimingForm>({ kind: "OFFSET", anchor: "", value: "", unit: "DAY" });
@@ -92,7 +97,10 @@ export function EditVisitSheet({ row, view, busy, onClose, onSubmit }: {
   useEffect(() => {
     if (!row) return;
     setName(row.visit_name); setEditTiming(false); setEditWindow(false); setConfirmRow(false);
-    setRationale(""); setError("");
+    setRationale(""); setError(""); setEditBasis(false);
+    const stated = (row.details.recurrence?.rule || {}) as Record<string, any>;
+    setBasis({ basis: stated.basis_status === "UNCONFIRMED" ? "" : (stated.basis || ""),
+               actualSource: stated.actual_source || "" });
     setTiming(simpleTiming || { kind: "OFFSET", anchor: view.anchors[0]?.code || "", value: "", unit: "DAY" });
     setWindow(windowFormFromRule(windowRule));
   }, [row?.id]);
@@ -101,7 +109,7 @@ export function EditVisitSheet({ row, view, busy, onClose, onSubmit }: {
   const save = async () => {
     const built = buildEditRequest(row, {
       visitName: name, timing: editTiming ? timing : null, window: editWindow ? window : null,
-      confirmRow, rationale,
+      confirmRow, rationale, recurrence: editBasis ? basis : null,
     }, view.revision);
     if (built.error) { setError(built.error); return; }
     setError("");
@@ -125,6 +133,32 @@ export function EditVisitSheet({ row, view, busy, onClose, onSubmit }: {
     </Pressable>
     <Text style={styles.muted}>Current: {row.window_summary}</Text>
     {editWindow && <WindowEditor value={window} onChange={setWindow} />}
+    {row.details.recurrence?.type === "INTERVAL" && <>
+      <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: editBasis, disabled: !canCorrect }}
+        disabled={!canCorrect} onPress={() => setEditBasis((value) => !value)} style={styles.toggle}>
+        <Text style={styles.valueStrong}>{editBasis ? "☑" : "☐"} State what each repeat counts from</Text>
+      </Pressable>
+      <Text style={styles.muted}>Current: {row.details.recurrence.summary}</Text>
+      {!canCorrect && <Text style={styles.warn}>
+        Your account cannot correct schedule rules. Ask someone with that permission to state this.
+      </Text>}
+      {editBasis && canCorrect && <View style={{ gap: 8 }}>
+        <View style={styles.chips}>
+          {RECURRENCE_BASES.map((option) => <Choice key={option.value} label={option.label}
+            selected={basis.basis === option.value}
+            onPress={() => setBasis((current) => ({ ...current, basis: option.value }))} />)}
+        </View>
+        {!!basis.basis && <Text style={styles.muted}>
+          {RECURRENCE_BASES.find((option) => option.value === basis.basis)?.hint}
+        </Text>}
+        {basis.basis === "PREVIOUS_ACTUAL_OCCURRENCE" && <View style={styles.chips}>
+          {([["ACTUAL_VISIT", "Actual visit date"], ["ACTUAL_TREATMENT", "Actual treatment date"]] as
+            [ActualSourceValue, string][]).map(([value, label]) => <Choice key={value} label={label}
+            selected={basis.actualSource === value}
+            onPress={() => setBasis((current) => ({ ...current, actualSource: value }))} />)}
+        </View>}
+      </View>}
+    </>}
     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: confirmRow }}
       onPress={() => setConfirmRow((value) => !value)} style={styles.toggle}>
       <Text style={styles.valueStrong}>{confirmRow ? "☑" : "☐"} I have checked this visit against the protocol</Text>

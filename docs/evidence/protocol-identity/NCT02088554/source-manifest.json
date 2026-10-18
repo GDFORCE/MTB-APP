@@ -1,0 +1,23 @@
+{
+  "retrieved_date_client_timezone": "2026-10-15 Asia/Calcutta",
+  "registry_api_url": "https://clinicaltrials.gov/api/v2/studies/NCT02088554",
+  "pdf_url": "https://cdn.clinicaltrials.gov/large-docs/54/NCT02088554/Prot_003.pdf",
+  "nct_id": "NCT02088554",
+  "title": "PERIGON Pivotal Trial",
+  "registry_document": {
+    "typeAbbrev": "Prot",
+    "hasProtocol": true,
+    "hasSap": false,
+    "hasIcf": false,
+    "label": "Study Protocol",
+    "date": "2019-03-13",
+    "uploadDate": "2019-08-27T12:20",
+    "filename": "Prot_003.pdf",
+    "size": 1099656
+  },
+  "sha256": "142fd9b3cbc461da523e3edd30bad33ce33c58e79a3cdec20474dff658226f96",
+  "bytes": 1099656,
+  "pages": 96,
+  "contains_perigon_in_first_5_pages": true,
+  "provenance": "Public official registry copy; not asserted to be the historically mislabelled upload or an amendment pair."
+}

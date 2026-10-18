@@ -49,10 +49,21 @@ def _event_document(event: domain.Event, *, valid_codes: set[str]) -> dict[str, 
     }
 
 
+def check_track_references(
+    events: list[domain.Event], track_ids: set[UUID],
+) -> None:
+    """An event that names a track must name one OF THIS schedule version."""
+    for event in events:
+        if event.track_scope == "TRACK" and event.track_id not in track_ids:
+            raise ValueError(
+                f"event {event.code!r} names a track that is not part of this schedule version")
+
+
 def build_parts(
     schedule: domain.UniversalSchedule, *, definition: ScheduleDefinitionRecord,
     extraction_run_id: UUID | None,
 ) -> dict[str, Any]:
+    check_track_references(schedule.events, {item.id for item in schedule.tracks})
     meta = schedule.schedule_metadata
     if meta.protocol_version_id is None:
         raise ValueError("protocol_version_id is required to persist schedule evidence")
@@ -64,11 +75,32 @@ def build_parts(
         schedule_definition_id=definition.id, version_number=meta.version_number,
         status=meta.status.value, extraction_run_id=extraction_run_id,
         schema_version=schedule.schema_version, created_at=schedule.created_at, updated_at=now,
+        effective_from=meta.effective_from,
     )
+    if meta.status.value == "APPROVED":
+        # A version persisted already APPROVED (an import / fixture; the review boundary
+        # stamps its own in the approval write) is hashed here, from the content it is
+        # being stored with, so an approved version never exists without one.
+        from app.domain.schedule.amendment import (
+            CONTENT_HASH_VERSION, header_integrity_hash, schedule_content_hash,
+        )
+        digest = schedule_content_hash(schedule)
+        header = header.model_copy(update={
+            "content_hash": digest, "content_hash_version": CONTENT_HASH_VERSION,
+            "header_integrity_hash": header_integrity_hash(
+                schedule_version_id=header.id, organization_id=header.organization_id,
+                trial_id=header.trial_id, protocol_id=header.protocol_id,
+                protocol_version_id=header.protocol_version_id,
+                schedule_definition_id=header.schedule_definition_id,
+                version_number=header.version_number, based_on_schedule_version_id=None,
+                effective_from=meta.effective_from, approved_by=None, approved_at=None,
+                content_hash=digest, content_hash_version=CONTENT_HASH_VERSION)})
     content = {
         "metadata": to_json(meta.model_dump(
             mode="python", exclude={"status", "version_number", "protocol_version_id"})),
         "processes": to_json(schedule.processes),
+        "tracks": [to_json(item) for item in schedule.tracks],
+        "track_links": [to_json(item) for item in schedule.track_links],
         "holiday_calendars": to_json(schedule.holiday_calendars),
         "dimensions": to_json(schedule.dimensions),
         "conditional_definitions": to_json(schedule.conditional_definitions),
@@ -85,6 +117,8 @@ def build_parts(
         "header": header,
         "content": content,
         "events": [_event_document(item, valid_codes=codes) for item in schedule.events],
+        "tracks": [{"id": item.id, "code": item.code, "track": to_json(item)}
+                   for item in schedule.tracks],
         "evidence": [
             {"id": item.id, "protocol_version_id": meta.protocol_version_id, "evidence": to_json(item)}
             for item in schedule.evidence
@@ -142,6 +176,8 @@ def assemble(
             domain.ConfinementEpisodeDefinition.model_validate(item)
             for item in content.get("confinement_episodes") or []],
         processes=[domain.ProcessDefinition.model_validate(item) for item in content.get("processes") or []],
+        tracks=[domain.ScheduleTrack.model_validate(item) for item in content.get("tracks") or []],
+        track_links=[domain.TrackLink.model_validate(item) for item in content.get("track_links") or []],
         holiday_calendars=[
             domain.HolidayCalendar.model_validate(item) for item in content.get("holiday_calendars") or []],
         evidence=[domain.Evidence.model_validate(item["evidence"]) for item in evidence],
@@ -163,3 +199,28 @@ def rename_dependency_source(event_json: dict[str, Any], old: str, new: str) -> 
 
 def stamp(now: datetime | None = None) -> datetime:
     return now or utc_now()
+
+
+def approval_stamp(
+    header: ScheduleVersionHeader, schedule: domain.UniversalSchedule, *, reviewer_id: UUID,
+    approved_at: datetime, effective_from: Any,
+) -> dict[str, str]:
+    """The three values the guarded approval write stamps: the content hash, its
+    algorithm version and the approval-header integrity hash. One definition, used by
+    the review service AND by the repositories when a direct caller supplies none, so
+    no path can approve a version without them."""
+    from app.domain.schedule.amendment import (
+        CONTENT_HASH_VERSION, header_integrity_hash, schedule_content_hash,
+    )
+    digest = schedule_content_hash(schedule)
+    return {
+        "content_hash": digest, "content_hash_version": CONTENT_HASH_VERSION,
+        "header_integrity_hash": header_integrity_hash(
+            schedule_version_id=header.id, organization_id=header.organization_id,
+            trial_id=header.trial_id, protocol_id=header.protocol_id,
+            protocol_version_id=header.protocol_version_id,
+            schedule_definition_id=header.schedule_definition_id,
+            version_number=header.version_number,
+            based_on_schedule_version_id=header.based_on_schedule_version_id,
+            effective_from=effective_from, approved_by=reviewer_id, approved_at=approved_at,
+            content_hash=digest, content_hash_version=CONTENT_HASH_VERSION)}

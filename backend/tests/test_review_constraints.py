@@ -35,7 +35,7 @@ def anchor_value(code, days=None):
 
 def persist(factory, events: list[dict], extra: dict | None = None) -> str:
     with factory() as session:
-        trial = db.Trial(organization_id=UUID(USER["organization_id"]), protocol_id="SYN-C")
+        trial = db.Trial(organization_id=UUID(USER["organization_id"]), protocol_id="SYN-C", external_trial_id="SYN-C-EXT")
         session.add(trial); session.flush()
         protocol = db.Protocol(trial_id=trial.id, protocol_number="SYN-C")
         session.add(protocol); session.flush()

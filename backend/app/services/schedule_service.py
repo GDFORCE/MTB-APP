@@ -78,6 +78,9 @@ def occurrence_fact_from_row(
     )
 from app.domain.schedule.validator import ScheduleValidator
 
+if False:  # pragma: no cover - typing only
+    from app.authorization.maker_checker import MakerCheckerPolicy, Provenance
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -205,9 +208,52 @@ def resolve_current_schedule_version(
 
 
 class ScheduleReviewService:
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, maker_checker: "MakerCheckerPolicy | None" = None):
         self.session = session
         self.repository = ScheduleRepository(session)
+        # Deployment-owned policy; resolved per approval when not injected, so a
+        # caller cannot weaken it and a direct service call is still covered.
+        self._maker_checker = maker_checker
+
+    # -- P3-04 maker-checker ---------------------------------------------------
+    def mark_material_edit(self, version: db.ScheduleVersion, editor_id: UUID) -> None:
+        """Record WHO made a material change, on the version, in this transaction."""
+        editors = [str(item) for item in (version.material_editor_ids or [])]
+        if str(editor_id) not in editors:
+            editors.append(str(editor_id))
+        version.material_editor_ids = editors
+        version.last_material_editor_id = editor_id
+        version.last_material_edit_at = utc_now()
+
+    def _provenance(self, version: db.ScheduleVersion) -> "Provenance":
+        from app.authorization.maker_checker import Provenance
+
+        editors = tuple(str(item) for item in (version.material_editor_ids or []))
+        last = str(version.last_material_editor_id) if version.last_material_editor_id else None
+        legacy: tuple[str, ...] = ()
+        if last is None and not editors:
+            from app.authorization.maker_checker import legacy_correctors
+
+            rows = self.session.execute(select(
+                db.ReviewDecision.reviewer_id, db.ReviewDecision.field_path,
+                db.ReviewDecision.previous_value, db.ReviewDecision.new_value).where(
+                db.ReviewDecision.schedule_version_id == version.id,
+                db.ReviewDecision.decision.in_(["CORRECT", "ADD"]),
+            )).all()
+            legacy = legacy_correctors(tuple(row) for row in rows)
+        return Provenance(last, editors, legacy)
+
+    def enforce_maker_checker(self, version: db.ScheduleVersion, approver_id: UUID):
+        """Raise ``MakerCheckerViolation`` when the policy forbids this approver.
+
+        This is the lowest shared approval boundary: approve-version,
+        approve-table, the review endpoint and direct service calls all end in
+        ``approve`` below, so the rule cannot be bypassed by choosing an alias.
+        """
+        from app.authorization.maker_checker import MakerCheckerPolicy, enforce
+
+        policy = self._maker_checker or MakerCheckerPolicy.from_environment()
+        return enforce(policy, str(approver_id), self._provenance(version))
 
     def validate(self, schedule_version_id: UUID) -> list[ValidationIssue]:
         schedule = self.repository.get(schedule_version_id)
@@ -242,6 +288,13 @@ class ScheduleReviewService:
         issues = ScheduleValidator().validate(corrected)
         self.repository.replace_validation_issues(schedule_version_id, issues)
         version.status = ScheduleStatus.VALIDATION_REQUIRED.value
+        # A whole-event replacement is a material edit unless only a label moved.
+        from app.authorization.maker_checker import is_material_event_change
+        changed = [key for key, value in event.model_dump(mode="json").items()
+                   if before.model_dump(mode="json").get(key) != value
+                   and key not in {"metadata", "evidence_refs", "updated_at", "created_at"}]
+        if is_material_event_change(changed):
+            self.mark_material_edit(version, reviewer_id)
         self.session.add(db.ReviewDecision(
             schedule_version_id=schedule_version_id, entity_type="EVENT", entity_id=event.id,
             decision="CORRECT", previous_value=before.model_dump(mode="json"),
@@ -407,6 +460,11 @@ class ScheduleReviewService:
         version.status = ScheduleStatus.VALIDATION_REQUIRED.value
 
         after = target.model_dump(mode="json")
+        # Accepting the extracted reading is a confirmation; changing what the
+        # footnote MEANS is a material edit.
+        if {k: v for k, v in before.items() if k != "resolved"} != {
+                k: v for k, v in after.items() if k != "resolved"}:
+            self.mark_material_edit(version, reviewer_id)
         self.session.add(db.ReviewDecision(
             schedule_version_id=schedule_version_id, entity_type="QUALIFIER",
             entity_id=qualifier_id, field_path="resolved", decision=decision,
@@ -503,6 +561,9 @@ class ScheduleReviewService:
             raise KeyError("schedule version not found")
         if version.status in {ScheduleStatus.APPROVED.value, ScheduleStatus.SUPERSEDED.value, "ARCHIVED"}:
             raise ImmutableScheduleError("this schedule is no longer editable")
+        # Refuse a self-approval before any confirmation is written; ``approve``
+        # enforces it again at the commit (the lowest shared boundary).
+        self.enforce_maker_checker(version, reviewer_id)
         issues = ScheduleValidator().validate(self.repository.get(schedule_version_id))
         if ScheduleValidator.blocking(issues):
             raise ValueError("Resolve the flagged schedule items before approval.")
@@ -526,6 +587,9 @@ class ScheduleReviewService:
             raise KeyError("schedule version not found")
         if version.status != ScheduleStatus.IN_REVIEW.value:
             raise ValueError("only an in-review schedule can be approved")
+        # P3-04: segregation of duties, read from the locked row so a concurrent
+        # edit cannot slip between the check and the commit.
+        maker_checker = self.enforce_maker_checker(version, reviewer_id)
         schedule = self.repository.get(schedule_version_id)
         issues = ScheduleValidator().validate(schedule)
         self.repository.replace_validation_issues(schedule_version_id, issues)
@@ -599,7 +663,10 @@ class ScheduleReviewService:
             organization_id=self._organization_id(version), actor_id=reviewer_id,
             action="SCHEDULE_APPROVED", entity_type="SCHEDULE_VERSION",
             entity_id=version.id, before=before,
-            after={"status": version.status, "approved_at": version.approved_at.isoformat()},
+            after={"status": version.status, "approved_at": version.approved_at.isoformat(),
+                   "maker_checker": maker_checker.audit(
+                       approver_id=str(reviewer_id),
+                       revision=self._revision(schedule_version_id))},
             reason=comment,
         ))
 
@@ -615,7 +682,9 @@ class ScheduleReviewService:
         ))
         self._audit(version, reviewer_id, "SCHEDULE_REJECTED", reason)
 
-    def list_pending_review(self, *, organization_id: UUID) -> list[dict[str, object]]:
+    def list_pending_review(
+        self, *, organization_id: UUID, trial_ids: "frozenset[UUID] | None" = None,
+    ) -> list[dict[str, object]]:
         """Every IN_REVIEW schedule version across this org's trials.
 
         The cross-trial "what needs my decision" list `schedule-review.tsx`
@@ -624,7 +693,7 @@ class ScheduleReviewService:
         tables `approve`/`reject` already act on rather than a second,
         independently-maintained record of "what's pending".
         """
-        rows = self.session.execute(
+        query = (
             select(
                 db.Trial.id, db.Trial.study_title, db.Trial.protocol_id,
                 db.ScheduleDefinition.id, db.ScheduleDefinition.name,
@@ -643,7 +712,12 @@ class ScheduleReviewService:
                 db.Trial.organization_id == organization_id,
             )
             .order_by(db.ScheduleVersion.updated_at)
-        ).all()
+        )
+        if trial_ids is not None:
+            # Authorised scope is applied in the query, so an unauthorised
+            # trial is never read, counted or returned.
+            query = query.where(db.Trial.id.in_(list(trial_ids)))
+        rows = self.session.execute(query).all()
         return [
             {
                 "trial_id": str(trial_id),
@@ -669,6 +743,14 @@ class ScheduleReviewService:
             .join(db.ScheduleDefinition, db.ScheduleDefinition.protocol_version_id == db.ProtocolVersion.id)
             .where(db.ScheduleDefinition.id == version.schedule_definition_id)
         ).scalar_one()
+
+    def _revision(self, schedule_version_id: UUID) -> str | None:
+        try:
+            from app.services.review_view import review_revision
+
+            return review_revision(self.repository.get(schedule_version_id))
+        except Exception:  # the stamp must never block an approval
+            return None
 
     def _audit(self, version: db.ScheduleVersion, actor_id: UUID, action: str, reason: str | None = None) -> None:
         self.session.add(db.AuditEvent(

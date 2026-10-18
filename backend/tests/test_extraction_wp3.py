@@ -51,6 +51,27 @@ def blocking(result):
     return sorted(issue.issue_code for issue in ScheduleValidator.blocking(result.issues))
 
 
+def stated(schedule):
+    """A reviewer EXPLICITLY states each recurrence basis the compiler could only propose.
+
+    The compiler never states one (P4-02): an unconfirmed basis blocks approval until a person
+    does, so a test that wants an approved, evaluable schedule models that explicit edit."""
+    from app.domain.schedule.models import RecurrenceBasis
+
+    schedule = schedule.model_copy(deep=True)
+    for item in schedule.events:
+        rule = item.recurrence
+        if rule is not None and rule.basis_status == "UNCONFIRMED":
+            rule.basis = rule.basis or RecurrenceBasis.FIRST_RESOLVED_OCCURRENCE
+            rule.basis_status = "STATED"
+    return schedule
+
+
+def blocking_after_review(result):
+    return sorted(issue.issue_code for issue in ScheduleValidator.blocking(
+        ScheduleValidator().validate(stated(result.schedule))))
+
+
 def approve(schedule):
     return schedule.model_copy(update={"schedule_metadata": schedule.schedule_metadata.model_copy(
         update={"status": ScheduleStatus.APPROVED})})
@@ -182,11 +203,13 @@ def test_components_become_processes_with_unstated_policies_left_unstated():
                for item in result.schedule.conditional_definitions for action in item.actions}
     assert ("NEUROPATHY", "STOP_PROCESS", "DRUG_B") in actions
     assert ("PROGRESSION", "STOP_BLOCK", "TREATMENT") in actions
-    assert blocking(result) == []
+    # the three repeats' bases are not stated by the protocol text: review is required (only that)
+    assert set(blocking(result)) == {"RECURRENCE_BASIS_UNCONFIRMED"}
+    assert blocking_after_review(result) == []
 
 
 def test_a_per_drug_stop_cancels_only_that_drugs_obligations():
-    schedule = approve(compile_treatment().schedule)
+    schedule = approve(stated(compile_treatment().schedule))
     before = run(schedule, "UNRELATED")
     after = run(schedule, "NEUROPATHY")
     assert cancelled(after["DRUG_B_DOSE"]) > 0
@@ -196,7 +219,7 @@ def test_a_per_drug_stop_cancels_only_that_drugs_obligations():
 
 
 def test_a_whole_treatment_stop_cancels_every_drug_but_not_follow_up():
-    schedule = approve(compile_treatment().schedule)
+    schedule = approve(stated(compile_treatment().schedule))
     after = run(schedule, "PROGRESSION")
     assert cancelled(after["DRUG_A_DOSE"]) > 0 and cancelled(after["DRUG_B_DOSE"]) > 0
     assert cancelled(after["SURVIVAL_FOLLOW_UP_CONTACT"]) == 0
@@ -251,9 +274,9 @@ def test_renamed_components_compile_and_behave_identically():
     processes = {item.code: item.event_codes for item in renamed.schedule.processes}
     assert processes == {"AGENT_X": ["AGENT_X_DOSE"], "AGENT_Y": ["AGENT_Y_DOSE"],
                          "LONG_TERM_MONITORING": ["LONG_TERM_MONITORING_CONTACT"]}
-    schedule = approve(renamed.schedule)
+    schedule = approve(stated(renamed.schedule))
     after = run(schedule, "NEUROPATHY", start_code="DAY_ZERO")
-    original = run(approve(compile_treatment().schedule), "NEUROPATHY")
+    original = run(approve(stated(compile_treatment().schedule)), "NEUROPATHY")
     assert [item.status.value for item in after["AGENT_Y_DOSE"]] == [
         item.status.value for item in original["DRUG_B_DOSE"]]
     assert cancelled(after["AGENT_X_DOSE"]) == 0

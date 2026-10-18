@@ -62,7 +62,8 @@ class DeviationService:
             schedule = tx.schedules.get(version_id)
             names = {item.code: item.display_name for item in schedule.events}
             events = tx.evaluations.list_events(pointer.current_evaluation_id)
-            actual_by_key = self._actual_dates(tx, patient.id)
+            actual_by_key = self._actual_dates(
+                self.patient_schedules.occurrences_for(tx, patient.id, version_id))
             for event in events:
                 feasibility, windows = feasibility_from_explanation(event.generation_reason)
                 report.visits.append(assess_visit(
@@ -87,8 +88,8 @@ class DeviationService:
         return self._uow.read(work)
 
     @staticmethod
-    def _actual_dates(tx: UnitOfWork, patient_id: UUID) -> dict[tuple[str, int], date]:
-        rows = tx.facts.list_occurrences(patient_id)
+    def _actual_dates(rows) -> dict[tuple[str, int], date]:
+        """``rows``: the applicable version's occurrence facts (explicit lineage)."""
         # PT-02: a corrected record no longer acts; its correction does.
         superseded = {str((row.metadata or {}).get(SUPERSEDES_KEY))
                       for row in rows if (row.metadata or {}).get(SUPERSEDES_KEY)}
@@ -150,8 +151,10 @@ class AnchorStatusService:
             schedule = tx.schedules.get(patient.current_schedule_version_id)
             required = self._required_anchor_codes(tx, schedule, patient)
             records = self._records_by_anchor(tx, patient_id)
-            with_actuals = {row.event_code for row in tx.facts.list_occurrences(patient_id)
-                            if row.actual_date is not None}
+            with_actuals = {
+                row.event_code for row in self._service.occurrences_for(
+                    tx, patient_id, patient.current_schedule_version_id)
+                if row.actual_date is not None}
             return [resolve_anchor_status(
                 anchor_code=anchor.code, display_name=anchor.display_name,
                 records=records.get(anchor.code, []), applicable=anchor.code in required,

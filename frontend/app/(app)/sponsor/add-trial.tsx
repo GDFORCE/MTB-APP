@@ -26,6 +26,10 @@ import {
 import { api } from "@/src/api/client";
 import { buildCanonicalSchedule } from "@/src/features/uctsm/api";
 import { ExtractionPreview, type ExtractionPreviewData } from "@/src/features/uctsm/ExtractionPreview";
+import { ProtocolIdentityNotice } from "@/src/features/uctsm/ProtocolIdentityNotice";
+import {
+  identityBlockFrom, type IdentityBlock, type ProtocolIdentity,
+} from "@/src/features/uctsm/protocolIdentity";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Button, Card, Small } from "@/src/components/ui";
 import {
@@ -151,6 +155,10 @@ export default function AddTrial() {
   const [previews, setPreviews] = useState<ExtractionPreviewData[]>([]);
   const [showTrialDetails, setShowTrialDetails] = useState(false);
   const [err, setErr] = useState("");
+  // P2: the protocol identity gate's outcome for the uploaded document. A block
+  // (quarantine) is shown as such - never as a generic extraction failure.
+  const [identityBlock, setIdentityBlock] = useState<IdentityBlock | null>(null);
+  const [identity, setIdentity] = useState<ProtocolIdentity | null>(null);
   const [loading, setLoading] = useState(false);
   const [createdTrialId, setCreatedTrialId] = useState<string | null>(null);
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(true);
@@ -225,8 +233,13 @@ export default function AddTrial() {
     setResolved(false);
     setExtracting(true);
     setErr("");
+    setIdentityBlock(null);
+    setIdentity(null);
     try {
       const form = new FormData();
+      // Only an identifier the sponsor actually entered is an expected identity;
+      // the file name is never promoted to one.
+      if (protocolId.trim()) form.append("expected_protocol_id", protocolId.trim());
       if (Platform.OS === "web") {
         const file = asset.file || await (await fetch(asset.uri)).blob();
         form.append("file", file, asset.name || "protocol.pdf");
@@ -242,6 +255,7 @@ export default function AddTrial() {
         // extracted in this one analysis (see backend extract_protocol_alias).
         timeout: 1800000,
       });
+      setIdentity(response.data?.identity ?? null);
       setDetails(normalized(response.data?.details));
       const extractions: { extraction_id: string; preview?: ExtractionPreviewData }[] = response.data?.extractions
         || (response.data?.extraction_id ? [response.data] : []);
@@ -254,6 +268,13 @@ export default function AddTrial() {
       setShowUpload(false);
     } catch (error: any) {
       const status = error?.response?.status;
+      const blocked = identityBlockFrom(error);
+      if (blocked) {
+        setIdentityBlock(blocked);
+        setExtractionIds([]);
+        setPreviews([]);
+        return;
+      }
       setErr(
         error?.response?.data?.detail ||
         (status === 503
@@ -375,6 +396,13 @@ export default function AddTrial() {
           contentContainerStyle={s.content}
           keyboardShouldPersistTaps="handled"
         >
+          <ProtocolIdentityNotice
+            block={identityBlock}
+            identity={identity}
+            onOpenReview={(identityId) => router.push({
+              pathname: "/(app)/sponsor/protocol-identity-review", params: { id: identityId },
+            })}
+          />
           {previews.length > 0 && <ExtractionPreview previews={previews} />}
           {previews.length > 0 && <Pressable accessibilityRole="button"
             accessibilityState={{ expanded: showTrialDetails }} onPress={() => setShowTrialDetails((value) => !value)}

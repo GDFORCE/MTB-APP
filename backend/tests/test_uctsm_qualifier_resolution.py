@@ -26,6 +26,7 @@ from app.db import models as db  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.db.repositories import ScheduleRepository  # noqa: E402
 from app.domain.schedule.exceptions import ImmutableScheduleError  # noqa: E402
+from app.domain.schedule.models import ApplicabilityRule  # noqa: E402
 from app.domain.schedule.validator import ScheduleValidator  # noqa: E402
 from app.services.canonical_bridge import import_schedule_definitions  # noqa: E402
 from app.services.schedule_service import ScheduleReviewService  # noqa: E402
@@ -86,6 +87,42 @@ def resolve_every_qualifier(session, version_id, **kwargs):
     service = ScheduleReviewService(session)
     for item in all_qualifiers(session, version_id):
         service.resolve_qualifier(version_id, item.id, reviewer_id=REVIEWER, **kwargs)
+    session.commit()
+
+
+def state_the_executable_condition(session, version_id):
+    """A reviewer states the typed rule behind the conditional assessment.
+
+    Resolving a footnote records what it MEANS; it does not make a CONDITIONAL assessment
+    executable. Without a typed condition or applicability rule the assessment is ambiguous
+    and cannot be approved (the validator is right, and is left unchanged). This is the
+    explicit, reviewed edit that supplies it; the field is synthetic."""
+    service = ScheduleReviewService(session)
+    schedule = ScheduleRepository(session).get(version_id)
+    for event in schedule.events:
+        edited = False
+        for activity in event.activities:
+            if (activity.requiredness.value == "CONDITIONAL"
+                    and not activity.conditions and not activity.applicability):
+                activity.applicability = [ApplicabilityRule(
+                    dimension="PATIENT_ATTRIBUTE", field="clinically_indicated",
+                    operator="EQ", values=["true"])]
+                edited = True
+        if edited:
+            service.correct_event(
+                version_id, event, reviewer_id=REVIEWER,
+                reason="State the typed rule behind footnote a (clinically indicated).")
+    session.commit()
+
+
+def approve_independently(session, version_id):
+    """The editor made material changes, so (default-on maker-checker) a DIFFERENT
+    authorised approver approves."""
+    service = ScheduleReviewService(session)
+    approver = uuid4()
+    service.submit_for_review(version_id, actor_id=REVIEWER)
+    journey.review_every_field(session, version_id, reviewer=approver)
+    service.approve(version_id, reviewer_id=approver)
     session.commit()
 
 
@@ -241,12 +278,13 @@ def test_an_unknown_decision_is_refused(session):
 def test_an_approved_version_cannot_have_its_footnotes_rewritten(session):
     """Doc s18: an approved version is immutable, footnotes included."""
     row = imported_with_footnote(session)
-    qualifier = only_qualifier(session, row.schedule_version_id)
     service = ScheduleReviewService(session)
+    state_the_executable_condition(session, row.schedule_version_id)
+    qualifier = only_qualifier(session, row.schedule_version_id)
     resolve_every_qualifier(
         session, row.schedule_version_id, decision="ACCEPT",
         category="CONDITION", reason="Confirmed.")
-    journey.approve(session, row.schedule_version_id)
+    approve_independently(session, row.schedule_version_id)
 
     with pytest.raises(ImmutableScheduleError):
         service.resolve_qualifier(
@@ -260,13 +298,25 @@ def test_an_approved_version_cannot_have_its_footnotes_rewritten(session):
 def test_a_protocol_with_a_footnote_can_now_be_approved_and_reach_a_patient(session):
     """Before this workflow existed, this journey was impossible to complete."""
     row = imported_with_footnote(session)
-    qualifier = only_qualifier(session, row.schedule_version_id)
 
+    state_the_executable_condition(session, row.schedule_version_id)
     resolve_every_qualifier(
         session, row.schedule_version_id, decision="ACCEPT", category="CONDITION",
         reason="Confirmed against footnote a on the Schedule of Assessments.")
 
-    journey.approve(session, row.schedule_version_id)
+    approve_independently(session, row.schedule_version_id)
     version = session.get(db.ScheduleVersion, row.schedule_version_id)
 
     assert version is not None and version.status == "APPROVED"
+
+
+def test_resolving_the_footnote_alone_does_not_make_a_conditional_assessment_approvable(session):
+    """The footnote's meaning and the assessment's executable rule are separate decisions."""
+    row = imported_with_footnote(session)
+    resolve_every_qualifier(
+        session, row.schedule_version_id, decision="ACCEPT", category="CONDITION",
+        reason="Confirmed against footnote a on the Schedule of Assessments.")
+
+    assert unresolved_count(session, row.schedule_version_id) == 0
+    with pytest.raises(ValueError, match="approval blocked"):
+        journey.approve(session, row.schedule_version_id)

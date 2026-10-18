@@ -20,6 +20,7 @@ Clinical-trials platform: Expo/React Native frontend (`frontend/`) + FastAPI/Mon
 - Orphaned but present, don't assume reachable: `sponsor/trial-detail.tsx` (dead redirect, zero inbound refs), `clinical/invite-patient.tsx` (unreferenced), and the `ProtocolActivityTable`/`DayScheduleTable`/`QualifierPanel` exports from `ScheduleTable.tsx` (zero importers).
 - `ParityService.set_read_mode` (`app/services/parity_service.py:206`) and its HTTP endpoint (`POST /api/uctsm/trials/{id}/read-mode`, `backend/app/api/uctsm.py:1139`) are a complete, tested, bidirectional per-trial cutover mechanism — proven correct in both directions by `test_uctsm_cutover.py` — but have zero product surface. `getReadMode()`/`setReadMode()` wrappers exist in `frontend/src/features/uctsm/api.ts` (`:505`, `:515`) with no callers. No trial has ever been cut over outside tests. This is designed-and-verified, not designed-and-untested — treat it as a strong candidate architecture decision input, not a risky unknown.
 - `MTB_IMPLEMENTATION_HANDOFF.txt` (root) and `docs/audits/mtb-app-architecture-audit.md` are the current status sources — both supersede `docs/mtb-requirements-traceability.md`'s status column.
+- Protocol amendments (P6) live on the Mongo patient plane, not in SQL: lineage/hashes in `domain/schedule/amendment.py`, the plan/simulation in `application/amendment_plan.py`, decisions in `amendment_adoption.py`, routes in `api/uctsm_amendments.py` (all declared in the authorization manifest), screens `clinical/amendment-review` and the panel on `clinical/plane-schedule`. Approval stamps a content hash in the same guarded write (storage refuses an APPROVED version without one); facts move between versions only through a reviewed event mapping, never because event codes match; nobody is adopted by default. `UCTSM_AMENDMENT_WORKER_INTERVAL_SEC` (default 300, 0 = off, only when the plane is configured) drives deferred adoptions. See `docs/p6-completion-record.md`.
 - `memory/PRD.md` is stale (e.g. its "admin portal excluded" line no longer holds) — don't treat it as current.
 
 ## Running and verifying
@@ -40,3 +41,9 @@ Clinical-trials platform: Expo/React Native frontend (`frontend/`) + FastAPI/Mon
 - `POST /auth/register` (single-call) and the OTP wizard (`/auth/register/start → verify → complete`) are both live; only the OTP wizard is what the app actually uses.
 
 <!-- /bmad:context -->
+
+## Prompt delivery - user preference
+
+- Save every new full implementation or continuation prompt prepared for the user as a descriptive `.md` file under `docs/` before sharing it.
+- Link the saved file in the response and maintain `docs/claude-code-prompts-index.md`; update `docs/claude-code-next-prompt.md` when the next action changes.
+- Preserve historical prompt files and clearly identify the current prompt and superseded instructions. Saving a prompt does not authorize deployment, clinical policy changes or data migration.

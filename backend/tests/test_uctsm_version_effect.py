@@ -30,6 +30,7 @@ from app.domain.schedule.models import (
     ScheduleStatus, UniversalSchedule,
 )
 from app.domain.schedule.timing import AnchorReference, ProtocolDayTiming
+from tests._authz_fixtures import map_operational_ids
 from tests.test_uctsm_unscheduled_api import API, client  # noqa: F401
 
 BASELINE = date(2026, 9, 1)
@@ -150,6 +151,9 @@ def test_a_recurrence_still_needs_its_resolution_watched():
 def approve_and_enrol(client, api, effective_from: str | None):
     """Take the demo schedule to APPROVED with a given effective date."""
     workspace = client.post(f"{api}/demo/seed").json()
+    # The seeded ids must be mapped to the caller's operational relationships first: a
+    # resource without one is (deliberately) indistinguishable from a missing one.
+    map_operational_ids(client)
     version_id = workspace["schedule_version_id"]
     schedule = client.get(f"{api}/schedule-versions/{version_id}").json()
     client.post(f"{api}/schedule-versions/{version_id}/validate")

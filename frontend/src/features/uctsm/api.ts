@@ -718,3 +718,161 @@ export async function attachHolidayCalendar(
     { expected_revision: expectedRevision, rationale, calendar });
   return response.data;
 }
+
+/** What the signed-in user may do (informational - the server rechecks every call). */
+export async function getMyCapabilities() {
+  const response = await api.get<{
+    policy_version: string; matrix_status: string;
+    capabilities: Record<string, string>; trial_scoped_grants: { capability: string; trial_id: string }[];
+  }>("/uctsm/authorization/me");
+  return response.data;
+}
+
+// ------------------------------------------------------------------ P5 commands
+const plane = (trialId: string, patientId: string) =>
+  `${root}/mongo-plane/trials/${trialId}/patients/${encodeURIComponent(patientId)}`;
+
+/** 404 = this patient is not in the MongoDB patient plane (commands unavailable). */
+export async function getPlaneCalendar(trialId: string, patientId: string) {
+  const response = await api.get<{
+    schedule_version_id: string | null; calendar: any[]; authority_plane?: string | null;
+  }>(`${plane(trialId, patientId)}/calendar`);
+  return response.data;
+}
+
+export async function previewPatientCommand(trialId: string, patientId: string, body: Record<string, unknown>) {
+  const response = await api.post<any>(`${plane(trialId, patientId)}/commands/preview`, body);
+  return response.data;
+}
+
+export async function confirmPatientCommand(
+  trialId: string, patientId: string, proposalId: string, idempotencyKey: string,
+) {
+  const response = await api.post<any>(
+    `${plane(trialId, patientId)}/commands/${proposalId}/confirm`, {},
+    { headers: { "Idempotency-Key": idempotencyKey } });
+  return response.data;
+}
+
+export async function cancelPatientCommand(
+  trialId: string, patientId: string, proposalId: string, reason: string,
+) {
+  const response = await api.post<any>(
+    `${plane(trialId, patientId)}/commands/${proposalId}/cancel`, { reason });
+  return response.data;
+}
+
+export async function listPatientCommands(trialId: string, patientId: string) {
+  const response = await api.get<{ commands: any[] }>(`${plane(trialId, patientId)}/commands`);
+  return response.data.commands;
+}
+
+/** Reviewed track definitions, cross-track rules and event membership (P5-01). */
+export async function reviewScheduleTracks(scheduleVersionId: string, body: Record<string, unknown>) {
+  const response = await api.post<ReviewWriteResult>(
+    `${root}/schedule-versions/${scheduleVersionId}/tracks`, body);
+  return response.data;
+}
+
+/** A stable page of the command plane's patients for one trial (50 default, 200 max). */
+export async function listPlanePatients(trialId: string, cursor?: string | null, limit = 50) {
+  const response = await api.get<{
+    items: { external_patient_id: string; patient_code: string; authority_plane: string | null }[];
+    next_cursor: string | null; limit: number;
+  }>(`${root}/mongo-plane/trials/${trialId}/patients`, { params: { limit, ...(cursor ? { cursor } : {}) } });
+  return response.data;
+}
+
+/** Local/development only: create the isolated synthetic pilot trial. */
+export async function seedPilot() {
+  const response = await api.post<{
+    trial_id: string; protocol_number: string;
+    patients: { external_patient_id: string; schedule_version_id: string }[];
+  }>(`${root}/mongo-plane/pilot/seed`);
+  return response.data;
+}
+
+// ------------------------------------------------------------------ P6 amendments
+const amendmentsOfTrial = (trialId: string) => `${root}/mongo-plane/trials/${trialId}/amendments`;
+const amendmentsOfPatient = (trialId: string, patientId: string) =>
+  `${plane(trialId, patientId)}/amendments`;
+
+/** Every schedule version of the trial with its lineage, plus the prepared comparisons. */
+export async function getTrialAmendments(trialId: string) {
+  const response = await api.get<{
+    trial_id: string;
+    versions: { schedule_version_id: string; version_number: number; status: string;
+      based_on_schedule_version_id: string | null; effective_from: string | null;
+      approved_at: string | null; hash_recorded: boolean }[];
+    pairs: { pair_id: string; from_schedule_version_id: string; to_schedule_version_id: string;
+      change_summary: any; mapping_set_revision: number }[];
+  }>(amendmentsOfTrial(trialId));
+  return response.data;
+}
+
+/** Freeze the comparison of two approved versions (needs the schedule-review right). */
+export async function prepareAmendmentPair(trialId: string, fromId: string, toId: string) {
+  const response = await api.post<import("./amendments").PairView>(
+    `${amendmentsOfTrial(trialId)}/pairs`,
+    { from_schedule_version_id: fromId, to_schedule_version_id: toId });
+  return response.data;
+}
+
+export async function getAmendmentPair(trialId: string, pairId: string) {
+  const response = await api.get<import("./amendments").PairView>(
+    `${amendmentsOfTrial(trialId)}/pairs/${pairId}`);
+  return response.data;
+}
+
+/** One authenticated mapping decision; the reviewer is the signed-in user. */
+export async function reviewAmendmentMapping(
+  trialId: string, pairId: string, body: Record<string, unknown>,
+) {
+  const response = await api.post<import("./amendments").PairView>(
+    `${amendmentsOfTrial(trialId)}/pairs/${pairId}/mappings`, body);
+  return response.data;
+}
+
+export async function getPatientAmendments(trialId: string, patientId: string) {
+  const response = await api.get<any>(amendmentsOfPatient(trialId, patientId));
+  return response.data;
+}
+
+export async function simulateAmendment(trialId: string, patientId: string, body: Record<string, unknown>) {
+  const response = await api.post<import("./amendments").Simulation>(
+    `${amendmentsOfPatient(trialId, patientId)}/simulate`, body);
+  return response.data;
+}
+
+export async function confirmAmendment(
+  trialId: string, patientId: string, simulationId: string, body: Record<string, unknown>,
+  idempotencyKey: string,
+) {
+  const response = await api.post<any>(
+    `${amendmentsOfPatient(trialId, patientId)}/simulations/${simulationId}/confirm`, body,
+    { headers: { "Idempotency-Key": idempotencyKey } });
+  return response.data;
+}
+
+export async function executeAmendmentDecision(trialId: string, patientId: string, decisionId: string) {
+  const response = await api.post<any>(
+    `${amendmentsOfPatient(trialId, patientId)}/decisions/${decisionId}/execute`);
+  return response.data;
+}
+
+export async function cancelAmendmentDecision(
+  trialId: string, patientId: string, decisionId: string, reason: string,
+) {
+  const response = await api.post<any>(
+    `${amendmentsOfPatient(trialId, patientId)}/decisions/${decisionId}/cancel`, { reason });
+  return response.data;
+}
+
+/** Local/development only: add the synthetic Amendment 1 to the pilot (no patient moves). */
+export async function seedPilotAmendment() {
+  const response = await api.post<{
+    trial_id: string; from_schedule_version_id: string; to_schedule_version_id: string;
+    amendment_label: string; patients: { external_patient_id: string; patient_code: string }[];
+  }>(`${root}/mongo-plane/pilot/seed-amendment`);
+  return response.data;
+}

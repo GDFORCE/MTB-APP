@@ -110,7 +110,8 @@ class DashboardService:
         definitions = {item.code: item for item in schedule.events}
         horizon = today + timedelta(days=UPCOMING_WINDOW_DAYS)
         completed = {(row.event_code, row.occurrence_index)
-                     for row in tx.facts.list_occurrences(patient.id) if row.actual_date is not None}
+                     for row in self._schedules.occurrences_for(tx, patient.id, version_id)
+                     if row.actual_date is not None}
         events = [
             item for item in self._schedules.current_events(tx, patient.id, version_id)
             if item.status == "RESOLVED" and item.nominal_start_date is not None

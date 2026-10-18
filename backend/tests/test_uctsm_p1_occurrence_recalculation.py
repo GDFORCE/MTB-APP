@@ -24,10 +24,11 @@ from app.application.patient_schedule import PatientScheduleService
 from app.application.patients import PatientAnchorRecord, PatientRecord
 from app.domain.schedule.models import (
     Anchor, ClaimEvidence, Dependency, DependencyMode, Event, Evidence, OccurrenceFactKind,
-    ScheduleMetadata, ScheduleStatus, UniversalSchedule,
+    RecurrenceRule, RecurrenceTermination, ScheduleMetadata, ScheduleStatus, UniversalSchedule,
 )
 from app.domain.schedule.timing import (
-    AnchorReference, EventReference, OffsetTiming, TemporalAmount, TemporalBasis,
+    AnchorReference, EventReference, OffsetTiming, PositiveTemporalAmount, TemporalAmount,
+    TemporalBasis,
 )
 
 pytest_plugins = ["tests.contract.conftest"]
@@ -71,6 +72,8 @@ def schedule_of(*events: Event) -> UniversalSchedule:
     for event in events:
         event.evidence_refs = [evidence.id]
         paths = [("EVENT_NAME", "display_name"), ("TIMING", "timing")]
+        if event.recurrence is not None:
+            paths.append(("RECURRENCE", "recurrence"))
         if event.dependencies:
             paths += [("DEPENDENCY", "dependencies"), ("DEPENDENCY_MODE", "dependency_mode")]
         claims += [ClaimEvidence(
@@ -84,7 +87,8 @@ def schedule_of(*events: Event) -> UniversalSchedule:
 
 
 class Env:
-    def __init__(self, uow, schedule: UniversalSchedule, *, baseline: date = BASELINE):
+    def __init__(self, uow, schedule: UniversalSchedule, *, baseline: date = BASELINE,
+                 native_authority: str | None = "MONGO"):
         self.uow = uow
         trial = TrialRecord(organization_id=ORG, external_trial_id=f"t-{uuid4().hex[:6]}")
         protocol = ProtocolRecord(organization_id=ORG, trial_id=trial.id, protocol_number="P-1")
@@ -99,8 +103,12 @@ class Env:
         self.anchor_id = next(a.id for a in schedule.anchors if a.code == "BASELINE")
         patient = PatientRecord(
             organization_id=ORG, trial_id=trial.id, patient_code="P-001",
-            current_schedule_version_id=self.version_id)
+            external_patient_id="legacy-patient-001",
+            current_schedule_version_id=self.version_id,
+            authority_plane=native_authority)          # explicit: unclassified is refused
         self.patient_id = patient.id
+        self.trial_id = trial.id
+        self.external_patient_id = "legacy-patient-001"
         self.clock = datetime(2026, 9, 30, 8, 0, tzinfo=timezone.utc)
 
         def seed(tx):
@@ -116,8 +124,35 @@ class Env:
             tx.patients.add(patient)
 
         uow.run(seed)
+        self.definition_id = definition.id
+        self.protocol_version_id = version.id
         self.service = PatientScheduleService(uow)
         self.anchor(baseline)
+
+    def approve_second(self, schedule: UniversalSchedule) -> UUID:
+        """Approve a second version of the same definition WITHOUT pinning anyone."""
+        schedule.schedule_metadata.protocol_version_id = self.protocol_version_id
+        schedule.schedule_metadata.version_number = 2
+        new_id = schedule.schedule_version_id
+
+        def work(tx):
+            tx.schedules.persist_draft(schedule, schedule_definition_id=self.definition_id)
+            tx.schedules.transition(new_id, to_status="IN_REVIEW")
+            tx.schedules.mark_approved(
+                new_id, reviewer_id=uuid4(), approved_at=datetime.now(timezone.utc),
+                effective_from=None)
+
+        self.uow.run(work)
+        return new_id
+
+    def repin_to(self, schedule: UniversalSchedule) -> UUID:
+        """Approve a second version and pin the patient to it DIRECTLY - no impact
+        confirm, so there is no assignment lineage and no approved mapping."""
+        new_id = self.approve_second(schedule)
+        self.uow.run(lambda tx: tx.patients.pin_schedule_version(ORG, self.patient_id, new_id))
+        self.version_id = new_id
+        self.anchor_id = next(a.id for a in schedule.anchors if a.code == "BASELINE")
+        return new_id
 
     def anchor(self, value: date) -> None:
         from datetime import timedelta
@@ -348,6 +383,211 @@ def test_a_relevant_occurrence_writes_exactly_one_outbox_record(uow):
     assert pending[0].event_type == "PATIENT_SCHEDULE_CHANGED"
     assert pending[0].payload["evaluation_id"] == str(outcome.evaluation_id)
     assert set(pending[0].payload["changed"]) == {"V2:0", "V3:0"}
+
+
+# ------------------------------------------------- P1-02 version-scoped identity
+def test_a_reused_event_code_in_a_new_version_inherits_no_actual_or_completion(uow):
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+    env.record("V2", date(2026, 10, 13))
+    assert target(env, "V3") == date(2026, 10, 27)
+
+    env.repin_to(schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.anchor(BASELINE)                                   # a baseline for the new version
+    env.evaluate()
+    calendar = env.calendar()
+    assert not calendar["V2"].completed and calendar["V2"].status != "COMPLETED"
+    assert calendar["V2"].actual_visit_date is None
+    assert calendar["V2"].planned_start == date(2026, 10, 10)
+    assert calendar["V3"].planned_start is None            # waits: v1's actual is not v2's
+    assert calendar["V3"].status == "BLOCKED"
+
+    # Recording in the new version is scoped to it and does not touch version 1.
+    env.record("V2", date(2026, 10, 15))
+    assert env.calendar()["V3"].planned_start == date(2026, 10, 29)
+
+
+def test_an_approved_reassignment_is_the_mapping_that_carries_recorded_visits(uow):
+    """The explicit counterpart of the isolation test above: a confirmed impact
+    proposal (the approved assignment) carries version 1's recorded V2 into
+    version 2, so V3 (counted from V2's ACTUAL) is dated in the preview AND after
+    confirm, and a correction stays possible."""
+    from app.application.impact import PatientScheduleImpactService
+
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+    env.record("V2", date(2026, 10, 13))
+    v1_record = _last_occurrence(env)
+    v1_id = env.version_id
+    v2_id = env.approve_second(schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 21, 2, TemporalBasis.ACTUAL_VISIT)))
+
+    impact = PatientScheduleImpactService(uow)
+    proposal = impact.preview(
+        env.patient_id, organization_id=ORG, target_schedule_version_id=v2_id,
+        horizon=date(2027, 12, 31), actor_id=uuid4(), reason="Amendment 2")
+    by_key = {item["logical_key"]: item for item in proposal.impact["events"]}
+    assert by_key["V3:0"]["after"]["date"] == "2026-11-03"   # 13 Oct + 21: carried actual
+
+    impact.confirm(proposal.id, organization_id=ORG, actor_id=uuid4())
+    env.version_id = v2_id
+    calendar = env.calendar()
+    assert calendar["V2"].completed and calendar["V2"].actual_visit_date == date(2026, 10, 13)
+    assert target(env, "V3") == date(2026, 11, 3)
+
+    # the carried record can still be corrected: the lineage names version 1
+    env.record("V2", date(2026, 10, 15), supersedes=v1_record)
+    assert target(env, "V3") == date(2026, 11, 5)
+    assert v1_id != v2_id
+
+
+def repeating(code: str, interval: int, count: int, seq: int) -> Event:
+    return Event(
+        code=code, protocol_label=code, display_name=code.title(), event_type="VISIT",
+        sequence_number=seq,
+        timing=OffsetTiming(reference=AnchorReference(code="BASELINE"), offset=days(interval)),
+        recurrence=RecurrenceRule(
+            interval=PositiveTemporalAmount(value=interval, unit="DAY"),
+            start_reference=AnchorReference(code="BASELINE"), start_offset=days(interval),
+            termination=RecurrenceTermination(type="COUNT", count=count)))
+
+
+def by_key(env: Env) -> dict[str, object]:
+    return {item.logical_key: item for item in
+            env.service.current_calendar(env.patient_id, organization_id=ORG)}
+
+
+def test_a_missed_first_occurrence_does_not_shift_the_second_occurrences_actual(uow):
+    env = Env(uow, schedule_of(repeating("CYC", 7, 3, 1), from_baseline("IMAGING", 30, 2)))
+    env.evaluate()
+    planned = {k: v.planned_start for k, v in by_key(env).items()}
+    assert planned["CYC:0"] == date(2026, 10, 8) and planned["CYC:1"] == date(2026, 10, 15)
+
+    env.record("CYC", None, kind=OccurrenceFactKind.MISSED, index=0)
+    env.record("CYC", date(2026, 10, 17), index=1)          # attended late
+    entries = by_key(env)
+    assert entries["CYC:0"].status == "MISSED" and entries["CYC:0"].actual_visit_date is None
+    assert entries["CYC:1"].completed and entries["CYC:1"].actual_visit_date == date(2026, 10, 17)
+    assert entries["CYC:2"].actual_visit_date is None and not entries["CYC:2"].completed
+    # completed / missed history keeps its planned date; the rest stays fixed
+    assert entries["CYC:0"].planned_start == planned["CYC:0"]
+    assert entries["CYC:1"].planned_start == planned["CYC:1"]
+    assert entries["IMAGING:0"].planned_start == date(2026, 10, 31)
+
+
+def test_out_of_order_actuals_stay_with_their_own_occurrence_index(uow):
+    env = Env(uow, schedule_of(repeating("CYC", 7, 3, 1)))
+    env.evaluate()
+    env.record("CYC", date(2026, 10, 12), index=2)           # third visit first
+    env.record("CYC", date(2026, 10, 20), index=1)           # later date, earlier index
+    entries = by_key(env)
+    assert entries["CYC:2"].actual_visit_date == date(2026, 10, 12)
+    assert entries["CYC:1"].actual_visit_date == date(2026, 10, 20)
+    assert entries["CYC:0"].actual_visit_date is None
+    # correcting index 1 leaves index 2 alone and keeps the first record on file
+    first = [r for r in uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id))
+             if r.occurrence_index == 1][0]
+    env.record("CYC", date(2026, 10, 19), index=1, supersedes=first.id)
+    entries = by_key(env)
+    assert entries["CYC:1"].actual_visit_date == date(2026, 10, 19)
+    assert entries["CYC:2"].actual_visit_date == date(2026, 10, 12)
+    assert len(uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id))) == 3
+
+
+def test_an_event_that_depends_on_its_own_previous_occurrence_is_relevant_to_itself():
+    """references_event audit: a repeated visit whose only self-reference is a
+    dependency on its own earlier occurrence still has dependants, so recording
+    one occurrence must re-evaluate (otherwise the next one keeps a stale date)."""
+    from app.domain.schedule.relevance import references_event
+
+    cyc = after("CYC", "CYC", 7, 1, TemporalBasis.ACTUAL_VISIT)
+    cyc.timing = OffsetTiming(
+        reference=AnchorReference(code="BASELINE"), offset=days(7))   # no self reference
+    assert references_event(schedule_of(cyc), "CYC") is True
+    alone = from_baseline("CYC", 7, 1)
+    assert references_event(schedule_of(alone), "CYC") is False
+
+
+def test_a_correction_cannot_target_a_record_of_another_version(uow):
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+    env.record("V2", date(2026, 10, 13))
+    v1_record = _last_occurrence(env)
+
+    env.repin_to(schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.anchor(BASELINE)
+    env.evaluate()
+    before = len(uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id)))
+    with pytest.raises(KeyError):
+        env.record("V2", date(2026, 10, 15), supersedes=v1_record)
+    assert len(uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id))) == before
+
+
+def test_a_different_calculation_horizon_under_the_same_key_conflicts(uow):
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+
+    def record(horizon):
+        return env.service.record_actual_occurrence(
+            env.patient_id, organization_id=ORG, logical_key="V2:0", kind=PERFORMED,
+            visit_date=date(2026, 10, 13), idempotency_key="req-h", today=TODAY, horizon=horizon)
+
+    first = record(date(2027, 12, 31))
+    assert record(date(2027, 12, 31)).replayed
+    with pytest.raises(IdempotencyConflictError):
+        record(date(2028, 6, 30))
+    assert len(uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id))) == 1
+    assert first.evaluation_id is not None
+
+
+def test_a_replay_after_the_patient_moved_versions_is_refused_not_replayed(uow):
+    from app.application.errors import ScheduleVersionChangedError
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+    first = env.record("V2", date(2026, 10, 13), key="req-v")
+    assert first.schedule_version_id == env.version_id
+
+    env.repin_to(schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    before = len(uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id)))
+    with pytest.raises(ScheduleVersionChangedError):
+        env.record("V2", date(2026, 10, 13), key="req-v")        # same key, same body
+    assert len(uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id))) == before
+
+
+def test_a_request_prepared_against_another_version_is_refused_without_writes(uow):
+    from app.application.errors import ScheduleVersionChangedError
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+    with pytest.raises(ScheduleVersionChangedError):
+        env.service.record_actual_occurrence(
+            env.patient_id, organization_id=ORG, logical_key="V2:0", kind=PERFORMED,
+            visit_date=date(2026, 10, 13), today=TODAY, expected_schedule_version_id=uuid4())
+    assert uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id)) == []
+    ok = env.service.record_actual_occurrence(
+        env.patient_id, organization_id=ORG, logical_key="V2:0", kind=PERFORMED,
+        visit_date=date(2026, 10, 13), today=TODAY, expected_schedule_version_id=env.version_id)
+    assert ok.reevaluated
+
+
+def test_another_organization_cannot_record_against_the_patient(uow):
+    from app.application.errors import RecordNotFoundError
+    env = Env(uow, schedule_of(
+        from_baseline("V2", 9, 1), after("V3", "V2", 14, 2, TemporalBasis.ACTUAL_VISIT)))
+    env.evaluate()
+    with pytest.raises(RecordNotFoundError):
+        env.service.record_actual_occurrence(
+            env.patient_id, organization_id=uuid4(), logical_key="V2:0", kind=PERFORMED,
+            visit_date=date(2026, 10, 13), today=TODAY)
+    assert uow.read(lambda tx: tx.facts.list_occurrences(env.patient_id)) == []
 
 
 # ------------------------------------------------------- 13-14 chains, dates

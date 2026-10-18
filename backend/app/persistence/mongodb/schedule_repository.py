@@ -37,6 +37,7 @@ from app.application.errors import (
     DuplicateRecordError,
     ImmutableRecordError,
     RecordNotFoundError,
+    StaleRevisionError,
 )
 from app.domain.schedule.models import Event, UniversalSchedule, ValidationIssue
 
@@ -50,6 +51,7 @@ CLAIMS = "schedule_claims"
 ISSUES = "schedule_validation_issues"
 DECISIONS = "schedule_review_decisions"
 DEFINITIONS = "schedule_definitions"
+TRACKS = "schedule_tracks"
 
 _HEADER_FIELDS = set(ScheduleVersionHeader.model_fields)
 _DUPLICATE = 11000
@@ -160,6 +162,7 @@ class MongoScheduleVersionRepository:
                     {"_id": item["id"], **scope, "code": item["code"],
                      "sequence_number": item["sequence_number"], "event": item["event"]}
                     for item in built["events"]], ordered=True, session=self._session)
+            self._write_tracks(header, built["tracks"])
             if built["evidence"]:
                 self._db[EVIDENCE].insert_many([
                     {"_id": item["id"], **scope, "seq": index,
@@ -178,6 +181,31 @@ class MongoScheduleVersionRepository:
                 f"duplicate record while persisting schedule version {version_id}: {error}",
                 key=str(version_id)) from error
         self._insert_issues(version_id, header.organization_id, built["issues"], start=0)
+
+    def _write_tracks(self, header: ScheduleVersionHeader, tracks: list[dict[str, Any]]) -> None:
+        """Keep the per-track lookup rows in step with the version's content.
+
+        The content is the source of truth; these rows exist so ownership and
+        lookup are index-backed and ``(version, code)`` uniqueness is enforced by
+        the store, not by a validator alone."""
+        self._db[TRACKS].delete_many(
+            {"schedule_version_id": header.id}, session=self._session)
+        if tracks:
+            self._db[TRACKS].insert_many([
+                {"_id": item["id"], "organization_id": header.organization_id,
+                 "trial_id": header.trial_id, "schedule_version_id": header.id,
+                 "doc_version": DOC_VERSION, "code": item["code"], "track": item["track"]}
+                for item in tracks], ordered=True, session=self._session)
+
+    @staticmethod
+    def _check_track(header: dict[str, Any], event: Event) -> None:
+        track_ids = {UUID(str(item["id"])) for item in (header.get("content") or {}).get("tracks", [])}
+        parts.check_track_references([event], track_ids)
+
+    def list_tracks(self, schedule_version_id: UUID) -> list[dict[str, Any]]:
+        return list(self._db[TRACKS].find(
+            {"schedule_version_id": schedule_version_id}, session=self._session).sort(
+                [("code", ASCENDING)]))
 
     def _insert_issues(
         self, version_id: UUID, organization_id: UUID, issues: list[dict[str, Any]], *, start: int,
@@ -216,8 +244,10 @@ class MongoScheduleVersionRepository:
             doc["code"] for doc in self._db[EVENTS].find(
                 {"schedule_version_id": schedule_version_id}, {"code": 1}, session=self._session)
         } | {event.code}
+        self._check_track(header, event)
         document = parts._event_document(event, valid_codes=codes)
         old_code = stored["code"]
+        self._bump_revision(schedule_version_id)
         try:
             self._db[EVENTS].replace_one(
                 {"_id": event.id},
@@ -240,6 +270,60 @@ class MongoScheduleVersionRepository:
                 if parts.rename_dependency_source(payload, old_code, event.code):
                     self._db[EVENTS].update_one(
                         {"_id": other["_id"]}, {"$set": {"event": payload}}, session=self._session)
+
+    def add_event(self, schedule_version_id: UUID, event: Event) -> None:
+        header = self._require_editable(schedule_version_id)
+        codes = {
+            doc["code"] for doc in self._db[EVENTS].find(
+                {"schedule_version_id": schedule_version_id}, {"code": 1}, session=self._session)
+        } | {event.code}
+        self._check_track(header, event)
+        document = parts._event_document(event, valid_codes=codes)
+        self._bump_revision(schedule_version_id)
+        try:
+            self._db[EVENTS].insert_one(
+                {"_id": event.id, "schedule_version_id": schedule_version_id,
+                 "organization_id": header["organization_id"], "doc_version": DOC_VERSION,
+                 "code": document["code"], "sequence_number": document["sequence_number"],
+                 "event": document["event"]}, session=self._session)
+        except DuplicateKeyError as error:
+            raise DuplicateRecordError(
+                f"event code {event.code!r} already exists in this schedule version",
+                key=event.code) from error
+
+    def replace_support(self, schedule_version_id: UUID, schedule: UniversalSchedule) -> None:
+        header = self._require_editable(schedule_version_id)
+        definition_doc = self._db[DEFINITIONS].find_one(
+            {"_id": header["schedule_definition_id"]}, session=self._session)
+        if definition_doc is None:
+            raise RecordNotFoundError("schedule definition not found")
+        built = parts.build_parts(
+            schedule, definition=from_document(ScheduleDefinitionRecord, definition_doc),
+            extraction_run_id=header.get("extraction_run_id"))
+        scope = {
+            "schedule_version_id": schedule_version_id,
+            "organization_id": header["organization_id"], "doc_version": DOC_VERSION,
+        }
+        self._db[VERSIONS].update_one(
+            {"_id": schedule_version_id, "status": {"$nin": sorted(FROZEN_STATUSES)}},
+            {"$set": {"content": built["content"], "updated_at": datetime.now(timezone.utc)},
+             "$inc": {"revision": 1}}, session=self._session)
+        self._write_tracks(_header_from(header), built["tracks"])
+        self._db[EVIDENCE].delete_many(
+            {"schedule_version_id": schedule_version_id}, session=self._session)
+        self._db[CLAIMS].delete_many(
+            {"schedule_version_id": schedule_version_id}, session=self._session)
+        if built["evidence"]:
+            self._db[EVIDENCE].insert_many([
+                {"_id": item["id"], **scope, "seq": index,
+                 "protocol_version_id": item["protocol_version_id"], "evidence": item["evidence"]}
+                for index, item in enumerate(built["evidence"])],
+                ordered=True, session=self._session)
+        if built["claims"]:
+            self._db[CLAIMS].insert_many([
+                {"_id": item["id"], **scope, "seq": index, "claim": item["claim"]}
+                for index, item in enumerate(built["claims"])],
+                ordered=True, session=self._session)
 
     # -- issues ---------------------------------------------------------------
     def replace_validation_issues(
@@ -302,6 +386,9 @@ class MongoScheduleVersionRepository:
         self, schedule_version_id: UUID, *, to_status: str, expected: set[str] | None = None,
         rejection_reason: str | None = None,
     ) -> ScheduleVersionHeader:
+        if to_status == "APPROVED":
+            raise ImmutableRecordError(
+                "a version is approved only through mark_approved, which stamps its content hash")
         status_filter: dict[str, Any] = (
             {"status": {"$in": sorted(expected)}} if expected is not None
             else {"status": {"$nin": sorted(FROZEN_STATUSES)}})
@@ -314,14 +401,84 @@ class MongoScheduleVersionRepository:
 
     def mark_approved(
         self, schedule_version_id: UUID, *, reviewer_id: UUID, approved_at: datetime,
-        effective_from: date | None,
+        effective_from: date | None, content_hash: str | None = None,
+        content_hash_version: str | None = None, header_integrity_hash: str | None = None,
+        expected_revision: int | None = None,
     ) -> ScheduleVersionHeader:
+        flt: dict[str, Any] = {"status": "IN_REVIEW"}
+        if content_hash is None:
+            # A direct caller supplied no hash: stamp one from the content as stored NOW,
+            # bound to the revision it was read at. An approved version never lacks one.
+            header = self.get_header(schedule_version_id)
+            if header.status == "IN_REVIEW":
+                stamp = parts.approval_stamp(
+                    header, self.get(schedule_version_id), reviewer_id=reviewer_id,
+                    approved_at=approved_at, effective_from=effective_from)
+                content_hash = stamp["content_hash"]
+                content_hash_version = stamp["content_hash_version"]
+                header_integrity_hash = stamp["header_integrity_hash"]
+                expected_revision = header.revision
+        if expected_revision is not None:
+            flt["revision"] = expected_revision
+        try:
+            return self._guarded(
+                schedule_version_id, flt,
+                {"status": "APPROVED", "approved_by": reviewer_id,
+                 "approved_at": encode(approved_at),
+                 "effective_from": effective_from.isoformat() if effective_from else None,
+                 "content_hash": content_hash, "content_hash_version": content_hash_version,
+                 "header_integrity_hash": header_integrity_hash},
+                refusal="only an in-review schedule can be approved")
+        except ImmutableRecordError:
+            current = self._header_doc(schedule_version_id)
+            if expected_revision is not None and current["status"] == "IN_REVIEW" \
+                    and current["revision"] != expected_revision:
+                raise StaleRevisionError(
+                    "the schedule version changed after it was read for approval") from None
+            raise
+
+    def set_lineage(
+        self, schedule_version_id: UUID, based_on_schedule_version_id: UUID,
+    ) -> ScheduleVersionHeader:
+        current = self._header_doc(schedule_version_id)
+        existing = current.get("based_on_schedule_version_id")
+        if existing == based_on_schedule_version_id:
+            return _header_from(current)
+        if current["status"] in FROZEN_STATUSES or existing is not None:
+            raise ImmutableRecordError("the amendment lineage of this version is fixed")
         return self._guarded(
-            schedule_version_id, {"status": "IN_REVIEW"},
-            {"status": "APPROVED", "approved_by": reviewer_id,
-             "approved_at": encode(approved_at),
-             "effective_from": effective_from.isoformat() if effective_from else None},
-            refusal="only an in-review schedule can be approved")
+            schedule_version_id,
+            {"status": {"$nin": sorted(FROZEN_STATUSES)},
+             "based_on_schedule_version_id": {"$in": [None]}},
+            {"based_on_schedule_version_id": based_on_schedule_version_id},
+            refusal="cannot set the lineage of a frozen version")
+
+    def _bump_revision(self, schedule_version_id: UUID) -> None:
+        """A content edit moves the header revision (and write-conflicts with a
+        concurrent approval of the same version), so an approval that hashed the
+        content before the edit cannot be committed over it."""
+        result = self._db[VERSIONS].update_one(
+            {"_id": schedule_version_id, "status": {"$nin": sorted(FROZEN_STATUSES)}},
+            {"$inc": {"revision": 1}, "$set": {"updated_at": datetime.now(timezone.utc)}},
+            session=self._session)
+        if result.matched_count == 0:
+            raise ImmutableRecordError("approved schedule versions cannot be edited")
+
+    def record_material_edit(
+        self, schedule_version_id: UUID, *, editor_id: UUID, at: datetime,
+    ) -> ScheduleVersionHeader:
+        document = self._db[VERSIONS].find_one_and_update(
+            {"_id": schedule_version_id, "status": {"$nin": sorted(FROZEN_STATUSES)}},
+            {"$set": {"last_material_editor_id": editor_id,
+                      "last_material_edit_at": encode(at), "updated_at": at},
+             "$addToSet": {"material_editor_ids": editor_id},
+             "$inc": {"revision": 1}},
+            return_document=ReturnDocument.AFTER, session=self._session)
+        if document is not None:
+            return _header_from(document)
+        current = self._header_doc(schedule_version_id)  # raises when missing
+        raise ImmutableRecordError(
+            f"cannot record an edit on a frozen version (current status {current['status']})")
 
     # -- decisions ------------------------------------------------------------------
     def add_decision(self, record: ReviewDecisionRecord) -> None:

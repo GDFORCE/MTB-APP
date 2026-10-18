@@ -477,7 +477,21 @@ def describe_recurrence(event: dict[str, Any], names: _Names) -> dict[str, Any] 
                    f"{describe_termination(rule.get('termination'), names)}")
         if rule.get("include_start") is False:
             summary += "; the start itself is not a visit"
-        return {"type": rule.get("type", "INTERVAL"), "summary": summary, "rule": rule}
+        basis, basis_status = rule.get("basis"), rule.get("basis_status")
+        basis_text = {
+            "FIRST_RESOLVED_OCCURRENCE": "each repeat counted from the first occurrence",
+            "PREVIOUS_PLANNED_OCCURRENCE": "each repeat counted from the previous planned occurrence",
+            "PREVIOUS_ACTUAL_OCCURRENCE": "each repeat counted from the previous actual "
+                                          + ("treatment" if rule.get("actual_source") == "ACTUAL_TREATMENT"
+                                             else "visit"),
+            "FIXED_ANCHOR_SERIES": "fixed series counted from its anchor",
+        }
+        if basis_status == "UNCONFIRMED":
+            summary += "; what each repeat counts from: Needs review"
+        elif basis:
+            summary += f"; {basis_text.get(basis, basis)}"
+        return {"type": rule.get("type", "INTERVAL"), "summary": summary, "rule": rule,
+                "basis": basis, "basis_status": basis_status or ("LEGACY_UNSTATED" if not basis else "STATED")}
     if plan:
         start = names.reference(plan.get("start_reference"))
         parts = []
@@ -1275,6 +1289,27 @@ def build_review_view(
         "can_approve": not reasons,
         "approval_blockers": reasons,
         "processes": [process_summary(item, names) for item in names.processes.values()],
+        "tracks": [
+            {"code": item.code, "track_type": item.track_type, "display_name": item.display_name,
+             "anchor_code": item.anchor_code,
+             "rebase_policy": item.rebase_policy.value if item.rebase_policy else None,
+             "process_code": item.process_code, "stoppable": item.stoppable,
+             "review_state": item.review_state,
+             "events": [event.code for event in schedule.events if event.track_id == item.id]}
+            for item in getattr(schedule, "tracks", None) or []
+        ],
+        "track_links": [
+            {"source_track_code": item.source_track_code, "target_track_code": item.target_track_code,
+             "relation": item.relation, "review_state": item.review_state}
+            for item in getattr(schedule, "track_links", None) or []
+        ],
+        "track_membership": {
+            event.code: {"scope": event.track_scope,
+                         "track_code": next((track.code for track in schedule.tracks
+                                             if track.id == event.track_id), None)}
+            for event in schedule.events
+        } if getattr(schedule, "tracks", None) or any(
+            event.track_scope for event in schedule.events) else {},
         "holiday_calendars": [
             {"code": item.code, "version": item.version, "description": item.description,
              "business_weekdays": [getattr(day, "value", day) for day in item.business_weekdays],
@@ -1909,6 +1944,11 @@ class ReviewWorkflow:
             ))
         return evidence_id
 
+    def _mark_material_edit(self, version: db.ScheduleVersion, editor_id: UUID) -> None:
+        from app.services.schedule_service import ScheduleReviewService
+
+        ScheduleReviewService(self.session).mark_material_edit(version, editor_id)
+
     def _revalidate(self, version: db.ScheduleVersion) -> list[ValidationIssue]:
         self.session.flush()
         issues = ScheduleValidator().validate(self.repository.get(version.id))
@@ -2018,6 +2058,10 @@ class ReviewWorkflow:
         claims = [self.EDITABLE_FIELDS[key] for key in changed_fields]
         if confirm_row:
             claims.append("REVIEW_CONFIRMATION")
+        # Maker-checker provenance: a label rename or a row confirmation is not a
+        # change of clinical meaning; anything else is.
+        from app.authorization.maker_checker import is_material_event_change
+        material_edit = bool(changed_fields) and is_material_event_change(changed_fields)
         evidence_id = self._reviewer_evidence(
             version, reviewer_id=reviewer_id, rationale=rationale.strip(), action="EDIT_VISIT",
             entity_type="EVENT", entity_id=event_id, claims=claims,
@@ -2025,6 +2069,8 @@ class ReviewWorkflow:
         after.evidence_refs = [*after.evidence_refs, evidence_id]
         self.repository.replace_event(schedule_version_id, after)
         self._revalidate(version)
+        if material_edit:
+            self._mark_material_edit(version, reviewer_id)
         self._record(version, reviewer_id=reviewer_id, action="SCHEDULE_EVENT_EDITED", entity_type="EVENT",
                      entity_id=event_id, field_path=",".join(changed_fields) or "review",
                      before={key: payload_before for key, payload_before in before.model_dump(mode="json").items()
@@ -2118,6 +2164,7 @@ class ReviewWorkflow:
             ))
         self.repository.replace_event(schedule_version_id, new_event)
         self._revalidate(version)
+        self._mark_material_edit(version, reviewer_id)
         self._record(version, reviewer_id=reviewer_id, action="SCHEDULE_EVENT_ADDED", entity_type="EVENT",
                      entity_id=new_event.id, field_path=None, before=None,
                      after=new_event.model_dump(mode="json"), reason=rationale.strip(), decision="ADD")
@@ -2248,6 +2295,8 @@ class ReviewWorkflow:
         ) if held else []
         after = {**after, "released_statement_ids": released}
         self._revalidate(version)
+        if action != "CONFIRM_ANCHOR":   # confirming the extracted reading is not a change
+            self._mark_material_edit(version, reviewer_id)
         self._record(version, reviewer_id=reviewer_id, action="REVIEW_QUESTION_RESOLVED",
                      entity_type="ANCHOR" if entity_id else "SCHEDULE_VERSION", entity_id=entity_id,
                      field_path=question_id, before=before, after={**after, "action": action},
@@ -2290,10 +2339,99 @@ class ReviewWorkflow:
         version.metadata_json = metadata
         self.session.flush()
         self._revalidate(version)
+        self._mark_material_edit(version, reviewer_id)
         self._record(version, reviewer_id=reviewer_id, action="SCHEDULE_HOLIDAY_CALENDAR_ATTACHED",
                      entity_type="SCHEDULE_VERSION", entity_id=version.id,
                      field_path=f"holiday_calendars.{typed.code}", before=previous, after=payload,
                      reason=rationale.strip(), decision="ADD")
+        self.session.flush()
+        return self._result(schedule_version_id, before_rows)
+
+    # -- tracks (P5-01 reviewed membership and policy) -----------------------------
+
+    def set_tracks(self, schedule_version_id: UUID, *, reviewer_id: UUID, expected_revision: str,
+                   rationale: str, tracks: list[dict[str, Any]], track_links: list[dict[str, Any]],
+                   membership: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Replace the draft's tracks, cross-track rules and event membership as ONE
+        reviewed decision. Track identity is kept by code across edits; nothing is
+        defaulted - an event not named stays exactly as it was. The validator then
+        says what is still unresolved, so an incomplete draft can be completed here."""
+        from app.db.repositories import (
+            EVENT_TRACK_KEY, TRACK_LINKS_METADATA_KEY, TRACKS_METADATA_KEY,
+        )
+        from app.domain.schedule.models import ScheduleTrack, TrackLink
+
+        if not rationale.strip():
+            raise ValueError("Say why these track rules are correct; it is recorded.")
+        schedule, version = self._editable(schedule_version_id, expected_revision)
+        before_rows = {row["id"]: row for row in self.build(schedule, version)["rows"]}
+        existing = {item.code: item for item in schedule.tracks}
+        built: list[ScheduleTrack] = []
+        for item in tracks:
+            payload = {key: value for key, value in item.items() if key != "events"}
+            prior = existing.get(payload.get("code"))
+            if prior is not None:
+                payload["id"] = str(prior.id)
+                payload.setdefault("evidence_refs", [str(ref) for ref in prior.evidence_refs])
+            try:
+                built.append(ScheduleTrack.model_validate(payload))
+            except Exception as error:
+                raise ValueError(f"Track {payload.get('code')!r} is not valid: {error}") from error
+        codes = [item.code for item in built]
+        if len(codes) != len(set(codes)):
+            raise ValueError("Two tracks share a code.")
+        try:
+            links = [TrackLink.model_validate(item) for item in track_links]
+        except Exception as error:
+            raise ValueError(f"A cross-track rule is not valid: {error}") from error
+        by_code = {item.code: item for item in built}
+        event_rows = {row.code: row for row in self.session.scalars(
+            select(db.Event).where(db.Event.schedule_version_id == schedule_version_id))}
+        for event_code, choice in membership.items():
+            row = event_rows.get(event_code)
+            if row is None:
+                raise ValueError(f"Event {event_code!r} is not part of this schedule.")
+            scope = choice.get("scope")
+            metadata = dict(row.metadata_json or {})
+            if scope == "TRACK":
+                track = by_code.get(str(choice.get("track_code")))
+                if track is None:
+                    raise ValueError(f"{event_code} names a track that is not defined here.")
+                metadata[EVENT_TRACK_KEY] = {"scope": "TRACK", "track_id": str(track.id)}
+            elif scope == "GLOBAL":
+                metadata[EVENT_TRACK_KEY] = {"scope": "GLOBAL", "track_id": None}
+            elif scope in (None, "UNCLASSIFIED"):
+                metadata.pop(EVENT_TRACK_KEY, None)
+            else:
+                raise ValueError(f"{event_code}: choose a track, global, or leave it unclassified.")
+            row.metadata_json = metadata
+        # an event whose track was removed must not keep pointing at it
+        for row in event_rows.values():
+            marker = (row.metadata_json or {}).get(EVENT_TRACK_KEY) or {}
+            if marker.get("scope") == "TRACK" and marker.get("track_id") not in {
+                    str(item.id) for item in built}:
+                metadata = dict(row.metadata_json or {})
+                metadata.pop(EVENT_TRACK_KEY, None)
+                row.metadata_json = metadata
+        metadata = dict(version.metadata_json or {})
+        previous = {"tracks": metadata.get(TRACKS_METADATA_KEY) or [],
+                    "track_links": metadata.get(TRACK_LINKS_METADATA_KEY) or []}
+        after = {"tracks": [item.model_dump(mode="json") for item in built],
+                 "track_links": [item.model_dump(mode="json") for item in links]}
+        metadata[TRACKS_METADATA_KEY] = after["tracks"]
+        metadata[TRACK_LINKS_METADATA_KEY] = after["track_links"]
+        metadata["extensions"] = [*(metadata.get("extensions") or []), {
+            "type": "TRACK_DECISION", "by": str(reviewer_id),
+            "at": datetime.now(timezone.utc).isoformat(), "rationale": rationale.strip(),
+            "tracks": codes}]
+        version.metadata_json = metadata
+        self.session.flush()
+        self._revalidate(version)
+        self._mark_material_edit(version, reviewer_id)
+        self._record(version, reviewer_id=reviewer_id, action="SCHEDULE_TRACKS_REVIEWED",
+                     entity_type="SCHEDULE_VERSION", entity_id=version.id, field_path="tracks",
+                     before=previous, after={**after, "membership": membership},
+                     reason=rationale.strip(), decision="UPDATE")
         self.session.flush()
         return self._result(schedule_version_id, before_rows)
 

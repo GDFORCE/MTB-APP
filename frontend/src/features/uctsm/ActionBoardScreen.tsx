@@ -56,6 +56,13 @@ export default function ActionBoardScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <Pressable accessibilityRole="button"
+            onPress={() => router.push("/(app)/clinical/plane-schedule" as never)}>
+            <Card>
+              <Body weight="700">Command-plane pilot</Body>
+              <Small>Synthetic patients whose schedule is managed in the command plane.</Small>
+            </Card>
+          </Pressable>
           {error ? (
             <Card style={styles.empty}>
               <AlertTriangle size={30} color={colors.warning} />

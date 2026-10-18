@@ -34,6 +34,8 @@ pytest_plugins = ["tests.contract.conftest"]
 
 ORG = UUID("33333333-3333-4333-8333-333333333333")
 REVIEWER = UUID("44444444-4444-4444-8444-444444444444")
+#: an independent approver (maker-checker is ON by default)
+APPROVER = UUID("55555555-5555-4555-8555-555555555555")
 
 
 def make_schedule(*, with_footnote: bool = False) -> UniversalSchedule:
@@ -367,19 +369,23 @@ def test_a_footnote_blocks_approval_until_it_is_resolved(sql_stack, repo_stack):
         schedule = stack.get_schedule(version)
         qualifier = schedule.events[0].qualifiers[0]
         blocked = attempt(lambda: stack.review.approve_reviewed_table(
-            version, reviewer_id=REVIEWER, reason="reviewed the table"))
+            version, reviewer_id=APPROVER, reason="reviewed the table"))
         stack.commit()
         stack.review.resolve_qualifier(
             version, qualifier.id, reviewer_id=REVIEWER, decision="ACCEPT",
             reason="footnote applies to V1", category="CONDITION")
         stack.commit()
-        stack.review.approve_reviewed_table(
-            version, reviewer_id=REVIEWER, reason="reviewed the table")
+        # the editor who resolved the footnote cannot approve it (maker-checker default)
+        self_approval = attempt(lambda: stack.review.approve_reviewed_table(
+            version, reviewer_id=REVIEWER, reason="reviewed the table"))
         stack.commit()
-        return blocked[0], stack.observe(version)
+        stack.review.approve_reviewed_table(
+            version, reviewer_id=APPROVER, reason="reviewed the table")
+        stack.commit()
+        return blocked[0], self_approval[0], stack.observe(version)
 
-    blocked, observed = both(sql_stack, repo_stack, scenario)
-    assert blocked == "error" and observed.status == "APPROVED"
+    blocked, self_approval, observed = both(sql_stack, repo_stack, scenario)
+    assert blocked == "error" and self_approval == "error" and observed.status == "APPROVED"
 
 
 def test_a_later_protocol_version_becomes_current_only_on_an_explicit_in_force_approval(sql_stack, repo_stack):

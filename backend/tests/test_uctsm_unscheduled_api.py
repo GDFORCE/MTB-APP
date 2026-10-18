@@ -20,13 +20,20 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import sys as _sys
+from pathlib import Path as _Path
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 from app.api.uctsm import create_uctsm_router
+from _authz_fixtures import map_operational_ids, permissive_authorizer
 from app.db import models as _models  # noqa: F401
 from app.db.base import Base, get_session
 
 USER = {
     "id": "00000000-0000-0000-0000-000000000001",
     "organization_id": "00000000-0000-0000-0000-000000000002",
+    "role": "pi", "status": "Active",
 }
 API = "/api/uctsm"
 
@@ -50,7 +57,9 @@ def client(monkeypatch) -> Generator[TestClient, None, None]:
             yield session
 
     app = FastAPI()
-    app.include_router(create_uctsm_router(authenticated_user))
+    app.include_router(create_uctsm_router(
+        authenticated_user,
+        authorizer=permissive_authorizer(USER["id"], USER["organization_id"])))
     app.dependency_overrides[get_session] = session_override
     with TestClient(app) as test_client:
         yield test_client
@@ -61,6 +70,7 @@ def client(monkeypatch) -> Generator[TestClient, None, None]:
 def approved_patient(client: TestClient) -> dict[str, str]:
     """Seed the demo trial and take its schedule all the way to APPROVED."""
     workspace = client.post(f"{API}/demo/seed").json()
+    map_operational_ids(client)
     version_id = workspace["schedule_version_id"]
     schedule = client.get(f"{API}/schedule-versions/{version_id}").json()
 
@@ -192,6 +202,7 @@ def test_extraction_without_an_engine_fails_visibly(client: TestClient, monkeypa
     """A run that cannot start must say so, not sit QUEUED forever."""
     monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
     workspace = client.post(f"{API}/demo/seed").json()
+    map_operational_ids(client)
     trial_id = workspace["trial_id"]
 
     protocol = client.post(f"{API}/trials/{trial_id}/protocols", json={

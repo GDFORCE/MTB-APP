@@ -20,7 +20,8 @@ from test_review_constraints import persist
 @pytest.fixture()
 def api(monkeypatch):
     monkeypatch.setenv("UCTSM_DEMO_MODE", "true")
-    client, factory, engine = build_client()
+    # patient clinical writes belong to the assigned PI/CRC; a sponsor account may not hold them
+    client, factory, engine = build_client(role="pi")
     with client:
         yield client, factory
     engine.dispose()
@@ -115,8 +116,28 @@ def test_processes_and_process_scoped_actions_are_shown_and_exported(api):
 
 # --- patient routes: occurrence facts and process transitions -----------------------------
 
+def _map_operational_ids(client) -> None:
+    """The acting PI reaches canonical records through their operational mapping
+    (a sponsor reaches its own organization's trial directly). Give the seeded demo
+    trial/patients that mapping, as an enrolled site would have."""
+    from app.db.base import get_session
+    from app.db import models as models
+
+    generator = client.app.dependency_overrides[get_session]()
+    session = next(generator)
+    try:
+        for trial in session.query(models.Trial).filter(models.Trial.external_trial_id.is_(None)):
+            trial.external_trial_id = f"EXT-{trial.id}"
+        for patient in session.query(models.Patient).filter(models.Patient.external_patient_id.is_(None)):
+            patient.external_patient_id = f"EXT-{patient.id}"
+        session.commit()
+    finally:
+        generator.close()
+
+
 def _approved_patient(client) -> dict:
     workspace = client.post(f"{API}/demo/seed").json()
+    _map_operational_ids(client)
     version_id, patient_id = workspace["schedule_version_id"], workspace["patient_id"]
     schedule = client.get(f"{API}/schedule-versions/{version_id}").json()
     client.post(f"{API}/schedule-versions/{version_id}/validate")
