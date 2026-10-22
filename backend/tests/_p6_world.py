@@ -43,7 +43,7 @@ class World:
         self.v1 = UUID(amended["from_schedule_version_id"])
         self.v2 = UUID(amended["to_schedule_version_id"])
         self.authoring = AmendmentService(uow)
-        self.adoption = AdoptionService(uow)
+        self.adoption = AdoptionService(uow, clock=lambda: TODAY)
         self.patients = PatientScheduleService(uow)
         self.pair = self.authoring.prepare_pair(
             organization_id=self.org, actor_id=self.reviewer,

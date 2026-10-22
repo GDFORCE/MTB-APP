@@ -84,8 +84,9 @@ def decision_view(record: AdoptionDecisionRecord, *, staff: bool = True) -> dict
 
 
 class AdoptionService:
-    def __init__(self, uow: UnitOfWork):
+    def __init__(self, uow: UnitOfWork, *, clock: Callable[[], date] = date.today):
         self._uow = uow
+        self._clock = clock
 
     def _run(self, work: Callable[[UnitOfWork], T]) -> T:
         last: Exception | None = None
@@ -104,7 +105,7 @@ class AdoptionService:
         horizon: date | None = None, as_of: date | None = None,
     ) -> dict[str, Any]:
         """Nothing clinical is written: no assignment, fact, projection or notification."""
-        today = as_of or date.today()
+        today = as_of or self._clock()
         use_horizon = horizon or default_horizon(today)
         if direction == DecisionType.RETURN.value and point.mode != AdoptionMode.ADOPT_IMMEDIATELY:
             raise AmendmentBlockedError(
@@ -199,7 +200,7 @@ class AdoptionService:
                             [blocker("SIMULATION_EXPIRED", str(sim.id), "expired")])
         if sim.blockers:
             return _Refused("the simulation has blockers that must be resolved first", sim.blockers)
-        today = date.today()
+        today = self._clock()
         plan = build_plan(
             tx, organization_id=org, patient_id=sim.patient_id, direction=direction,
             to_schedule_version_id=(sim.to_schedule_version_id
@@ -360,7 +361,7 @@ class AdoptionService:
         """Run a deferred decision if its point has come. Two transactions: claim a fenced
         lease (committed), then apply under it. A crash between them leaves an expired
         lease that the next attempt reclaims; a worker that lost its lease cannot commit."""
-        today = as_of or date.today()
+        today = as_of or self._clock()
         claim = self._run(lambda tx: self._claim(tx, organization_id, decision_id, today))
         if claim["lease_token"] is None:
             return claim["view"]
@@ -578,7 +579,7 @@ class AdoptionService:
     # ------------------------------------------------------------------------- status
     def patient_status(self, *, organization_id: UUID, patient_id: UUID,
                        staff: bool = True) -> dict[str, Any]:
-        today = date.today()
+        today = self._clock()
 
         def read(tx: UnitOfWork) -> dict[str, Any]:
             patient = tx.patients.get(organization_id, patient_id)

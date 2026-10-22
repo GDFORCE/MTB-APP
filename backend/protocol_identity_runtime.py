@@ -56,17 +56,19 @@ def _build_store() -> IdentityStore:
     from app.persistence.mongodb.client import build_client, get_database
     from app.persistence.mongodb.identity_repository import MongoIdentityStore
     from app.persistence.mongodb.migrate import run_migrations
-    from app.persistence.mongodb.settings import MongoSettings, MongoSettingsError
+    from app.persistence.mongodb.settings import MongoPostureError, MongoSettings, MongoSettingsError
 
     try:
         settings = MongoSettings.from_env()
+    except MongoPostureError:
+        raise                      # configured but unsafe: never fall back to another URL
     except MongoSettingsError:
         url, name = os.getenv("MONGO_URL", "").strip(), os.getenv("DB_NAME", "").strip()
         if not url or not name:
             raise HTTPException(
                 503, "The protocol identity store is not configured (set UCTSM_MONGO_URL "
                      "and UCTSM_MONGO_DB). Protocols are not extracted unverified.")
-        settings = MongoSettings(url=url, database=f"{name}_uctsm")
+        settings = MongoSettings(url=url, database=f"{name}_uctsm").enforce_environment_posture()
     client = build_client(settings, server_selection_timeout_ms=8000)
     database = get_database(client, settings)
     run_migrations(database)

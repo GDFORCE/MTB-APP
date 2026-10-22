@@ -83,7 +83,7 @@ def _protocol_version(
         protocol_id=protocol.id, version_label=label,
         document_name=document_name, document_uri=document_uri,
         document_hash=document_hash, uploaded_by=actor_id,
-        extraction_status="COMPLETED", metadata_json={"source": PROVIDER},
+        extraction_status="COMPLETED", metadata_json={"source": PROVIDER, "version_intent": "EXTRACTION_DRAFT"},
     )
     session.add(row)
     session.flush()

@@ -19,7 +19,7 @@ from app.domain.schedule.evaluator import ScheduleEvaluator
 from app.domain.schedule.models import PatientContext, UniversalSchedule, schedule_origin_anchor
 from app.domain.schedule.timing import AnchorReference
 from app.domain.schedule.validator import timing_references
-from app.services.schedule_projection import feasibility_from_explanation
+from app.application.schedule_projection import feasibility_from_explanation
 
 from .patient_schedule import SUPERSEDES_KEY, PatientScheduleService
 from .ports import UnitOfWork

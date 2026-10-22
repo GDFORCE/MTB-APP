@@ -1,0 +1,3 @@
+# Hash-verified corpus sources must have identical bytes on Windows and CI.
+backend/quality_corpus/sources/*.txt text eol=lf
+backend/quality_corpus/*.json text eol=lf

@@ -361,3 +361,23 @@ test("a basis edit still needs a rationale", () => {
     recurrence: { basis: "FIXED_ANCHOR_SERIES", actualSource: "" },
   }, "r").error!, /Say why/);
 });
+
+import { footnoteHeading, footnoteResolution, type FootnoteFinding } from "../src/features/uctsm/visitSchedule.ts";
+
+const footnote: FootnoteFinding = {
+  footnote_id: "b3-n1", label: "*", table: "Table 1: Schedule of Events", page: 23,
+  text: "Any assessments for unscheduled visits are done at the discretion of the Investigator.",
+  verification: "TEXT_MATCHED", message: "not interpreted", issue_ids: ["i1", "i2"],
+};
+
+test("a footnote is named by its label, table and page", () => {
+  assert.equal(footnoteHeading(footnote), "Footnote * of Table 1: Schedule of Events (page 23)");
+  assert.equal(footnoteHeading({ ...footnote, table: null, page: null }), "Footnote *");
+});
+
+test("recording 'no scheduling effect' needs a real sentence of reason and something open", () => {
+  assert.match(footnoteResolution(footnote, "ok").error!, /at least a sentence/);
+  assert.match(footnoteResolution({ ...footnote, issue_ids: [] }, "A long enough reason here.").error!, /nothing open/);
+  assert.deepEqual(footnoteResolution(footnote, "  Page 23: investigator discretion; no timing stated.  "),
+    { reason: "Page 23: investigator discretion; no timing stated." });
+});

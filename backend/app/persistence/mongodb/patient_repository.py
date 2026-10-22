@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, TypeVar
 from uuid import UUID
 
@@ -11,6 +11,8 @@ from pymongo.client_session import ClientSession
 from pymongo.database import Database
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
+from app.observability.correlation import stamp
+from app.application.archive_records import ArchiveRecord, ArchiveRefusedError, EvaluationArchivedError
 from app.application.errors import (
     DuplicateRecordError,
     RecordNotFoundError,
@@ -32,7 +34,10 @@ from app.application.patients import (
     PatientStateRecord,
     UnscheduledVisitRecord,
 )
-from app.application.records import CommandReceiptRecord, OutboxRecord, Record
+from app.application.cohort_records import CohortRecord
+from app.application.reminder_records import NotificationPreferenceRecord, ReminderNoticeRecord
+from app.application.migration_records import MigrationRunRecord, SourceMappingRecord
+from app.application.records import CommandReceiptRecord, InboxRecord, OutboxRecord, Record
 
 from .documents import from_document, to_document
 
@@ -51,6 +56,13 @@ CONFINEMENTS = "patient_confinement_episodes"
 POINTERS = "patient_schedules"
 PROPOSALS = "schedule_impact_proposals"
 ASSIGNMENTS = "patient_schedule_assignments"
+ARCHIVES = "evaluation_archives"
+INBOX = "outbox_inbox"
+COHORTS = "cutover_cohorts"
+REMINDER_PREFS = "notification_preferences"
+REMINDER_NOTICES = "reminder_notices"
+MIGRATION_RUNS = "migration_runs"
+MIGRATION_MAPPINGS = "migration_source_mappings"
 PARITY_RUNS = "parity_runs"
 RECEIPTS = "command_receipts"
 OUTBOX = "outbox"
@@ -342,6 +354,17 @@ class MongoImpactRepository(_Base):
                           [("assigned_at", ASCENDING), ("_id", ASCENDING)])
 
 
+class MongoArchiveRepository(_Base):
+    def get(self, evaluation_id: UUID) -> ArchiveRecord | None:
+        doc = self._db[ARCHIVES].find_one({"evaluation_id": evaluation_id}, session=self._session)
+        return from_document(ArchiveRecord, doc) if doc else None
+
+    def save(self, record: ArchiveRecord) -> None:
+        document = to_document(record)
+        self._db[ARCHIVES].replace_one(
+            {"evaluation_id": record.evaluation_id}, document, upsert=True, session=self._session)
+
+
 class MongoParityRepository(_Base):
     def add(self, record: ParityRunRecord) -> None:
         self._insert(PARITY_RUNS, record, "parity run")
@@ -380,11 +403,194 @@ class MongoCommandRepository(_Base):
 
 class MongoOutboxRepository(_Base):
     def add(self, record: OutboxRecord) -> None:
+        record = record.model_copy(update={"payload": stamp(record.payload)})
         self._insert(OUTBOX, record, "outbox record")
 
     def list_pending(self, *, limit: int = 100) -> list[OutboxRecord]:
-        return self._list(OUTBOX, OutboxRecord, {"status": "PENDING"},
-                          [("created_at", ASCENDING), ("_id", ASCENDING)])[:limit]
+        if limit <= 0:
+            return []
+        cursor = self._db[OUTBOX].find({"status": "PENDING"}, session=self._session).sort(
+            [("created_at", ASCENDING), ("_id", ASCENDING)]).limit(max(1, min(limit, 1000)))
+        return [from_document(OutboxRecord, row) for row in cursor]
+
+    def claim(self, *, now: datetime, lease_seconds: int, token: str):
+        exhausted = {"$expr": {"$gte": [{"$ifNull": ["$attempts", 0]},
+                                        {"$ifNull": ["$max_attempts", 5]}]}}
+        self._db[OUTBOX].update_many(
+            {"status": "PROCESSING", "lease_expires_at": {"$lte": now}, **exhausted},
+            {"$set": {"status": "DEAD", "lease_token": None, "lease_expires_at": None,
+                      "last_error_code": "LEASE_RETRY_LIMIT"}}, session=self._session)
+        query = {"$or": [
+            {"status": "PENDING", "$or": [{"available_at": None}, {"available_at": {"$lte": now}}]},
+            {"status": "PROCESSING", "lease_expires_at": {"$lte": now}}],
+            "$expr": {"$lt": [{"$ifNull": ["$attempts", 0]}, {"$ifNull": ["$max_attempts", 5]}]}}
+        row = self._db[OUTBOX].find_one_and_update(
+            query, {"$set": {"status": "PROCESSING", "lease_token": token,
+                             "lease_expires_at": now + timedelta(seconds=lease_seconds)}, "$inc": {"attempts": 1}},
+            sort=[("created_at", ASCENDING), ("_id", ASCENDING)],
+            return_document=ReturnDocument.AFTER, session=self._session)
+        return from_document(OutboxRecord, row) if row else None
+
+    def settle(self, organization_id, record_id, token, *, now, status,
+               available_at=None, error_code=None):
+        if status not in {"SENT", "PENDING", "DEAD"}:
+            raise ValueError("invalid outbox settlement")
+        result = self._db[OUTBOX].update_one(
+            {"_id": record_id, "organization_id": organization_id, "status": "PROCESSING",
+             "lease_token": token, "lease_expires_at": {"$gt": now}},
+            {"$set": {"status": status, "available_at": available_at,
+                      "last_error_code": error_code, "lease_token": None, "lease_expires_at": None}},
+            session=self._session)
+        if result.matched_count != 1:
+            raise StaleRevisionError("the outbox delivery lease was lost")
+
+    def get(self, organization_id, record_id):
+        doc = self._db[OUTBOX].find_one(
+            {"_id": record_id, "organization_id": organization_id}, session=self._session)
+        return from_document(OutboxRecord, doc) if doc else None
+
+    def count_by_status(self):
+        rows = self._db[OUTBOX].aggregate(
+            [{"$group": {"_id": "$status", "n": {"$sum": 1}}}], session=self._session)
+        return {row["_id"]: int(row["n"]) for row in rows}
+
+    def list_dead(self, organization_id, *, limit=100):
+        if limit <= 0:
+            return []
+        cursor = self._db[OUTBOX].find(
+            {"organization_id": organization_id, "status": "DEAD"}, session=self._session).sort(
+            [("created_at", ASCENDING), ("_id", ASCENDING)]).limit(min(limit, 1000))
+        return [from_document(OutboxRecord, row) for row in cursor]
+
+    def requeue_dead(self, organization_id, record_id, *, now):
+        doc = self._db[OUTBOX].find_one_and_update(
+            {"_id": record_id, "organization_id": organization_id, "status": "DEAD"},
+            {"$set": {"status": "PENDING", "attempts": 0, "available_at": now, "last_error_code": None,
+                      "lease_token": None, "lease_expires_at": None}},
+            return_document=ReturnDocument.AFTER, session=self._session)
+        if doc is None:
+            raise RecordNotFoundError("no dead-lettered message")
+        return from_document(OutboxRecord, doc)
+
+
+class MongoInboxRepository(_Base):
+    def find(self, consumer, dedupe_key):
+        doc = self._db[INBOX].find_one(
+            {"consumer": consumer, "dedupe_key": dedupe_key}, session=self._session)
+        return from_document(InboxRecord, doc) if doc else None
+
+    def add(self, record) -> None:
+        self._insert(INBOX, record, "inbox record")
+
+
+class MongoCohortRepository(_Base):
+    def add(self, record) -> None:
+        self._insert(COHORTS, record, "cohort")
+
+    def get(self, organization_id, cohort_id):
+        doc = self._db[COHORTS].find_one(
+            {"_id": cohort_id, "organization_id": organization_id}, session=self._session)
+        if doc is None:
+            raise RecordNotFoundError("cohort not found")
+        return from_document(CohortRecord, doc)
+
+    def save(self, record, *, expected_revision):
+        document = to_document(record.model_copy(update={"revision": expected_revision + 1}))
+        fields = {key: value for key, value in document.items() if key != "_id"}
+        stored = self._db[COHORTS].find_one_and_update(
+            {"_id": record.id, "organization_id": record.organization_id, "revision": expected_revision},
+            {"$set": fields}, return_document=ReturnDocument.AFTER, session=self._session)
+        if stored is None:
+            raise StaleRevisionError("the cohort changed since it was read")
+        return from_document(CohortRecord, stored)
+
+    def list_for_trial(self, organization_id, trial_id):
+        return self._list(COHORTS, CohortRecord, {"organization_id": organization_id, "trial_id": trial_id},
+                          [("name", ASCENDING), ("_id", ASCENDING)])
+
+    def find_blocking_membership(self, external_patient_id):
+        doc = self._db[COHORTS].find_one(
+            {"state": "PILOT", "members.external_patient_id": external_patient_id}, session=self._session)
+        return from_document(CohortRecord, doc) if doc else None
+
+
+class MongoReminderRepository(_Base):
+    def get_preferences(self, organization_id, patient_id):
+        doc = self._db[REMINDER_PREFS].find_one(
+            {"organization_id": organization_id, "patient_id": patient_id}, session=self._session)
+        return from_document(NotificationPreferenceRecord, doc) if doc else None
+
+    def save_preferences(self, record, *, expected_revision):
+        if expected_revision is None:
+            stored = record.model_copy(update={"revision": 1})
+            self._insert(REMINDER_PREFS, stored, "notification preferences")
+            return stored
+        document = to_document(record.model_copy(update={"revision": expected_revision + 1}))
+        fields = {key: value for key, value in document.items() if key != "_id"}
+        saved = self._db[REMINDER_PREFS].find_one_and_update(
+            {"organization_id": record.organization_id, "patient_id": record.patient_id,
+             "revision": expected_revision}, {"$set": fields},
+            return_document=ReturnDocument.AFTER, session=self._session)
+        if saved is None:
+            raise StaleRevisionError("the preferences changed since they were read")
+        return from_document(NotificationPreferenceRecord, saved)
+
+    def list_granted(self, *, after, limit):
+        query = {"consent": "GRANTED"}
+        if after is not None:
+            query["patient_id"] = {"$gt": after}
+        return self._list(REMINDER_PREFS, NotificationPreferenceRecord, query,
+                          [("patient_id", ASCENDING)])[:max(0, min(limit, 1000))]
+
+    def list_active(self, organization_id, patient_id):
+        return self._list(REMINDER_NOTICES, ReminderNoticeRecord,
+                          {"organization_id": organization_id, "patient_id": patient_id, "state": "ACTIVE"},
+                          [("reminder_key", ASCENDING), ("_id", ASCENDING)])
+
+    def add_notice(self, record) -> None:
+        self._insert(REMINDER_NOTICES, record, "reminder")
+
+    def withdraw(self, organization_id, patient_id, reminder_key, *, reason, at):
+        result = self._db[REMINDER_NOTICES].update_one(
+            {"organization_id": organization_id, "patient_id": patient_id, "reminder_key": reminder_key,
+             "state": "ACTIVE"},
+            {"$set": {"state": "WITHDRAWN", "withdrawn_at": at, "withdrawn_reason": reason}},
+            session=self._session)
+        if result.matched_count != 1:
+            raise RecordNotFoundError("no active reminder")
+
+
+class MongoMigrationRepository(_Base):
+    def get_run(self, organization_id, run_key):
+        doc = self._db[MIGRATION_RUNS].find_one(
+            {"organization_id": organization_id, "run_key": run_key}, session=self._session)
+        return from_document(MigrationRunRecord, doc) if doc else None
+
+    def _upsert(self, collection: str, query: dict, record) -> None:
+        """Replace the logical row; its _id (the first id it was stored under) never changes."""
+        document = to_document(record)
+        identity = document.pop("_id")
+        self._db[collection].update_one(
+            query, {"$set": document, "$setOnInsert": {"_id": identity}}, upsert=True, session=self._session)
+
+    def save_run(self, record) -> None:
+        self._upsert(MIGRATION_RUNS, {"organization_id": record.organization_id, "run_key": record.run_key}, record)
+
+    def get_mapping(self, organization_id, source_system, source_id):
+        doc = self._db[MIGRATION_MAPPINGS].find_one(
+            {"organization_id": organization_id, "source_system": source_system, "source_id": source_id},
+            session=self._session)
+        return from_document(SourceMappingRecord, doc) if doc else None
+
+    def save_mapping(self, record) -> None:
+        self._upsert(MIGRATION_MAPPINGS, {"organization_id": record.organization_id,
+                     "source_system": record.source_system, "source_id": record.source_id}, record)
+
+    def list_mappings(self, organization_id, source_system):
+        return self._list(
+            MIGRATION_MAPPINGS, SourceMappingRecord,
+            {"organization_id": organization_id, "source_system": source_system},
+            [("source_id", ASCENDING), ("_id", ASCENDING)])
 
 
 class MongoEvaluationRepository(_Base):
@@ -441,16 +647,42 @@ class MongoEvaluationRepository(_Base):
             raise StaleRevisionError("the patient schedule changed since it was read")
         return from_document(PatientScheduleRecord, doc)
 
+    def _guard_archived(self, evaluation_id: UUID) -> None:
+        if self._db[ARCHIVES].find_one(
+                {"evaluation_id": evaluation_id, "state": "ARCHIVED"},
+                session=self._session) is not None:
+            raise EvaluationArchivedError("the evaluation's projections are archived; restore them first")
+
     def list_events(self, evaluation_id: UUID) -> list[PatientEventRecord]:
-        return self._list(
+        rows = self._list(
             EVENTS, PatientEventRecord, {"evaluation_id": evaluation_id},
             [("nominal_start_date", ASCENDING), ("occurrence_index", ASCENDING),
              ("event_code", ASCENDING), ("_id", ASCENDING)])
+        if not rows:
+            self._guard_archived(evaluation_id)
+        return rows
 
     def list_confinements(self, evaluation_id: UUID) -> list[ConfinementEpisodeRecord]:
-        return self._list(
+        rows = self._list(
             CONFINEMENTS, ConfinementEpisodeRecord, {"evaluation_id": evaluation_id},
             [("episode_code", ASCENDING), ("_id", ASCENDING)])
+        if not rows:
+            self._guard_archived(evaluation_id)
+        return rows
+
+    def purge_projections(self, evaluation_id: UUID) -> None:
+        evaluation = self.get_evaluation(evaluation_id)
+        pointer = self.get_pointer(evaluation.patient_id, evaluation.schedule_version_id)
+        if pointer is not None and pointer.current_evaluation_id == evaluation_id:
+            raise ArchiveRefusedError("the current evaluation's projections are never purged")
+        self._db[EVENTS].delete_many({"evaluation_id": evaluation_id}, session=self._session)
+        self._db[CONFINEMENTS].delete_many({"evaluation_id": evaluation_id}, session=self._session)
+
+    def restore_projections(self, evaluation_id, events, confinements) -> None:
+        if self._db[EVENTS].find_one({"evaluation_id": evaluation_id}, session=self._session)                 or self._db[CONFINEMENTS].find_one({"evaluation_id": evaluation_id}, session=self._session):
+            raise DuplicateRecordError("projections already exist", key=str(evaluation_id))
+        self._insert_many(EVENTS, events, "projection")
+        self._insert_many(CONFINEMENTS, confinements, "confinement episode")
 
     def supersede_active_pointers(self, patient_id: UUID) -> int:
         result = self._db[POINTERS].update_many(

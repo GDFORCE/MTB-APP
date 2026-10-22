@@ -11,6 +11,7 @@ from pymongo.client_session import ClientSession
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
+from app.observability.correlation import stamp
 from app.application.errors import DuplicateRecordError
 from app.application.records import AuditRecord
 
@@ -54,6 +55,7 @@ class MongoAuditRepository:
         self._session = session
 
     def append(self, record: AuditRecord) -> None:
+        record = record.model_copy(update={"metadata": stamp(record.metadata)})
         try:
             self._collection.insert_one(_to_document(record), session=self._session)
         except DuplicateKeyError as error:

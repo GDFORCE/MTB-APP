@@ -902,7 +902,57 @@ Backend gate: 424 passing, 0 failing (the list below):
     tests/test_uctsm_assignment_impact.py \
     tests/test_canonical_import.py tests/test_canonical_bridge.py     tests/test_canonical_journey.py tests/test_uctsm_enrolment_api.py     tests/test_patient_visit_anchor_safety.py tests/test_protocol_expansion.py \
     tests/test_protocol_invariants.py tests/test_protocol_timing_contract.py \
-    tests/test_protocol_pattern_regressions.py tests/test_schedule_schema_v2.py
+    tests/test_protocol_pattern_regressions.py tests/test_schedule_schema_v2.py \
+    tests/contract/test_command_ledger_contract.py \
+    tests/contract/test_pdf_outbox_delivery.py \
+    tests/test_p6_repairs.py \
+    tests/test_uctsm_authz_manifest.py \
+    tests/test_pdf_archive.py \
+    tests/test_pdf_boundary_writes.py \
+    tests/test_pdf_cohort_cutover.py \
+    tests/test_pdf_compiled.py \
+    tests/test_pdf_conflict_resolution.py \
+    tests/test_pdf_context_queries.py \
+    tests/test_pdf_cross_feature_revalidation.py \
+    tests/test_pdf_graph_integrity.py \
+    tests/test_pdf_incremental.py \
+    tests/test_pdf_legacy_guard.py \
+    tests/test_pdf_legacy_inventory.py \
+    tests/test_pdf_legacy_migration.py \
+    tests/test_pdf_manual_rules.py \
+    tests/test_pdf_mongo_catalog.py \
+    tests/test_pdf_monitoring.py \
+    tests/test_pdf_observability.py \
+    tests/test_pdf_patient_projection.py \
+    tests/test_pdf_projection.py \
+    tests/test_pdf_quality.py \
+    tests/test_pdf_quality_sequence.py \
+    tests/test_pdf_recovery.py \
+    tests/test_pdf_release.py \
+    tests/test_pdf_reminder_sync.py \
+    tests/test_pdf_review_meaning.py \
+    tests/test_pdf_schedule_report.py \
+    tests/test_pdf_security.py \
+    tests/test_pdf_server_ratchet.py \
+    tests/test_pdf_sql_runner.py \
+    tests/test_pdf_transactions.py \
+    tests/test_pdf_operations_api.py \
+    tests/test_pdf_temporal_matrix.py \
+    tests/test_pdf_required_inputs.py \
+    tests/test_pdf_parity_numbers.py \
+    tests/test_pdf_quality_components.py \
+    tests/test_pdf_dangling_references.py \
+    tests/test_pdf_manual_facts.py \
+    tests/test_pdf_incremental_boundary.py \
+    tests/test_pdf_restore_drill.py \
+    tests/test_pdf_mutation_audit.py, tests/test_pdf_patient_boundary.py, tests/test_p6_repairs.py \
+    tests/test_pdf_review_service_split.py \
+    tests/test_pdf_ingestion_provenance.py \
+    tests/test_pdf_write_volume.py
+
+  (2026-10-19 continuation: the tests/test_pdf_*.py files, the two contract files, test_p6_repairs and the
+   authorization manifest test were added to this gate; scripts/check_pdf_gate.py reads this list. Each file
+   runs in its own process against a local replica set with UCTSM_REQUIRE_MONGO=1.)
 
 Frontend (87 tests, all passing):
 

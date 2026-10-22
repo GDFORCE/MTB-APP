@@ -497,3 +497,17 @@ def test_a_confinement_episode_round_trips_through_a_real_evaluation():
         assert final.actual_discharge == date(2026, 9, 14)
         assert final.protected_history is True
         assert "overlapping_episodes" not in episode.explanation
+
+
+def test_hours_on_a_calendar_date_are_exact_only_for_whole_days():
+    import pytest
+    from app.domain.schedule.calendar_math import add_amount
+    from app.domain.schedule.exceptions import TimeOfDayRequiredError
+    from app.domain.schedule.timing import TemporalAmount
+
+    assert add_amount(date(2026, 9, 13), TemporalAmount(value=24, unit="HOUR")) == date(2026, 9, 14)
+    assert add_amount(date(2026, 9, 13), TemporalAmount(value=48, unit="HOUR")) == date(2026, 9, 15)
+    assert add_amount(date(2026, 9, 13), TemporalAmount(value=1440, unit="MINUTE")) == date(2026, 9, 14)
+    for amount in (TemporalAmount(value=4, unit="HOUR"), TemporalAmount(value=90, unit="MINUTE")):
+        with pytest.raises(TimeOfDayRequiredError):
+            add_amount(date(2026, 9, 13), amount)

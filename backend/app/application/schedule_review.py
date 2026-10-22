@@ -39,7 +39,7 @@ _RETRIES = 3
 def approval_blockers(tx: UnitOfWork, schedule_version_id: UUID) -> list[str]:
     """THE approval gate: pending rows, source coverage and uncompiled
     statements block as well as validator findings. Empty means approvable."""
-    from app.services.review_view import build_review_view  # pure builder
+    from .review_projection import build_review_view
 
     header = tx.schedules.get_header(schedule_version_id)
     schedule = tx.schedules.get(schedule_version_id)
@@ -62,6 +62,8 @@ def _accountability(run, schedule_version_id: UUID):
             return entry["accountability"]
     return matches[0]["accountability"] if len(matches) == 1 else None
 
+
+from app.domain.schedule.resolutions import checked_resolution  # noqa: E402
 
 class ScheduleReviewService:
     # P3-04: deployment-owned policy, resolved per approval unless injected.
@@ -125,16 +127,21 @@ class ScheduleReviewService:
             before = next((item for item in before_schedule.events if item.id == event.id), None)
             if before is None:
                 raise KeyError("event definition not found")
+            unresolved = {"AMBIGUOUS", "CONFLICTING", "UNRESOLVED"}
+            if (before.interpretation_status.value in unresolved
+                    and event.interpretation_status.value not in unresolved):
+                # P7-03: an unresolved reading is settled only by the evidence-backed resolution
+                # (ConflictResolutionService), never by editing the status.
+                raise ValueError("an unresolved interpretation can only be settled by a reviewed "
+                                 "conflict resolution that names its supporting evidence")
             tx.schedules.replace_event(schedule_version_id, event)
             corrected = tx.schedules.get(schedule_version_id)
             issues = ScheduleValidator().validate(corrected)
             tx.schedules.replace_validation_issues(schedule_version_id, issues)
             tx.schedules.transition(
                 schedule_version_id, to_status=ScheduleStatus.VALIDATION_REQUIRED.value)
-            from app.authorization.maker_checker import is_material_event_change
-            changed = [key for key, value in event.model_dump(mode="json").items()
-                       if before.model_dump(mode="json").get(key) != value
-                       and key not in {"metadata", "evidence_refs", "updated_at", "created_at"}]
+            from app.authorization.maker_checker import is_material_event_change, material_event_changes
+            changed = material_event_changes(before.model_dump(mode="json"), event.model_dump(mode="json"))
             if is_material_event_change(changed):
                 tx.schedules.record_material_edit(
                     schedule_version_id, editor_id=reviewer_id, at=utc_now())
@@ -276,6 +283,8 @@ class ScheduleReviewService:
         field_path: str | None = None, previous_value: object | None = None,
         new_value: object | None = None, reason: str | None = None, comment: str | None = None,
     ) -> ReviewDecisionRecord:
+        if decision.upper().startswith("MANUAL_"):
+            raise ValueError("manual-rule decisions require the dedicated authenticated workflow")
         def work(tx: UnitOfWork) -> ReviewDecisionRecord:
             header = tx.schedules.get_header(schedule_version_id)
             self._require_not_frozen(header, "approved schedule versions cannot be reviewed again")
@@ -309,6 +318,7 @@ class ScheduleReviewService:
 
     def resolve_extraction_issue(
         self, schedule_version_id: UUID, issue_id: UUID, *, reviewer_id: UUID, reason: str,
+        resolution: str | None = None,
     ) -> None:
         if not reason.strip():
             raise ValueError("Explain the source review or correction that resolves this finding.")
@@ -325,13 +335,14 @@ class ScheduleReviewService:
             if issue.issue_code in {"SCHEDULE_OPTION_FAILED", "SCHEDULE_DISCOVERY_FAILED"}:
                 raise ValueError(
                     "Retry extraction to recover the missing schedule coverage before approval.")
+            resolved_as = checked_resolution(resolution, issue.issue_code)
             tx.schedules.set_issue_status(
                 schedule_version_id, issue_id, "RESOLVED", resolved_by=reviewer_id, note=reason)
             tx.schedules.add_decision(ReviewDecisionRecord(
                 schedule_version_id=schedule_version_id, entity_type="VALIDATION_ISSUE",
                 entity_id=issue.id, decision="RESOLVE", reviewer_id=reviewer_id, reason=reason,
                 previous_value={"status": "OPEN", "message": issue.message},
-                new_value={"status": "RESOLVED"}))
+                new_value={"status": "RESOLVED", **({"resolution": resolved_as} if resolved_as else {})}))
             self._audit(tx, header, reviewer_id, "EXTRACTION_FINDING_RESOLVED", reason)
 
         self._run(work)
@@ -339,6 +350,8 @@ class ScheduleReviewService:
     def approve_reviewed_table(
         self, schedule_version_id: UUID, *, reviewer_id: UUID, reason: str,
         effective_from: date | None = None,
+        organization_id: UUID | None = None, trial_id: UUID | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """One explicit table confirmation, with the existing gates and bulk audit."""
         if not reason.strip():
@@ -346,6 +359,11 @@ class ScheduleReviewService:
 
         def work(tx: UnitOfWork) -> None:
             header = tx.schedules.get_header(schedule_version_id)
+            if organization_id is not None or trial_id is not None:
+                if header.organization_id != organization_id or header.trial_id != trial_id:
+                    raise KeyError("schedule not found")
+            if expected_revision is not None and header.revision != expected_revision:
+                raise StaleRevisionError("the schedule changed; reload and review it again")
             if header.status in {*_FROZEN, "ARCHIVED"}:
                 raise ImmutableScheduleError("this schedule is no longer editable")
             issues = ScheduleValidator().validate(tx.schedules.get(schedule_version_id))
@@ -377,6 +395,13 @@ class ScheduleReviewService:
         # end here).
         maker_checker = self._enforce_maker_checker(tx, header, reviewer_id)
         schedule = tx.schedules.get(schedule_version_id)
+        from .manual_rules import verify_manual_decisions
+        verify_manual_decisions(tx, schedule)
+        from .required_inputs import approval_blocker
+        unacknowledged = approval_blocker(tx, schedule)
+        if unacknowledged:
+            raise ValueError("approval blocked: review and acknowledge the patient details a clinic must enter "
+                             "(" + unacknowledged + ")")
         issues = ScheduleValidator().validate(schedule)
         tx.schedules.replace_validation_issues(schedule_version_id, issues)
         blocking = ScheduleValidator.blocking(issues)
@@ -414,6 +439,10 @@ class ScheduleReviewService:
         approved = tx.schedules.mark_approved(
             schedule_version_id, reviewer_id=reviewer_id, approved_at=approved_at,
             effective_from=effective_from, expected_revision=header.revision, **stamp)
+        from app.domain.schedule.compiled import compile_schedule
+        from app.domain.schedule.evaluator import ScheduleEvaluator
+        tx.schedules.save_compiled(schedule_version_id, compile_schedule(
+            tx.schedules.get(schedule_version_id), evaluator_version=ScheduleEvaluator.version, issues=issues))
         protocol = tx.authoring.get_protocol(header.protocol_id)
         protocol_version = tx.authoring.get_protocol_version(header.protocol_version_id)
         # A replacement extraction can recover an unapproved first draft; an
@@ -427,7 +456,9 @@ class ScheduleReviewService:
                     organization_id=header.organization_id, status="APPROVED",
                     trial_id=header.trial_id)
                 if item.id != schedule_version_id)
-            is_amendment = (current is None or current.created_at is None
+            from .version_intent import activation_eligible
+            is_amendment = activation_eligible(protocol_version.metadata,
+                declared_lineage=header.based_on_schedule_version_id is not None) and (current is None or current.created_at is None
                             or protocol_version.created_at is None
                             or protocol_version.created_at >= current.created_at)
             in_force = effective_from is None or effective_from <= date.today()

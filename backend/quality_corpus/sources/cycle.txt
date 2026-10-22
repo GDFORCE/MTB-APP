@@ -1,0 +1,1 @@
+SYNTHETIC: three nominal 21-day cycles from baseline; visit on Day 1 of every cycle.

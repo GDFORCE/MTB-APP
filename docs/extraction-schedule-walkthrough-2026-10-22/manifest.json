@@ -1,0 +1,236 @@
+{
+  "snapshot_date": "2026-10-22",
+  "scope": "21 files from the prior reading list plus supporting extraction/API/service implementation files; entire files, including server.py",
+  "annotation_method": "Static syntax explanations plus separately authored application-level symbol notes",
+  "total_lines": 36474,
+  "files": [
+    {
+      "path": "backend/app/extraction/runner.py",
+      "sha256": "9af03a972039e7404881731c13d8b7bfd0920a5ec3ec1c3f4c00afdf0d3acfdc",
+      "lines": 352,
+      "symbols": 15
+    },
+    {
+      "path": "backend/app/extraction/documents.py",
+      "sha256": "83eca3c1221e379b2467d1d627b17e62179fa903e164ef7f001ce8f79024a5e8",
+      "lines": 97,
+      "symbols": 5
+    },
+    {
+      "path": "backend/app/extraction/contracts.py",
+      "sha256": "7f18bc0eb02945b10da29994f34f6d18cf68529ec18a81ee2841ea00981623c7",
+      "lines": 35,
+      "symbols": 2
+    },
+    {
+      "path": "backend/app/extraction/facts.py",
+      "sha256": "a79ac9793982e410e4fd3d16a591856dcfda3b69df7ea07e7bcd4c14e8423923",
+      "lines": 621,
+      "symbols": 42
+    },
+    {
+      "path": "backend/app/extraction/reader.py",
+      "sha256": "af20c50962f7d2537c40e31c7d9fafd2546257c861f565b340323b60a1b39d4c",
+      "lines": 1335,
+      "symbols": 41
+    },
+    {
+      "path": "backend/app/extraction/llm_client.py",
+      "sha256": "6305a7bc148cc128a3ef20abf1e37c99c1dec728a892e0510f7b81c8a0206b79",
+      "lines": 367,
+      "symbols": 23
+    },
+    {
+      "path": "backend/app/extraction/reconcile.py",
+      "sha256": "1547743f0bc5f7e388e1adc1bc5c47546ae483fa2b8b2f8c605487e37dfe0809",
+      "lines": 323,
+      "symbols": 8
+    },
+    {
+      "path": "backend/app/extraction/compiler.py",
+      "sha256": "fac4bce538fb4e5084269e51aa39ec4ee614cd99affe0ec67a2ecc1902c085e8",
+      "lines": 2562,
+      "symbols": 92
+    },
+    {
+      "path": "backend/app/domain/schedule/models.py",
+      "sha256": "97b6c820277e241bd9d1457a73a89f619c79cd6852ab2f50752a920183819d06",
+      "lines": 1686,
+      "symbols": 104
+    },
+    {
+      "path": "backend/app/domain/schedule/timing.py",
+      "sha256": "7738cd5da390fd1459ddd9497d5fff01f8a2fba35788e212da3a6f7a7cf2e0ca",
+      "lines": 509,
+      "symbols": 52
+    },
+    {
+      "path": "backend/app/domain/schedule/validator.py",
+      "sha256": "b08b826725665b4b7446036159026a9f9107190c708cc2cdc76e1090109e788a",
+      "lines": 1813,
+      "symbols": 38
+    },
+    {
+      "path": "backend/app/application/extraction.py",
+      "sha256": "d31bd80d3b91dd9cbbedda9c18e6b39cec3b89d9ea1e494c648925a878c84919",
+      "lines": 654,
+      "symbols": 38
+    },
+    {
+      "path": "backend/app/application/schedule_review.py",
+      "sha256": "9d90f51f4eae489809afd9f0a1b92555549e6e3cb06833eb6140f5380b732986",
+      "lines": 542,
+      "symbols": 30
+    },
+    {
+      "path": "backend/app/domain/schedule/evaluator.py",
+      "sha256": "39752461f6785bbd1738fd11b20b312c6691ee4e7613a4ef3b8a28772bd7406d",
+      "lines": 3486,
+      "symbols": 116
+    },
+    {
+      "path": "backend/app/application/patient_schedule.py",
+      "sha256": "45f510cc0ba1efbcff1250ed995abfc9d0b45ed8b8bf3ced68446c7153378334",
+      "lines": 1347,
+      "symbols": 46
+    },
+    {
+      "path": "backend/app/application/schedule_projection.py",
+      "sha256": "90c1c58e1784f594567d55a606ebbf2f5c851d93b8c28fc8a319dd119efa6621",
+      "lines": 348,
+      "symbols": 15
+    },
+    {
+      "path": "backend/server.py",
+      "sha256": "8932e02a2b145b714a898952c794995c7951cdc7916760b38f52aca3d60515e2",
+      "lines": 11570,
+      "symbols": 413
+    },
+    {
+      "path": "frontend/app/(app)/sponsor/add-trial.tsx",
+      "sha256": "168ebbd3e51786f6374f74ad3ec6956173597a83d93c01af89c83b3c6a055d5d",
+      "lines": 762,
+      "symbols": 50
+    },
+    {
+      "path": "frontend/src/features/uctsm/api.ts",
+      "sha256": "3d028ba5508b3c071af602a0af9253be1885103d0bf1f226497379624e4b6af5",
+      "lines": 966,
+      "symbols": 114
+    },
+    {
+      "path": "backend/tests/test_extraction_reader.py",
+      "sha256": "e47143e0e6784a5f319bf245e94fb5736aab9d0e50c32813fca2b92b058f4f18",
+      "lines": 375,
+      "symbols": 31
+    },
+    {
+      "path": "backend/tests/test_extraction_compiler.py",
+      "sha256": "029fea41417b74064cd24a19100a9020ee54f95a2b1319184035ce1db53f34dd",
+      "lines": 1168,
+      "symbols": 86
+    },
+    {
+      "path": "backend/app/extraction/artifacts.py",
+      "sha256": "b91e3f7f7b2a43536b3a1bd45a204b013dd927dae618c17676d9d087716f0361",
+      "lines": 156,
+      "symbols": 23
+    },
+    {
+      "path": "backend/app/extraction/ledger.py",
+      "sha256": "4c67ca70f31206e173187040434b39e583bb25e29655da4a81aba4e08323362d",
+      "lines": 218,
+      "symbols": 12
+    },
+    {
+      "path": "backend/app/extraction/statements.py",
+      "sha256": "314bfbd226b814e0350f37d9ab16494e9755459d42c788edcefa9bdf0eb5cd06",
+      "lines": 331,
+      "symbols": 10
+    },
+    {
+      "path": "backend/app/services/native_import.py",
+      "sha256": "6b8160a3cc60cf3f0f2800419ba5f4c87cd1dab0e8bf4bba5021f9881329a423",
+      "lines": 196,
+      "symbols": 4
+    },
+    {
+      "path": "backend/app/services/extraction_service.py",
+      "sha256": "fe179983d2db58e69a5f7725dcfd135138197497568a9d0ec5d5901a5677e4f3",
+      "lines": 343,
+      "symbols": 11
+    },
+    {
+      "path": "backend/app/services/schedule_service.py",
+      "sha256": "ed23242256cc357f066ebfaa5a3ab4fac2abd4e2486bb9e2d8c32a593be1b01a",
+      "lines": 52,
+      "symbols": 2
+    },
+    {
+      "path": "backend/app/api/uctsm.py",
+      "sha256": "6d25ca91bc101fc7b95ab67bce3336aff2821166da1899c3b01e127b4df5f28b",
+      "lines": 2215,
+      "symbols": 110
+    },
+    {
+      "path": "backend/app/api/uctsm_mongo.py",
+      "sha256": "2e97f9158eeff975550a4f8d48f5febca2e6497d6b94598628d31b8e75f45b72",
+      "lines": 549,
+      "symbols": 26
+    },
+    {
+      "path": "backend/app/services/review_base.py",
+      "sha256": "261840d7c0b4170f4379794e9cc5d40dd841f9f145bb603a8b8188c1169a50dc",
+      "lines": 95,
+      "symbols": 8
+    },
+    {
+      "path": "backend/app/services/review_editing.py",
+      "sha256": "752738d77700371873ca4903d21258d46a5c40ce289611937be6fbedab2aeb1a",
+      "lines": 305,
+      "symbols": 7
+    },
+    {
+      "path": "backend/app/services/review_approval.py",
+      "sha256": "929dc1bceb5f1ee4648a3fc8fb60f04d259a24dd88627bfc120b830a53be8dbe",
+      "lines": 169,
+      "symbols": 5
+    },
+    {
+      "path": "backend/app/services/review_queue.py",
+      "sha256": "a2a254c6d7ac90977c0ae94da066511d047fcd9282ac2eabd248a7fd41fe3cca",
+      "lines": 72,
+      "symbols": 2
+    },
+    {
+      "path": "backend/app/services/patient_schedule_reads.py",
+      "sha256": "c621ad6d2712ece659c3bd1b43d540e886c14a46952de57a6347f1d52957cd87",
+      "lines": 108,
+      "symbols": 8
+    },
+    {
+      "path": "backend/app/services/patient_schedule_context.py",
+      "sha256": "14cb7aa3167c81acfc25de369b6aa50b0cf34ee060364e95b1d70864f16aa259",
+      "lines": 156,
+      "symbols": 2
+    },
+    {
+      "path": "backend/app/services/patient_schedule_persistence.py",
+      "sha256": "2bbac863237401c100250507ef5c83c961c7c2eadd5cd69788eee27c63addbd3",
+      "lines": 116,
+      "symbols": 5
+    },
+    {
+      "path": "backend/app/services/patient_schedule_recording.py",
+      "sha256": "82d56e5b84077ceb9e4d07600c4673edfa19a9c236f39b5340027cb4f6e69314",
+      "lines": 253,
+      "symbols": 5
+    },
+    {
+      "path": "backend/app/services/patient_schedule_evaluation.py",
+      "sha256": "444b5e33135bcb4f690b9fede9f94af016cd19949c9304d901e53c43c33b1874",
+      "lines": 222,
+      "symbols": 3
+    }
+  ]
+}

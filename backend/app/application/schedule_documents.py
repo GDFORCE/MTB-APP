@@ -6,7 +6,7 @@ keeps (a header plus separate event / evidence / claim / issue documents) and
 exactly these functions, so the two cannot disagree about what is persisted.
 
 Behaviour deliberately preserved from the SQL repository this replaces:
-* a dependency naming an event that is not in the version is dropped at persist;
+* a dependency naming a missing event stays in the draft for blocking validation;
 * an event may not depend on itself;
 * a renamed event code is followed by the dependencies that point at it;
 * events read back ordered by (sequence_number, code);
@@ -28,7 +28,9 @@ from app.domain.schedule.temporal_basis import upgrade_event_payload
 from .authoring import ScheduleDefinitionRecord, ScheduleVersionHeader
 from .records import utc_now
 
-VALIDATOR_VERSION = "uctsm-validator.v1"
+from app.domain.schedule.validator import ScheduleValidator
+
+VALIDATOR_VERSION = ScheduleValidator.version
 
 
 def to_json(value: object | None) -> Any:
@@ -41,8 +43,9 @@ def _event_document(event: domain.Event, *, valid_codes: set[str]) -> dict[str, 
     for dependency in event.dependencies:
         if dependency.source_event_code == event.code:
             raise ValueError("an event cannot depend on itself")
-    kept = [item for item in event.dependencies if item.source_event_code in valid_codes]
-    stored = event.model_copy(update={"dependencies": kept}, deep=True)
+    # Drafts may be invalid. Preserve their declared semantics so review can find
+    # the missing source; deleting an edge here could make an unsafe draft valid.
+    stored = event.model_copy(deep=True)
     return {
         "id": event.id, "code": event.code, "sequence_number": event.sequence_number,
         "event": to_json(stored),

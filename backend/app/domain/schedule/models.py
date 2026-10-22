@@ -1665,6 +1665,7 @@ class RepeatSummary(StrictModel):
 
 
 class EvaluationResult(StrictModel):
+    evaluation_plan: dict[str, object] = Field(default_factory=dict)
     schedule_version_id: UUID
     patient_id: UUID
     evaluator_version: str

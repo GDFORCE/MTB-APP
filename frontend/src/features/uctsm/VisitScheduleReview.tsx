@@ -8,8 +8,8 @@ import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import {
   QUESTION_ACTION_LABELS, ROW_FILTERS, citationLine, coverageCountsText, dispositionSummary,
   extractionBadge, filterCounts, filterRows, groupRows, missingReferenceLine, questionResolution,
-  rowAccessibilityLabel, statusIndicator, windowTone,
-  type ReviewIssue, type ReviewRow, type ReviewView, type RowFilter, type SharedQuestion,
+  rowAccessibilityLabel, statusIndicator, windowTone, footnoteHeading,
+  type FootnoteFinding, type ReviewIssue, type ReviewRow, type ReviewView, type RowFilter, type SharedQuestion,
   type SourceCoverage,
 } from "./visitSchedule";
 
@@ -197,6 +197,37 @@ export function SharedQuestionsPanel({ questions, onResolve, onShowRow, busy, ed
         </View>}
       </View>;
     })}
+  </View>;
+}
+
+/** Footnotes the system read but could not turn into a rule. A reviewer either enters the rule
+ * it states or records, with a reason, that it has no scheduling effect. */
+export function FootnotePanel({ findings, onResolve, busy, editable }: {
+  findings: FootnoteFinding[];
+  onResolve: (finding: FootnoteFinding, reason: string) => void;
+  busy: boolean;
+  editable: boolean;
+}) {
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  if (!findings.length) return null;
+  return <View style={styles.questions} accessibilityLabel="Footnotes to review">
+    <Text style={styles.sectionLabel}>Footnotes to review ({findings.length})</Text>
+    {findings.map((finding) => <View key={finding.footnote_id} style={styles.question}>
+      <Text style={styles.valueStrong}>{footnoteHeading(finding)}</Text>
+      {!!finding.text && <Text style={styles.value}>"{finding.text}"</Text>}
+      <Text style={styles.muted}>Blocks approval until it is interpreted or recorded as having no scheduling effect.</Text>
+      {finding.verification !== "TEXT_MATCHED" && <Text style={styles.warn}>The footnote text could not be verified on its page; check the protocol before deciding.</Text>}
+      {editable && <View style={{ gap: 8 }}>
+        <Field label="What does it say, and why is there no schedule rule? (recorded)" value={reasons[finding.footnote_id] || ""}
+          onChange={(value) => setReasons((current) => ({ ...current, [finding.footnote_id]: value }))} multiline
+          placeholder="e.g. Page 23: assessments for unscheduled visits are at the investigator's discretion; no timing is stated" />
+        <Pressable accessibilityRole="button" disabled={busy} onPress={() => onResolve(finding, reasons[finding.footnote_id] || "")}
+          style={[styles.action, busy && { opacity: 0.5 }]}>
+          <Text style={styles.actionText}>Record: no scheduling effect</Text>
+        </Pressable>
+        <Text style={styles.muted}>If it does state a rule, edit the visit it applies to instead.</Text>
+      </View>}
+    </View>)}
   </View>;
 }
 

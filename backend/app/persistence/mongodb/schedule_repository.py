@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, NAMESPACE_URL, uuid5
 
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.client_session import ClientSession
@@ -84,6 +84,25 @@ class MongoScheduleVersionRepository:
 
     def get_header(self, schedule_version_id: UUID) -> ScheduleVersionHeader:
         return _header_from(self._header_doc(schedule_version_id))
+
+    def get_compiled(self, schedule_version_id, cache_key):
+        from app.domain.schedule.compiled import CompiledSchedule
+        header = self._header_doc(schedule_version_id)
+        doc = self._db["compiled_schedule_artifacts"].find_one({
+            "organization_id": header["organization_id"], "schedule_version_id": schedule_version_id,
+            "cache_key": cache_key}, session=self._session)
+        return CompiledSchedule.model_validate(doc["artifact"]) if doc else None
+
+    def save_compiled(self, schedule_version_id, compiled):
+        header = self._header_doc(schedule_version_id)
+        if header["status"] not in FROZEN_STATUSES:
+            raise ValueError("only approved versions have compiled artifacts")
+        compiled.verify_for(self.get(schedule_version_id), compiled.evaluator_version)
+        identifier = uuid5(NAMESPACE_URL, f"uctsm-compiled/{schedule_version_id}/{compiled.cache_key}")
+        self._db["compiled_schedule_artifacts"].update_one({"_id": identifier}, {"$setOnInsert": {
+            "doc_version": 1, "organization_id": header["organization_id"],
+            "schedule_version_id": schedule_version_id, "cache_key": compiled.cache_key,
+            "artifact": compiled.model_dump(mode="json")}}, upsert=True, session=self._session)
 
     def get(self, schedule_version_id: UUID) -> UniversalSchedule:
         doc = self._header_doc(schedule_version_id)

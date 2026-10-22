@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Body, Button, Card, Small } from "@/src/components/ui";
 import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
+import { RuleHandlingPanel } from "./RuleHandlingPanel";
 import {
   getAmendmentPair, getTrialAmendments, prepareAmendmentPair, reviewAmendmentMapping,
 } from "./api";
@@ -93,6 +94,10 @@ export default function AmendmentReviewScreen() {
       <ScrollView contentContainerStyle={{ padding: spacing.md, gap: 12 }}>
         {busy && <ActivityIndicator />}
         {!!error && <Card><Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text></Card>}
+        <Button variant="secondary" onPress={() => router.push({
+          pathname: "/(app)/clinical/plane-operations", params: { trialId } } as never)}>
+          Operations: failed messages, pilot cutover, reminders, reports</Button>
+        <RuleHandlingPanel key={trialId} trialId={trialId} versions={overview?.versions ?? []} onApproved={() => void load()} />
 
         {!view && <Card>
           <Body weight="700">Approved amendments</Body>

@@ -25,20 +25,26 @@ def stored(uow):
     return uow, definition, schedule
 
 
-def expected_after_persist(schedule):
-    """Persisting drops dependencies on events that are not in the version."""
-    expected = schedule.model_copy(deep=True)
-    for event in expected.events:
-        event.dependencies = [d for d in event.dependencies if d.source_event_code != "GHOST"]
-    return expected
-
-
-def test_round_trip_is_lossless_apart_from_dropped_dangling_dependencies(stored):
+def test_round_trip_preserves_even_invalid_draft_dependencies(stored):
     uow, _, schedule = stored
     loaded = uow.read(lambda tx: tx.schedules.get(schedule.schedule_version_id))
-    original = expected_after_persist(schedule)
+    original = schedule.model_copy(deep=True)
     original.events.sort(key=lambda e: (e.sequence_number is not None, e.sequence_number or 0, e.code))
     assert loaded.model_dump(exclude={"created_at"}) == original.model_dump(exclude={"created_at"})
+
+
+def test_missing_dependency_survives_storage_and_blocks_approval(stored):
+    from app.application.schedule_review import ScheduleReviewService
+    from app.domain.schedule.validator import ScheduleValidator
+    uow, _, schedule = stored
+    loaded = uow.read(lambda tx: tx.schedules.get(schedule.schedule_version_id))
+    issues = ScheduleValidator().validate(loaded)
+    assert any(row.issue_code == "UNRESOLVED_REFERENCE" and row.blocking
+               and row.details.get("field_path") == "events/FOLLOW_UP/dependencies/GHOST/source_event_code"
+               for row in issues)
+    with pytest.raises(ValueError, match="before approval"):
+        ScheduleReviewService(uow).approve_reviewed_table(schedule.schedule_version_id,
+            reviewer_id=uuid4(), reason="Must not silently approve a missing dependency")
 
 
 def test_events_read_back_ordered_by_sequence_then_code_with_unnumbered_first(stored):
@@ -106,7 +112,7 @@ def test_a_renamed_event_is_followed_by_its_dependents(stored):
     uow.run(lambda tx: tx.schedules.replace_event(schedule.schedule_version_id, dose))
     loaded = uow.read(lambda tx: tx.schedules.get(schedule.schedule_version_id))
     follow_up = next(e for e in loaded.events if e.code == "FOLLOW_UP")
-    assert [d.source_event_code for d in follow_up.dependencies] == ["DOSE_1"]
+    assert [d.source_event_code for d in follow_up.dependencies] == ["DOSE_1", "GHOST"]
 
 
 def test_an_event_code_cannot_collide_within_a_version(stored):

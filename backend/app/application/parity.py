@@ -17,7 +17,7 @@ from app.domain.schedule.models import EvaluatedEvent, utc_now
 from app.domain.schedule.parity import (
     ParityReport, ParityVerdict, compare_schedules, to_comparable,
 )
-from app.services.operational_projection import bridge_visit_documents
+from app.application.operational_projection import bridge_visit_documents
 
 from .errors import RecordNotFoundError
 from .operational_bridge import BridgeEvent
@@ -67,8 +67,8 @@ class ParityService:
             definitions = {item.id: item for item in schedule.events}
             engine_rows = self._engine_rows(patient, result.events, definitions)
             report = compare_schedules(
-                to_comparable(legacy_visits, key_fields=("name",)),
-                to_comparable(engine_rows, key_fields=("name",)))
+                to_comparable(legacy_visits, key_fields=("name",), number_field="visit_number"),
+                to_comparable(engine_rows, key_fields=("name",), number_field="visit_number"))
             return report, self._record(tx, patient, report, actor_id) if record else None
 
         return self._uow.run(work)

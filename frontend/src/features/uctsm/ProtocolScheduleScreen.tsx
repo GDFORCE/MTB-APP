@@ -16,17 +16,17 @@ import { colors, fonts, radii, spacing } from "@/src/theme/tokens";
 import {
   addScheduleVisit, approveScheduleVersion, buildCanonicalSchedule, decideSchedule,
   editScheduleVisit, exportScheduleVersion, getApprovedSchedules, getMyCapabilities, getReviewView,
-  resolveReviewQuestion, reviewScheduleTracks, submitScheduleReview,
+  resolveExtractionIssue, resolveReviewQuestion, reviewScheduleTracks, submitScheduleReview,
 } from "./api";
 import {
-  DocumentIssues, FilterChips, SharedQuestionsPanel, SourceCoveragePanel, VisitScheduleSummary, VisitTable,
+  DocumentIssues, FilterChips, FootnotePanel, SharedQuestionsPanel, SourceCoveragePanel, VisitScheduleSummary, VisitTable,
   type QuestionDraft,
 } from "./VisitScheduleReview";
 import { TrackReviewSheet } from "./TrackReviewSheet";
 import { AddVisitSheet, EditVisitSheet } from "./VisitScheduleSheets";
 import {
-  approvalState, buildQuestionRequest, exportFileName, isStaleRevision, recoveryNotice,
-  reviewErrorMessage, type ReviewRow, type ReviewView, type RowFilter, type SharedQuestion,
+  approvalState, buildQuestionRequest, exportFileName, footnoteHeading, footnoteResolution, isStaleRevision, recoveryNotice,
+  reviewErrorMessage, type FootnoteFinding, type ReviewRow, type ReviewView, type RowFilter, type SharedQuestion,
 } from "./visitSchedule";
 
 const first = (value?: string | string[]) => Array.isArray(value) ? value[0] : value;
@@ -128,6 +128,16 @@ export default function ProtocolScheduleScreen() {
     void write("resolve", async () => {
       await resolveReviewQuestion(versionId!, question.id, built.body!);
       return `Answered once for ${question.affected_rows.length} visit(s).`;
+    });
+  };
+  const onFootnote = (finding: FootnoteFinding, reason: string) => {
+    const built = footnoteResolution(finding, reason);
+    if (built.error) { setError(built.error); return; }
+    void write("footnote", async () => {
+      for (const issueId of finding.issue_ids) {
+        await resolveExtractionIssue(versionId!, issueId, built.reason!, "NO_SCHEDULING_EFFECT");
+      }
+      return `${footnoteHeading(finding)} recorded as having no scheduling effect.`;
     });
   };
   const onApprove = () => write("approve", async () => {
@@ -232,6 +242,7 @@ export default function ProtocolScheduleScreen() {
 
           <SourceCoveragePanel coverage={view.source_coverage} />
           <DocumentIssues issues={view.document_level_issues} />
+          <FootnotePanel findings={view.footnote_findings || []} onResolve={onFootnote} busy={!!busy} editable={editable} />
           <SharedQuestionsPanel questions={view.shared_review_questions} onResolve={onResolve}
             onShowRow={showRow} busy={!!busy} editable={editable} />
 

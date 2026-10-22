@@ -151,6 +151,9 @@ def admin():
     # seeded admin account (Password1!) has the admin role
     async def login():
         async with make_client() as cli:
+            # idempotent demo seed: a fresh (isolated) database has no admin account yet
+            seeded = await cli.post('/api/seed')
+            assert seeded.status_code == 200, seeded.text
             r = await cli.post('/api/auth/login',
                                json={'email': 'admin@mtb.app', 'password': PASSWORD})
         assert r.status_code == 200, r.text

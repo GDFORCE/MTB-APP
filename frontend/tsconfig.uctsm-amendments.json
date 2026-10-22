@@ -1,6 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "compilerOptions": {
+    "noEmit": true,
+    "skipLibCheck": true
+  },
   "include": [
     "expo-env.d.ts",
     "app/(app)/clinical/amendment-review.tsx",
@@ -10,7 +13,18 @@
     "src/features/uctsm/PatientAmendmentPanel.tsx",
     "src/features/uctsm/AmendmentReviewScreen.tsx",
     "src/features/uctsm/PlaneScheduleScreen.tsx",
-    "tests/uctsm-amendments.test.ts"
+    "tests/uctsm-amendments.test.ts",
+    "tests/uctsm-manual-rules.test.ts",
+    "tests/uctsm-conflicts.test.ts",
+    "src/features/uctsm/ConflictPanel.tsx",
+    "tests/uctsm-required-inputs.test.ts",
+    "src/features/uctsm/RequiredInputsPanel.tsx",
+    "src/features/uctsm/EnrolmentInputsFields.tsx",
+    "tests/uctsm-operations.test.ts",
+    "src/features/uctsm/OperationsScreen.tsx",
+    "app/(app)/clinical/plane-operations.tsx"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

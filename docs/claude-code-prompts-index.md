@@ -1,5 +1,20 @@
 # Saved Claude Code prompts
 
+## Current continuation - 19 October 2026 (after the second slice)
+
+- [Current continuation prompt](claude-code-continue-after-pdf-slice-2026-10-19.md): state, ordered remaining work, decisions that need a named owner, and boundaries. It supersedes [claude-code-continue-current-tree-2026-10-19.md](claude-code-continue-current-tree-2026-10-19.md) as the starting point (preserved).
+- Status: [checkpoint](pdf-execution-checkpoint-2026-10-19.md), [70-row matrix](pdf-requirements-acceptance-matrix.md).
+
+## Current handoff and continuation ? 19 October 2026
+
+- [Short handoff report](claude-handoff-report-2026-10-19.md): current changes, verified runs and remaining gaps.
+- [Current continuation prompt](claude-code-continue-current-tree-2026-10-19.md): resume the current tree under the remaining-PDF master.
+- [Historical partially executed launcher](claude-code-partially-executed-launcher-2026-10-19.md): retained; the current handoff supersedes its execution checkpoint.
+
+The owner subsequently requested that work resume. The scope remains all remaining PDF work; no deployment, real migration or authority change is authorized.
+
+Current execution status (19 October): [checkpoint](pdf-execution-checkpoint-2026-10-19.md) and [70-row matrix](pdf-requirements-acceptance-matrix.md). The current combined prompt is partially executed; resume from this checkpoint. This status record is not a new implementation prompt.
+
 Updated 16 October 2026 after merging the P6 repairs into the full P7/P8 prompt at the owner's request. The P1-P5 prompts, the P6-P14 master prompt and the P6/P7-P8 slice prompts are saved as Markdown files below. Older prompts are retained for context; do not execute every historical prompt in sequence or treat an old pending decision as current.
 
 ## Start here
@@ -25,7 +40,7 @@ The current overall scope is the remaining PDF work: repair unfinished prerequis
 |---|---|
 | [P6-P14 remaining PDF work](claude-code-p6-p14-remaining-pdf-prompt.md) | **Current master prompt**: 45 numbered tasks, prerequisite repairs, dependency sequence, API/UI/storage/quality/recovery acceptance and honest operational gates |
 | [Standalone P6 repair prompt](claude-code-p6-audit-repairs-before-p7-p8-prompt.md) | Historical; all repair requirements are included in the combined P7/P8 prompt |
-| [Combined P6 repairs + P7/P8](claude-code-p7-p8-after-p6-prompt.md) | **Current focused continuation**: four repairs and integration triage, all P7/P8 tasks, acceptance tests, UI, corpus/scoring and CI gate |
+| [Combined P6 repairs + P7/P8](claude-code-p7-p8-after-p6-prompt.md) | **Historical detailed scope, partly executed**: four repairs and integration triage, all P7/P8 tasks, acceptance tests, UI, corpus/scoring and CI gate |
 | [Earlier short P7/P8 prompt](claude-code-p7-p8-before-merged-repairs-2026-10-16.md) | Historical version before the owner-requested detailed merge |
 | [P6 domain-to-app completion](claude-code-p6-domain-to-app-completion-prompt.md) | Implemented slice (acceptance reopened by independent review): mapping repair plus every P6 layer; see [p6-completion-record.md](p6-completion-record.md) |
 

@@ -22,8 +22,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.uctsm import _identity
-from app.application.amendment_adoption import AdoptionService, decision_view
+from app.api.uctsm_shared import _identity
+from app.application.amendment_adoption import decision_view
+from app.application.patient_boundary import PatientScheduleBoundary
 from app.application.amendment_service import AmendmentService
 from app.application.authority import PlaneAuthorityError
 from app.application.errors import (
@@ -84,6 +85,24 @@ class ConfirmIn(_Body):
 
 
 class CancelIn(_Body):
+    reason: str = Field(min_length=3)
+
+
+class ManualDeclareIn(_Body):
+    schedule_version_id: UUID
+    event_code: str = Field(min_length=1)
+    expected_revision: int = Field(ge=1)
+    kind: Literal["UNSUPPORTED", "MANUAL_ONLY"]
+    reason: str = Field(min_length=3)
+    evidence_refs: list[UUID] = Field(min_length=1)
+    policy_reference: str = Field(min_length=3)
+    accepts_responsibility: Literal[True]
+
+
+class ManualApproveIn(_Body):
+    schedule_version_id: UUID
+    event_code: str = Field(min_length=1)
+    expected_revision: int = Field(ge=1)
     reason: str = Field(min_length=3)
 
 
@@ -163,6 +182,42 @@ def register_amendment_routes(
         return pair
 
     # ------------------------------------------------------------------ trial level
+    @router.get(f"{trial_base}/rule-handling")
+    async def rule_handling(trial_id: UUID, schedule_version_id: UUID, user: User, uow: Uow):
+        from app.application.manual_rules import ManualRuleService
+        await trial_scope(uow, user, trial_id, Capability.SCHEDULE_EVIDENCE_READ)
+        _, org = _identity(user)
+        try:
+            return ManualRuleService(uow).view(organization_id=org, trial_id=trial_id,
+                                               version_id=schedule_version_id)
+        except Exception as error:
+            raise refuse(error) from error
+
+    @router.post(f"{trial_base}/rule-handling")
+    async def declare_manual(trial_id: UUID, body: ManualDeclareIn, user: User, uow: Uow):
+        from app.application.manual_rules import ManualRuleService
+        await trial_scope(uow, user, trial_id, Capability.SCHEDULE_CORRECT)
+        actor, org = _identity(user)
+        try:
+            return ManualRuleService(uow).decide(organization_id=org, trial_id=trial_id,
+                version_id=body.schedule_version_id, event_code=body.event_code, actor_id=actor,
+                expected_revision=body.expected_revision, action="DECLARE", reason=body.reason,
+                kind=body.kind, evidence_refs=body.evidence_refs, policy_reference=body.policy_reference)
+        except Exception as error:
+            raise refuse(error) from error
+
+    @router.post(f"{trial_base}/rule-handling/approve")
+    async def approve_manual(trial_id: UUID, body: ManualApproveIn, user: User, uow: Uow):
+        from app.application.manual_rules import ManualRuleService
+        await trial_scope(uow, user, trial_id, Capability.SCHEDULE_APPROVE)
+        actor, org = _identity(user)
+        try:
+            return ManualRuleService(uow).decide(organization_id=org, trial_id=trial_id,
+                version_id=body.schedule_version_id, event_code=body.event_code, actor_id=actor,
+                expected_revision=body.expected_revision, action="APPROVE", reason=body.reason)
+        except Exception as error:
+            raise refuse(error) from error
+
     @router.get(trial_base)
     async def trial_amendments(trial_id: UUID, user: User, uow: Uow):
         await trial_scope(uow, user, trial_id, Capability.SCHEDULE_READ)
@@ -227,7 +282,8 @@ def register_amendment_routes(
         patient = patient_of(uow, user, trial_id, external_patient_id)
         _, org = _identity(user)
         try:
-            return AdoptionService(uow).patient_status(organization_id=org, patient_id=patient.id)
+            return PatientScheduleBoundary(uow).amendment_status(
+                organization_id=org, patient_id=patient.id)
         except Exception as error:      # noqa: BLE001
             raise refuse(error) from error
 
@@ -237,7 +293,7 @@ def register_amendment_routes(
         patient = patient_of(uow, user, trial_id, external_patient_id)
         actor, org = _identity(user)
         try:
-            return AdoptionService(uow).simulate(
+            return PatientScheduleBoundary(uow).simulate_adoption(
                 organization_id=org, actor_id=actor, patient_id=patient.id,
                 direction=body.direction, point=body.adoption_point,
                 to_schedule_version_id=body.to_schedule_version_id, horizon=body.horizon)
@@ -270,7 +326,7 @@ def register_amendment_routes(
         for capability in capabilities:
             require(user, capability)
         try:
-            return AdoptionService(uow).confirm(
+            return PatientScheduleBoundary(uow).confirm_adoption(
                 organization_id=org, actor_id=actor, simulation_id=simulation_id,
                 decision=body.decision, reason=body.reason, idempotency_key=idempotency_key,
                 future_policy=body.future_policy, replaces_decision_id=body.replaces_decision_id,
@@ -295,7 +351,7 @@ def register_amendment_routes(
         actor, org = _identity(user)
         decision_of(uow, org, patient.id, decision_id)
         try:
-            return AdoptionService(uow).execute(
+            return PatientScheduleBoundary(uow).execute_adoption(
                 organization_id=org, actor_id=actor, decision_id=decision_id,
                 capabilities=(Capability.AMENDMENT_ADOPT.value,))
         except Exception as error:      # noqa: BLE001
@@ -308,7 +364,7 @@ def register_amendment_routes(
         actor, org = _identity(user)
         decision_of(uow, org, patient.id, decision_id)
         try:
-            return AdoptionService(uow).cancel(
+            return PatientScheduleBoundary(uow).cancel_adoption(
                 organization_id=org, actor_id=actor, decision_id=decision_id, reason=body.reason)
         except Exception as error:      # noqa: BLE001
             raise refuse(error) from error

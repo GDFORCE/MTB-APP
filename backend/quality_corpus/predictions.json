@@ -1,0 +1,321 @@
+{
+  "schema_version": "uctsm-quality.v1",
+  "versions": {
+    "source": "constructed-pilot",
+    "provider": "NONE_ENGINEERING_ONLY"
+  },
+  "fields": {
+    "synthetic-linear": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-actual_relative": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-recurrence": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-multi_track": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-branch": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-device": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-amendment": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 10,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-cycle": [
+      {
+        "rule_id": "CYCLE_DAY1",
+        "path": "timing",
+        "value": {
+          "type": "CYCLE_DAY",
+          "cycle_reference": "CYCLE",
+          "cycle": {
+            "type": "CURRENT",
+            "number": null
+          },
+          "day": 1
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-conflict": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ],
+    "synthetic-unsupported": [
+      {
+        "rule_id": "C1D1",
+        "path": "timing/offset",
+        "value": {
+          "value": 7,
+          "unit": "DAY"
+        },
+        "critical": true,
+        "equivalence": "EXACT"
+      }
+    ]
+  },
+  "errors": {},
+  "identity": {
+    "synthetic-linear": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-linear"
+      ]
+    },
+    "synthetic-actual_relative": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-actual_relative"
+      ]
+    },
+    "synthetic-recurrence": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-recurrence"
+      ]
+    },
+    "synthetic-multi_track": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-multi_track"
+      ]
+    },
+    "synthetic-branch": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-branch"
+      ]
+    },
+    "synthetic-device": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-device"
+      ]
+    },
+    "synthetic-amendment": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-amendment"
+      ]
+    },
+    "synthetic-cycle": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-cycle"
+      ]
+    },
+    "synthetic-conflict": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-conflict"
+      ]
+    },
+    "synthetic-unsupported": {
+      "status": "MATCH",
+      "identifiers": [
+        "synthetic-unsupported"
+      ]
+    }
+  },
+  "evidence": {
+    "synthetic-linear": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed linear case; no clinical sign-off."
+      }
+    ],
+    "synthetic-actual_relative": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed actual_relative case; no clinical sign-off."
+      }
+    ],
+    "synthetic-recurrence": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed recurrence case; no clinical sign-off."
+      }
+    ],
+    "synthetic-multi_track": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed multi_track case; no clinical sign-off."
+      }
+    ],
+    "synthetic-branch": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed branch case; no clinical sign-off. Imaging only if the explicit condition 1 equals 2."
+      }
+    ],
+    "synthetic-device": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed device case; no clinical sign-off."
+      }
+    ],
+    "synthetic-amendment": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed amendment case; no clinical sign-off."
+      }
+    ],
+    "synthetic-cycle": [
+      {
+        "rule_id": "CYCLE_DAY1",
+        "page": 1,
+        "quote": "SYNTHETIC: three nominal 21-day cycles from baseline; visit on Day 1 of every cycle."
+      }
+    ],
+    "synthetic-conflict": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed conflict case; no clinical sign-off. Conflicting source interpretations have not been resolved."
+      }
+    ],
+    "synthetic-unsupported": [
+      {
+        "rule_id": "C1D1",
+        "page": 1,
+        "quote": "Treatment Day 1 at Day 7; weekly dosing; labs 7 days after the treatment date; baseline imaging at Day 30 (+/-3 days). Synthetic, not a real protocol. Constructed unsupported case; no clinical sign-off. The imaging condition uses an unsupported operator; no automatic date is permitted."
+      }
+    ]
+  },
+  "mappings": {
+    "synthetic-amendment": [
+      {
+        "source_codes": [
+          "C1D1"
+        ],
+        "target_codes": [
+          "C1D1"
+        ],
+        "mapping_type": "EQUIVALENT",
+        "requires_review": false
+      },
+      {
+        "source_codes": [
+          "DOSE"
+        ],
+        "target_codes": [
+          "DOSE"
+        ],
+        "mapping_type": "EQUIVALENT",
+        "requires_review": false
+      },
+      {
+        "source_codes": [
+          "LAB_AFTER_TX"
+        ],
+        "target_codes": [
+          "LAB_AFTER_TX"
+        ],
+        "mapping_type": "EQUIVALENT",
+        "requires_review": false
+      },
+      {
+        "source_codes": [
+          "IMAGING_BASELINE"
+        ],
+        "target_codes": [
+          "IMAGING_BL"
+        ],
+        "mapping_type": "RENAMED",
+        "requires_review": true
+      },
+      {
+        "source_codes": [],
+        "target_codes": [
+          "SAFETY_CALL"
+        ],
+        "mapping_type": "ADDED",
+        "requires_review": false
+      }
+    ]
+  }
+}

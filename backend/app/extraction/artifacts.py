@@ -63,6 +63,38 @@ class MemoryArtifactStore:
         return True
 
 
+class DiskArtifactStore:
+    """Artifacts as JSON files under a directory: a quota failure or a crash keeps every completed
+    model answer, and a rerun (or an offline analysis) reuses them instead of paying again.
+    Keys are the same content-addressed keys as every other store."""
+
+    durable = True
+
+    def __init__(self, directory) -> None:
+        from pathlib import Path
+        self.root = Path(directory)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, key: str):
+        return self.root / key.replace("/", "__")
+
+    def get(self, key: str) -> dict[str, Any] | None:
+        try:
+            return json.loads(self._path(key).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def put(self, key: str, value: dict[str, Any]) -> bool:
+        try:
+            temporary = self._path(key).with_suffix(".tmp")
+            temporary.write_text(json.dumps(value, default=str), encoding="utf-8")
+            temporary.replace(self._path(key))
+            return True
+        except OSError as error:
+            log.warning("extraction artifact %s could not be saved: %s", key, error)
+            return False
+
+
 def _run_async(coroutine_factory):
     """Run an async storage call from the reader's worker thread.
 

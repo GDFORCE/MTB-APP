@@ -68,7 +68,7 @@ def build_schedule(
             offset=amount(7)),
         dependencies=[
             Dependency(source_event_code="DOSE", dependency_type="TEMPORAL"),
-            Dependency(source_event_code="GHOST", dependency_type="TEMPORAL"),  # unknown: dropped
+            Dependency(source_event_code="GHOST", dependency_type="TEMPORAL"),  # preserved invalid draft edge
         ],
         dependency_mode=DependencyMode.NOMINAL, evidence_refs=[evidence.id],
         qualifiers=[Qualifier(

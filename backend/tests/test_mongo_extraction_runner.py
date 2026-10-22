@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 from uuid import UUID, uuid4
@@ -13,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.application.authoring import ProtocolRecord, ProtocolVersionRecord, TrialRecord
-from app.application.extraction import ExtractionService
+from app.application.extraction import (
+    ExtractionClaimLostError, ExtractionClaimUnavailableError, ExtractionService,
+)
 from app.domain.schedule.models import UniversalSchedule
 from app.extraction import runner
 from app.extraction.contracts import DocumentPage, ExtractionResult
@@ -98,6 +102,34 @@ def test_a_failing_engine_marks_the_run_failed_and_creates_no_schedule(queued, m
     assert headers == []
 
 
+def test_duplicate_runner_cannot_fail_the_active_workers_run(queued, monkeypatch):
+    uow, run, _version = queued
+    entered, release = threading.Event(), threading.Event()
+    schedule = UniversalSchedule.model_validate(native_schedule())
+    async def load(_uri): return IDENTIFIED, None
+    async def clear_identity(**_kwargs): return None
+    def extract(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(10), "test did not release the synthetic worker"
+        return [(None, ExtractionResult(schedule=schedule, issues=[], extraction_trace=[]))]
+    monkeypatch.setattr(runner, "load_pages", load)
+    monkeypatch.setattr(runner, "_clear_identity", clear_identity)
+    monkeypatch.setattr(runner, "extract_schedules", extract)
+    monkeypatch.setattr(runner, "storage_artifacts", lambda: None)
+    async def scenario():
+        first = asyncio.create_task(runner.execute_run_on_ports(uow, run.id))
+        assert await asyncio.to_thread(entered.wait, 5)
+        try:
+            duplicate = await runner.execute_run_on_ports(uow, run.id)
+        finally:
+            release.set()
+        return await first, duplicate
+    first, duplicate = asyncio.run(scenario())
+    assert first and duplicate is None
+    assert uow.read(lambda tx: tx.authoring.get_run(run.id)).status == "COMPLETED"
+    assert len(uow.read(lambda tx: tx.schedules.list_headers(organization_id=ORG))) == 1
+
+
 def test_an_unconfigured_engine_fails_the_run_with_the_reason(queued, monkeypatch):
     uow, run, _version = queued
     monkeypatch.delenv("UCTSM_EXTRACTION_PROVIDER", raising=False)
@@ -147,3 +179,45 @@ def test_an_unknown_run_is_reported_not_swallowed(queued):
     uow, _run, _version = queued
     with pytest.raises(KeyError, match="extraction run not found"):
         asyncio.run(runner.execute_run_on_ports(uow, uuid4()))
+
+
+def test_expired_attempt_cannot_complete_fail_or_renew_a_reclaimed_run(queued):
+    uow, run, _version = queued
+    now = [datetime(2026, 10, 19, tzinfo=timezone.utc)]
+    service = ExtractionService(uow, clock=lambda: now[0])
+    first = service.start(run.id, lease_seconds=30)
+    with pytest.raises(ExtractionClaimUnavailableError):
+        service.start(run.id)
+    now[0] += timedelta(seconds=30)
+    with pytest.raises(ExtractionClaimLostError):
+        service.renew(run.id, first.lease_token)
+    second = service.start(run.id)
+    assert second.attempt_number == 2 and first.lease_token != second.lease_token
+    result = ExtractionResult(
+        schedule=UniversalSchedule.model_validate(native_schedule()), issues=[], extraction_trace=[])
+    for action in [
+        lambda: service.complete(run.id, result, claim_token=first.lease_token),
+        lambda: service.fail(run.id, RuntimeError("old worker"), claim_token=first.lease_token),
+        lambda: service.renew(run.id, first.lease_token),
+        lambda: service.complete(run.id, result),
+        lambda: service.fail(run.id, RuntimeError("unclaimed worker")),
+    ]:
+        with pytest.raises(ExtractionClaimLostError):
+            action()
+    renewed = service.renew(run.id, second.lease_token, lease_seconds=180)
+    assert renewed.lease_expires_at == now[0] + timedelta(seconds=180)
+    version_id = service.complete(run.id, result, claim_token=second.lease_token)
+    with pytest.raises(ExtractionClaimLostError):
+        service.fail(run.id, RuntimeError("late failure"), claim_token=second.lease_token)
+    assert uow.read(lambda tx: tx.authoring.get_run(run.id)).status == "COMPLETED"
+    assert [row.id for row in uow.read(
+        lambda tx: tx.schedules.list_headers(organization_id=ORG))] == [version_id]
+
+
+def test_worker_log_does_not_include_provider_document_or_patient_error_text(queued, monkeypatch, caplog):
+    uow, run, _version = queued
+    sentinel = "PRIVATE_PROTOCOL_AND_PATIENT_SENTINEL"
+    fake_pages(monkeypatch, error=RuntimeError(sentinel))
+    assert asyncio.run(runner.execute_run_on_ports(uow, run.id)) is None
+    assert "error_type=RuntimeError" in caplog.text
+    assert sentinel not in caplog.text

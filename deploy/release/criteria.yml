@@ -1,0 +1,19 @@
+# Release and canary criteria (P13-05). Objective numbers only; changing them needs an approved change.
+required_evidence:
+  - clean_working_tree
+  - curated_gate_passed          # backend/scripts/check_pdf_gate.py report.json, decision PASS and complete
+  - monitoring_contract_valid    # alerts reference real metrics, runbooks and routes
+  - security_posture_checked     # no unsafe flag, connection posture enforced in staging/production
+flags_that_must_be_off_unless_approved:
+  UCTSM_AUTHORITATIVE: "turns every legacy schedule-authoring route into HTTP 410; per-trial parity must be confirmed first"
+  DEV_OTP_MODE: "accepts a fixed OTP for any unconfigured channel; local development only"
+canary:
+  stages_percent: [1, 10, 50, 100]
+  observe_minutes_per_stage: 30
+  abort_if_alert_firing: [UctsmWorkflowErrors, UctsmHttp5xxRate, UctsmEvaluateLatencyHigh, UctsmLegacyWriteAfterCutover]
+  hold_if_alert_firing: [UctsmOutboxDeadLetters, UctsmOutboxBacklog, UctsmJobFailures]
+  max_synthetic_check_failures: 0
+rollback:
+  automatic_on: abort_if_alert_firing
+  procedure: docs/runbooks/release-and-rollback.md
+  never_roll_back: "applied additive migrations (they are backward compatible); roll the application back instead"

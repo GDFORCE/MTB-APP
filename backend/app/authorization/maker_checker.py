@@ -7,8 +7,8 @@ POLICY (``maker-checker.v1``)
   and ``UCTSM_MAKER_CHECKER_SCOPE`` (``LAST_EDITOR`` | ``ANY_EDITOR``). It is read
   from the server environment on every approval; no request field, header or
   token can change it, and the setting in force is stamped on the approval audit.
-* **Default is OFF** (compatibility: existing single-reviewer workflows keep
-  working). This default is a PROPOSAL awaiting owner approval, not a decision.
+* **Default is ON**, selected under owner delegation. Deployment configuration
+  can explicitly disable it; this is not external clinical sign-off.
 * **Scope** ``LAST_EDITOR`` is the check the requirements state: the approver may
   not be ``last_material_editor_id``. ``ANY_EDITOR`` additionally excludes every
   actor who has materially edited this draft. Which one a deployment needs is a
@@ -51,7 +51,17 @@ def is_material_event_change(changed_fields: Iterable[str]) -> bool:
                for name in changed_fields)
 
 
-_IGNORED_DIFF_KEYS = frozenset({"metadata", "evidence_refs", "updated_at", "created_at"})
+_IGNORED_DIFF_KEYS = frozenset({"updated_at", "created_at"})
+
+
+def material_event_changes(previous: dict, current: dict) -> list[str]:
+    """Metadata and evidence can change clinical meaning and review trust.
+
+    Only presentation fields and timestamps have an established exemption;
+    an opaque metadata change is conservatively treated as material.
+    """
+    return [key for key in previous.keys() | current.keys()
+            if previous.get(key) != current.get(key) and key not in _IGNORED_DIFF_KEYS]
 
 
 def legacy_correctors(decisions: Iterable[tuple]) -> tuple[str, ...]:

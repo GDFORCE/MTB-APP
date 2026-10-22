@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.db import models as db
@@ -118,7 +118,7 @@ class ExtractionService:
         is marked FAILED with every option's issues attached, same as a
         single-schedule run that failed outright.
         """
-        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True)
+        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True, populate_existing=True)
         if run is None:
             raise KeyError("extraction run not found")
         if run.status not in {"QUEUED", "RUNNING", "PARTIAL"}:
@@ -316,13 +316,22 @@ class ExtractionService:
         RUNNING but before any model call happens, instead of this class
         owning the whole pipeline construction.
         """
-        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True)
+        run = self.session.get(db.ExtractionRun, run_id, with_for_update=True, populate_existing=True)
         if run is None:
             raise KeyError("extraction run not found")
         if run.status != "QUEUED":
             raise ValueError(f"cannot execute extraction in {run.status} state")
-        run.status = "RUNNING"
-        run.started_at = utc_now()
+        missing = [name for name in ("provider", "model_name", "prompt_version", "schema_version")
+                   if not str(getattr(run, name) or "").strip()]
+        if missing:                                  # same rule as the port service (P12-03)
+            raise ValueError("extraction run lacks provenance: " + ", ".join(missing))
+        started = utc_now()
+        result = self.session.execute(update(db.ExtractionRun).where(
+            db.ExtractionRun.id == run_id, db.ExtractionRun.status == "QUEUED"
+        ).values(status="RUNNING", started_at=started))
+        if result.rowcount != 1:
+            raise ValueError("extraction run is already claimed")
+        self.session.refresh(run)
         self.session.flush()
         return run
 

@@ -39,7 +39,7 @@ def _runtime_routes() -> set[tuple[str, str]]:
 
 def test_every_registered_uctsm_route_has_a_declaration():
     routes = _runtime_routes()
-    assert len(routes) == 76, f"route count changed: {len(routes)} - declare the new route"
+    assert len(routes) == 97, f"route count changed: {len(routes)} - declare the new route"
     missing = sorted(routes - set(MANIFEST))
     assert not missing, f"routes with no authorization declaration: {missing}"
 

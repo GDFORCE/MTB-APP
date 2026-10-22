@@ -1,0 +1,18 @@
+{
+  "schema_version": "uctsm-quality.v1",
+  "min_precision": 1.0,
+  "min_recall": 1.0,
+  "required_constructs": [
+    "actual_relative",
+    "amendment",
+    "branch",
+    "conflict",
+    "cycle",
+    "device",
+    "linear",
+    "multi_track",
+    "recurrence",
+    "unsupported"
+  ],
+  "approval": null
+}

@@ -66,6 +66,11 @@ def enrollable_protocol_version(
     chosen_rank: tuple | None = None
     for protocol_version_id, versions in by_protocol_version.items():
         if current is not None and protocol_version_id != current.id:
+            from .version_intent import activation_eligible
+            candidate = tx.authoring.get_protocol_version(protocol_version_id)
+            if not activation_eligible(candidate.metadata,
+                    declared_lineage=any(row.based_on_schedule_version_id is not None for row in versions)):
+                continue
             uploaded = created.get(protocol_version_id)
             if uploaded is None or current.created_at is None or uploaded < current.created_at:
                 continue  # superseded, never enrollable again

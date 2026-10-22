@@ -1,0 +1,75 @@
+# Monitoring-as-code (P13-02). Metric names are checked against app.observability.metrics by
+# backend/tests/test_pdf_monitoring.py; every alert needs an owner, severity and a runbook file.
+groups:
+  - name: uctsm-correctness-and-latency
+    rules:
+      - alert: UctsmWorkflowErrors
+        expr: sum(rate(uctsm_workflow_seconds_count{outcome="error"}[5m])) / clamp_min(sum(rate(uctsm_workflow_seconds_count[5m])), 0.001) > 0.02
+        for: 10m
+        labels: {severity: page, owner: platform-oncall}
+        annotations:
+          summary: More than 2% of schedule workflows are failing
+          runbook: docs/runbooks/workflow-errors.md
+      - alert: UctsmEvaluateLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(uctsm_workflow_seconds_bucket{stage="patient_evaluate"}[10m]))) > 5
+        for: 15m
+        labels: {severity: ticket, owner: platform-oncall}
+        annotations:
+          summary: p95 patient evaluation latency above 5 seconds
+          runbook: docs/runbooks/evaluation-latency.md
+      - alert: UctsmHttp5xxRate
+        expr: sum(rate(uctsm_http_requests_total{status="5xx"}[5m])) / clamp_min(sum(rate(uctsm_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: {severity: page, owner: platform-oncall}
+        annotations:
+          summary: More than 5% of API responses are server errors
+          runbook: docs/runbooks/workflow-errors.md
+  - name: uctsm-queues-and-jobs
+    rules:
+      - alert: UctsmOutboxDeadLetters
+        expr: uctsm_queue_depth{queue="outbox",state="dead"} > 0
+        for: 5m
+        labels: {severity: ticket, owner: platform-oncall}
+        annotations:
+          summary: Dead-lettered notification messages are waiting for an authorized replay
+          runbook: docs/runbooks/outbox-dead-letter.md
+      - alert: UctsmOutboxBacklog
+        expr: uctsm_queue_depth{queue="outbox",state="pending"} > 500
+        for: 15m
+        labels: {severity: page, owner: platform-oncall}
+        annotations:
+          summary: Outbox backlog is growing; delivery is not keeping up
+          runbook: docs/runbooks/outbox-backlog.md
+      - alert: UctsmJobFailures
+        expr: sum by (job) (increase(uctsm_job_failures_total[15m])) > 3
+        for: 0m
+        labels: {severity: ticket, owner: platform-oncall}
+        annotations:
+          summary: A background job is failing repeatedly
+          runbook: docs/runbooks/outbox-backlog.md
+  - name: uctsm-migration
+    rules:
+      - alert: UctsmLegacyWriteAfterCutover
+        expr: increase(uctsm_legacy_write_blocked_total[5m]) > 0
+        for: 0m
+        labels: {severity: page, owner: migration-lead}
+        annotations:
+          summary: A client is still attempting legacy schedule writes after cutover
+          runbook: docs/runbooks/legacy-write-after-cutover.md
+  - name: uctsm-recovery
+    rules:
+      - alert: UctsmRestoreDrillFailed
+        expr: uctsm_restore_drill_status == 0
+        for: 0m
+        labels: {severity: page, owner: platform-oncall}
+        annotations:
+          summary: The latest restore drill failed (restore, archive objects or RTO/RPO)
+          runbook: docs/runbooks/restore-drill.md
+      - alert: UctsmRestoreDrillOverdue
+        expr: time() - uctsm_restore_drill_last_success_timestamp_seconds > 8 * 86400
+        for: 0m
+        labels: {severity: ticket, owner: platform-oncall}
+        annotations:
+          summary: No passing restore drill in the last 8 days
+          runbook: docs/runbooks/restore-drill.md
+

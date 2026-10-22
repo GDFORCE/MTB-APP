@@ -271,6 +271,17 @@ and a non_schedule_reason. Never turn them into visits.
 10. Name reference dates with the overview's anchor_names exactly. If a rule counts from a date \
 that is not on that list, write the protocol's own words; never map it onto a similar-looking \
 anchor (for example, "study entry" is not assumed to be "registration").
+11. NAMES. "what" is a SHORT label, at most about 8 words: the visit or timepoint exactly as its column
+or heading prints it ("1 Year", "3-6 Months", "Discharge"), or the assessment as its row prints it
+("Serum creatinine"). It is never a sentence. Put the protocol sentence in the evidence quote, not in
+"what". Do not turn an assessment row or a note into a visit: a row of the schedule table is an
+activity performed AT visits; a sentence about what is collected is a footnote or non-schedule fact.
+A reference date (implant, registration, surgery) is an anchor, not a visit.
+12. SILENCE. When the protocol discusses a timing question but does not answer it (what is Day 1,
+whether the first repeat falls on the start date or one interval later, whether a boundary day is
+included), do NOT answer it. Write the fact with that field null (or pattern UNRESOLVED) and put in the
+reason the exact words that show the gap, for example: "page 14 says 'annually thereafter' without
+saying whether the first annual visit is at year 1 or year 2".
 Return JSON only, no commentary."""
 
 FACT_FORMAT = """Each fact is a JSON object:
@@ -429,14 +440,37 @@ cell by cell, in the same JSON object:
                   "footnotes": ["labels of footnotes attached to this cell or its row"]}]
    - one entry for EVERY marked cell of EVERY column (pre-treatment, each treatment period, end of
      a phase, follow-up) - never only the first column. Leave unmarked cells out.
- "footnotes": [{"table": table title, "page": n, "label": "a", "text": "the exact footnote text"}]
-   - every footnote printed with the table, word for word.
+ "footnotes": [{"table": table title, "page": n, "label": "a", "text": "the exact footnote text",
+                "effect": "RULE" or "NONE", "effect_reason": "one short sentence"}]
+   - EVERY footnote printed with the table or its continuation pages (*, **, a, b, 1, 2 ... markers
+     alike), word for word. A footnote is never skipped because it looks administrative.
+   - "effect": "RULE" if the footnote states anything about WHEN, HOW OFTEN, IN WHICH CONDITION, FOR
+     WHOM or WHETHER an assessment or visit happens (timing, windows, counts, conditions, populations,
+     required/optional status, a reference to another section). "NONE" ONLY if it plainly says nothing
+     of that kind (for example investigator discretion for unscheduled assessments). When unsure, "RULE".
+   - a footnote with effect "RULE" must ALSO be written as a fact quoting it.
 Still write facts for the timing each column header or footnote states."""
+
+REPAIR_FACTS_PROMPT = """Some schedule statements you reported could not be read by the schedule model.
+Each item below is followed by the exact validation error. Return ONLY JSON
+{{"facts": [...]}} with a corrected version of each item, keeping its "repair_id".
+Rules:
+ - Change only what the error names. Keep the cited page and quote word for word.
+ - A duration is "N UNIT" (for example "30 DAY", "6 MONTH") or {{"value": N, "unit": "DAY"}}. A bare number
+   is not a duration. Use the unit the CITED TEXT states.
+ - If the cited text does not state the unit or the value, set that field to null; never guess it.
+ - Do not add statements and do not drop an item (return it unchanged if it cannot be corrected).
+Fact format:
+{fact_format}
+
+Items to correct:
+{items}"""
 
 #: Versions everything that shapes a model answer; part of every artifact key,
 #: so a prompt change never reuses an answer to a different question.
-PROMPT_VERSION = (f"{READER_VERSION}+"
-                  f"{sha256_text(SYSTEM_PROMPT + FACT_FORMAT + METADATA_PROMPT + TABLE_FORMAT + REPAIR_PROMPT)[:12]}")
+_PROMPT_TEXT = (SYSTEM_PROMPT + FACT_FORMAT + METADATA_PROMPT + TABLE_FORMAT + REPAIR_PROMPT
+                + REPAIR_FACTS_PROMPT)
+PROMPT_VERSION = f"{READER_VERSION}+{sha256_text(_PROMPT_TEXT)[:12]}"
 
 _TRANSPORT_ERRORS = (ExtractionModelError, TimeoutError, ConnectionError, OSError)
 
@@ -676,6 +710,24 @@ def quote_found(quote: str, page_text: str) -> bool:
     return len(words) >= 3 and sum(word in present for word in words) / len(words) >= 0.85
 
 
+#: Footnote markers a schedule table uses: symbols, or one letter followed by a dot / bracket.
+#: Numbers are NOT treated as markers (they are ordinary numbered paragraphs).
+_FOOTNOTE_LINE = re.compile(r"^\s*(\*{1,3}|\u2020|\u2021|\u00a7|\(?[a-z]\)|[a-z]\.)\s+(\S.{14,})$")
+
+
+def detect_footnote_lines(text: str) -> list[tuple[str, str]]:
+    """Footnote-looking lines on a page that prints a table. Deterministic and conservative:
+    it only exists so a footnote the model forgot to report is still accounted for."""
+    if not re.search(r"\btable\s+\d", text or "", re.IGNORECASE):
+        return []
+    found: list[tuple[str, str]] = []
+    for raw in (text or "").splitlines():
+        match = _FOOTNOTE_LINE.match(raw)
+        if match:
+            found.append((match.group(1).strip("()."), match.group(2).strip()))
+    return found
+
+
 def _facts_prompt(overview: dict[str, Any], batch: list[DocumentPage]) -> str:
     names = {
         "visit_names": overview.get("visit_names") or [],
@@ -750,10 +802,19 @@ def verify_citation(citation, batch_numbers: set[int],
             code="EVIDENCE_PAGE_NOT_READ", pages=[citation.page], details=details,
             message=f"The statement cites page {citation.page}, which was not read for it, and the "
                     "quote is not on that page. It cannot be used until a reviewer verifies it.")
+    elsewhere = sorted(number for number, other in all_pages.items()
+                       if number != citation.page and other.text_status == "text"
+                       and quote_found(citation.quote, other.text))
+    hint = ""
+    if elsewhere:
+        # Evidence stays REJECTED (the model's page is wrong); the reviewer is shown where it IS.
+        details = {**details, "found_on_pages": elsewhere[:5]}
+        hint = (" The same words appear on page" + ("s " if len(elsewhere) > 1 else " ")
+                + ", ".join(str(number) for number in elsewhere[:5]) + ": check whether the citation has the wrong page.")
     return "REJECTED", ReaderIssue(
         code="EVIDENCE_QUOTE_NOT_FOUND", pages=[citation.page], details=details,
         message=f"The cited quote is not on page {citation.page}. The statement cannot be used until "
-                "a reviewer verifies it against the protocol.")
+                "a reviewer verifies it against the protocol." + hint)
 
 
 def _cells_to_facts(cells: list[Any], index: int, accountability: dict[str, Any],
@@ -794,6 +855,42 @@ def _cells_to_facts(cells: list[Any], index: int, accountability: dict[str, Any]
     return items
 
 
+def _repair_invalid_facts(run: _Run, batch: list[DocumentPage], index: int,
+                          invalid: list[tuple[str, Any, bool, str]], page_numbers: list[int],
+                          ) -> dict[str, tuple[ScheduleFact, Any]]:
+    """One bounded correction round for facts that failed validation. Returns the facts that
+    now validate, keyed by their statement id; everything else stays rejected."""
+    items = []
+    for number, (new_id, item, _from_table, message) in enumerate(invalid, start=1):
+        shown = dict(item) if isinstance(item, dict) else {"value": item}
+        shown["repair_id"] = f"r{number}"
+        items.append(json.dumps({"item": shown, "validation_error": message[:700]}, default=str))
+    prompt = REPAIR_FACTS_PROMPT.format(fact_format=FACT_FORMAT, items="\n".join(items))
+
+    def parse(text: str) -> list[Any]:
+        return parse_json_list(text, "facts")
+
+    try:
+        reply = _ask(run, batch, prompt, max_tokens=FACTS_MAX_TOKENS, parse=parse,
+                     node=f"reader.repair.{index}")
+    except UnusableReply:
+        return {}
+    by_repair = {f"r{number}": entry for number, entry in enumerate(invalid, start=1)}
+    fixed: dict[str, tuple[ScheduleFact, Any]] = {}
+    for candidate in reply:
+        if not isinstance(candidate, dict):
+            continue
+        original = by_repair.get(str(candidate.get("repair_id")))
+        if original is None or original[0] in fixed:
+            continue
+        cleaned = {key: value for key, value in candidate.items() if key != "repair_id"}
+        try:
+            fixed[original[0]] = (ScheduleFact.model_validate(cleaned), cleaned)
+        except ValidationError:
+            continue
+    return fixed
+
+
 def _read_batch(run: _Run, overview: dict[str, Any], batch: list[DocumentPage], index: int,
                 all_pages: dict[int, DocumentPage], accountability: dict[str, Any],
                 ) -> tuple[list[ScheduleFact], bool]:
@@ -825,20 +922,8 @@ def _read_batch(run: _Run, overview: dict[str, Any], batch: list[DocumentPage], 
 
     ids: dict[str, str] = {}
     facts: list[ScheduleFact] = []
-    for new_id, item, from_table in raw_items:
-        try:
-            fact = ScheduleFact.model_validate(item)
-        except ValidationError as error:
-            accountability["rejected_items"].append({
-                "statement_id": new_id, "batch": index, "kind": "fact", "error": str(error)[:800],
-                "raw_item": item, "pages": page_numbers})
-            issues.append(ReaderIssue(
-                code="EXTRACTION_FACT_INVALID", pages=page_numbers,
-                message="A schedule statement the reader reported could not be understood, so it was "
-                        "not compiled. Check the cited text and enter the rule if it is one.",
-                details={"statement_id": new_id, "error": str(error)[:500],
-                         "item": json.dumps(item, default=str)[:800]}))
-            continue
+
+    def admit(new_id: str, item: Any, fact: ScheduleFact, from_table: bool) -> None:
         if fact.id and not from_table:
             ids[fact.id] = new_id
         accountability["raw_items"][new_id] = item
@@ -856,6 +941,36 @@ def _read_batch(run: _Run, overview: dict[str, Any], batch: list[DocumentPage], 
             "id": new_id, "evidence": [citation.model_copy(update={"verification": None})
                                        for citation in fact.evidence]}))
 
+    invalid: list[tuple[str, Any, bool, str]] = []
+    for new_id, item, from_table in raw_items:
+        try:
+            admit(new_id, item, ScheduleFact.model_validate(item), from_table)
+        except ValidationError as error:
+            invalid.append((new_id, item, from_table, str(error)))
+
+    # A reply that is right in substance but wrong in shape (a bare 30 where a duration is
+    # needed) is sent back to the model ONCE with the exact error. The corrected item must
+    # validate on its own; nothing is converted or defaulted locally.
+    repaired = _repair_invalid_facts(run, batch, index, invalid, page_numbers) if invalid else {}
+    for new_id, item, from_table, message in invalid:
+        corrected = repaired.get(new_id)
+        if corrected is not None:
+            accountability.setdefault("repaired_items", []).append({
+                "statement_id": new_id, "batch": index, "error": message[:800], "raw_item": item,
+                "corrected_item": corrected[0].model_dump(mode="json", exclude_none=True)})
+            admit(new_id, corrected[1], corrected[0], from_table)
+            continue
+        accountability["rejected_items"].append({
+            "statement_id": new_id, "batch": index, "kind": "fact", "error": message[:800],
+            "raw_item": item, "pages": page_numbers, "repair_attempted": True})
+        issues.append(ReaderIssue(
+            code="EXTRACTION_FACT_INVALID", pages=page_numbers,
+            message="A schedule statement the reader reported could not be understood, even after "
+                    "the model was asked to correct it once, so it was not compiled. Check the cited "
+                    "text and enter the rule if it is one.",
+            details={"statement_id": new_id, "error": message[:500], "repair_attempted": True,
+                     "item": json.dumps(item, default=str)[:800]}))
+
     for position, note in enumerate(reply["footnotes"], start=1):
         valid = (isinstance(note, dict) and str(note.get("text") or "").strip()
                  and isinstance(note.get("page"), int))
@@ -868,10 +983,30 @@ def _read_batch(run: _Run, overview: dict[str, Any], batch: list[DocumentPage], 
         page = all_pages.get(note["page"])
         verified = ("UNVERIFIED" if page is None or page.text_status != "text" else
                     "TEXT_MATCHED" if quote_found(str(note["text"]), page.text) else "REJECTED")
+        effect = str(note.get("effect") or "").strip().upper()
         accountability["footnotes"].append({
             "statement_id": statement_id, "batch": index, "table": note.get("table"),
             "label": str(note.get("label") or "").strip() or None, "page": note["page"],
-            "text": str(note["text"]).strip(), "verification": verified})
+            "text": str(note["text"]).strip(), "verification": verified,
+            "source": "MODEL",
+            # the model's own classification is a PROPOSAL; statements.py decides what it may do
+            "proposed_effect": effect if effect in {"RULE", "NONE"} else None,
+            "proposed_effect_reason": str(note.get("effect_reason") or "").strip()[:300] or None})
+
+    # A footnote that is printed on a read page but was not reported is added, so it cannot
+    # disappear: it has no proposed effect and is therefore pending interpretation.
+    reported = [item for item in accountability["footnotes"]]
+    for page in batch:
+        for label, line in detect_footnote_lines(page.text):
+            if any(item["page"] == page.page_number and (quote_found(line, item["text"])
+                                                         or quote_found(item["text"], line))
+                   for item in reported):
+                continue
+            statement_id = f"b{index}-n{len(accountability['footnotes']) + 1}"
+            accountability["footnotes"].append({
+                "statement_id": statement_id, "batch": index, "table": None, "label": label,
+                "page": page.page_number, "text": line, "verification": "TEXT_MATCHED",
+                "source": "TEXT_DETECTED", "proposed_effect": None, "proposed_effect_reason": None})
 
     batch_numbers = set(page_numbers)
     output: list[ScheduleFact] = []

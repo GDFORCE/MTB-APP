@@ -126,10 +126,19 @@ _SQL: dict[tuple[str, str], RouteRule] = {
 }
 
 _MONGO: dict[tuple[str, str], RouteRule] = {
+    ("GET", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/review-view"): _r(
+        C.SCHEDULE_EVIDENCE_READ, privacy=Privacy.EVIDENCE, plane="mongo_plane"),
+    ("POST", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/approve-table"): _r(
+        C.SCHEDULE_APPROVE, plane="mongo_plane", mutation="app.application.schedule_review.ScheduleReviewService.approve_reviewed_table"),
     ("POST", "/trials/{trial_id}/patients/{external_patient_id}/actual-occurrences"): _r(
         C.PATIENT_OCCURRENCE_RECORD, P, "trial_id", "external_patient_id",
         privacy=Privacy.PATIENT_CLINICAL, plane="mongo_plane",
         mutation="app.application.patient_schedule.PatientScheduleService.record_actual_occurrence"),
+    ("GET", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/conflicts"): _r(
+        C.SCHEDULE_EVIDENCE_READ, privacy=Privacy.EVIDENCE, plane="mongo_plane"),
+    ("POST", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/conflicts/{event_id}/resolve"): _r(
+        C.SCHEDULE_CORRECT, plane="mongo_plane",
+        mutation="app.application.conflict_resolution.ConflictResolutionService.resolve_event"),
     ("GET", "/trials/{trial_id}/patients/{external_patient_id}/calendar"): _r(
         C.PATIENT_SCHEDULE_READ, P, "trial_id", "external_patient_id",
         privacy=Privacy.PATIENT_CLINICAL, plane="mongo_plane"),
@@ -163,6 +172,35 @@ _MONGO: dict[tuple[str, str], RouteRule] = {
     ("GET", "/trials/{trial_id}/patients"): _r(
         C.PATIENT_SCHEDULE_READ, K.TRIAL, "trial_id", privacy=Privacy.PATIENT_CLINICAL,
         plane="mongo_plane"),
+    ("GET", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/required-inputs"): _r(
+        C.SCHEDULE_EVIDENCE_READ, privacy=Privacy.EVIDENCE, plane="mongo_plane"),
+    ("POST", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/required-inputs/custom"): _r(
+        C.SCHEDULE_CORRECT, plane="mongo_plane", mutation="app.application.required_inputs.RequiredInputsService.add_custom"),
+    ("POST", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/required-inputs/custom/{code}/remove"): _r(
+        C.SCHEDULE_CORRECT, plane="mongo_plane", mutation="app.application.required_inputs.RequiredInputsService.remove_custom"),
+    ("POST", "/trials/{trial_id}/schedule-versions/{schedule_version_id}/required-inputs/acknowledge"): _r(
+        C.SCHEDULE_REVIEW, plane="mongo_plane", mutation="app.application.required_inputs.RequiredInputsService.acknowledge"),
+    ("GET", "/trials/{trial_id}/enrolment-inputs"): _r(
+        C.PATIENT_ENROL, K.TRIAL, "trial_id", plane="mongo_plane"),
+    ("GET", "/operations/dead-letters"): _r(C.OUTBOX_REPLAY, plane="mongo_plane"),
+    ("POST", "/operations/dead-letters/{outbox_id}/replay"): _r(
+        C.OUTBOX_REPLAY, plane="mongo_plane", mutation="app.application.outbox_delivery.DeadLetterService.replay"),
+    ("POST", "/trials/{trial_id}/cohorts"): _r(
+        C.COHORT_CUTOVER, K.TRIAL, "trial_id", plane="mongo_plane", mutation="app.application.cohort_cutover.CohortCutoverService.create_shadow"),
+    ("GET", "/trials/{trial_id}/cohorts/{cohort_id}/readiness"): _r(
+        C.COHORT_CUTOVER, K.TRIAL, "trial_id", plane="mongo_plane"),
+    ("POST", "/trials/{trial_id}/cohorts/{cohort_id}/promote"): _r(
+        C.COHORT_CUTOVER, K.TRIAL, "trial_id", plane="mongo_plane", mutation="app.application.cohort_cutover.CohortCutoverService.promote"),
+    ("POST", "/trials/{trial_id}/cohorts/{cohort_id}/rollback"): _r(
+        C.COHORT_CUTOVER, K.TRIAL, "trial_id", plane="mongo_plane", mutation="app.application.cohort_cutover.CohortCutoverService.rollback"),
+    ("GET", "/trials/{trial_id}/patients/{external_patient_id}/notification-preferences"): _r(
+        C.PATIENT_SCHEDULE_READ, P, "trial_id", "external_patient_id", privacy=Privacy.PATIENT_CLINICAL, plane="mongo_plane"),
+    ("PUT", "/trials/{trial_id}/patients/{external_patient_id}/notification-preferences"): _r(
+        C.PATIENT_STATE_RECORD, P, "trial_id", "external_patient_id", privacy=Privacy.PATIENT_CLINICAL, plane="mongo_plane",
+        mutation="app.application.reminder_sync.ReminderSyncService.record_preferences"),
+    ("GET", "/trials/{trial_id}/reports/schedule"): _r(
+        C.PATIENT_SCHEDULE_READ, K.TRIAL, "trial_id", privacy=Privacy.PATIENT_CLINICAL,
+        plane="mongo_plane"),
     ("GET", "/trials/{trial_id}/patients/{external_patient_id}/commands"): _r(
         C.PATIENT_COMMAND_PREVIEW, P, "trial_id", "external_patient_id",
         privacy=Privacy.PATIENT_CLINICAL, plane="mongo_plane"),
@@ -172,6 +210,12 @@ _MONGO: dict[tuple[str, str], RouteRule] = {
     # needs ``patient.command.high_impact`` (checked in the handler, on every call).
     ("GET", "/trials/{trial_id}/amendments"): _r(
         C.SCHEDULE_READ, privacy=Privacy.SCHEDULE, plane="mongo_plane"),
+    ("GET", "/trials/{trial_id}/amendments/rule-handling"): _r(
+        C.SCHEDULE_EVIDENCE_READ, privacy=Privacy.EVIDENCE, plane="mongo_plane"),
+    ("POST", "/trials/{trial_id}/amendments/rule-handling"): _r(
+        C.SCHEDULE_CORRECT, plane="mongo_plane", mutation="app.application.manual_rules.ManualRuleService.decide"),
+    ("POST", "/trials/{trial_id}/amendments/rule-handling/approve"): _r(
+        C.SCHEDULE_APPROVE, plane="mongo_plane", mutation="app.application.manual_rules.ManualRuleService.decide"),
     ("POST", "/trials/{trial_id}/amendments/lineage"): _r(
         C.SCHEDULE_AUTHOR, plane="mongo_plane",
         mutation="app.application.amendment_service.AmendmentService.declare_lineage"),

@@ -247,3 +247,41 @@ def test_saved_live_extraction_can_be_reviewed_approved_and_dated(session, pipel
     timing_claims = [claim for claim in schedule.claim_evidence if claim.claim_type == "TIMING"]
     for claim in timing_claims:
         assert str(claim.evidence_id) in next(item.evidence_refs for item in projections if item.event_id == str(claim.claim_entity_id))
+
+
+def _footnote_issue(session, row, code="FOOTNOTE_NOT_INTERPRETED"):
+    issue_id = uuid4()
+    session.add(db.ValidationIssue(
+        id=issue_id, schedule_version_id=row.schedule_version_id, validator_version="uctsm-validator.v1",
+        issue_code=code, severity="ERROR", status="OPEN", blocking=True,
+        message="Footnote * of Table 1 is not interpreted", details={"origin": "EXTRACTION"},
+    ))
+    session.commit()
+    return issue_id
+
+
+def test_a_footnote_finding_is_resolved_as_no_scheduling_effect_with_a_reason_and_the_type_is_recorded(session):
+    _, row = imported(session)
+    issue_id = _footnote_issue(session, row)
+    ScheduleReviewService(session).resolve_extraction_issue(
+        row.schedule_version_id, issue_id, reviewer_id=REVIEWER, resolution="NO_SCHEDULING_EFFECT",
+        reason="Read page 23: investigator discretion for unscheduled assessments; no timing rule.")
+    session.commit()
+    decision = session.scalar(select(db.ReviewDecision).where(db.ReviewDecision.entity_id == issue_id))
+    assert decision.new_value == {"status": "RESOLVED", "resolution": "NO_SCHEDULING_EFFECT"}
+    assert "investigator discretion" in decision.reason
+
+
+def test_the_no_effect_resolution_needs_a_reason_and_is_refused_for_any_other_finding(session):
+    _, row = imported(session)
+    service = ScheduleReviewService(session)
+    footnote = _footnote_issue(session, row)
+    with pytest.raises(ValueError):
+        service.resolve_extraction_issue(row.schedule_version_id, footnote, reviewer_id=REVIEWER,
+                                         resolution="NO_SCHEDULING_EFFECT", reason="  ")
+    timing = _footnote_issue(session, row, code="AMBIGUOUS_TIMING")
+    with pytest.raises(ValueError, match="not a resolution"):
+        service.resolve_extraction_issue(row.schedule_version_id, timing, reviewer_id=REVIEWER,
+                                         resolution="NO_SCHEDULING_EFFECT", reason="Looks harmless")
+    session.rollback()
+    assert session.get(db.ValidationIssue, timing).status == "OPEN"

@@ -24,8 +24,13 @@ from .authoring_repository import MongoAuthoringRepository
 from .patient_repository import (
     MongoCommandRepository,
     MongoOutboxRepository,
+    MongoArchiveRepository,
     MongoEvaluationRepository,
     MongoImpactRepository,
+    MongoCohortRepository,
+    MongoInboxRepository,
+    MongoMigrationRepository,
+    MongoReminderRepository,
     MongoParityRepository,
     MongoPatientFactsRepository,
     MongoPatientRepository,
@@ -35,7 +40,7 @@ from .schedule_repository import MongoScheduleVersionRepository
 
 T = TypeVar("T")
 
-_READ_CONCERN = ReadConcern("majority")
+_READ_CONCERN = ReadConcern("snapshot")
 _WRITE_CONCERN = WriteConcern("majority")
 
 
@@ -56,6 +61,11 @@ class BoundUnitOfWork:
         self.parity = MongoParityRepository(database, session)
         self.outbox = MongoOutboxRepository(database, session)
         self.amendments = MongoAmendmentRepository(database, session)
+        self.archives = MongoArchiveRepository(database, session)
+        self.inbox = MongoInboxRepository(database, session)
+        self.migrations = MongoMigrationRepository(database, session)
+        self.cohorts = MongoCohortRepository(database, session)
+        self.reminders = MongoReminderRepository(database, session)
 
     def run(self, fn):  # pragma: no cover - guard
         raise RuntimeError("nested units of work are not allowed")

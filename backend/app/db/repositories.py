@@ -9,6 +9,7 @@ from pydantic_core import to_jsonable_python
 
 from app.domain.schedule import models as domain
 from app.domain.schedule.temporal_basis import upgrade_event_payload
+from app.domain.schedule.validator import ScheduleValidator
 
 from . import models as db
 
@@ -92,6 +93,11 @@ class ScheduleRepository:
         schedule_definition_id: UUID,
         extraction_run_id: UUID | None = None,
     ) -> None:
+        codes = {event.code for event in schedule.events}
+        for event in schedule.events:
+            for dependency in event.dependencies:
+                if dependency.source_event_code not in codes:
+                    raise ValueError(f"events/{event.code}/dependencies/{dependency.source_event_code}: unknown source")
         if schedule.schedule_metadata.protocol_version_id is None:
             raise ValueError("protocol_version_id is required to persist schedule evidence")
         if self.session.get(db.ScheduleVersion, schedule.schedule_version_id):
@@ -218,19 +224,23 @@ class ScheduleRepository:
     def replace_validation_issues(self, schedule_version_id: UUID, issues: list[domain.ValidationIssue]) -> None:
         self.session.execute(delete(db.ValidationIssue).where(
             db.ValidationIssue.schedule_version_id == schedule_version_id,
-            db.ValidationIssue.validator_version == "uctsm-validator.v1",
             db.ValidationIssue.status == "OPEN",
         ))
         for item in issues:
             self.session.add(db.ValidationIssue(
                 id=item.id, schedule_version_id=schedule_version_id,
-                validator_version="uctsm-validator.v1", entity_type=item.entity_type,
+                validator_version=ScheduleValidator.version, entity_type=item.entity_type,
                 entity_id=item.entity_id, issue_code=item.issue_code,
                 severity=item.severity.value, message=item.message, details=item.details,
                 blocking=item.blocking, status=item.status.value,
             ))
 
     def replace_event(self, schedule_version_id: UUID, event: domain.Event) -> None:
+        codes = set(self.session.scalars(select(db.Event.code).where(
+            db.Event.schedule_version_id == schedule_version_id))) | {event.code}
+        for dependency in event.dependencies:
+            if dependency.source_event_code not in codes:
+                raise ValueError(f"events/{event.code}/dependencies/{dependency.source_event_code}: unknown source")
         row = self.session.scalar(select(db.Event).where(
             db.Event.id == event.id, db.Event.schedule_version_id == schedule_version_id,
         ))

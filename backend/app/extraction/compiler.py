@@ -37,6 +37,7 @@ mappings below (docs/schedule-engine-case-handling.md, Part 4 and Part 5
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -172,11 +173,30 @@ _MONTHS_PER = {"MONTH": 1, "YEAR": 12}
 _OPERATORS = {"EQUALS": "EQ", "NOT_EQUALS": "NE", "GT": "GT", "GTE": "GTE", "LT": "LT", "LTE": "LTE"}
 
 
+_MAX_CODE = 48
+_SENTENCE_NAME = 80          # characters; longer than this is a sentence, not a visit or assessment name
+
+
+def _page_ranges(pages: list[int]) -> str:
+    """[3,4,5,9] -> "3-5, 9"."""
+    runs: list[list[int]] = []
+    for number in pages:
+        if runs and number == runs[-1][1] + 1:
+            runs[-1][1] = number
+        else:
+            runs.append([number, number])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
 def code_for(name: str) -> str:
     """A stable schedule code from a protocol name ("Cycle 1 Day 8" -> CYCLE_1_DAY_8)."""
     code = re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")
     if not code:
         code = "UNNAMED"
+    if len(code) > _MAX_CODE:
+        # A whole sentence used as a name must still yield a short, stable, unique code.
+        digest = hashlib.sha1(code.encode("utf-8")).hexdigest()[:6].upper()
+        code = f"{code[:_MAX_CODE - 7].rstrip('_')}_{digest}"
     return code if code[0].isalpha() else f"E_{code}"
 
 
@@ -419,6 +439,7 @@ class _Compiler:
         self.anchors: dict[str, Anchor] = {}
         self.anchor_names: dict[str, str] = {}
         self.events: dict[str, Event] = {}
+        self._precedence: dict[str, dict] = {}
         self.event_names: dict[str, str] = {}
         self.event_facts: dict[str, list[ScheduleFact]] = {}
         self.condition_names: dict[str, str] = {}
@@ -1298,6 +1319,26 @@ class _Compiler:
         patient_facts = [fact for fact in event_facts if self._is_patient(fact)]
         for group in self._groups(patient_facts):
             self._build_group(group)
+            for member in group:
+                if len(member.what) > _SENTENCE_NAME and member.kind != "anchor":
+                    event = self.events.get(self._event_code(member))
+                    self.issue(
+                        "NAME_LOOKS_LIKE_A_SENTENCE",
+                        f"The name {member.what[:60]!r}... is a sentence, not a visit or assessment name. "
+                        "Rename it, or confirm it is a note rather than a visit.",
+                        blocking=False, severity=Severity.WARNING,
+                        entity_type="EVENT" if event is not None else None,
+                        entity_id=event.id if event is not None else None, facts=[member])
+        for code, note in self._precedence.items():
+            event = self.events.get(code)
+            self.issue(
+                "CONFLICT_RESOLVED_BY_TABLE_PRIORITY",
+                f"{event.display_name if event else code!r}: the narrative summary and the schedule table "
+                "describe the same timepoint with slightly different wording; the table's exact values "
+                "were used. Check that this is right.",
+                blocking=False, severity=Severity.WARNING,
+                entity_type="EVENT" if event is not None else None,
+                entity_id=event.id if event is not None else None, **note)
 
     @staticmethod
     def _recurring(fact: ScheduleFact) -> bool:
@@ -1325,6 +1366,55 @@ class _Compiler:
         if {one, two} <= (_TARGET_PATTERNS | _BOUND_PATTERNS):
             return "AND", "compatible restrictions on one occurrence: both apply"
         return "CONFLICTS_WITH", "the statements cannot be combined"
+
+    #: Approximate calendar lengths, ONLY for deciding whether a narrative sentence and a table
+    #: cell describe the same timepoint. Never used to date anything.
+    _APPROX_DAYS = {"DAY": 1.0, "WEEK": 7.0, "MONTH": 30.4375, "YEAR": 365.25}
+
+    def _span_days(self, fact: ScheduleFact) -> tuple[float, float] | None:
+        timing = fact.timing
+        if timing is None or timing.reference is None:
+            return None
+
+        def days(amount) -> float | None:
+            factor = self._APPROX_DAYS.get(str(getattr(amount, "unit", "")).upper())
+            return None if factor is None else amount.value * factor
+
+        if timing.pattern == "OFFSET" and timing.offset is not None:
+            value = days(timing.offset)
+            return None if value is None else (value, value)
+        if timing.pattern == "RANGE" and timing.start is not None and timing.end is not None:
+            low, high = days(timing.start), days(timing.end)
+            return None if low is None or high is None else (low, high)
+        return None
+
+    def _table_precedence(self, distinct: list[tuple[ScheduleFact, list[_Compiled]]],
+                          ) -> tuple[ScheduleFact, list[ScheduleFact]] | None:
+        """The schedule table's exact reading when the other statements are only the narrative
+        summary of the same timepoint.
+
+        Applies ONLY when: exactly one reading cites a table and every other reading cites none;
+        all count from the same reference; and the narrative values agree with the table's within
+        a small tolerance ("1 year" vs "365 days", "3-6 months" vs "+90-180 days"). A narrative
+        that really disagrees ("6 months" vs a 12-month cell) is NOT overridden - it stays a conflict."""
+        table = [fact for fact, _ in distinct if any(citation.table for citation in fact.evidence)]
+        narrative = [fact for fact, _ in distinct if not any(citation.table for citation in fact.evidence)]
+        if len(table) != 1 or not narrative or len(table) + len(narrative) != len(distinct):
+            return None
+        chosen = table[0]
+        reference = code_for(chosen.timing.reference.name) if chosen.timing and chosen.timing.reference else None
+        wanted = self._span_days(chosen)
+        if reference is None or wanted is None:
+            return None
+        tolerance = max(7.0, 0.05 * max(wanted[1], 1.0))
+        for fact in narrative:
+            span = self._span_days(fact)
+            other = code_for(fact.timing.reference.name) if fact.timing and fact.timing.reference else None
+            if span is None or other != reference:
+                return None
+            if abs(span[0] - wanted[0]) > tolerance or abs(span[1] - wanted[1]) > tolerance:
+                return None
+        return chosen, narrative
 
     def _build_group(self, group: list[ScheduleFact]) -> None:
         primary = group[0]
@@ -1370,6 +1460,21 @@ class _Compiler:
             by_signature[key] = fact
             distinct.append((fact, compiled))
 
+        if not stated_conflict and len(distinct) > 1:
+            precedence = self._table_precedence(distinct)
+            if precedence is not None:
+                kept, restated = precedence
+                for fact in restated:
+                    self.relate("DUPLICATE", fact, kept,
+                                "narrative summary of the same timepoint; the schedule table's values are used")
+                self._precedence[code] = {
+                    "table_fact": kept.id, "narrative_facts": [fact.id for fact in restated],
+                    "alternatives": [{
+                        "fact_id": fact.id, "what": fact.what,
+                        "timing": fact.timing.model_dump(mode="json", by_alias=True) if fact.timing else None,
+                        "citations": [c.model_dump(mode="json") for c in fact.evidence]}
+                        for fact in restated]}
+                distinct = [item for item in distinct if item[0] is kept]
         relations = {}
         for index, (first, _) in enumerate(distinct):
             for second, _ in distinct[index + 1:]:
@@ -2307,10 +2412,16 @@ class _Compiler:
             ("which date is Day 1", stated.day_1_anchor),
             ("whether days are counted from Day 1 or Day 0", stated.counting_convention),
         ) if not value]
+        coverage = (self.document.accountability or {}).get("coverage") or {}
+        read = sorted(unit["page"] for unit in coverage.get("units") or []
+                      if unit.get("state") == "INSPECTED" and unit.get("page"))
+        searched = (f" The reader looked at {len(read)} page(s) ({_page_ranges(read)}) and found no "
+                    "statement that answers it.") if read else ""
         self.extensions.append({
             "type": "UNRESOLVED_SCHEDULE_ORIGIN",
             "detail": "The protocol extract does not state " + " or ".join(missing)
-                      + "; a reviewer must record it before any Day-N visit can be dated.",
+                      + "; a reviewer must record it before any Day-N visit can be dated." + searched,
+            "pages_read": read,
         })
         return None
 

@@ -1,0 +1,48 @@
+{
+  "schema_version": "mtb.protocol-source-review.v1",
+  "source_id": "user-bp11-301-india-v2.1-2024-11-14",
+  "original_filename": "Copy of S-103 Syneos Health.pdf",
+  "local_source_path": "D:/Copy of S-103 Syneos Health.pdf",
+  "sha256": "450635b8b8661782c32b1090c00a2f56c2814391f8944bff6ef17b6f65e28f46",
+  "size_bytes": 1701589,
+  "page_count": 100,
+  "source_kind": "USER_PROVIDED_PROTOCOL_PDF",
+  "synthetic": false,
+  "identity": {
+    "protocol_number": "BP11-301",
+    "version": "2.1",
+    "version_status": "Final",
+    "amendment_label": "Protocol Amendment 1.1, Version 2.1 (India)",
+    "protocol_date": "2024-11-14",
+    "sponsor": "CuraTeQ Biologics Private Ltd.",
+    "registry_identifiers": [{"type": "EudraCT", "value": "2022-001745-20"}],
+    "nct_identifier": null,
+    "source_pages": [1, 2, 3],
+    "filename_is_authoritative_identity": false
+  },
+  "version_history_as_stated_on_cover": [
+    {"version": "1.0", "label": "Original Protocol", "date": "2022-05-27", "separate_document_supplied": false},
+    {"version": "2.0", "label": "Protocol Amendment 1", "date": "2024-01-17", "separate_document_supplied": false},
+    {"version": "2.1", "label": "Protocol Amendment 1.1 (India)", "date": "2024-11-14", "separate_document_supplied": true}
+  ],
+  "review": {
+    "status": "AI_SOURCE_GROUNDED_DRAFT",
+    "authoring_date": "2026-10-19",
+    "expected_results_derived_from_app": false,
+    "independent_clinical_review": "PENDING",
+    "clinical_reviewer_id": null,
+    "clinical_review_signature": null,
+    "license_and_redistribution_review": "UNVERIFIED",
+    "patient_data_review": "NOT_CERTIFIED",
+    "clinical_release_qualified": false,
+    "protocol_approval_signatures_are_benchmark_approval": false
+  },
+  "inspection": {
+    "schedule_relevant_text_pages_reviewed": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 85, 86, 87, 88, 89, 90, 91, 94, 95, 96],
+    "rendered_pages_visually_reviewed": [49, 50, 98, 99],
+    "table_cells_independently_extracted_for_verification": [49, 50],
+    "whole_document_clinical_or_statistical_review_claimed": false,
+    "source_document_uploaded_to_external_service": false,
+    "source_pdf_copied_into_repository": false
+  }
+}

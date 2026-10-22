@@ -15,6 +15,7 @@ export type PlaneEntry = {
   cancelled: boolean; actual_visit_date: string | null; actual_treatment_date: string | null;
   track_name: string | null; track_code: string | null; provisional: boolean;
   evaluation_id: string;
+  rule_handling?: string | null;
 };
 
 export type PlaneRow = {
@@ -37,6 +38,7 @@ export function describeWindow(entry: Pick<PlaneEntry, "window_known" | "earlies
 export function toPlaneRows(entries: PlaneEntry[]): PlaneRow[] {
   return entries.map((entry) => {
     const flags: string[] = [];
+    if (entry.rule_handling === "MANUAL_ONLY") flags.push("Manual scheduling required; no automatic target");
     if (entry.appointment_outside_window === true) flags.push("Appointment is outside the protocol window");
     if (entry.appointment_date && entry.appointment_outside_window === null) {
       flags.push("Appointment cannot be checked: the protocol states no window");

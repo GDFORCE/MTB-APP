@@ -19,6 +19,7 @@ from typing import Callable, Protocol, TypeVar
 from uuid import UUID
 
 from app.domain.schedule.models import Event, UniversalSchedule, ValidationIssue
+from app.domain.schedule.compiled import CompiledSchedule
 
 from .amendments import (
     AdoptionDecisionRecord,
@@ -52,7 +53,11 @@ from .patients import (
     PatientStateRecord,
     UnscheduledVisitRecord,
 )
-from .records import AuditRecord, CommandReceiptRecord, OutboxRecord
+from .archive_records import ArchiveRecord
+from .cohort_records import CohortRecord
+from .reminder_records import NotificationPreferenceRecord, ReminderNoticeRecord
+from .migration_records import MigrationRunRecord, SourceMappingRecord
+from .records import AuditRecord, CommandReceiptRecord, InboxRecord, OutboxRecord
 
 T = TypeVar("T")
 
@@ -126,6 +131,8 @@ class ScheduleVersionRepository(Protocol):
         extraction_run_id: UUID | None = None,
     ) -> None: ...
     def get(self, schedule_version_id: UUID) -> UniversalSchedule: ...
+    def get_compiled(self, schedule_version_id: UUID, cache_key: str) -> CompiledSchedule | None: ...
+    def save_compiled(self, schedule_version_id: UUID, compiled: CompiledSchedule) -> None: ...
     def get_header(self, schedule_version_id: UUID) -> ScheduleVersionHeader: ...
     def find_by_extraction_run(self, run_id: UUID) -> ScheduleVersionHeader | None: ...
     def max_version_number(self, schedule_definition_id: UUID) -> int: ...
@@ -302,6 +309,23 @@ class EvaluationRepository(Protocol):
     def list_evaluations(self, patient_id: UUID, schedule_version_id: UUID) -> list[EvaluationRecord]:
         """Oldest first - the full, never-rewritten history."""
         ...
+    def purge_projections(self, evaluation_id: UUID) -> None:
+        """Remove ONE superseded evaluation's projections after they were archived (P9-05).
+        The evaluation row is never touched. Refuses the current pointer's evaluation."""
+        ...
+    def restore_projections(
+        self, evaluation_id: UUID, events: list[PatientEventRecord],
+        confinements: list[ConfinementEpisodeRecord],
+    ) -> None:
+        """Re-insert archived projections; refuses when any projection exists already."""
+        ...
+
+
+class ArchiveRepository(Protocol):
+    def get(self, evaluation_id: UUID) -> ArchiveRecord | None: ...
+    def save(self, record: ArchiveRecord) -> None:
+        """Insert or replace the one metadata row of this evaluation."""
+        ...
 
 
 class ImpactRepository(Protocol):
@@ -365,6 +389,70 @@ class OutboxRepository(Protocol):
         """Unique per ``dedupe_key``. ``DuplicateRecordError``."""
         ...
     def list_pending(self, *, limit: int = 100) -> list[OutboxRecord]: ...
+    def claim(self, *, now: datetime, lease_seconds: int, token: str) -> OutboxRecord | None: ...
+    def settle(self, organization_id: UUID, record_id: UUID, token: str, *, now: datetime,
+               status: str, available_at: datetime | None = None, error_code: str | None = None) -> None: ...
+    def get(self, organization_id: UUID, record_id: UUID) -> OutboxRecord | None: ...
+    def count_by_status(self) -> dict[str, int]:
+        """Messages per status across ALL organizations (operational gauge; no content)."""
+        ...
+    def list_dead(self, organization_id: UUID, *, limit: int = 100) -> list[OutboxRecord]:
+        """Dead-lettered messages of one organization, oldest first."""
+        ...
+    def requeue_dead(self, organization_id: UUID, record_id: UUID, *, now: datetime) -> OutboxRecord:
+        """DEAD -> PENDING with a fresh attempt budget; the message and dedupe_key are unchanged.
+        Raises ``RecordNotFoundError`` unless the message is DEAD in that organization."""
+        ...
+
+
+class MigrationRepository(Protocol):
+    def get_run(self, organization_id: UUID, run_key: str) -> MigrationRunRecord | None: ...
+    def save_run(self, record: MigrationRunRecord) -> None:
+        """Insert or replace; unique per (organization, run_key)."""
+        ...
+    def get_mapping(self, organization_id: UUID, source_system: str, source_id: str) -> SourceMappingRecord | None: ...
+    def save_mapping(self, record: SourceMappingRecord) -> None:
+        """Insert or replace; unique per (organization, source_system, source_id)."""
+        ...
+    def list_mappings(self, organization_id: UUID, source_system: str) -> list[SourceMappingRecord]: ...
+
+
+class CohortRepository(Protocol):
+    def add(self, record: CohortRecord) -> None:
+        """Unique per (organization, trial, name). ``DuplicateRecordError``."""
+        ...
+    def get(self, organization_id: UUID, cohort_id: UUID) -> CohortRecord:
+        """Raises ``RecordNotFoundError``."""
+        ...
+    def save(self, record: CohortRecord, *, expected_revision: int) -> CohortRecord:
+        """Revision-guarded replace. ``StaleRevisionError`` on a lost race."""
+        ...
+    def list_for_trial(self, organization_id: UUID, trial_id: UUID) -> list[CohortRecord]: ...
+    def find_blocking_membership(self, external_patient_id: str) -> CohortRecord | None:
+        """The PILOT cohort holding this legacy patient id, if any (the legacy-write guard)."""
+        ...
+
+
+class ReminderRepository(Protocol):
+    def get_preferences(self, organization_id: UUID, patient_id: UUID) -> NotificationPreferenceRecord | None: ...
+    def save_preferences(self, record: NotificationPreferenceRecord, *, expected_revision: int | None) -> NotificationPreferenceRecord:
+        """Insert (expected None) or revision-guarded replace. ``StaleRevisionError`` / ``DuplicateRecordError``."""
+        ...
+    def list_active(self, organization_id: UUID, patient_id: UUID) -> list[ReminderNoticeRecord]: ...
+    def list_granted(self, *, after: UUID | None, limit: int) -> list[NotificationPreferenceRecord]:
+        """Preferences with consent GRANTED across organizations, ordered by patient id (worker use only)."""
+        ...
+    def add_notice(self, record: ReminderNoticeRecord) -> None:
+        """Unique per (organization, patient, reminder_key). ``DuplicateRecordError``."""
+        ...
+    def withdraw(self, organization_id: UUID, patient_id: UUID, reminder_key: str, *, reason: str, at) -> None: ...
+
+
+class InboxRepository(Protocol):
+    def find(self, consumer: str, dedupe_key: str) -> InboxRecord | None: ...
+    def add(self, record: InboxRecord) -> None:
+        """Unique per (consumer, dedupe_key). ``DuplicateRecordError``."""
+        ...
 
 
 class AmendmentRepository(Protocol):
@@ -473,6 +561,11 @@ class UnitOfWork(Protocol):
     parity: ParityRepository
     outbox: OutboxRepository
     amendments: AmendmentRepository
+    archives: ArchiveRepository
+    inbox: InboxRepository
+    migrations: MigrationRepository
+    cohorts: CohortRepository
+    reminders: ReminderRepository
 
     def run(self, fn: "Callable[[UnitOfWork], T]") -> T: ...
 

@@ -177,9 +177,13 @@ PENDING_INTERPRETATION = "PENDING_INTERPRETATION"
 UNSUPPORTED = "UNSUPPORTED"
 OUT_OF_SCOPE_NON_SCHEDULE = "OUT_OF_SCOPE_NON_SCHEDULE"
 INVALID = "INVALID"
+#: A footnote that was READ, quoted and screened: it states nothing about when, how often, under
+#: which condition, for whom or whether anything happens. It stays in the ledger with its reason
+#: (it is not dropped) and a reviewer can reopen it; it does not block approval.
+NO_SCHEDULING_EFFECT = "NO_SCHEDULING_EFFECT"
 
 DISPOSITIONS = (COMPILED, DUPLICATE_OF, PENDING_INTERPRETATION, UNSUPPORTED,
-                OUT_OF_SCOPE_NON_SCHEDULE, INVALID)
+                OUT_OF_SCOPE_NON_SCHEDULE, INVALID, NO_SCHEDULING_EFFECT)
 #: A statement in one of these states is an uncompiled requirement: it blocks
 #: readiness of every compiled rule about the same activity (IR-05, AT-04).
 UNCOMPILED = frozenset({PENDING_INTERPRETATION, UNSUPPORTED, INVALID})

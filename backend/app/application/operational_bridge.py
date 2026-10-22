@@ -8,16 +8,17 @@ history, its anchors and its first evaluation commit together or not at all.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Callable, TypeVar
 from uuid import UUID
 
 from app.domain.schedule.models import schedule_origin_anchor
 
+from .enrolment_inputs import resolve_enrolment_inputs
 from .errors import DuplicateRecordError, StaleRevisionError
 from .patient_schedule import PatientScheduleService
 from .patients import (
-    AssignmentRecord, PatientAnchorRecord, PatientRecord,
+    AssignmentRecord, PatientAnchorRecord, PatientRecord, PatientStateRecord,
 )
 from .ports import UnitOfWork
 from .read_services import dimension_id, enrollment_anchors
@@ -120,6 +121,7 @@ class OperationalBridgeService:
         dimension_values: dict[str, list[str]] | None = None,
         anchor_dates: dict[str, date] | None = None, expected_version_id: UUID | None = None,
         anchor_date_sources: dict[str, str] | None = None,
+        inputs: dict[str, object] | None = None, deferred_inputs: list[str] | None = None,
     ) -> BridgeEnrollment:
         def work(tx: UnitOfWork) -> BridgeEnrollment:
             try:
@@ -131,7 +133,8 @@ class OperationalBridgeService:
             if expected_version_id and header.id != expected_version_id:
                 raise ValueError("The approved schedule changed. Reload and preview it again.")
             schedule = tx.schedules.get(header.id)
-            dates = enrollment_anchors(schedule, baseline_date, anchor_dates or {})
+            resolved = resolve_enrolment_inputs(tx, schedule, header.id, inputs, deferred_inputs)
+            dates = enrollment_anchors(schedule, baseline_date, {**(anchor_dates or {}), **resolved.anchor_dates})
             existing = tx.patients.find_by_external_id(
                 organization_id, trial.id, external_patient_id)
             if existing is not None:
@@ -205,11 +208,21 @@ class OperationalBridgeService:
                 tx.facts.add_anchor(PatientAnchorRecord(
                     organization_id=organization_id, patient_id=patient.id,
                     anchor_definition_id=anchor.id, anchor_code=anchor.code,
-                    value_date=dates[anchor.code], status="CONFIRMED",
+                    value_date=dates[anchor.code], value_datetime=resolved.anchor_datetimes.get(anchor.code),
+                    metadata=({"utc_offset_minutes": int(resolved.anchor_datetimes[anchor.code].utcoffset().total_seconds() // 60)}
+                              if anchor.code in resolved.anchor_datetimes else {}),
+                    status="CONFIRMED",
                     source_type="PLANNED" if planned else "OPERATIONAL_ENROLMENT",
                     recorded_by=actor_id,
                     source_reference={"external_patient_id": external_patient_id,
                                       "entered_as": "PLANNED" if planned else "ACTUAL"}))
+            known_states = {row.state_code for row in tx.facts.list_states(patient.id)}
+            for code, value in resolved.custom:
+                if f"INPUT:{code}" not in known_states:
+                    tx.facts.append_state(PatientStateRecord(
+                        organization_id=organization_id, patient_id=patient.id, state_code=f"INPUT:{code}",
+                        state_value=value, effective_at=datetime.now(timezone.utc), recorded_by=actor_id,
+                        source_reference={"entered_at": "ENROLMENT"}))
             evaluation, rows = PatientScheduleService(self._uow).evaluate_in(
                 tx, patient.id, organization_id=organization_id, horizon=horizon,
                 schedule_version_id=header.id,

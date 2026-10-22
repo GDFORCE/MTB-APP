@@ -167,8 +167,16 @@ export type ReviewView = {
   };
   groups: { id: string; label: string; row_ids: string[] }[];
   rows: ReviewRow[];
+  tracks?: { code: string; display_name: string; track_type: string; anchor_code: string | null;
+    rebase_policy: string | null; process_code: string | null; stoppable: boolean | null;
+    review_state: string; events: string[] }[];
+  track_links?: { source_track_code: string; target_track_code: string; relation: string; review_state: string }[];
+  processes?: { code: string; display_name: string; hold_resume_label: string;
+    resume_trigger_label: string; visits: string[] }[];
   shared_review_questions: SharedQuestion[];
   document_level_issues: ReviewIssue[];
+  /** Footnotes that were read but not interpreted (one entry per footnote, however many visits it marks). */
+  footnote_findings?: FootnoteFinding[];
   source_coverage?: SourceCoverage | null;
   /** Reviewed schedule-level holiday calendars attached to this draft. */
   holiday_calendars?: { code: string; version: string; description?: string | null;
@@ -178,6 +186,26 @@ export type ReviewView = {
   approval_blockers: string[];
   anchors: { code: string; display_name: string; status: string; anchor_type: string; is_origin: boolean }[];
 };
+
+export type FootnoteFinding = {
+  footnote_id: string; label?: string | null; table?: string | null; page?: number | null;
+  text?: string | null; verification?: string | null; message: string; issue_ids: string[];
+};
+
+export function footnoteHeading(finding: FootnoteFinding): string {
+  const parts = [`Footnote ${finding.label ?? ""}`.trim()];
+  if (finding.table) parts.push(`of ${finding.table}`);
+  if (finding.page) parts.push(`(page ${finding.page})`);
+  return parts.join(" ");
+}
+
+/** The reason that must accompany "this footnote has no scheduling effect": a sentence, not a click. */
+export function footnoteResolution(finding: FootnoteFinding, reason: string): { error?: string; reason?: string } {
+  if (!finding.issue_ids.length) return { error: "This footnote has nothing open to resolve." };
+  const text = reason.trim();
+  if (text.length < 15) return { error: "Say what you read in the footnote and why it states no schedule rule (at least a sentence)." };
+  return { reason: text };
+}
 
 export type RowFilter = "ALL" | "PENDING" | "READY";
 export const ROW_FILTERS: { key: RowFilter; label: string }[] = [

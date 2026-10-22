@@ -7,6 +7,7 @@ import calendar
 from datetime import date, datetime, timedelta, timezone
 
 from .timing import TemporalAmount, TimeUnit
+from .exceptions import TimeOfDayRequiredError
 
 Temporal = date | datetime
 
@@ -40,6 +41,12 @@ def add_amount(value: Temporal, amount: TemporalAmount, multiplier: int = 1) -> 
     count = amount.value * multiplier
     if amount.unit in (TimeUnit.MINUTE, TimeUnit.HOUR):
         delta = timedelta(minutes=count) if amount.unit == TimeUnit.MINUTE else timedelta(hours=count)
+        if not isinstance(value, datetime):
+            # A calendar date has no time of day. A whole number of days expressed in hours
+            # ("24 hours") is exact; anything else would silently drop or invent a time.
+            if delta % timedelta(days=1) != timedelta(0):
+                raise TimeOfDayRequiredError()
+            return value + delta
         if _is_aware(value):
             return (value.astimezone(timezone.utc) + delta).astimezone(value.tzinfo)
         return value + delta

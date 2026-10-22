@@ -1,8 +1,8 @@
 """The UCTSM capability catalog (P3-01).
 
-STATUS OF THE ROLE DEFAULTS BELOW: **PROPOSED, NOT OWNER-APPROVED.**
-P3-01 requires the role matrix to be reviewed by the product/clinical owner;
-that review has not happened. The defaults are deliberately narrower than the
+STATUS: **SELECTED_UNDER_OWNER_DELEGATION**, with no external clinical sign-off.
+The selected policy is recorded in docs/p1-p5-project-decisions.md. The defaults
+are deliberately narrower than the
 pre-P3 behaviour (where any organization member could do anything the tenant
 check allowed) and every sensitive clinical right - correcting, reviewing,
 approving or rejecting a schedule - has NO role default at all: it needs an
@@ -80,6 +80,10 @@ class Capability(StrEnum):
     # administration of grants themselves (organization administration, NOT a
     # clinical right: it cannot be used to grant oneself a clinical capability)
     GRANTS_MANAGE = "authorization.grants.manage"
+    #: P13-03: re-queue a dead-lettered outbox message. Operational, grant-only, never self-granted.
+    OUTBOX_REPLAY = "outbox.replay"
+    #: P11-03: promote a reconciled pilot cohort to plane authority, or roll it back. Grant-only.
+    COHORT_CUTOVER = "cohort.cutover"
 
 
 class Privacy(StrEnum):
@@ -178,6 +182,10 @@ CATALOG: dict[Capability, CapabilitySpec] = {spec.capability: spec for spec in (
                    description="Read the action dashboard (scoped to authorised trials)"),
     CapabilitySpec(Capability.DEMO_SEED, _roles(),
                    description="Seed demonstration data (also needs UCTSM_DEMO_MODE)"),
+    CapabilitySpec(Capability.OUTBOX_REPLAY, _roles(),
+                   description="Replay a dead-lettered outbox message (audited, reason required)"),
+    CapabilitySpec(Capability.COHORT_CUTOVER, _roles(), maker_checker=True,
+                   description="Promote a reconciled pilot cohort to UCTSM authority, or roll it back"),
     CapabilitySpec(Capability.GRANTS_MANAGE, _roles(), org_admin_default=True,
                    description="Manage capability grants within one's organization"),
 )}
@@ -219,7 +227,7 @@ RECIPIENT_ROLES: dict[Capability, frozenset[str]] = {
 #: Nobody may grant these to themselves (stricter self-grant rule): every clinical
 #: write/decision right plus identity review, authority/read-mode and parity sign-off.
 SELF_GRANT_PROTECTED = CLINICAL_DECISION_CAPABILITIES | PATIENT_CLINICAL_WRITE_CAPABILITIES | frozenset({
-    Capability.PROTOCOL_IDENTITY_REVIEW,
+    Capability.PROTOCOL_IDENTITY_REVIEW, Capability.OUTBOX_REPLAY, Capability.COHORT_CUTOVER,
 })
 
 #: Old / informal permission strings that already exist in stored users.

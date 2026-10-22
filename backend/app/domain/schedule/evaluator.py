@@ -15,7 +15,7 @@ from .dependency import (
 from .calendar_math import _is_aware, _normalise_wall_clock, add_amount  # noqa: F401 (re-exported)
 from .condition import TruthValue, evaluate_condition
 from .conditional import ConditionalPlan, EventActivation, build_conditional_plan
-from .exceptions import ScheduleNotApprovedError, UnsupportedTimingError
+from .exceptions import ScheduleNotApprovedError, TimeOfDayRequiredError, UnsupportedTimingError
 from .temporal_basis import effective_temporal_basis
 from .timing import TemporalBasis
 from .feasibility import (
@@ -434,6 +434,7 @@ def _apply_rolling_horizon(
     plan: ConditionalPlan,
     rolling: RollingHorizon | None,
     horizon: date,
+    today: date | None = None,
 ) -> tuple[list[EvaluatedEvent], list[RepeatSummary]]:
     """Doc 3 s7-s8: keep a bounded rolling set of upcoming occurrences.
 
@@ -457,7 +458,7 @@ def _apply_rolling_horizon(
             repeating.setdefault(code, next(
                 event for event in schedule.events if event.code == code))
 
-    as_of = (rolling.as_of if rolling and rolling.as_of else None) or date.today()
+    as_of = (rolling.as_of if rolling and rolling.as_of else None) or today or date.today()
     limit = rolling.upcoming_limit if rolling else None
 
     summaries: list[RepeatSummary] = []
@@ -1562,6 +1563,8 @@ def evaluate_activities(
         if activity.timing is not None:
             try:
                 timing = evaluate_timing(activity.timing, context, activity_scope=scope)
+            except TimeOfDayRequiredError as error:
+                explanation.update(reason=str(error), reason_code="TIME_OF_DAY_REQUIRED")
             except UnsupportedTimingError as error:
                 explanation["reason"] = str(error)
                 results.append(EvaluatedActivity(
@@ -1589,10 +1592,10 @@ def evaluate_activities(
             continue
         if activity.timing is not None and timing is None:
             waiting_on = _missing_activity_anchor(activity.timing)
-            explanation["reason"] = (
+            explanation.setdefault("reason", (
                 f"waiting for the actual time of {waiting_on}" if waiting_on
                 else "required anchor or event reference is not available"
-            )
+            ))
             if waiting_on:
                 explanation["waiting_for_activity"] = waiting_on
             results.append(EvaluatedActivity(
@@ -2162,7 +2165,7 @@ def _reindex(items: list[EvaluatedEvent], episode_index: int, condition_code: st
 
 
 class ScheduleEvaluator:
-    version = "uctsm-evaluator.v1"
+    version = "uctsm-evaluator.v3"
 
     def _evaluate_with_history(
         self,
@@ -2184,9 +2187,22 @@ class ScheduleEvaluator:
         Without history (every existing context) this is ``_evaluate_event``.
         """
         def once(ctx: PatientContext) -> list[EvaluatedEvent]:
-            results = self._evaluate_event(
-                event, ctx, prior, horizon, plan=plan, assignments=assignments,
-                cycle_plans=cycle_plans, run=run)
+            try:
+                results = self._evaluate_event(
+                    event, ctx, prior, horizon, plan=plan, assignments=assignments,
+                    cycle_plans=cycle_plans, run=run)
+            except TimeOfDayRequiredError as error:
+                # Includes intraday event windows and recurrence intervals,
+                # not just the first timing expression. Never publish a date
+                # obtained by flooring a missing clock to midnight.
+                results = [EvaluatedEvent(
+                    event_definition_id=event.id, event_code=event.code,
+                    status=PatientEventStatus.WAITING_FOR_ANCHOR,
+                    visit_mode=event.visit_mode, allowed_visit_modes=list(event.allowed_visit_modes),
+                    explanation={"rule": event.code, "reason": str(error),
+                                 "reason_code": "TIME_OF_DAY_REQUIRED", "required_precision": "DATETIME",
+                                 "timing": event.timing.model_dump(mode="json"),
+                                 "evidence_refs": [str(item) for item in event.evidence_refs]})]
             return self._episode_identity(event, plan, results)
 
         history_dimensions = {dimension for period in run.periods for dimension in period.values}
@@ -2246,15 +2262,27 @@ class ScheduleEvaluator:
         horizon: date,
         rolling: RollingHorizon | None = None,
         today: date | None = None,
+        compiled=None,
+        baseline=None,
     ) -> EvaluationResult:
         if schedule.schedule_metadata.status != ScheduleStatus.APPROVED:
             raise ScheduleNotApprovedError("patient schedules require an approved schedule version")
         if context.schedule_version_id != schedule.schedule_version_id:
             raise ValueError("patient context is pinned to a different schedule version")
-        blocking = ScheduleValidator.blocking(
-            ScheduleValidator().validate(schedule, evaluating_approved=True))
-        if blocking:
-            raise ValueError("approved schedule failed integrity validation")
+        if compiled is None:
+            blocking = ScheduleValidator.blocking(
+                ScheduleValidator().validate(schedule, evaluating_approved=True))
+            if blocking:
+                raise ValueError("approved schedule failed integrity validation")
+            event_order = topological_event_codes(schedule)
+        else:
+            compiled.verify_for(schedule, self.version)
+            event_order = compiled.event_order
+        from .incremental import plan_evaluation
+        execution_plan = plan_evaluation(schedule, context, baseline, horizon=horizon,
+            as_of=today or date.today(), evaluator_version=self.version, rolling=rolling)
+        reusable = ({row.event_code: row.model_copy(deep=True) for row in baseline.result.events}
+                    if baseline is not None and execution_plan.reused else {})
 
         events_by_code = {event.code: event for event in schedule.events}
         evaluated: list[EvaluatedEvent] = []
@@ -2291,8 +2319,32 @@ class ScheduleEvaluator:
         )
         run.open_series = _open_series(schedule, plan, cycle_plans, run.processes)
 
-        for code in topological_event_codes(schedule):
+        for code in event_order:
             event = events_by_code[code]
+            if code in execution_plan.reused:
+                item = reusable[code]
+                evaluated.append(item); results_by_code[code] = [item]
+                if item.timing and item.timing.nominal_start is not None:
+                    working_context.event_values[code] = [item.timing.nominal_start]
+                    run.planned_series[code] = {item.occurrence_index: item.timing.nominal_start}
+                continue
+            from .manual_handling import approved_manual
+            if approved_manual(event):
+                # The definition remains visible. Manual appointments/exceptions
+                # are separate operational facts, never generated protocol dates.
+                item = EvaluatedEvent(
+                    event_definition_id=event.id, event_code=event.code,
+                    status=PatientEventStatus.BLOCKED, timing=None,
+                    explanation={"rule_handling": "MANUAL_ONLY",
+                                 "reason": "The care team must arrange this visit manually."})
+                outcome = run.facts.outcome.get((event.code, 0))
+                if outcome is not None:
+                    item = item.model_copy(update={"status": PatientEventStatus.COMPLETED
+                        if outcome.kind == OccurrenceFactKind.PERFORMED else PatientEventStatus.MISSED})
+                item = annotate_occurrence(item, run.facts)
+                item = apply_track_overlays(event, [item], schedule, working_context)[0]
+                evaluated.append(item); results_by_code[code] = [item]
+                continue
             # P5-02: a MANUAL_REBASE moves the track anchor for this track only and
             # only for occurrences inside its effective period (stable-date rule).
             event_context = working_context
@@ -2333,8 +2385,9 @@ class ScheduleEvaluator:
                 # A cycle's Cycle 1 anchor may itself come from a visit just dated.
                 publish_cycle_anchors(cycle_plans, context, working_context, horizon)
         evaluated, repeat_summaries = _apply_rolling_horizon(
-            evaluated, schedule, plan, rolling, horizon)
+            evaluated, schedule, plan, rolling, horizon, today=today)
         return EvaluationResult(
+            evaluation_plan=execution_plan.as_dict(),
             repeat_summaries=repeat_summaries,
             schedule_version_id=schedule.schedule_version_id,
             patient_id=context.patient_id,

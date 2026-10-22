@@ -174,6 +174,41 @@ def _new_issue(code: str, message: str, *, entity_type: str | None, entity_id, *
                            details={**details, "origin": _ORIGIN})
 
 
+#: Wording that makes a footnote schedule-relevant. If ANY of it is present the model's "no effect"
+#: proposal is refused and the footnote stays pending a person: timing and counts, conditions,
+#: populations, required/optional status, cross references, or any numeric amount.
+_RELEVANT = re.compile(
+    r"\d|\b(before|after|prior|within|until|every|each|per|weekly|daily|monthly|annual\w*|day|days|week|weeks|"
+    r"month|months|year|years|hour|hours|window|visit window|baseline|screening|"
+    r"required|requires|require|must|mandatory|shall|only|except|unless|if|when|whenever|applicable|"
+    r"eligible|female|male|women|men|subjects? who|patients? who|"
+    r"see|refer|section|appendix|table|figure|schedule|repeat\w*|optional|not required|at least|no later|"
+    r"up to|maximum|minimum|first|last|final|then|following|preceding|continue\w*)\b", re.IGNORECASE)
+
+
+def schedule_relevant_wording(text: str) -> list[str]:
+    """The schedule-relevant words found in a footnote (empty = nothing that could be a rule)."""
+    return sorted({match.group(0).lower() for match in _RELEVANT.finditer(text or "")})
+
+
+def _no_effect(note: dict[str, Any]) -> tuple[bool, str]:
+    """Whether a footnote may be recorded as having no scheduling effect, and why / why not.
+
+    The model only PROPOSES it. It is accepted when the footnote text is verified on its page, the
+    model gave a reason, AND a deterministic screen finds no schedule-relevant wording. Anything
+    else stays pending interpretation - an unstated rule is never assumed absent."""
+    if note.get("proposed_effect") != "NONE":
+        return False, "the reader did not propose that it has no scheduling effect"
+    if note.get("verification") != "TEXT_MATCHED":
+        return False, "the footnote text could not be verified on its page"
+    if not note.get("proposed_effect_reason"):
+        return False, "no reason was given for treating it as having no effect"
+    found = schedule_relevant_wording(str(note.get("text") or ""))
+    if found:
+        return False, "it contains schedule-relevant wording (" + ", ".join(found[:6]) + ")"
+    return True, str(note["proposed_effect_reason"])
+
+
 def _footnotes(compiler, schedule: UniversalSchedule, accountability: dict[str, Any],
                statements: list[dict[str, Any]], relations: list[dict[str, Any]]) -> list[ValidationIssue]:
     """A schedule-table footnote is a statement too: it is interpreted by the
@@ -202,6 +237,13 @@ def _footnotes(compiler, schedule: UniversalSchedule, accountability: dict[str, 
             disposition, reason = dispositions[0], "the statements interpreting it are not compiled"
         else:
             disposition, reason = L.PENDING_INTERPRETATION, "no statement interprets this footnote"
+            accepted, why = _no_effect(note)
+            if accepted:
+                disposition = L.NO_SCHEDULING_EFFECT
+                reason = (f"read and recorded as having no scheduling effect: {why} "
+                          "(no timing, condition, population or requirement wording; a reviewer can reopen it)")
+            elif note.get("proposed_effect") == "NONE":
+                reason = f"no statement interprets this footnote; 'no effect' was proposed but refused: {why}"
         affected: list[str] = []
         columns: dict[str, set[str]] = {}
         if note.get("label"):
@@ -221,7 +263,9 @@ def _footnotes(compiler, schedule: UniversalSchedule, accountability: dict[str, 
             "operator": None, "duplicate_of": None, "rule_refs": [],
             "relations": [item for item in relations if item.get("subject") == note["statement_id"]],
             "unknown_fields": [], "issue_codes": [], "blocking_issue_codes": [],
-            "provenance": {"label": note.get("label"), "table": note.get("table"), "cell_statements": affected},
+            "provenance": {"label": note.get("label"), "table": note.get("table"), "cell_statements": affected,
+                           "found_by": note.get("source"), "proposed_effect": note.get("proposed_effect"),
+                           "proposed_effect_reason": note.get("proposed_effect_reason")},
             "raw_item": None,
         }
         statements.append(statement)

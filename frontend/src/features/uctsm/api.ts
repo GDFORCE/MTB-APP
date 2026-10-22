@@ -640,8 +640,9 @@ export async function approveReviewedTable(scheduleVersionId: string, reason: st
   return response.data;
 }
 
-export async function resolveExtractionIssue(versionId: string, issueId: string, reason: string) {
-  await api.post(`/uctsm/schedule-versions/${versionId}/extraction-issues/${issueId}/resolve`, { reason });
+export async function resolveExtractionIssue(versionId: string, issueId: string, reason: string, resolution?: "NO_SCHEDULING_EFFECT") {
+  await api.post(`/uctsm/schedule-versions/${versionId}/extraction-issues/${issueId}/resolve`,
+    resolution ? { reason, resolution } : { reason });
 }
 
 export type CanonicalScheduleIndex = {
@@ -665,6 +666,18 @@ export async function getReviewView(scheduleVersionId: string) {
   const response = await api.get<import("./visitSchedule").ReviewView>(
     `${root}/schedule-versions/${scheduleVersionId}/review-view`);
   return response.data;
+}
+
+export type PlaneReview = { schedule_version_id: string; revision: number; status: string;
+  content_hash: string | null; view: import("./visitSchedule").ReviewView };
+const planeReviewPath = (trialId: string, versionId: string) =>
+  `${root}/mongo-plane/trials/${encodeURIComponent(trialId)}/schedule-versions/${encodeURIComponent(versionId)}`;
+export async function getPlaneReview(trialId: string, versionId: string) {
+  return (await api.get<PlaneReview>(`${planeReviewPath(trialId, versionId)}/review-view`)).data;
+}
+export async function approvePlaneTable(trialId: string, versionId: string,
+  body: { expected_revision: number; reviewed_entire_table: true; reason: string }) {
+  return (await api.post<Omit<PlaneReview, "view">>(`${planeReviewPath(trialId, versionId)}/approve-table`, body)).data;
 }
 
 type ReviewWriteResult = {
@@ -794,6 +807,16 @@ export async function seedPilot() {
 
 // ------------------------------------------------------------------ P6 amendments
 const amendmentsOfTrial = (trialId: string) => `${root}/mongo-plane/trials/${trialId}/amendments`;
+export async function getRuleHandling(trialId: string, scheduleVersionId: string) {
+  return (await api.get<import("./manualRules").RuleView>(`${amendmentsOfTrial(trialId)}/rule-handling`,
+    { params: { schedule_version_id: scheduleVersionId } })).data;
+}
+export async function declareRuleHandling(trialId: string, body: Record<string, unknown>) {
+  return (await api.post(`${amendmentsOfTrial(trialId)}/rule-handling`, body)).data;
+}
+export async function approveRuleHandling(trialId: string, body: Record<string, unknown>) {
+  return (await api.post(`${amendmentsOfTrial(trialId)}/rule-handling/approve`, body)).data;
+}
 const amendmentsOfPatient = (trialId: string, patientId: string) =>
   `${plane(trialId, patientId)}/amendments`;
 
@@ -875,4 +898,69 @@ export async function seedPilotAmendment() {
     amendment_label: string; patients: { external_patient_id: string; patient_code: string }[];
   }>(`${root}/mongo-plane/pilot/seed-amendment`);
   return response.data;
+}
+
+
+/** P7-03: unresolved interpretations of one draft and their evidence-backed resolution. */
+const versionOfTrial = (trialId: string, versionId: string) =>
+  `${root}/mongo-plane/trials/${trialId}/schedule-versions/${versionId}`;
+export async function getConflicts(trialId: string, versionId: string) {
+  return (await api.get<{ conflicts: import("./conflicts").Conflict[] }>(`${versionOfTrial(trialId, versionId)}/conflicts`)).data;
+}
+export async function resolveConflict(trialId: string, versionId: string, eventId: string, body: Record<string, unknown>) {
+  return (await api.post(`${versionOfTrial(trialId, versionId)}/conflicts/${eventId}/resolve`, body)).data;
+}
+
+
+/** Details a clinic must enter for each patient: reviewed, extended and acknowledged before approval. */
+export async function getRequiredInputs(trialId: string, versionId: string) {
+  return (await api.get<import("./requiredInputs").RequiredInputsView>(`${versionOfTrial(trialId, versionId)}/required-inputs`)).data;
+}
+export async function addRequiredInput(trialId: string, versionId: string, body: Record<string, unknown>) {
+  return (await api.post(`${versionOfTrial(trialId, versionId)}/required-inputs/custom`, body)).data;
+}
+export async function removeRequiredInput(trialId: string, versionId: string, code: string, body: Record<string, unknown>) {
+  return (await api.post(`${versionOfTrial(trialId, versionId)}/required-inputs/custom/${encodeURIComponent(code)}/remove`, body)).data;
+}
+export async function acknowledgeRequiredInputs(trialId: string, versionId: string, body: Record<string, unknown>) {
+  return (await api.post(`${versionOfTrial(trialId, versionId)}/required-inputs/acknowledge`, body)).data;
+}
+export async function getEnrolmentInputs(trialId: string, definitionId: string) {
+  return (await api.get<import("./requiredInputs").EnrolmentInputs>(
+    `${root}/mongo-plane/trials/${trialId}/enrolment-inputs`, { params: { schedule_definition_id: definitionId } })).data;
+}
+
+
+/** Operations of the Mongo plane (dead letters, pilot cohorts, reminder preferences, reports). */
+const plane_ = `${root}/mongo-plane`;
+export async function listDeadLetters() {
+  return (await api.get<{ messages: { id: string; event_type: string; aggregate_type: string; attempts: number;
+    last_error_code: string | null; created_at: string }[] }>(`${plane_}/operations/dead-letters`)).data;
+}
+export async function replayDeadLetter(id: string, body: { reason: string }) {
+  return (await api.post(`${plane_}/operations/dead-letters/${id}/replay`, body)).data;
+}
+export async function createCohort(trialId: string, body: Record<string, unknown>) {
+  return (await api.post<{ id: string; name: string; state: string }>(`${plane_}/trials/${trialId}/cohorts`, body)).data;
+}
+export async function getCohortReadiness(trialId: string, cohortId: string) {
+  return (await api.get<import("./operations").Readiness>(`${plane_}/trials/${trialId}/cohorts/${cohortId}/readiness`)).data;
+}
+export async function promoteCohort(trialId: string, cohortId: string, body: Record<string, unknown>) {
+  return (await api.post<{ id: string; name: string; state: string }>(`${plane_}/trials/${trialId}/cohorts/${cohortId}/promote`, body)).data;
+}
+export async function rollbackCohort(trialId: string, cohortId: string, body: Record<string, unknown>) {
+  return (await api.post<{ id: string; name: string; state: string }>(`${plane_}/trials/${trialId}/cohorts/${cohortId}/rollback`, body)).data;
+}
+export async function getNotificationPreferences(trialId: string, patientId: string) {
+  return (await api.get<{ preferences: null | { consent: "GRANTED" | "DECLINED" | "WITHDRAWN"; timezone: string; delivery_time: string;
+    lead_days: number; quiet_start: string | null; quiet_end: string | null } }>(
+    `${plane_}/trials/${trialId}/patients/${encodeURIComponent(patientId)}/notification-preferences`)).data;
+}
+export async function putNotificationPreferences(trialId: string, patientId: string, body: Record<string, unknown>) {
+  return (await api.put<{ consent: string; revision: number }>(
+    `${plane_}/trials/${trialId}/patients/${encodeURIComponent(patientId)}/notification-preferences`, body)).data;
+}
+export async function getScheduleReport(trialId: string) {
+  return (await api.get<import("./operations").ScheduleReport>(`${plane_}/trials/${trialId}/reports/schedule`)).data;
 }

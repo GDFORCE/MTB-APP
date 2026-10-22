@@ -12,7 +12,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .records import Record, utc_now
 
@@ -261,6 +261,15 @@ class PatientCommandRecord(Record):
     result_evaluation_id: UUID | None = None
     semantics_version: str = "patient-commands.v1"
 
+    @field_validator("command_type")
+    @classmethod
+    def _known_command_type(cls, value: str) -> str:
+        """The same closed set the Mongo validator enforces, so every store agrees (P14-05)."""
+        from app.domain.schedule.commands import CommandType
+        if value not in {item.value for item in CommandType}:
+            raise ValueError(f"unknown patient command type: {value}")
+        return value
+
 
 class AssignmentRecord(Record):
     """Append-only: which schedule version a patient was put on, and why."""
@@ -344,6 +353,7 @@ class CalendarEntry(Record):
     provisional: bool = False
     #: the last ledger command applying to this occurrence / its track (staff only)
     last_command_id: UUID | None = None
+    rule_handling: str | None = None
 
 
 class ScheduleChange(Record):

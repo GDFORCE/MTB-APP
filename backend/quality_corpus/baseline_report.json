@@ -1,0 +1,519 @@
+{
+  "clinical_release_qualified": false,
+  "component_coverage": {
+    "evidence": true,
+    "fields": true,
+    "identity": true,
+    "mappings": true,
+    "scenarios": true
+  },
+  "components": {
+    "synthetic-actual_relative": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-amendment": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      },
+      "mappings": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 5
+      }
+    },
+    "synthetic-branch": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-conflict": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-cycle": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-device": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-linear": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-multi_track": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-recurrence": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    },
+    "synthetic-unsupported": {
+      "evidence": {
+        "failures": [],
+        "fn": 0,
+        "fp": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "tp": 1
+      },
+      "identity": {
+        "actual": "MATCH",
+        "critical_false_accept": false,
+        "expected": "MATCH",
+        "match": true,
+        "missing": false
+      }
+    }
+  },
+  "config_hash": "9f57c2a394e40ae4d75f8c0ef7d9ce83bd06357e3810b52ec95891b56fd9725e",
+  "covered_constructs": [
+    "actual_relative",
+    "amendment",
+    "branch",
+    "conflict",
+    "cycle",
+    "device",
+    "linear",
+    "multi_track",
+    "recurrence",
+    "unsupported"
+  ],
+  "dataset_hash": "04d5d0446a980d5ec4ebe74e6a474444af98b11de85eda960f02fcb7594ee952",
+  "dataset_version": "engineering.2026-10-19.v1",
+  "decision": "PASS",
+  "eligible_records": 10,
+  "excluded": [],
+  "metrics": {
+    "synthetic-actual_relative": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-amendment": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-branch": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-conflict": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-cycle": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-device": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-linear": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-multi_track": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-recurrence": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    },
+    "synthetic-unsupported": {
+      "critical_false_positives": 0,
+      "f1": 1.0,
+      "failures": [],
+      "families": {
+        "timing": {
+          "fn": 0,
+          "fp": 0,
+          "tp": 1
+        }
+      },
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+    }
+  },
+  "missing_components": [],
+  "missing_constructs": [],
+  "mode": "engineering",
+  "prediction_hash": "8f786db68c42b9341859852b5ed8f48d4e97d6716889588469675b1a98da6ff0",
+  "reason_codes": [],
+  "scenarios": [
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "linear",
+      "input_hash": "48a60401a82ed45037a1a8f76f328f2379849562cd3c856d4401b8afcccf3332",
+      "output_hash": "44443010f6f2ad380f08837bfb207a316b1164372808532397e9055170e458ad",
+      "passed": true,
+      "record_id": "synthetic-linear",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "actual_relative",
+      "input_hash": "fda83be5086f12a37cbd149e38c130926c6896de11228d9be86ec968a4318544",
+      "output_hash": "21be13b4c61686e7061b989d67ebeefa68f6293bb8825cf99e23dbc640291c96",
+      "passed": true,
+      "record_id": "synthetic-actual_relative",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "failures": [],
+      "id": "actual_relative_sequence",
+      "kind": "SEQUENCE",
+      "passed": true,
+      "record_id": "synthetic-actual_relative",
+      "safety_critical": true,
+      "steps": 2,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "recurrence",
+      "input_hash": "2fd5a8103e32e3367bdf795fa5b4169f473896694d6daaf1f2631a05693fb896",
+      "output_hash": "44443010f6f2ad380f08837bfb207a316b1164372808532397e9055170e458ad",
+      "passed": true,
+      "record_id": "synthetic-recurrence",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "multi_track",
+      "input_hash": "f30bf2086f95732e002406839d48430439be401c094172a15997d802d2506681",
+      "output_hash": "44443010f6f2ad380f08837bfb207a316b1164372808532397e9055170e458ad",
+      "passed": true,
+      "record_id": "synthetic-multi_track",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "branch",
+      "input_hash": "fbd2b837411af83fc8d0432b7a557b6211613cc684b37c439b0ba073e0dac7d5",
+      "output_hash": "00eeb5b3cea1dcd93647fd2b2f50e16ddb5a29644835c51afed23abe685efb34",
+      "passed": true,
+      "record_id": "synthetic-branch",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "device",
+      "input_hash": "dd3a9521b2080118c179cac3ffc1ac781fecfd4a37d133837e7956f032a6c6b7",
+      "output_hash": "44443010f6f2ad380f08837bfb207a316b1164372808532397e9055170e458ad",
+      "passed": true,
+      "record_id": "synthetic-device",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "amendment",
+      "input_hash": "b6d17f1e3f4fde1433863ca881fb14bfcd184bf4736f36fd59999f5b60c2d58a",
+      "output_hash": "6c955e3a1274446f524536b945823213803980b58ef1cde96162b04685913066",
+      "passed": true,
+      "record_id": "synthetic-amendment",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "evaluator_version": "uctsm-evaluator.v2",
+      "failures": [],
+      "id": "cycle",
+      "input_hash": "fe5c2237058e7644475c4adb5ef379c19d8139c96f21daa7350adb8eea2bc0e8",
+      "output_hash": "629162b234c42290c89569c8df59f63b015e16c0f6cbc3a2595add486c73a526",
+      "passed": true,
+      "record_id": "synthetic-cycle",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "actual_blockers": [
+        "CONFLICTING_EVIDENCE"
+      ],
+      "expected_blockers": [
+        "CONFLICTING_EVIDENCE"
+      ],
+      "id": "conflict",
+      "passed": true,
+      "record_id": "synthetic-conflict",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    },
+    {
+      "actual_blockers": [
+        "UNSUPPORTED_OPERATOR"
+      ],
+      "expected_blockers": [
+        "UNSUPPORTED_OPERATOR"
+      ],
+      "id": "unsupported",
+      "passed": true,
+      "record_id": "synthetic-unsupported",
+      "safety_critical": true,
+      "unsafe_dates": 0
+    }
+  ],
+  "schema_version": "uctsm-quality.v1",
+  "sources_without_gold": [],
+  "unsafe_dates": 0,
+  "validator_version": "uctsm-validator.v2",
+  "versions": {
+    "provider": "NONE_ENGINEERING_ONLY",
+    "source": "constructed-pilot"
+  }
+}

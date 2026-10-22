@@ -14,7 +14,7 @@
     "test:uctsm-presentation": "node --experimental-strip-types --test tests/uctsm-presentation.test.ts",
     "check:actions": "node ./scripts/action-map-check.js",
     "test:uctsm-tabular-ui": "node --experimental-strip-types --test tests/uctsm-tabular-ui.test.ts",
-    "test:uctsm": "node --experimental-strip-types --test tests/uctsm-presentation.test.ts tests/uctsm-tabular-ui.test.ts tests/uctsm-event-types.test.ts tests/uctsm-review-surfaces.test.ts tests/uctsm-versions.test.ts tests/visit-timing.test.ts tests/uctsm-engine-states.test.ts tests/uctsm-engine-cycles.test.ts tests/uctsm-visit-schedule.test.ts tests/uctsm-patient-commands.test.ts tests/uctsm-command-controller.test.ts tests/uctsm-plane-schedule.test.ts tests/uctsm-amendments.test.ts",
+    "test:uctsm": "node --experimental-strip-types --test tests/uctsm-presentation.test.ts tests/uctsm-tabular-ui.test.ts tests/uctsm-event-types.test.ts tests/uctsm-review-surfaces.test.ts tests/uctsm-versions.test.ts tests/visit-timing.test.ts tests/uctsm-engine-states.test.ts tests/uctsm-engine-cycles.test.ts tests/uctsm-visit-schedule.test.ts tests/uctsm-patient-commands.test.ts tests/uctsm-command-controller.test.ts tests/uctsm-plane-schedule.test.ts tests/uctsm-amendments.test.ts tests/uctsm-manual-rules.test.ts tests/uctsm-conflicts.test.ts tests/uctsm-required-inputs.test.ts tests/uctsm-operations.test.ts",
     "test:uctsm-amendments": "node --experimental-strip-types --test tests/uctsm-amendments.test.ts",
     "typecheck:uctsm-amendments": "tsc -p tsconfig.uctsm-amendments.json",
     "test:uctsm-visit-schedule": "node --experimental-strip-types --test tests/uctsm-visit-schedule.test.ts",
@@ -25,7 +25,11 @@
     "test:uctsm-versions": "node --experimental-strip-types --test tests/uctsm-versions.test.ts",
     "test:uctsm-event-types": "node --experimental-strip-types --test tests/uctsm-event-types.test.ts",
     "test:uctsm-review": "node --experimental-strip-types --test tests/uctsm-review-surfaces.test.ts",
-    "test:remote-audit": "node --experimental-strip-types --test tests/remote-audit-capture.test.ts tests/remote-audit-documents.test.ts tests/remote-audit-queries.test.ts tests/remote-audit-scoring.test.ts"
+    "test:remote-audit": "node --experimental-strip-types --test tests/remote-audit-capture.test.ts tests/remote-audit-documents.test.ts tests/remote-audit-queries.test.ts tests/remote-audit-scoring.test.ts",
+    "test:uctsm-manual-rules": "node --experimental-strip-types --test tests/uctsm-manual-rules.test.ts",
+    "test:uctsm-conflicts": "node --experimental-strip-types --test tests/uctsm-conflicts.test.ts",
+    "test:uctsm-required-inputs": "node --experimental-strip-types --test tests/uctsm-required-inputs.test.ts",
+    "test:uctsm-operations": "node --experimental-strip-types --test tests/uctsm-operations.test.ts"
   },
   "dependencies": {
     "@expo/metro-runtime": "6.1.2",

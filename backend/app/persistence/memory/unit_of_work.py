@@ -13,6 +13,7 @@ from app.application.amendments import (
     AmendmentSimulationRecord,
     MappingDecisionRecord,
 )
+from app.application.archive_records import ArchiveRefusedError, EvaluationArchivedError
 from app.application.authoring import (
     FROZEN_STATUSES,
     ExtractionRunRecord,
@@ -54,6 +55,9 @@ from .amendment_repository import InMemoryAmendmentRepository
 T = TypeVar("T")
 
 
+from app.observability.correlation import stamp as _stamp  # noqa: E402
+
+
 class _Store:
     def __init__(self) -> None:
         self.audit: dict[UUID, AuditRecord] = {}
@@ -64,6 +68,7 @@ class _Store:
         self.runs: dict[UUID, ExtractionRunRecord] = {}
         # schedule version aggregate, kept as the shared stored shape
         self.versions: dict[UUID, dict[str, Any]] = {}
+        self.compiled: dict[tuple[UUID, str], Any] = {}
         self.decisions: list[ReviewDecisionRecord] = []
         # patient plane
         self.patients: dict[UUID, PatientRecord] = {}
@@ -76,6 +81,13 @@ class _Store:
         self.evaluations: dict[UUID, EvaluationRecord] = {}
         self.events: dict[UUID, list[PatientEventRecord]] = {}
         self.confinements: dict[UUID, list[ConfinementEpisodeRecord]] = {}
+        self.archives: dict = {}
+        self.inbox: dict = {}
+        self.migration_runs: dict = {}
+        self.cohorts: dict = {}
+        self.reminder_prefs: dict = {}
+        self.reminder_notices: dict = {}
+        self.migration_mappings: dict = {}
         self.pointers: dict[tuple[UUID, UUID], PatientScheduleRecord] = {}
         self.receipts: list[CommandReceiptRecord] = []
         self.patient_commands: list[PatientCommandRecord] = []
@@ -102,7 +114,9 @@ class InMemoryAuditRepository:
     def append(self, record: AuditRecord) -> None:
         if record.id in self._store.audit:
             raise DuplicateRecordError(f"audit event {record.id} already exists", key=str(record.id))
-        self._store.audit[record.id] = record.model_copy(deep=True)
+        stored = record.model_copy(deep=True)
+        stored.metadata = _stamp(stored.metadata)
+        self._store.audit[record.id] = stored
 
     def list_for_entity(
         self, organization_id: UUID, entity_type: str, entity_id: UUID, *, limit: int = 500,
@@ -298,6 +312,17 @@ class InMemoryAuthoringRepository:
 
 
 class InMemoryScheduleVersionRepository:
+    def get_compiled(self, schedule_version_id, cache_key):
+        row = self._s.compiled.get((schedule_version_id, cache_key))
+        return row.model_copy(deep=True) if row else None
+
+    def save_compiled(self, schedule_version_id, compiled):
+        header = self.get_header(schedule_version_id)
+        if header.status not in FROZEN_STATUSES:
+            raise ValueError("only approved versions have compiled artifacts")
+        compiled.verify_for(self.get(schedule_version_id), compiled.evaluator_version)
+        self._s.compiled.setdefault((schedule_version_id, compiled.cache_key), compiled.model_copy(deep=True))
+
     def __init__(self, store: _Store):
         self._s = store
 
@@ -826,14 +851,39 @@ class InMemoryEvaluationRepository:
         return (item.nominal_start_date is not None, item.nominal_start_date or date.min,
                 item.occurrence_index, item.event_code, str(item.id))
 
+    def _guard_archived(self, evaluation_id: UUID) -> None:
+        row = self._s.archives.get(evaluation_id)
+        if row is not None and row.state == "ARCHIVED":
+            raise EvaluationArchivedError("the evaluation's projections are archived; restore them first")
+
     def list_events(self, evaluation_id: UUID) -> list[PatientEventRecord]:
         rows = sorted(self._s.events.get(evaluation_id, []), key=self._order)
+        if not rows:
+            self._guard_archived(evaluation_id)
         return [item.model_copy(deep=True) for item in rows]
 
     def list_confinements(self, evaluation_id: UUID) -> list[ConfinementEpisodeRecord]:
         rows = sorted(self._s.confinements.get(evaluation_id, []),
                       key=lambda item: (item.episode_code, str(item.id)))
+        if not rows:
+            self._guard_archived(evaluation_id)
         return [item.model_copy(deep=True) for item in rows]
+
+    def purge_projections(self, evaluation_id: UUID) -> None:
+        evaluation = self._s.evaluations.get(evaluation_id)
+        if evaluation is None:
+            raise RecordNotFoundError("evaluation not found")
+        pointer = self._s.pointers.get((evaluation.patient_id, evaluation.schedule_version_id))
+        if pointer is not None and pointer.current_evaluation_id == evaluation_id:
+            raise ArchiveRefusedError("the current evaluation's projections are never purged")
+        self._s.events[evaluation_id] = []
+        self._s.confinements[evaluation_id] = []
+
+    def restore_projections(self, evaluation_id, events, confinements) -> None:
+        if self._s.events.get(evaluation_id) or self._s.confinements.get(evaluation_id):
+            raise DuplicateRecordError("projections already exist", key=str(evaluation_id))
+        self._s.events[evaluation_id] = [item.model_copy(deep=True) for item in events]
+        self._s.confinements[evaluation_id] = [item.model_copy(deep=True) for item in confinements]
 
     def supersede_active_pointers(self, patient_id: UUID) -> int:
         changed = 0
@@ -848,6 +898,18 @@ class InMemoryEvaluationRepository:
                 if item.patient_id == patient_id and item.schedule_version_id == schedule_version_id]
         rows.sort(key=lambda item: (item.sequence, item.evaluated_at))
         return [item.model_copy(deep=True) for item in rows]
+
+
+class InMemoryArchiveRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def get(self, evaluation_id: UUID):
+        row = self._s.archives.get(evaluation_id)
+        return row.model_copy(deep=True) if row else None
+
+    def save(self, record) -> None:
+        self._s.archives[record.evaluation_id] = record.model_copy(deep=True)
 
 
 class InMemoryImpactRepository:
@@ -976,12 +1038,199 @@ class InMemoryOutboxRepository:
     def add(self, record: OutboxRecord) -> None:
         if any(row.dedupe_key == record.dedupe_key for row in self._s.outbox):
             raise DuplicateRecordError("outbox record already exists", key=record.dedupe_key)
-        self._s.outbox.append(record.model_copy(deep=True))
+        stored = record.model_copy(deep=True)
+        stored.payload = _stamp(stored.payload)
+        self._s.outbox.append(stored)
 
     def list_pending(self, *, limit: int = 100):
         rows = sorted((row for row in self._s.outbox if row.status == "PENDING"),
                       key=lambda row: (row.created_at, str(row.id)))
         return [row.model_copy(deep=True) for row in rows[:limit]]
+
+    def claim(self, *, now, lease_seconds, token):
+        from datetime import timedelta
+
+        rows = sorted(self._s.outbox, key=lambda row: (row.created_at, str(row.id)))
+        for row in rows:
+            due = row.status == "PENDING" and (row.available_at is None or row.available_at <= now)
+            expired = row.status == "PROCESSING" and row.lease_expires_at is not None and row.lease_expires_at <= now
+            if expired and row.attempts >= row.max_attempts:
+                row.status = "DEAD"; row.lease_token = None; row.lease_expires_at = None
+                row.last_error_code = "LEASE_RETRY_LIMIT"
+                continue
+            if (due or expired) and row.attempts < row.max_attempts:
+                row.status = "PROCESSING"; row.attempts += 1
+                row.lease_token = token; row.lease_expires_at = now + timedelta(seconds=lease_seconds)
+                return row.model_copy(deep=True)
+        return None
+
+    def settle(self, organization_id, record_id, token, *, now, status,
+               available_at=None, error_code=None):
+        if status not in {"SENT", "PENDING", "DEAD"}:
+            raise ValueError("invalid outbox settlement")
+        row = next((row for row in self._s.outbox if row.id == record_id
+                    and row.organization_id == organization_id), None)
+        if (row is None or row.status != "PROCESSING" or row.lease_token != token
+                or row.lease_expires_at is None or row.lease_expires_at <= now):
+            raise StaleRevisionError("the outbox delivery lease was lost")
+        row.status = status; row.available_at = available_at; row.last_error_code = error_code
+        row.lease_token = None; row.lease_expires_at = None
+
+    def get(self, organization_id, record_id):
+        row = next((row for row in self._s.outbox if row.id == record_id
+                    and row.organization_id == organization_id), None)
+        return row.model_copy(deep=True) if row else None
+
+    def count_by_status(self):
+        counts: dict[str, int] = {}
+        for row in self._s.outbox:
+            counts[row.status] = counts.get(row.status, 0) + 1
+        return counts
+
+    def list_dead(self, organization_id, *, limit=100):
+        rows = sorted((row for row in self._s.outbox
+                       if row.organization_id == organization_id and row.status == "DEAD"),
+                      key=lambda row: (row.created_at, str(row.id)))
+        return [row.model_copy(deep=True) for row in rows[:max(0, min(limit, 1000))]]
+
+    def requeue_dead(self, organization_id, record_id, *, now):
+        row = next((row for row in self._s.outbox if row.id == record_id
+                    and row.organization_id == organization_id and row.status == "DEAD"), None)
+        if row is None:
+            raise RecordNotFoundError("no dead-lettered message")
+        row.status = "PENDING"; row.attempts = 0; row.available_at = now
+        row.last_error_code = None; row.lease_token = None; row.lease_expires_at = None
+        return row.model_copy(deep=True)
+
+
+class InMemoryMigrationRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def get_run(self, organization_id, run_key):
+        row = self._s.migration_runs.get((organization_id, run_key))
+        return row.model_copy(deep=True) if row else None
+
+    def save_run(self, record) -> None:
+        key = (record.organization_id, record.run_key)
+        previous = self._s.migration_runs.get(key)
+        self._s.migration_runs[key] = record.model_copy(deep=True, update={"id": previous.id if previous else record.id})
+
+    def get_mapping(self, organization_id, source_system, source_id):
+        row = self._s.migration_mappings.get((organization_id, source_system, source_id))
+        return row.model_copy(deep=True) if row else None
+
+    def save_mapping(self, record) -> None:
+        key = (record.organization_id, record.source_system, record.source_id)
+        previous = self._s.migration_mappings.get(key)
+        self._s.migration_mappings[key] = record.model_copy(
+            deep=True, update={"id": previous.id if previous else record.id})
+
+    def list_mappings(self, organization_id, source_system):
+        rows = [row for (org, system, _), row in self._s.migration_mappings.items()
+                if org == organization_id and system == source_system]
+        return [row.model_copy(deep=True) for row in sorted(rows, key=lambda item: item.source_id)]
+
+
+class InMemoryCohortRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def add(self, record) -> None:
+        if any(row.organization_id == record.organization_id and row.trial_id == record.trial_id
+               and row.name == record.name for row in self._s.cohorts.values()):
+            raise DuplicateRecordError("cohort name already used", key=record.name)
+        self._s.cohorts[record.id] = record.model_copy(deep=True)
+
+    def get(self, organization_id, cohort_id):
+        row = self._s.cohorts.get(cohort_id)
+        if row is None or row.organization_id != organization_id:
+            raise RecordNotFoundError("cohort not found")
+        return row.model_copy(deep=True)
+
+    def save(self, record, *, expected_revision):
+        row = self._s.cohorts.get(record.id)
+        if row is None or row.organization_id != record.organization_id:
+            raise RecordNotFoundError("cohort not found")
+        if row.revision != expected_revision:
+            raise StaleRevisionError("the cohort changed since it was read")
+        stored = record.model_copy(deep=True, update={"revision": expected_revision + 1})
+        self._s.cohorts[record.id] = stored
+        return stored.model_copy(deep=True)
+
+    def list_for_trial(self, organization_id, trial_id):
+        rows = [row for row in self._s.cohorts.values()
+                if row.organization_id == organization_id and row.trial_id == trial_id]
+        return [row.model_copy(deep=True) for row in sorted(rows, key=lambda item: item.name)]
+
+    def find_blocking_membership(self, external_patient_id):
+        for row in self._s.cohorts.values():
+            if row.state == "PILOT" and any(m.external_patient_id == external_patient_id for m in row.members):
+                return row.model_copy(deep=True)
+        return None
+
+
+class InMemoryReminderRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def get_preferences(self, organization_id, patient_id):
+        row = self._s.reminder_prefs.get((organization_id, patient_id))
+        return row.model_copy(deep=True) if row else None
+
+    def save_preferences(self, record, *, expected_revision):
+        key = (record.organization_id, record.patient_id)
+        current = self._s.reminder_prefs.get(key)
+        if expected_revision is None:
+            if current is not None:
+                raise DuplicateRecordError("preferences already exist", key=str(record.patient_id))
+            stored = record.model_copy(deep=True, update={"revision": 1})
+        else:
+            if current is None or current.revision != expected_revision:
+                raise StaleRevisionError("the preferences changed since they were read")
+            stored = record.model_copy(deep=True, update={"id": current.id, "revision": expected_revision + 1})
+        self._s.reminder_prefs[key] = stored
+        return stored.model_copy(deep=True)
+
+    def list_granted(self, *, after, limit):
+        rows = sorted((row for row in self._s.reminder_prefs.values() if row.consent == "GRANTED"
+                       and (after is None or str(row.patient_id) > str(after))), key=lambda row: str(row.patient_id))
+        return [row.model_copy(deep=True) for row in rows[:max(0, min(limit, 1000))]]
+
+    def _active(self, organization_id, patient_id, reminder_key=None):
+        return [row for row in self._s.reminder_notices.values()
+                if row.organization_id == organization_id and row.patient_id == patient_id
+                and row.state == "ACTIVE" and (reminder_key is None or row.reminder_key == reminder_key)]
+
+    def list_active(self, organization_id, patient_id):
+        rows = self._active(organization_id, patient_id)
+        return [row.model_copy(deep=True) for row in sorted(rows, key=lambda item: item.reminder_key)]
+
+    def add_notice(self, record) -> None:
+        if record.state == "ACTIVE" and self._active(record.organization_id, record.patient_id, record.reminder_key):
+            raise DuplicateRecordError("reminder already exists", key=record.reminder_key)
+        self._s.reminder_notices[record.id] = record.model_copy(deep=True)
+
+    def withdraw(self, organization_id, patient_id, reminder_key, *, reason, at):
+        rows = self._active(organization_id, patient_id, reminder_key)
+        if not rows:
+            raise RecordNotFoundError("no active reminder")
+        rows[0].state, rows[0].withdrawn_at, rows[0].withdrawn_reason = "WITHDRAWN", at, reason
+
+
+class InMemoryInboxRepository:
+    def __init__(self, store: _Store):
+        self._s = store
+
+    def find(self, consumer, dedupe_key):
+        row = self._s.inbox.get((consumer, dedupe_key))
+        return row.model_copy(deep=True) if row else None
+
+    def add(self, record) -> None:
+        key = (record.consumer, record.dedupe_key)
+        if key in self._s.inbox:
+            raise DuplicateRecordError("inbox record already exists", key=record.dedupe_key)
+        self._s.inbox[key] = record.model_copy(deep=True)
 
 
 class InMemoryUnitOfWork:
@@ -1001,6 +1250,11 @@ class InMemoryUnitOfWork:
         self.parity = InMemoryParityRepository(self._store)
         self.outbox = InMemoryOutboxRepository(self._store)
         self.amendments = InMemoryAmendmentRepository(self._store)
+        self.archives = InMemoryArchiveRepository(self._store)
+        self.inbox = InMemoryInboxRepository(self._store)
+        self.migrations = InMemoryMigrationRepository(self._store)
+        self.cohorts = InMemoryCohortRepository(self._store)
+        self.reminders = InMemoryReminderRepository(self._store)
 
     def run(self, fn: Callable[["InMemoryUnitOfWork"], T]) -> T:
         snapshot = copy.deepcopy(self._store.__dict__)

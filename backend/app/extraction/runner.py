@@ -17,6 +17,8 @@ reason.
 from __future__ import annotations
 
 import logging
+import asyncio
+from contextlib import suppress
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -144,6 +146,8 @@ def build_accountability(document: DocumentFacts, compiled: dict[str, Any] | Non
         },
         "coverage": coverage,
         "statements": statements,
+        #: facts the model first returned malformed and then corrected on request (original + error)
+        "repaired_statements": source.get("repaired_items") or [],
         "relations": compiled.get("relations") or [],
         "anchors": {
             "canonical": reconciliation.get("canonical_anchors") or [],
@@ -239,15 +243,20 @@ async def execute_run(session: Session, run_id: UUID) -> list[UUID] | None:
     if version is None:
         raise KeyError("protocol version not found")
 
+    claimed = False
     try:
+        # Claim in a short transaction before I/O. A duplicate that cannot
+        # start owns nothing and must never fail another worker's run.
+        service = ExtractionService(session)
+        service.start(run_id)
+        session.commit()
+        claimed = True
         pages, pdf_bytes = await load_pages(version.document_uri)
         protocol = session.get(db.Protocol, version.protocol_id)
         await _clear_identity(
             organization_id=run.organization_id, version=version, pages=pages,
             pdf_bytes=pdf_bytes, document_hash=run.document_hash,
             expected=[protocol.protocol_number] if protocol is not None else [])
-        service = ExtractionService(session)
-        service.start(run_id)
         # Engines make blocking model calls; keep them off the event loop.
         results = await run_in_threadpool(
             extract_schedules, pages, pdf_bytes=pdf_bytes,
@@ -260,14 +269,16 @@ async def execute_run(session: Session, run_id: UUID) -> list[UUID] | None:
         return version_ids
     except (ExtractionModelError, Exception) as error:  # noqa: BLE001
         session.rollback()
+        if not claimed:
+            return None
         failed = session.get(db.ExtractionRun, run_id, with_for_update=True)
-        if failed is not None and failed.status not in {"COMPLETED"}:
+        if failed is not None and failed.status == "RUNNING":
             failed.status = "FAILED"
             failed.error_details = {
                 "type": type(error).__name__, "message": str(error)[:2000],
             }
             session.commit()
-        log.exception("extraction run %s failed", run_id)
+        log.error("extraction run failed: run_id=%s error_type=%s", run_id, type(error).__name__)
         return None
 
 
@@ -279,7 +290,9 @@ async def execute_run_on_ports(uow: "UnitOfWork", run_id: UUID) -> list[UUID] | 
     happens with no transaction, and completion commits all drafts together.
     Failures are recorded on the run rather than raised.
     """
-    from app.application.extraction import ExtractionService as PortExtraction
+    from app.application.extraction import (
+        ExtractionClaimLostError, ExtractionClaimUnavailableError, ExtractionService as PortExtraction,
+    )
 
     service = PortExtraction(uow)
     try:
@@ -292,6 +305,17 @@ async def execute_run_on_ports(uow: "UnitOfWork", run_id: UUID) -> list[UUID] | 
         raise KeyError("protocol version not found") from error
 
     try:
+        claimed = service.start(run_id)
+    except ExtractionClaimUnavailableError:
+        return None
+
+    async def heartbeat():
+        while True:
+            await asyncio.sleep(30)
+            await run_in_threadpool(service.renew, run_id, claimed.lease_token)
+
+    renewal = asyncio.create_task(heartbeat())
+    try:
         pages, pdf_bytes = await load_pages(version.document_uri)
         try:
             protocol = uow.read(lambda tx: tx.authoring.get_protocol(version.protocol_id))
@@ -301,15 +325,28 @@ async def execute_run_on_ports(uow: "UnitOfWork", run_id: UUID) -> list[UUID] | 
         await _clear_identity(
             organization_id=run.organization_id, version=version, pages=pages,
             pdf_bytes=pdf_bytes, document_hash=run.document_hash, expected=expected)
-        service.start(run_id)
         results = await run_in_threadpool(
             extract_schedules, pages, pdf_bytes=pdf_bytes,
             document_hash=run.document_hash,
             schedule_name=version.document_name or "Schedule of Assessments",
             artifacts=storage_artifacts(),
         )
-        return service.complete_many(run_id, results)
-    except (ExtractionModelError, Exception) as error:  # noqa: BLE001
-        service.fail(run_id, error)
-        log.exception("extraction run %s failed", run_id)
+        if renewal.done():
+            renewal.result()
+        return service.complete_many(run_id, results, claim_token=claimed.lease_token)
+    except ExtractionClaimLostError:
         return None
+    except (ExtractionModelError, Exception) as error:  # noqa: BLE001
+        try:
+            service.fail(run_id, error, claim_token=claimed.lease_token)
+        except ExtractionClaimLostError:
+            return None
+        log.error("extraction run failed: run_id=%s attempt=%s error_type=%s",
+                  run_id, claimed.attempt_number, type(error).__name__)
+        return None
+    finally:
+        renewal.cancel()
+        # A completed heartbeat failure was handled above. Cleanup must not
+        # raise it again and obscure the recorded outcome.
+        with suppress(asyncio.CancelledError, Exception):
+            await renewal

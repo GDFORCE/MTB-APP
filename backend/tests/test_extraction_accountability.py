@@ -98,6 +98,8 @@ class Scripted:
         self.calls.append(prompt)
         if "return one JSON object" in prompt:
             return json.dumps(self.metadata)
+        if "could not be read by the schedule model" in prompt:
+            return json.dumps({"facts": []})       # a correction round: this scripted model corrects nothing
         self.facts_calls += 1
         if self.facts_calls in self.fail_on:
             raise ExtractionModelError("model request failed: timeout")

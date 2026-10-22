@@ -1,0 +1,19 @@
+# Routing and escalation (P13-02). First matching route wins; the last route is the catch-all
+# so an alert with an unknown severity or owner is never silently dropped.
+receivers:
+  platform-pager: {channel: pager, escalate_after_minutes: 15, then: engineering-manager}
+  platform-ticket: {channel: ticket-queue, escalate_after_minutes: 1440, then: platform-pager}
+  migration-pager: {channel: pager, escalate_after_minutes: 10, then: engineering-manager}
+  engineering-manager: {channel: pager, escalate_after_minutes: 0, then: null}
+routes:
+  - match: {owner: migration-lead, severity: page}
+    receiver: migration-pager
+  - match: {owner: platform-oncall, severity: page}
+    receiver: platform-pager
+  - match: {owner: platform-oncall, severity: ticket}
+    receiver: platform-ticket
+  - match: {}
+    receiver: platform-pager
+synthetic_checks:
+  - {name: live, path: /health/live, expect_status: 200, interval_seconds: 60}
+  - {name: ready, path: /health/ready, expect_status: 200, interval_seconds: 60}

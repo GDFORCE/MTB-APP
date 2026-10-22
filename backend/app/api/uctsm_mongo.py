@@ -24,19 +24,20 @@ from datetime import date
 from typing import Annotated, Any, Callable, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.uctsm import _identity
+from app.api.uctsm_shared import _identity
 from app.authorization.guard import RouteAuthorizer
 from app.application.errors import (
     IdempotencyConflictError, ScheduleVersionChangedError, StaleRevisionError,
 )
 from app.application.authority import PlaneAuthorityError
 from app.application.patient_commands import (
-    CommandImpact, CommandOutcome, CommandRefusedError, PatientCommandService,
+    CommandImpact, CommandOutcome, CommandRefusedError,
 )
-from app.application.patient_schedule import PatientScheduleService
+from app.application.patient_boundary import PatientScheduleBoundary
 from app.authorization.catalog import Capability
 from app.authorization.policy import ResourceContext
 from app.domain.schedule.commands import CommandPayload, CommandType, FACT_COMMANDS
@@ -104,6 +105,9 @@ class ActualOccurrenceOut(BaseModel):
 
 
 class CalendarOut(BaseModel):
+    projection_version: str = "uctsm-projection.v1"
+    evaluation_id: UUID | None = None
+    revision: int | None = None
     patient_id: UUID
     trial_id: UUID
     #: which store is authoritative for this patient's schedule (None = unclassified)
@@ -166,9 +170,9 @@ def create_uctsm_mongo_router(
     ):
         actor_id, organization_id = _identity(user)
         patient = resolve(uow, organization_id, trial_id, external_patient_id)
-        service = PatientScheduleService(uow)
+        service = PatientScheduleBoundary(uow)
         try:
-            outcome = service.record_actual_occurrence(
+            outcome = service.record_occurrence(
                 patient.id, organization_id=organization_id, logical_key=body.logical_key,
                 kind=OccurrenceFactKind(body.kind), visit_date=body.visit_date,
                 treatment_date=body.treatment_date, effective_at=body.effective_at,
@@ -184,7 +188,7 @@ def create_uctsm_mongo_router(
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         calendar = for_role(
-            service.current_calendar(patient.id, organization_id=organization_id), user)
+            service.calendar(patient.id, organization_id=organization_id), user)
         fresh = uow.read(lambda tx: tx.patients.get(organization_id, patient.id))
         return ActualOccurrenceOut(
             patient_id=patient.id, trial_id=trial_id,
@@ -232,7 +236,7 @@ def create_uctsm_mongo_router(
         except (ValidationError, TypeError, ValueError) as error:
             raise HTTPException(422, f"invalid command: {error}") from error
         try:
-            result = PatientCommandService(uow).preview(
+            result = PatientScheduleBoundary(uow).preview_command(
                 patient.id, organization_id=organization_id, actor_id=actor_id, payload=payload,
                 effective_at=effective_at, reason=str(envelope["reason"] or ""),
                 authority=envelope["authority"], horizon=horizon)
@@ -276,7 +280,7 @@ def create_uctsm_mongo_router(
         # re-checked on EVERY confirm, replays included
         authorise_proposal(uow, user, organization_id, proposal_id, patient.id)
         try:
-            outcome = PatientCommandService(uow).confirm(
+            outcome = PatientScheduleBoundary(uow).confirm_command(
                 proposal_id, organization_id=organization_id, actor_id=actor_id,
                 idempotency_key=idempotency_key, reason=body.reason if body else None)
             if not is_staff(user):
@@ -292,7 +296,7 @@ def create_uctsm_mongo_router(
         patient = resolve(uow, organization_id, trial_id, external_patient_id)
         authorise_proposal(uow, user, organization_id, proposal_id, patient.id)
         try:
-            row = PatientCommandService(uow).cancel(
+            row = PatientScheduleBoundary(uow).cancel_command(
                 proposal_id, organization_id=organization_id, actor_id=actor_id,
                 reason=body.reason or "cancelled")
         except Exception as error:      # noqa: BLE001
@@ -421,10 +425,51 @@ def create_uctsm_mongo_router(
         patient = resolve(uow, organization_id, trial_id, external_patient_id)
         profile = "STAFF" if is_staff(user) else "RESTRICTED"
         return {"patient_id": str(patient.id), "profile": profile,
-                "commands": PatientCommandService(uow).ledger(
+                "commands": PatientScheduleBoundary(uow).command_history(
                     patient.id, organization_id=organization_id, profile=profile)}
 
     staff_roles = {"pi", "crc", "smo", "site"}
+
+    @router.get(f"/trials/{{trial_id}}/reports/schedule", response_model=None)
+    async def schedule_report(trial_id: UUID, user: User, uow: Uow, cursor: str | None = None,
+                              limit: int = 25, format: Literal["json", "csv"] = "json"):
+        """P10-05: targets, windows, actuals, deviations, versions, commands and amendment state for the
+        patients the caller may see, from the committed projection. Patients never use this route."""
+        from app.application.schedule_report import SPONSOR, STAFF, ScheduleReportService, to_csv
+        if limit < 1 or limit > 100:
+            raise HTTPException(422, "limit must be between 1 and 100")
+        role = str(getattr(user["_authz"].principal, "role", "") or "").lower()
+        if role == "patient":
+            raise HTTPException(403, "You do not have permission to perform this action.")
+        profile = STAFF if role in staff_roles else SPONSOR
+        _, organization_id = _identity(user)
+        service = ScheduleReportService(uow)
+        reports, position, exhausted = [], cursor, False
+        while len(reports) < limit:
+            batch = uow.read(lambda tx: tx.patients.list_page_for_trial(
+                organization_id, trial_id, after_code=position, limit=limit))
+            if not batch:
+                exhausted = True
+                break
+            for row in batch:
+                position = row.patient_code
+                if row.external_patient_id and await authorizer.access.can_access_patient(user, row.external_patient_id):
+                    reports.append(service.patient_report(organization_id, trial_id, row, profile=profile))
+                if len(reports) >= limit:
+                    break
+            if len(batch) < limit and len(reports) < limit:
+                exhausted = True
+                break
+        next_cursor = None if exhausted else position
+        if format == "csv":
+            rows = [row for report in reports for row in report["rows"]]
+            body = to_csv(rows, profile=profile, provenance={
+                "projection_version": reports[0]["projection_version"] if reports else "none",
+                "profile": profile, "patients": str(len(reports)), "next_cursor": next_cursor or ""})
+            return Response(body, media_type="text/csv; charset=utf-8",
+                            headers={"Cache-Control": "private, no-store"})
+        return {"trial_id": str(trial_id), "profile": profile, "patients": reports,
+                "next_cursor": next_cursor, "limit": limit}
 
     def for_role(calendar: list[CalendarEntry], user: dict) -> list[CalendarEntry]:
         """Authority, reasons and command identity are treating-staff detail: a
@@ -438,20 +483,66 @@ def create_uctsm_mongo_router(
                   "track_rebase_policy": None}
         return [entry.model_copy(update=hidden) for entry in calendar]
 
-    @router.get(f"{base}/calendar", response_model=CalendarOut)
-    def get_calendar(trial_id: UUID, external_patient_id: str, user: User, uow: Uow):
+    @router.get(f"{base}/calendar", response_model=None)
+    def get_calendar(trial_id: UUID, external_patient_id: str, user: User, uow: Uow,
+                     response: Response,
+                     if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None):
+        from app.authorization.policy import POLICY_VERSION
+        from app.domain.schedule.amendment import canonical_json, sha256_text
+
         _, organization_id = _identity(user)
-        patient = resolve(uow, organization_id, trial_id, external_patient_id)
-        calendar = for_role(PatientScheduleService(uow).current_calendar(
-            patient.id, organization_id=organization_id), user)
-        return CalendarOut(
-            patient_id=patient.id, trial_id=trial_id, authority_plane=patient.authority_plane,
-            schedule_version_id=patient.current_schedule_version_id, calendar=calendar,
-            pending_anchor_candidates=pending(uow, patient.id))
+        try:
+            snapshot = PatientScheduleBoundary(uow).projection(
+                organization_id=organization_id, trial_id=trial_id,
+                external_patient_id=external_patient_id)
+        except KeyError as error:
+            raise HTTPException(404, "Not found") from error
+        principal = user["_authz"].principal
+        if principal.role == "patient":
+            # P10-03: a patient never receives the staff DTO, not even with fields blanked; an allowlist
+            # serializer names exactly what a patient may see.
+            from app.application.patient_projection import display_names, patient_calendar
+            names = display_names(uow, organization_id, snapshot["schedule_version_id"])
+            body = patient_calendar(snapshot["calendar"], names, today=date.today())
+            body["projection_revision"] = snapshot["revision"]
+            tag = '"' + sha256_text(canonical_json({"body": body, "role": "patient", "actor": str(user["id"]),
+                                                     "privacy_policy": POLICY_VERSION})) + '"'
+            patient_headers = {"ETag": tag, "Cache-Control": "private, max-age=0, must-revalidate",
+                               "Vary": "Authorization, Cookie"}
+            if if_none_match and (if_none_match.strip() == "*" or tag in [
+                    item.strip().removeprefix("W/") for item in if_none_match.split(",")]):
+                return Response(status_code=304, headers=patient_headers)
+            return JSONResponse(body, headers=patient_headers)
+        snapshot["calendar"] = for_role(snapshot["calendar"], user)
+        if principal.role not in staff_roles:
+            snapshot["pending_anchor_candidates"] = []
+        result = CalendarOut(**snapshot)
+        etag = '"' + sha256_text(canonical_json({
+            "body": result.model_dump(mode="json"), "role": principal.role,
+            "actor": str(user["id"]), "privacy_policy": POLICY_VERSION})) + '"'
+        headers = {"ETag": etag, "Cache-Control": "private, max-age=0, must-revalidate",
+                   "Vary": "Authorization, Cookie"}
+        # The authorization dependency has already checked current grants/relationship,
+        # even when the client requests a conditional response.
+        if if_none_match and (if_none_match.strip() == "*" or etag in [
+                item.strip().removeprefix("W/") for item in if_none_match.split(",")]):
+            return Response(status_code=304, headers=headers)
+        response.headers.update(headers)
+        return result
 
     # P6: protocol amendments (compare, mapping review, simulate, adopt / remain / return)
     from app.api.uctsm_amendments import register_amendment_routes
     register_amendment_routes(
+        router, authorizer=authorizer, current_user_dependency=current_user_dependency,
+        uow_dependency=uow_dependency)
+
+    from app.api.uctsm_authoring import register_authoring_routes
+    register_authoring_routes(
+        router, authorizer=authorizer, current_user_dependency=current_user_dependency,
+        uow_dependency=uow_dependency)
+
+    from app.api.uctsm_operations import register_operations_routes
+    register_operations_routes(
         router, authorizer=authorizer, current_user_dependency=current_user_dependency,
         uow_dependency=uow_dependency)
 

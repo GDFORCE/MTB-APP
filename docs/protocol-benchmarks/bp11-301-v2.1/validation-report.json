@@ -1,0 +1,30 @@
+{
+  "status": "SOURCE_AND_ARITHMETIC_CHECKS_PASSED",
+  "source_sha256": "450635b8b8661782c32b1090c00a2f56c2814391f8944bff6ef17b6f65e28f46",
+  "source_pages": 100,
+  "matched_text_citations": 46,
+  "visual_references_pending_independent_review": [
+    {
+      "id": "E44",
+      "page": 99,
+      "status": "HUMAN_REVIEW_PENDING"
+    },
+    {
+      "id": "E45",
+      "page": 98,
+      "status": "HUMAN_REVIEW_PENDING"
+    }
+  ],
+  "assessment_rows_verified_against_pdf_cells": 26,
+  "assessment_visit_cells_checked": 312,
+  "calendar_targets_independently_checked": 10,
+  "scenario_count": 36,
+  "open_question_count": 10,
+  "app_tests_executed": 0,
+  "app_comparison_status": "NOT_RUN",
+  "clinical_release_qualified": false,
+  "qualification": "Source fidelity and arithmetic only; not clinical approval or application acceptance.",
+  "checked_at": "2026-10-19T08:27:15.124545+00:00",
+  "source_manifest_sha256": "dedcc8bdfc0e822fd729b0b0c3016346e10dad9749c3c9360a1aa5fd03bc99fa",
+  "oracle_sha256": "71bbf071011f0f4b6ee7a89316b6394066180b12d01ec2ca919c3993c74c82e3"
+}

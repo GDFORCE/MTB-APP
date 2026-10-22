@@ -111,9 +111,23 @@ def to_comparable(
     rows: list[dict[str, object]],
     *,
     key_fields: tuple[str, ...] = ("event_code", "name"),
+    number_field: str | None = None,
 ) -> list[ComparableVisit]:
-    """Reduce either system's visit documents to the comparable shape."""
+    """Reduce either system's visit documents to the comparable shape.
+
+    ``number_field`` names the visit number. It is used ONLY to tell apart visits that share a name (a weekly dose
+    five times): such a visit becomes ``name#number`` when every one of its namesakes carries a distinct whole
+    number. If a number is missing, repeated or not whole, the plain name is kept, the namesakes stay ambiguous and
+    the comparison reports ``AMBIGUOUS_MATCH`` instead of pairing by position.
+    """
     output: list[ComparableVisit] = []
+    numbers: list[int | None] = []
+    for row in rows:
+        raw_number = row.get(number_field) if number_field else None
+        try:
+            numbers.append(int(raw_number) if raw_number not in (None, "") and float(raw_number) == int(raw_number) else None)
+        except (TypeError, ValueError):
+            numbers.append(None)
     for row in rows:
         raw_key = ""
         for field in key_fields:
@@ -129,6 +143,18 @@ def to_comparable(
             window_start=_as_date(row.get("window_start")),
             window_end=_as_date(row.get("window_end")),
         ))
+    if number_field:
+        by_key: dict[str, list[int]] = {}
+        for index, item in enumerate(output):
+            by_key.setdefault(item.key, []).append(index)
+        for key, indexes in by_key.items():
+            if len(indexes) < 2:
+                continue
+            values = [numbers[index] for index in indexes]
+            if None in values or len(set(values)) != len(values):
+                continue
+            for index in indexes:
+                output[index] = output[index].model_copy(update={"key": f"{key}#{numbers[index]}"})
     return output
 
 

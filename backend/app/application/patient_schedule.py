@@ -28,6 +28,7 @@ from typing import Callable, Sequence, TypeVar
 from uuid import UUID, uuid4
 
 from app.domain.schedule.anchor_status import record_is_actual
+from app.domain.schedule.amendment import schedule_content_hash
 from app.domain.schedule.evaluator import ScheduleEvaluator
 from app.domain.schedule.identity import activity_logical_key, event_logical_key
 from app.domain.schedule.relevance import references_event
@@ -53,6 +54,7 @@ from .patients import (
     OccurrenceOutcome, OccurrenceRecord, PatientActivityEntry, PatientEventRecord, PatientRecord,
     PatientStateRecord, ScheduleChange, UnscheduledVisitRecord,
 )
+from app.observability.metrics import METRICS
 from .ports import UnitOfWork
 from .records import AuditRecord, CommandReceiptRecord, OutboxRecord, utc_now
 
@@ -130,6 +132,20 @@ def _as_instant(value: date | datetime | None) -> datetime | None:
     if value is None or isinstance(value, datetime):
         return value
     return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+
+
+def anchor_value(row):
+    """The anchor's value in the zone it was entered in. A store keeps instants in UTC, so the offset the
+    clinic used (for example +05:30) is recorded with the anchor and restored here; otherwise a 23:30 IST dose
+    would read as 18:00 UTC and its minute-based visit would land on the wrong calendar day."""
+    moment = row.value_datetime
+    if moment is None:
+        return row.value_date
+    minutes = (row.metadata or {}).get("utc_offset_minutes")
+    if minutes is None:
+        return moment
+    from datetime import timedelta, timezone
+    return moment.astimezone(timezone(timedelta(minutes=int(minutes))))
 
 
 class PatientScheduleService:
@@ -308,7 +324,7 @@ class PatientScheduleService:
             item.code: str((item.derivation_rule or {}).get("selection", "LAST")).upper()
             for item in schedule.anchors}
         for row in tx.facts.list_anchors(patient.id, statuses={"CONFIRMED", "PROVISIONAL"}):
-            value = row.value_datetime or row.value_date
+            value = anchor_value(row)
             target = anchors if record_is_actual(row.status, row.source_type) else planned_anchors
             if selection_by_code.get(row.anchor_code, "LAST") == "FIRST" and row.anchor_code in target:
                 continue
@@ -433,6 +449,10 @@ class PatientScheduleService:
         today: date | None = None,
     ) -> EvaluationResult:
         schedule = tx.schedules.get(schedule_version_id)
+        from .manual_rules import verify_manual_decisions
+        verify_manual_decisions(tx, schedule)
+        from .compiled_schedules import compiled_for
+        compiled = compiled_for(tx, schedule, patient.organization_id)
         context = self.build_context(
             tx, patient, schedule, schedule_version_id,
             condition_overrides=condition_overrides, anchor_overrides=anchor_overrides,
@@ -441,8 +461,9 @@ class PatientScheduleService:
             assignment_fact_overrides=assignment_fact_overrides,
             carry_from_versions=carry_from_versions, extra_occurrences=extra_occurrences,
             extra_unscheduled=extra_unscheduled, extra_ledger=extra_ledger)
-        return ScheduleEvaluator().evaluate(
-            schedule, context, horizon=horizon, rolling=rolling, today=today)
+        from .evaluation_cache import memo
+        return memo.evaluate(patient.organization_id, schedule, context,
+            horizon=horizon, rolling=rolling, today=today, compiled=compiled)
 
     # ------------------------------------------------------------------ evaluate
     def evaluate(
@@ -454,11 +475,12 @@ class PatientScheduleService:
     ) -> tuple[EvaluationRecord, list[PatientEventRecord]]:
         """Evaluate one patient against a schedule version (AD-4d: the caller may
         name the version explicitly; otherwise the pinned one is used)."""
-        return self._run(lambda tx: self._evaluate(
-            tx, patient_id, organization_id=organization_id, horizon=horizon,
-            schedule_version_id=schedule_version_id, idempotency_key=idempotency_key,
-            prior_events_override=prior_events_override, rolling=rolling,
-            actor_id=actor_id, reason=reason, today=today))
+        with METRICS.timed("patient_evaluate"):
+            return self._run(lambda tx: self._evaluate(
+                tx, patient_id, organization_id=organization_id, horizon=horizon,
+                schedule_version_id=schedule_version_id, idempotency_key=idempotency_key,
+                prior_events_override=prior_events_override, rolling=rolling,
+                actor_id=actor_id, reason=reason, today=today))
 
     def reconcile_projection(
         self, result: EvaluationResult, prior: list[PatientEventRecord],
@@ -606,6 +628,14 @@ class PatientScheduleService:
             output_summary={
                 "statuses": [item.status.value for item in result.events],
                 "count": len(result.events), "persisted_count": len(events),
+                "calculation": result.evaluation_plan,
+                "input_hash": hashlib.sha256(json.dumps({"schedule_hash": schedule_content_hash(schedule),
+                    "context": result.input_snapshot, "horizon": horizon.isoformat(),
+                    "as_of": (today or date.today()).isoformat(), "evaluator": result.evaluator_version,
+                    "rolling": rolling.model_dump(mode="json") if rolling else None},
+                    sort_keys=True, default=str).encode()).hexdigest(),
+                "evaluation_hash": hashlib.sha256(json.dumps(result.model_dump(mode="json",
+                    exclude={"evaluated_at", "evaluation_plan"}), sort_keys=True).encode()).hexdigest(),
                 "reconciliation": reconciliation},
             started_at=started, completed_at=completed, evaluated_at=result.evaluated_at,
             sequence=tx.evaluations.count_evaluations(patient.id, schedule.schedule_version_id) + 1,
@@ -954,73 +984,76 @@ class PatientScheduleService:
         Completion and actual dates come from the facts recorded against each
         logical visit, so they are present however many evaluations have run.
         """
-        def work(tx: UnitOfWork) -> list[CalendarEntry]:
-            patient = tx.patients.get(organization_id, patient_id)
-            if patient.current_schedule_version_id is None:
-                return []
-            version_id = patient.current_schedule_version_id
-            pointer = tx.evaluations.get_pointer(patient.id, version_id)
-            if pointer is None or pointer.current_evaluation_id is None:
-                return []
-            history = {
-                (item.event_code, item.occurrence_index): item
-                for item in self._history(
-                    tx, patient, version_id,
-                    self.occurrences_for(tx, patient.id, version_id))}
-            entries = []
-            bookings = self._current_bookings(
-                self.occurrences_for(tx, patient.id, version_id))
-            commands = [row for row in tx.ledger.list_for_patient(organization_id, patient.id)
-                        if row.schedule_version_id == version_id]
-            for item in tx.evaluations.list_events(pointer.current_evaluation_id):
-                state = history.get((item.event_code, item.occurrence_index))
-                status = state.status if state and state.status in {"COMPLETED", "MISSED"} \
-                    else item.status
-                reason = item.generation_reason or {}
-                operational = reason.get("operational") or {}
-                override = operational.get("override") or {}
-                cancelled = operational.get("cancelled")
-                track = reason.get("track") or {}
-                booked = bookings.get(item.logical_key)
-                low, high = item.earliest_date, item.latest_date
-                outside = None
-                if booked is not None and (low is not None or high is not None):
-                    outside = bool((low is not None and booked < low)
-                                   or (high is not None and booked > high))
+        return self._uow.read(lambda tx: self.calendar_in(tx, patient_id, organization_id=organization_id))
 
-                def _d(value):
-                    return date.fromisoformat(value) if value else None
-                touching = [row for row in commands if row.logical_key == item.logical_key
-                            or (row.track_code and row.track_code == track.get("code"))]
-                entries.append(CalendarEntry(
-                    schedule_version_id=item.schedule_version_id,
-                    window_known=low is not None or high is not None,
-                    appointment_date=booked, appointment_outside_window=outside,
-                    override_target=_d(override.get("target_date")),
-                    override_window_earliest=_d(override.get("window_earliest")),
-                    override_window_latest=_d(override.get("window_latest")),
-                    override_outside_window=override.get("outside_protocol_window"),
-                    override_authority=override.get("authority"),
-                    override_reason=override.get("reason"),
-                    cancelled=bool(cancelled), cancelled_reason=(cancelled or {}).get("reason"),
-                    track_code=track.get("code"), track_name=track.get("display_name"),
-                    track_rebase_policy=track.get("rebase_policy"),
-                    track_movement=track.get("movement"),
-                    provisional=bool(((reason.get("recurrence") or {}).get("termination") or {})
-                                     .get("provisional")),
-                    last_command_id=touching[-1].id if touching else None,
-                    logical_key=item.logical_key, event_code=item.event_code,
-                    occurrence_index=item.occurrence_index,
-                    logical_occurrence_id=item.logical_occurrence_id,
-                    evaluation_id=item.evaluation_id, status=status,
-                    completed=status == "COMPLETED", planned_start=item.nominal_start_date,
-                    earliest=item.earliest_date, latest=item.latest_date,
-                    original_planned=item.original_nominal_start_date,
-                    actual_visit_date=state.actual_visit_date if state else None,
-                    actual_treatment_date=state.actual_treatment_date if state else None))
-            return entries
+    def calendar_in(self, tx: UnitOfWork, patient_id: UUID, *, organization_id: UUID) -> list[CalendarEntry]:
+        """The shared calendar builder inside a caller-owned snapshot/transaction."""
+        patient = tx.patients.get(organization_id, patient_id)
+        if patient.current_schedule_version_id is None:
+            return []
+        version_id = patient.current_schedule_version_id
+        pointer = tx.evaluations.get_pointer(patient.id, version_id)
+        if pointer is None or pointer.current_evaluation_id is None:
+            return []
+        history = {
+            (item.event_code, item.occurrence_index): item
+            for item in self._history(
+                tx, patient, version_id,
+                self.occurrences_for(tx, patient.id, version_id))}
+        entries = []
+        bookings = self._current_bookings(
+            self.occurrences_for(tx, patient.id, version_id))
+        commands = [row for row in tx.ledger.list_for_patient(organization_id, patient.id)
+                    if row.schedule_version_id == version_id]
+        for item in tx.evaluations.list_events(pointer.current_evaluation_id):
+            state = history.get((item.event_code, item.occurrence_index))
+            status = state.status if state and state.status in {"COMPLETED", "MISSED"} \
+                else item.status
+            reason = item.generation_reason or {}
+            operational = reason.get("operational") or {}
+            override = operational.get("override") or {}
+            cancelled = operational.get("cancelled")
+            track = reason.get("track") or {}
+            booked = bookings.get(item.logical_key)
+            low, high = item.earliest_date, item.latest_date
+            outside = None
+            if booked is not None and (low is not None or high is not None):
+                outside = bool((low is not None and booked < low)
+                               or (high is not None and booked > high))
 
-        return self._uow.read(work)
+            def _d(value):
+                return date.fromisoformat(value) if value else None
+            touching = [row for row in commands if row.logical_key == item.logical_key
+                        or (row.track_code and row.track_code == track.get("code"))]
+            entries.append(CalendarEntry(
+                schedule_version_id=item.schedule_version_id,
+                window_known=low is not None or high is not None,
+                appointment_date=booked, appointment_outside_window=outside,
+                override_target=_d(override.get("target_date")),
+                override_window_earliest=_d(override.get("window_earliest")),
+                override_window_latest=_d(override.get("window_latest")),
+                override_outside_window=override.get("outside_protocol_window"),
+                override_authority=override.get("authority"),
+                override_reason=override.get("reason"),
+                cancelled=bool(cancelled), cancelled_reason=(cancelled or {}).get("reason"),
+                track_code=track.get("code"), track_name=track.get("display_name"),
+                track_rebase_policy=track.get("rebase_policy"),
+                track_movement=track.get("movement"),
+                provisional=bool(((reason.get("recurrence") or {}).get("termination") or {})
+                                 .get("provisional")),
+                rule_handling=reason.get("rule_handling"),
+                last_command_id=touching[-1].id if touching else None,
+                logical_key=item.logical_key, event_code=item.event_code,
+                occurrence_index=item.occurrence_index,
+                logical_occurrence_id=item.logical_occurrence_id,
+                evaluation_id=item.evaluation_id, status=status,
+                completed=status == "COMPLETED", planned_start=item.nominal_start_date,
+                earliest=item.earliest_date, latest=item.latest_date,
+                original_planned=item.original_nominal_start_date,
+                actual_visit_date=state.actual_visit_date if state else None,
+                actual_treatment_date=state.actual_treatment_date if state else None))
+        return entries
+
 
     @staticmethod
     def _current_bookings(rows: list[OccurrenceRecord]) -> dict[str, date]:

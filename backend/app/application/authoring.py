@@ -74,6 +74,9 @@ class ScheduleDefinitionRecord(Record):
 
 
 class ExtractionRunRecord(Record):
+    attempt_number: int = Field(default=0, ge=0)
+    lease_token: str | None = None
+    lease_expires_at: datetime | None = None
     id: UUID = Field(default_factory=uuid4)
     organization_id: UUID
     protocol_version_id: UUID

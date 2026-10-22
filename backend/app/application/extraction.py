@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable, Iterable, TypeVar
 from uuid import UUID, uuid4
 
@@ -35,6 +36,13 @@ CANONICAL_PROMPT_VERSION = "mtb.canonical-plan.v2"
 _RETRIES = 3
 
 
+MAX_TRACE_BYTES = 4 * 1024 * 1024
+
+
+class ProvenanceError(ValueError):
+    """A run without provider/model/prompt/schema provenance may not execute."""
+
+
 @dataclass(frozen=True)
 class ImportedSchedule:
     """One canonical draft produced from one detected schedule option."""
@@ -54,6 +62,14 @@ class _Completion:
     error: str | None = None
 
 
+class ExtractionClaimUnavailableError(ValueError):
+    """Another worker owns this attempt, or the run has already finished."""
+
+
+class ExtractionClaimLostError(ValueError):
+    """An expired/replaced worker cannot finish, fail or renew the current attempt."""
+
+
 def plan_fingerprint(plan: dict[str, Any]) -> str:
     """Content address for an extracted plan (identical to the SQL bridge)."""
     payload = json.dumps(plan or {}, sort_keys=True, default=str, ensure_ascii=False)
@@ -64,8 +80,17 @@ def plan_fingerprint(plan: dict[str, Any]) -> str:
 class ExtractionService:
     """Transactional boundary around a separately hosted extraction worker."""
 
-    def __init__(self, uow: UnitOfWork):
+    def __init__(self, uow: UnitOfWork, *, clock=utc_now):
         self._uow = uow
+        self._clock = clock
+
+    def _require_claim(self, run, token):
+        if (run.attempt_number == 0 and run.status != "RUNNING"
+                and run.lease_token is None and token is None):
+            return  # trusted synchronous import; no worker ever claimed it
+        if (not token or run.lease_token != token or run.status != "RUNNING"
+                or run.lease_expires_at is None or run.lease_expires_at <= self._clock()):
+            raise ExtractionClaimLostError("extraction worker no longer owns this attempt")
 
     def _run(self, work: Callable[[UnitOfWork], T]) -> T:
         last: Exception | None = None
@@ -154,6 +179,7 @@ class ExtractionService:
     def complete_in(
         self, tx: UnitOfWork, run_id: UUID,
         results: list[tuple[dict[str, Any] | None, ExtractionResult]],
+        *, claim_token: str | None = None,
     ) -> _Completion:
         """Persist every schedule one run produced, then mark the run once.
 
@@ -162,6 +188,7 @@ class ExtractionService:
         FAILED state can be committed before the caller reports it.
         """
         run = tx.authoring.get_run(run_id)
+        self._require_claim(run, claim_token)
         if run.status not in {"QUEUED", "RUNNING", "PARTIAL"}:
             raise ValueError(f"cannot complete extraction in {run.status} state")
         entries: list[dict[str, Any]] = [
@@ -180,8 +207,13 @@ class ExtractionService:
             version_id = self._persist_one(tx, run, result)
             version_ids.append(version_id)
             entries[index]["schedule_version_id"] = str(version_id)
+        size = len(json.dumps(entries, default=str))
+        if size > MAX_TRACE_BYTES:
+            raise ValueError("extraction trace is too large to keep with the run; store raw provider payloads in the "
+                             "artifact store and keep only a reference")
         run = run.model_copy(update={
-            "trace": {"options": [dict(entry) for entry in entries]}, "completed_at": utc_now()})
+            "trace": {"options": [dict(entry) for entry in entries]}, "completed_at": self._clock(),
+            "lease_token": None, "lease_expires_at": None})
         if not version_ids:
             run = run.model_copy(update={
                 "status": "FAILED",
@@ -207,14 +239,15 @@ class ExtractionService:
 
     def complete_many(
         self, run_id: UUID, results: list[tuple[dict[str, Any] | None, ExtractionResult]],
+        *, claim_token: str | None = None,
     ) -> list[UUID]:
-        completion = self._run(lambda tx: self.complete_in(tx, run_id, results))
+        completion = self._run(lambda tx: self.complete_in(tx, run_id, results, claim_token=claim_token))
         if completion.error:
             raise ValueError(completion.error)
         return completion.version_ids
 
-    def complete(self, run_id: UUID, result: ExtractionResult) -> UUID:
-        return self.complete_many(run_id, [(None, result)])[0]
+    def complete(self, run_id: UUID, result: ExtractionResult, *, claim_token: str | None = None) -> UUID:
+        return self.complete_many(run_id, [(None, result)], claim_token=claim_token)[0]
 
     def accountability_for_version(self, schedule_version_id: UUID) -> dict[str, Any] | None:
         def work(tx: UnitOfWork) -> dict[str, Any] | None:
@@ -334,27 +367,55 @@ class ExtractionService:
         return self._run(work)
 
     # -- run lifecycle ----------------------------------------------------------------
-    def start(self, run_id: UUID) -> ExtractionRunRecord:
-        """QUEUED -> RUNNING."""
+    @staticmethod
+    def require_provenance(run: ExtractionRunRecord) -> None:
+        """A run may only execute when we can say WHICH provider, model, prompt and schema produced its drafts."""
+        missing = [name for name in ("provider", "model_name", "prompt_version", "schema_version")
+                   if not str(getattr(run, name) or "").strip()]
+        if missing:
+            raise ProvenanceError("extraction run lacks provenance: " + ", ".join(missing))
+
+    def start(self, run_id: UUID, *, lease_seconds: int = 120) -> ExtractionRunRecord:
+        """Atomically claim a queued run or reclaim an explicitly expired attempt."""
+        if not 30 <= lease_seconds <= 3600:
+            raise ValueError("extraction lease must be between 30 and 3600 seconds")
         def work(tx: UnitOfWork) -> ExtractionRunRecord:
             run = tx.authoring.get_run(run_id)
-            if run.status != "QUEUED":
-                raise ValueError(f"cannot execute extraction in {run.status} state")
-            run = run.model_copy(update={"status": "RUNNING", "started_at": utc_now()})
+            now = self._clock()
+            expired = run.status == "RUNNING" and run.lease_expires_at is not None and run.lease_expires_at <= now
+            if run.status != "QUEUED" and not expired:
+                raise ExtractionClaimUnavailableError(f"cannot execute extraction in {run.status} state")
+            self.require_provenance(run)
+            run = run.model_copy(update={"status": "RUNNING", "started_at": now,
+                "attempt_number": run.attempt_number + 1, "lease_token": uuid4().hex,
+                "lease_expires_at": now + timedelta(seconds=lease_seconds)})
             tx.authoring.save_run(run)
             return run
 
         return self._run(work)
 
-    def fail(self, run_id: UUID, error: Exception) -> None:
+    def renew(self, run_id: UUID, claim_token: str, *, lease_seconds: int = 120):
+        if not 30 <= lease_seconds <= 3600:
+            raise ValueError("extraction lease must be between 30 and 3600 seconds")
+        def work(tx):
+            run = tx.authoring.get_run(run_id)
+            self._require_claim(run, claim_token)
+            renewed = run.model_copy(update={"lease_expires_at": self._clock() + timedelta(seconds=lease_seconds)})
+            tx.authoring.save_run(renewed)
+            return renewed
+        return self._run(work)
+
+    def fail(self, run_id: UUID, error: Exception, *, claim_token: str | None = None) -> None:
         def work(tx: UnitOfWork) -> None:
             try:
                 run = tx.authoring.get_run(run_id)
             except KeyError:
                 return
-            if run.status != "COMPLETED":
+            self._require_claim(run, claim_token)
+            if run.status not in {"COMPLETED", "PARTIAL"}:
                 tx.authoring.save_run(run.model_copy(update={
-                    "status": "FAILED", "completed_at": utc_now(),
+                    "status": "FAILED", "completed_at": self._clock(),
+                    "lease_token": None, "lease_expires_at": None,
                     "error_details": {"type": type(error).__name__, "message": str(error)}}))
 
         self._run(work)
@@ -407,7 +468,7 @@ def _protocol_version(
         organization_id=protocol.organization_id, trial_id=protocol.trial_id,
         protocol_id=protocol.id, version_label=label, document_name=document_name,
         document_uri=document_uri, document_hash=document_hash, uploaded_by=actor_id,
-        extraction_status="COMPLETED", metadata={"source": provider})
+        extraction_status="COMPLETED", metadata={"source": provider, "version_intent": "EXTRACTION_DRAFT"})
     tx.authoring.add_protocol_version(row)
     # An amendment must never silently replace the version already in use for
     # enrolment; that switch is an explicit approval step, not an import effect.
@@ -493,7 +554,7 @@ def import_schedule_definitions(
     protocol_number: str, study_title: str | None = None, definitions: Iterable[dict[str, Any]],
 ) -> tuple[TrialRecord, list[ImportedSchedule]]:
     """Import every operational schedule definition as a canonical draft version."""
-    from app.services.canonical_import import extraction_result_from_plan
+    from app.extraction.canonical_adapter import extraction_result_from_plan
 
     items = list(definitions)
     service = ExtractionService(uow)

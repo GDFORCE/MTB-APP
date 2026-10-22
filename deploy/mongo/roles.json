@@ -1,0 +1,24 @@
+{
+  "_comment": "Least-privilege MongoDB roles for UCTSM (P14-04). <db> is the UCTSM database of ONE environment; never reuse a role or password across environments. Apply with deploy/mongo/create_roles.mongosh.js.",
+  "roles": {
+    "uctsm_runtime": {
+      "purpose": "The API and workers. Reads and writes documents only; cannot change schema, indexes or drop anything.",
+      "privileges": [{"resource": {"db": "<db>", "collection": ""}, "actions": ["find", "insert", "update", "remove"]}]
+    },
+    "uctsm_migrator": {
+      "purpose": "Run versioned migrations at deploy time only; not used by the running service.",
+      "privileges": [{"resource": {"db": "<db>", "collection": ""}, "actions": ["find", "insert", "update", "createCollection", "createIndex", "collMod", "listIndexes", "listCollections"]}]
+    },
+    "uctsm_backup_reader": {
+      "purpose": "Encrypted logical snapshots and drills read the database; it cannot write.",
+      "privileges": [{"resource": {"db": "<db>", "collection": ""}, "actions": ["find", "listIndexes", "listCollections"]}]
+    }
+  },
+  "network": {
+    "bind": "private address only; never 0.0.0.0 on a public interface",
+    "allowed_clients": ["API hosts", "worker hosts", "backup host"],
+    "tls": "required (tls=true or mongodb+srv); certificate validation must stay on",
+    "authentication": "required; SCRAM or X.509; one credential set per environment and per role",
+    "secrets": "connection strings come from the secret store / environment, never from the repository"
+  }
+}

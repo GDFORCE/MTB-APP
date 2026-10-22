@@ -355,3 +355,8 @@ Saved [P6 audit repairs before P7/P8](claude-code-p6-audit-repairs-before-p7-p8-
 ## 2026-10-16: owner-requested single detailed P7/P8 prompt
 
 Merged all P6 F1-F4 repairs and integration triage into [the P7/P8 prompt](claude-code-p7-p8-after-p6-prompt.md), with detailed instructions for each P7/P8 task, evidence and manual-only workflow, scoring, fixed-clock scenarios, CI gates and verification. Preserved the earlier short prompt and standalone-repair launcher, marked the standalone prompt historical, and updated the index, launcher and checkpoint. Documentation only; no application changes.
+
+
+## 2026-10-19: continuation prompt after the second implementation slice
+
+Saved [claude-code-continue-after-pdf-slice-2026-10-19.md](claude-code-continue-after-pdf-slice-2026-10-19.md) and pointed docs/claude-code-next-prompt.md and the index at it. The earlier handoff and continuation prompts are kept unchanged and marked superseded as starting points; no scope was removed.

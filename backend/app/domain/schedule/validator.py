@@ -198,7 +198,7 @@ def _non_acknowledgeable_codes() -> frozenset[str]:
 
 
 class ScheduleValidator:
-    version = "uctsm-validator.v1"
+    version = "uctsm-validator.v2"
 
     def validate(
         self, schedule: UniversalSchedule, *, evaluating_approved: bool = False,
@@ -241,7 +241,12 @@ class ScheduleValidator:
         from .capabilities import capability_issues
 
         issues.extend(capability_issues(schedule))
-        return issues
+        from .graph_validation import graph_integrity_issues, locate_issues
+
+        issues.extend(graph_integrity_issues(schedule))
+        from .manual_handling import validation_issues as handling_issues
+        issues = handling_issues(schedule, issues)
+        return locate_issues(schedule, issues)
 
     def _interval_recurrences(
         self, schedule: UniversalSchedule, *, tolerant: bool = False,
@@ -931,6 +936,7 @@ class ScheduleValidator:
                         "UNRESOLVED_REFERENCE",
                         f"Unknown dependency event {dependency.source_event_code!r}",
                         entity_type="EVENT", entity_id=event.id,
+                        details={"field_path": f"events/{event.code}/dependencies/{dependency.source_event_code}/source_event_code"},
                     ))
                 if dependency.source_event_code == event.code:
                     issues.append(self._issue(

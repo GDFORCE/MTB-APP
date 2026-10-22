@@ -4,9 +4,12 @@ Created 16 October 2026 with the P6 slice; kept current as slices finish. Master
 
 ## Resume checkpoint
 
-* **Implemented, acceptance reopened:** P6-01 through P6-05. Independent review reproduced F1-F4 on both stores; see [review](p6-end-to-end-independent-review.md). The original completion record and prior P1-P5 evidence remain preserved.
-* **Next slice:** [Combined P6 repairs + P7/P8](claude-code-p7-p8-after-p6-prompt.md): four repairs and integration triage first, then all ten P7/P8 tasks, in one detailed prompt. Do not assume P6 acceptance is closed.
-* **Exact blockers carried forward:** authentic amendment pair and signed corpus (external evidence); owner approval of the P3 matrix as a clinical sign-off is not claimed; real cohort migration/cutover and deployment are not authorised.
+Updated 19 October 2026. Read [the execution checkpoint](pdf-execution-checkpoint-2026-10-19.md) and [the 70-row matrix](pdf-requirements-acceptance-matrix.md) before continuing; the detailed plan below preserves the original slice design and is not a current completion claim.
+
+* P6 F1?F4 repair regressions now pass: 34 cases on memory and real Mongo. Full requalification after the new shared-validator work remains pending.
+* P7/P8 are in progress: graph/source checks, manual-rule backend, scoring/gold schema, deterministic engineering corpus and a CI gate. Finish the manual-review UI and acceptance gaps; do not rebuild these parts from the historical prompt.
+* Selected P10 snapshot/cache and P13 outbox foundations are also implemented and tested; neither section is complete.
+* Next engineering actions and external evidence gaps are listed in the checkpoint. No real-patient migration, deployment or authority/read-mode change is authorized by these status records.
 
 ## 1. Task rows
 

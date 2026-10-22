@@ -12,11 +12,11 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from app.domain.schedule.deviation import DeviationType
-from app.services.dashboard_service import (
+from app.application.dashboard_contracts import (
     PRIORITY, UPCOMING_WINDOW_DAYS, ActionCategory, DashboardAction, DashboardResult,
     _humanize, _visit_mode,
 )
-from app.services.schedule_projection import (
+from app.application.schedule_projection import (
     ProjectedConfinement, ProjectedEvent, ProjectionResult, feasibility_from_explanation, project,
 )
 
@@ -173,14 +173,18 @@ def compute_patient_projection(
     service = PatientScheduleService(uow)
 
     def work(tx: UnitOfWork) -> ProjectionResult:
-        version_id = patient.current_schedule_version_id
-        pointer = tx.evaluations.get_pointer(patient.id, version_id) if version_id else None
+        fresh = tx.patients.get(patient.organization_id, patient.id)
+        version_id = fresh.current_schedule_version_id
+        pointer = tx.evaluations.get_pointer(fresh.id, version_id) if version_id else None
         if pointer is None or pointer.status != "ACTIVE" or pointer.current_evaluation_id is None:
             return ProjectionResult()
         schedule = tx.schedules.get(version_id)
         definitions = {item.code: item for item in schedule.events}
+        calendar = {entry.logical_key: entry for entry in service.calendar_in(
+            tx, fresh.id, organization_id=fresh.organization_id)}
         projected = []
         for event in tx.evaluations.list_events(pointer.current_evaluation_id):
+            entry = calendar.get(event.logical_key)
             definition = definitions.get(event.event_code)
             event_type = definition.event_type if definition else ""
             # WP2/WP3: the occurrence's persisted feasibility, so a disjoint or
@@ -190,25 +194,25 @@ def compute_patient_projection(
                 logical_key=event.logical_key, event_code=event.event_code, event_type=event_type,
                 visit_mode=definition.visit_mode if definition else None,
                 display_name=definition.display_name if definition else event.event_code,
-                status=event.status, nominal_date=event.nominal_start_date,
+                status=("CANCELLED" if entry.cancelled else entry.status) if entry else event.status,
+                nominal_date=event.nominal_start_date,
                 earliest_date=event.earliest_date, latest_date=event.latest_date,
                 is_unscheduled=str(event_type).upper() == "UNSCHEDULED",
                 feasibility=feasibility, feasible_windows=windows))
         confinements: list[ProjectedConfinement] = []
-        result = service.evaluate_result(
-            tx, patient, version_id, horizon=(today or date.today()) + timedelta(days=365))
-        for episode in result.confinements:
+        for episode in tx.evaluations.list_confinements(pointer.current_evaluation_id):
             definition = next(
                 (item for item in schedule.confinement_episodes if item.code == episode.episode_code),
                 None)
             members = ([definition.admission_event_code, *definition.dose_event_codes,
                         definition.discharge_event_code] if definition else [])
             confinements.append(ProjectedConfinement(
-                episode_code=episode.episode_code, display_name=episode.display_name,
-                status=episode.status.value,
+                episode_code=episode.episode_code,
+                display_name=definition.display_name if definition else episode.episode_code,
+                status=episode.status,
                 start_date=_as_date(episode.actual_admission or episode.planned_admission),
                 end_date=_as_date(episode.actual_discharge or episode.planned_discharge),
                 member_event_codes=members))
         return project(projected, today=today or date.today(), confinements=confinements)
 
-    return uow.read(work)
+    return uow.run(work)

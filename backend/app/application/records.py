@@ -66,6 +66,23 @@ class OutboxRecord(Record):
     status: str = "PENDING"
     attempts: int = 0
     created_at: datetime = Field(default_factory=utc_now)
+    available_at: datetime | None = None
+    lease_token: str | None = None
+    lease_expires_at: datetime | None = None
+    last_error_code: str | None = None
+    max_attempts: int = Field(default=5, ge=1, le=20)
+
+
+class InboxRecord(Record):
+    """Consumer-side proof that one outbox message already produced its business result (P13-03).
+    Unique per (consumer, dedupe_key): a replay or redelivery is suppressed, never re-applied."""
+
+    id: UUID = Field(default_factory=uuid4)
+    organization_id: UUID
+    consumer: str = Field(min_length=1, max_length=64)
+    dedupe_key: str
+    outbox_id: UUID
+    processed_at: datetime = Field(default_factory=utc_now)
 
 
 class AuditRecord(Record):

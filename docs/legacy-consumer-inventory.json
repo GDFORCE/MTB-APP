@@ -1,0 +1,2638 @@
+{
+  "counts": {
+    "ADAPT": 19,
+    "MIGRATE": 10,
+    "OUT_OF_SCOPE": 114,
+    "RETAIN": 10
+  },
+  "note": "Rule-based PROPOSAL generated from source. Every row needs a named owner's approval; frontend_consumers are full-route-shape matches in app/ and src/ (dynamic URL building is not detected).",
+  "routes": [
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "root",
+      "line": 11086,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_adherence",
+      "line": 9683,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/adherence",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "app_content"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "app_config",
+      "line": 10647,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/app/config",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "audit_logs"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_audit",
+      "line": 10576,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/audit-logs",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_contact_changes"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "change_contact_start",
+      "line": 2074,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/change-contact/start",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_contact_changes",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "change_contact_verify",
+      "line": 2115,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/change-contact/verify",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "change_password",
+      "line": 992,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/change-password",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "forgot",
+      "line": 1157,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/forgot",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "verify_forgot_password_otp",
+      "line": 1229,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/forgot/verify",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "login",
+      "line": 838,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/login",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "refresh_tokens"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "logout",
+      "line": 920,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/logout",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "me",
+      "line": 929,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/me",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "update_me",
+      "line": 957,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/me",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "password_reset_tokens",
+        "refresh_tokens",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "complete_password_reset_link",
+      "line": 1266,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/password-reset-link",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "refresh_tokens",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "refresh_token",
+      "line": 865,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/refresh",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register",
+      "line": 796,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_check_availability",
+      "line": 1675,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register/check-availability",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_registrations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_complete",
+      "line": 1965,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register/complete",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_registrations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_resend",
+      "line": 2026,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register/resend",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_registrations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_security_questions",
+      "line": 1984,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register/security-questions",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_registrations",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_start",
+      "line": 1694,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register/start",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "pending_registrations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_verify",
+      "line": 1911,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/register/verify",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "refresh_tokens",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "reset",
+      "line": 1238,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/reset",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "prelogin_support_requests",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "start_login_support",
+      "line": 1030,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/support/start",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "prelogin_support_requests",
+        "support_tickets"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "verify_login_support",
+      "line": 1086,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/auth/support/verify",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "trials",
+        "users",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/team-calendar.tsx"
+      ],
+      "handler": "team_calendar",
+      "line": 9217,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/calendar/team",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations",
+        "messages",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_conversations",
+      "line": 7714,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_conversation",
+      "line": 7784,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "join_conversation_by_invite",
+      "line": 7930,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/join/{token}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_conversation_detail",
+      "line": 7845,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "clear_conversation_messages",
+      "line": 7966,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/clear",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "messages"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_conversation_files",
+      "line": 7945,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/files",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "set_conversation_flags",
+      "line": 7766,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/flags",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_conversation_invite_link",
+      "line": 7917,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/invite-link",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "add_conversation_members",
+      "line": 7870,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/members",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "remove_conversation_member",
+      "line": 7897,
+      "method": "DELETE",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/members/{uid}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "messages"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_messages",
+      "line": 8014,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/messages",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "post_message",
+      "line": 8028,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/messages",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "messages"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "mark_conversation_read",
+      "line": 8041,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/read",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "support_tickets"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "report_conversation",
+      "line": 7976,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/report",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "update_conversation_settings",
+      "line": 7994,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/conversations/{cid}/settings",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "crc_dashboard",
+      "line": 9414,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/crc/dashboard",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "faq"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_faq",
+      "line": 10860,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/faq",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "files"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_files",
+      "line": 11019,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/files",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "files",
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "upload_file",
+      "line": 10954,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/files",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "files"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "delete_file",
+      "line": 11068,
+      "method": "DELETE",
+      "owner": "UNASSIGNED",
+      "path": "/api/files/{file_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "files"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "download_file",
+      "line": 11044,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/files/{file_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_invitations",
+      "line": 9785,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/invitations",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_invitation",
+      "line": 9738,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/invitations",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "cancel_invitation",
+      "line": 9894,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/invitations/{invitation_id}/cancel",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "resend_invitation",
+      "line": 9855,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/invitations/{invitation_id}/resend",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "resolve_invitation",
+      "line": 9800,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/invitations/{token}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "accept_invitation",
+      "line": 9834,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/invitations/{token}/accept",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "accept_legal",
+      "line": 10879,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/legal/accept",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "app_content"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_legal",
+      "line": 10868,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/legal/{doc_type}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "master_data_submissions",
+        "master_data_values"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "master_data_options",
+      "line": 934,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/master-data/options",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "medication list",
+      "classification": "RETAIN",
+      "collections": [
+        "medications"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_medications",
+      "line": 9500,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/medications",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "medication list",
+      "classification": "RETAIN",
+      "collections": [
+        "medications"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_medication",
+      "line": 9507,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/medications",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "medication adherence, not protocol scheduling",
+      "classification": "RETAIN",
+      "collections": [
+        "dose_logs"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_doses",
+      "line": 9576,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/medications/{medication_id}/doses",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "medication adherence, not protocol scheduling",
+      "classification": "RETAIN",
+      "collections": [
+        "dose_logs"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "log_dose",
+      "line": 9552,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/medications/{medication_id}/doses",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_messaging_recipients",
+      "line": 7814,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/messaging/recipients",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "conversations",
+        "messages"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "messaging_unread_count",
+      "line": 7828,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/messaging/unread-count",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "notifications"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "my_notifications",
+      "line": 7530,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/notifications",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "notifications"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "mark_all_notifications_read",
+      "line": 7547,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/notifications/read-all",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "notifications"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "unread_notification_count",
+      "line": 7541,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/notifications/unread-count",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "notifications"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "mark_read",
+      "line": 7555,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/notifications/{nid}/read",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "organizations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_organizations",
+      "line": 7339,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/organizations",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "organization_registration_check",
+      "line": 7480,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/organizations/registration-check",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "organizations"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "organization_platform_contact",
+      "line": 7510,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/organizations/{org_id}/platform-contact",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "trials",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/patients.tsx",
+        "frontend/app/(app)/crc/dashboard.tsx",
+        "frontend/app/(app)/dashboard.tsx",
+        "frontend/app/(app)/pi/dashboard.tsx",
+        "frontend/app/(app)/sponsor/dashboard.tsx",
+        "frontend/src/features/clinical/components/PiBottomNav.tsx",
+        "frontend/src/features/uctsm/PatientScheduleScreen.tsx",
+        "frontend/src/features/uctsm/api.ts"
+      ],
+      "handler": "list_patients",
+      "line": 6714,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "patients",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "add_patient",
+      "line": 6776,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations",
+        "patients",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "invite_patient_for_enrollment",
+      "line": 6923,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/invite",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations",
+        "patients",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "check_patient_invitation_availability",
+      "line": 6876,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/invite/check-availability",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "patients",
+        "trials",
+        "worker_status"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "reminder_sync_status",
+      "line": 6747,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/reminder-sync-status",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "trials",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/add-patient.tsx",
+        "frontend/app/(app)/clinical/visit-detail.tsx",
+        "frontend/src/features/uctsm/PatientScheduleScreen.tsx",
+        "frontend/src/features/uctsm/api.ts",
+        "frontend/src/features/uctsm/patientCommands.ts"
+      ],
+      "handler": "get_patient",
+      "line": 7060,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/{patient_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "audit_logs"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "patient_audit_trail",
+      "line": 7142,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/{patient_id}/audit-trail",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "MIGRATE",
+      "collections": [
+        "patients",
+        "trials",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "reconcile_patient_uctsm",
+      "line": 7181,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/{patient_id}/uctsm-reconcile",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/visit-detail.tsx"
+      ],
+      "handler": "get_patient_visits",
+      "line": 7217,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/{patient_id}/visits",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "MIGRATE",
+      "collections": [
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/visit-detail.tsx"
+      ],
+      "handler": "add_patient_visit",
+      "line": 7244,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/{patient_id}/visits",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "MIGRATE",
+      "collections": [
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/visit-detail.tsx"
+      ],
+      "handler": "delete_patient_visit",
+      "line": 7315,
+      "method": "DELETE",
+      "owner": "UNASSIGNED",
+      "path": "/api/patients/{patient_id}/visits/{instance_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "pi_dashboard",
+      "line": 9409,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/pi/dashboard",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "preferences"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_prefs",
+      "line": 10443,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/preferences",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "preferences"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "patch_prefs",
+      "line": 10448,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/preferences",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_protocol_identities",
+      "line": 4468,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocol-identities",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_protocol_identity",
+      "line": 4501,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocol-identities/{identity_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_identity_extraction",
+      "line": 4595,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocol-identities/{identity_id}/extraction",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "resolve_protocol_identity",
+      "line": 4544,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocol-identities/{identity_id}/resolve",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "resume_protocol_identity",
+      "line": 4581,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocol-identities/{identity_id}/resume",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "extract_protocol_alias",
+      "line": 2526,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocols/extract",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "extract_protocol_details",
+      "line": 2486,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocols/extract-details",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "lookup_protocol_query",
+      "line": 2194,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocols/lookup",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "ADAPT",
+      "collections": [
+        "protocol_registry",
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/sponsor/add-trial.tsx"
+      ],
+      "handler": "lookup_protocol",
+      "line": 2166,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/protocols/lookup/{protocol_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "hospital_place_autocomplete",
+      "line": 7387,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/public/places/hospitals/autocomplete",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "hospital_place_details",
+      "line": 7406,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/public/places/hospitals/{place_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "organization_place_autocomplete",
+      "line": 7424,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/public/places/organizations/autocomplete",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "organization_place_details",
+      "line": 7443,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/public/places/organizations/{place_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "push_tokens"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "register_push",
+      "line": 10464,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/push/register",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "patient medication alarms are a separate system",
+      "classification": "RETAIN",
+      "collections": [
+        "reminders"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_reminders",
+      "line": 9422,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/reminders",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "patient medication alarms are a separate system",
+      "classification": "RETAIN",
+      "collections": [
+        "reminders"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_reminder",
+      "line": 9426,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/reminders",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "patient medication alarms are a separate system",
+      "classification": "RETAIN",
+      "collections": [
+        "reminders"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "delete_reminder",
+      "line": 9436,
+      "method": "DELETE",
+      "owner": "UNASSIGNED",
+      "path": "/api/reminders/{rid}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "patient medication alarms are a separate system",
+      "classification": "RETAIN",
+      "collections": [
+        "reminders"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "update_reminder",
+      "line": 9431,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/reminders/{rid}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "role_reports"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "role_generate_report",
+      "line": 10792,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/reports/generate",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "role_report_options",
+      "line": 10823,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/reports/options",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "role_reports"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "role_recent_reports",
+      "line": 10832,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/reports/recent",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "role_reports"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "role_download_report",
+      "line": 10840,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/reports/{report_id}/download",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "approve_schedule",
+      "line": 9008,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/schedules/{trial_id}/approve",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "flag_schedule",
+      "line": 9012,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/schedules/{trial_id}/flag",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances, visits",
+      "classification": "MIGRATE",
+      "collections": [
+        "audit_logs",
+        "broadcast_messages",
+        "dose_logs",
+        "invitations",
+        "master_data_submissions",
+        "medications",
+        "meta",
+        "notifications",
+        "organizations",
+        "patients",
+        "support_tickets",
+        "system_alerts",
+        "terms_versions",
+        "trials",
+        "users",
+        "visit_instances",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/src/features/uctsm/api.ts"
+      ],
+      "handler": "seed_demo",
+      "line": 8406,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/seed",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "touches legacy scheduling collections: schedule_reviews, schedule_versions, visits",
+      "classification": "MIGRATE",
+      "collections": [
+        "files",
+        "notifications",
+        "schedule_reviews",
+        "schedule_versions",
+        "shares",
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_share",
+      "line": 10215,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/shares",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "ADAPT",
+      "collections": [
+        "shares",
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "share_pdf",
+      "line": 10368,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/shares/{token}/schedule.pdf",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "org_sites",
+        "organizations",
+        "patients",
+        "trials",
+        "users",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/org-admin/site.tsx",
+        "frontend/app/(app)/pi/dashboard.tsx",
+        "frontend/app/(app)/site/dashboard.tsx",
+        "frontend/app/_layout.tsx",
+        "frontend/app/index.tsx",
+        "frontend/src/features/clinical/components/PiBottomNav.tsx"
+      ],
+      "handler": "smo_dashboard",
+      "line": 3968,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/site/dashboard",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "org_sites",
+        "organizations",
+        "patients",
+        "trials",
+        "users",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/pi/dashboard.tsx"
+      ],
+      "handler": "smo_dashboard",
+      "line": 3968,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/smo/dashboard",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "dose_logs",
+        "notifications",
+        "org_sites",
+        "organizations",
+        "patients",
+        "trials",
+        "users",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/_layout.tsx",
+        "frontend/app/index.tsx",
+        "frontend/src/features/sponsor/api.ts",
+        "frontend/src/features/sponsor/components/SponsorBottomNav.tsx"
+      ],
+      "handler": "sponsor_dashboard",
+      "line": 2758,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/dashboard",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "sponsor_pi_lookup",
+      "line": 3557,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/pi-lookup",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "org_sites",
+        "organizations",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "sponsor_share_site_directory",
+      "line": 3583,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/share-site-directory",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "sponsor_trial_detail",
+      "line": 3550,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/trials/{trial_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "invitations",
+        "org_sites",
+        "organizations",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "sponsor_add_trial_site",
+      "line": 3727,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/trials/{trial_id}/sites",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "sponsor_import_trial_sites",
+      "line": 3856,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/trials/{trial_id}/sites/import",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "sponsor_trial_subjects",
+      "line": 3702,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/sponsor/trials/{trial_id}/subjects",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "support_contact",
+      "line": 10657,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/support/contact",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "support_tickets"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_tickets",
+      "line": 1003,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/support/tickets",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "support_tickets"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_ticket",
+      "line": 1007,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/support/tickets",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: schedule_reviews, visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "conversations",
+        "messages",
+        "patients",
+        "schedule_reviews",
+        "trials",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/crc/dashboard.tsx",
+        "frontend/app/(app)/pi/dashboard.tsx"
+      ],
+      "handler": "my_tasks",
+      "line": 9055,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/tasks",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "patients",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_team",
+      "line": 8075,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/team",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "notifications",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "remove_team_member",
+      "line": 8268,
+      "method": "DELETE",
+      "owner": "UNASSIGNED",
+      "path": "/api/team/{member_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "notifications",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "patch_team_member",
+      "line": 8215,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/team/{member_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "patients",
+        "trials",
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_trials",
+      "line": 2614,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "organizations",
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "create_trial",
+      "line": 2676,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "ADAPT",
+      "collections": [
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/admin/trials.tsx",
+        "frontend/app/(app)/clinical/trial-summary.tsx",
+        "frontend/src/components/org-admin-kit.tsx",
+        "frontend/src/features/sponsor/api.ts",
+        "frontend/src/features/uctsm/patientCommands.ts"
+      ],
+      "handler": "get_trial",
+      "line": 2713,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "patch_trial",
+      "line": 2722,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "ADAPT",
+      "collections": [
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/add-patient.tsx"
+      ],
+      "handler": "list_trial_arms",
+      "line": 4725,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/arms",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "trial_documents",
+      "line": 3532,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/documents",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "extract_schedule",
+      "line": 4229,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/extract-schedule",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: protocol_extractions",
+      "classification": "MIGRATE",
+      "collections": [
+        "protocol_extractions",
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/sponsor/add-trial.tsx",
+        "frontend/src/features/uctsm/ProtocolUploadReview.tsx"
+      ],
+      "handler": "consume_protocol_extraction",
+      "line": 4310,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/protocol-extractions/{extraction_id}/consume",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "trial_recruitment",
+      "line": 3451,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/recruitment",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: schedule_definitions",
+      "classification": "ADAPT",
+      "collections": [
+        "schedule_definitions",
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_schedule_definition",
+      "line": 4627,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/schedule-definition",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "MIGRATE",
+      "collections": [
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/add-patient.tsx"
+      ],
+      "handler": "preview_trial_schedule",
+      "line": 4653,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/schedule-preview",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "trial_subjects",
+      "line": 3478,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/subjects",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "trial_subject_visits",
+      "line": 3497,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/subjects/{subject_id}/visits",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "ADAPT",
+      "collections": [
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/add-patient.tsx"
+      ],
+      "handler": "list_trial_substudies",
+      "line": 4709,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/substudies",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "trial_team",
+      "line": 3525,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/team",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "trials",
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_trial_uctsm_link",
+      "line": 6678,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/uctsm-link",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "link_trial_to_uctsm",
+      "line": 6506,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/uctsm-link",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "get_canonical_schedules",
+      "line": 6476,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/uctsm-schedule",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: protocol_extractions, schedule_definitions",
+      "classification": "MIGRATE",
+      "collections": [
+        "protocol_extractions",
+        "schedule_definitions",
+        "trials"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/src/features/uctsm/api.ts"
+      ],
+      "handler": "build_canonical_schedule",
+      "line": 6600,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/uctsm-schedule",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "touches legacy scheduling collections: schedule_versions",
+      "classification": "ADAPT",
+      "collections": [
+        "schedule_versions"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/trial-summary.tsx"
+      ],
+      "handler": "trial_versions",
+      "line": 3539,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/trials/{trial_id}/versions",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "does not read or write protocol scheduling data",
+      "classification": "OUT_OF_SCOPE",
+      "collections": [
+        "users"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "list_users",
+      "line": 8059,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/users",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances",
+      "classification": "MIGRATE",
+      "collections": [
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/visit-detail.tsx",
+        "frontend/app/(app)/crc/dashboard.tsx",
+        "frontend/app/(app)/pi/dashboard.tsx"
+      ],
+      "handler": "patch_visit_instance",
+      "line": 8786,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/visit-instances/{instance_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    },
+    {
+      "because": "legacy visit comment/task feature with no UCTSM equivalent (handoff C3/D-4)",
+      "classification": "RETAIN",
+      "collections": [
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "add_visit_instance_comment",
+      "line": 8917,
+      "method": "POST",
+      "owner": "UNASSIGNED",
+      "path": "/api/visit-instances/{instance_id}/comments",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "legacy visit comment/task feature with no UCTSM equivalent (handoff C3/D-4)",
+      "classification": "RETAIN",
+      "collections": [
+        "visit_instances"
+      ],
+      "evidence": null,
+      "frontend_consumers": [],
+      "handler": "patch_visit_instance_task",
+      "line": 8853,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/visit-instances/{instance_id}/tasks/{task_id}",
+      "status": "PROPOSED",
+      "target": "unchanged"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances, visits",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "visit_instances",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/dashboard.tsx",
+        "frontend/app/(app)/patient/about-trial.tsx",
+        "frontend/app/(app)/patient/calendar.tsx",
+        "frontend/app/(app)/patient/dashboard.tsx",
+        "frontend/app/(app)/patient/my-trial.tsx",
+        "frontend/app/(app)/patient/my-visits.tsx"
+      ],
+      "handler": "my_visits",
+      "line": 4925,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/visits/mine",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visit_instances, visits",
+      "classification": "ADAPT",
+      "collections": [
+        "patients",
+        "visit_instances",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/patient/visit-detail.tsx"
+      ],
+      "handler": "my_visit_detail",
+      "line": 4992,
+      "method": "GET",
+      "owner": "UNASSIGNED",
+      "path": "/api/visits/mine/{visit_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM read projection via Trial.schedule_read_mode"
+    },
+    {
+      "because": "touches legacy scheduling collections: visits",
+      "classification": "MIGRATE",
+      "collections": [
+        "trials",
+        "visits"
+      ],
+      "evidence": null,
+      "frontend_consumers": [
+        "frontend/app/(app)/clinical/visit-detail.tsx",
+        "frontend/app/(app)/dashboard.tsx",
+        "frontend/app/(app)/patient/about-trial.tsx",
+        "frontend/app/(app)/patient/calendar.tsx",
+        "frontend/app/(app)/patient/dashboard.tsx",
+        "frontend/app/(app)/patient/my-trial.tsx",
+        "frontend/app/(app)/patient/my-visits.tsx"
+      ],
+      "handler": "patch_visit",
+      "line": 8746,
+      "method": "PATCH",
+      "owner": "UNASSIGNED",
+      "path": "/api/visits/{visit_id}",
+      "status": "PROPOSED",
+      "target": "UCTSM authoring/patient plane (schedule authoring is blocked after UCTSM_AUTHORITATIVE)"
+    }
+  ],
+  "schema": "uctsm-legacy-inventory.v1",
+  "workers": [
+    {
+      "because": "not a scheduling job",
+      "classification": "OUT_OF_SCOPE",
+      "name": "_ensure_admin_seed"
+    },
+    {
+      "because": "not a scheduling job",
+      "classification": "OUT_OF_SCOPE",
+      "name": "_ensure_indexes"
+    },
+    {
+      "because": "not a scheduling job",
+      "classification": "OUT_OF_SCOPE",
+      "name": "_migrate_organization_ownership"
+    },
+    {
+      "because": "materializes legacy visit instances; stop once cut over",
+      "classification": "ARCHIVE",
+      "name": "_migrate_visit_instances"
+    },
+    {
+      "because": "not a scheduling job",
+      "classification": "OUT_OF_SCOPE",
+      "name": "admin_routes.broadcast_worker_loop"
+    },
+    {
+      "because": "UCTSM amendment adoption worker",
+      "classification": "RETAIN",
+      "name": "amendment_worker_loop"
+    },
+    {
+      "because": "visit-reminder bridge reads UCTSM projections; medication alarms stay separate",
+      "classification": "ADAPT",
+      "name": "reminder_worker_loop"
+    }
+  ]
+}

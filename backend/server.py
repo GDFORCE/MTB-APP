@@ -31,6 +31,7 @@ import storage as file_storage
 import google_places
 from app.db.base import build_session_factory
 from app.services.operational_bridge import OperationalBridgeService
+from app.api.legacy_guard import refuse_if_migrated
 from app.services.operational_projection import bridge_visit_documents
 
 ROOT_DIR = Path(__file__).parent
@@ -7187,6 +7188,7 @@ async def reconcile_patient_uctsm(patient_id: str, user=Depends(current_user)):
         raise HTTPException(404, 'Trial not found')
     if not await _can_access_trial(user, trial):
         raise HTTPException(403, 'You do not have access to this patient')
+    await refuse_if_migrated(patient_id, route='/api/patients/{patient_id}/uctsm-reconcile')
     legacy_count = await db.visit_instances.count_documents({
         'patient_id': patient_id, 'uctsm_source_of_truth': {'$ne': True},
     })
@@ -7250,6 +7252,7 @@ async def add_patient_visit(patient_id: str, body: PatientVisitIn,
     the number the site already knows it by.
     """
     patient = await _require_patient(user, patient_id)
+    await refuse_if_migrated(patient_id, route='/api/patients/{patient_id}/visits')
     try:
         scheduled = datetime.fromisoformat(body.scheduled_date.replace('Z', '+00:00'))
     except ValueError:
@@ -7316,6 +7319,7 @@ async def delete_patient_visit(patient_id: str, instance_id: str,
     Only ever an added (`unscheduled`) visit — a protocol visit belongs to the
     approved schedule and is cancelled through its status, never deleted."""
     await _require_patient(user, patient_id)
+    await refuse_if_migrated(patient_id, route='/api/patients/{patient_id}/visits/{instance_id}')
     inst = await db.visit_instances.find_one(
         {'id': instance_id, 'patient_id': patient_id}, {'_id': 0})
     if not inst:
@@ -8787,6 +8791,10 @@ async def patch_visit_instance(instance_id: str, body: VisitInstancePatch,
     # Ownership: resolve the instance's patient and apply the patient-scoping
     # rule — a foreign instance is a 403, never a silent write.
     await _require_patient(user, inst.get('patient_id'))
+    if any(value is not None for value in (
+            body.status, body.scheduled_date, body.actual_visit_at, body.missed_reason, body.cancelled_reason)):
+        # Notes and visit type are not schedule writes; status, dates and reasons are.
+        await refuse_if_migrated(inst.get('patient_id'), route='/api/visit-instances/{instance_id}')
     upd: Dict = {}
     if body.status is not None:
         upd['status'] = body.status
@@ -11398,6 +11406,8 @@ async def disable_legacy_schedule_authoring(request: Request, call_next):
         )
         if legacy_authoring and not path.startswith('/api/uctsm/'):
             from fastapi.responses import JSONResponse
+            from app.observability.metrics import METRICS
+            METRICS.legacy_blocked.inc(route=getattr(request.scope.get('route'), 'path', None) or 'unmatched')
             return JSONResponse(
                 status_code=410,
                 content={'detail': 'Legacy visit-gap scheduling is disabled; use /api/uctsm.'},
@@ -11417,6 +11427,22 @@ app.include_router(org_routes.router)
 app.include_router(org_routes.trial_access_router)
 app.include_router(remote_audit_routes.router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+from app.observability.install import install as install_observability  # noqa: E402
+
+
+def _readiness() -> dict:
+    checks = {'process': True}
+    if os.getenv('UCTSM_MONGO_URL'):
+        try:
+            from app.api.uctsm_mongo import get_plane_uow
+            get_plane_uow()._client.admin.command('ping')
+            checks['plane_mongo'] = True
+        except Exception:
+            checks['plane_mongo'] = False
+    return checks
+
+
+install_observability(app, readiness=_readiness)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 async def _ensure_indexes():

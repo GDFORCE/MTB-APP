@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticVa
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.uctsm_shared import _identity, _maker_checker_http, _uuid
 from app.authorization.guard import RouteAuthorizer
 from app.authorization.maker_checker import MakerCheckerViolation
 from app.db import models as db
@@ -43,6 +44,14 @@ from app.services.schedule_projection import (
 from app.extraction.runner import ENGINE_UNAVAILABLE_MESSAGE, engine_available, execute_run
 from app.services.extraction_service import ExtractionService
 from app.services.demo_service import DemoService
+
+
+class ResolveIssueIn(BaseModel):
+    """A source-review resolution. ``resolution`` is optional and typed: NO_SCHEDULING_EFFECT says
+    a footnote was read and states nothing about the schedule (only for an uninterpreted footnote)."""
+
+    reason: str = Field(min_length=1)
+    resolution: str | None = None
 
 
 class BulkConfirmIn(BaseModel):
@@ -155,13 +164,6 @@ class ApproveVersionIn(BaseModel):
     expected_revision: str = Field(min_length=8)
     reason: str = Field(min_length=1)
     effective_from: date | None = None
-
-
-def _maker_checker_http(error: MakerCheckerViolation) -> HTTPException:
-    outcome = error.outcome
-    return HTTPException(403, str(error), headers={
-        "X-Authz-Code": "MAKER_CHECKER", "X-Authz-Reason": outcome.reason_code,
-        "X-Authz-Policy": outcome.policy_version})
 
 
 def _maker_checker_refused(
@@ -469,13 +471,6 @@ def _as_date(value: object) -> date | None:
     return value if isinstance(value, date) else None
 
 
-def _uuid(value: object, label: str) -> UUID:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError, AttributeError) as error:
-        raise HTTPException(403, f"Authenticated user has no valid {label}") from error
-
-
 def _feasibility_fields(explanation: dict[str, Any] | None) -> dict[str, Any]:
     feasibility = (explanation or {}).get("feasibility")
     if not isinstance(feasibility, dict):
@@ -510,12 +505,6 @@ def _wp3_event_fields(explanation: dict[str, Any] | None) -> dict[str, Any]:
         "held_after_resolution": explanation.get("held_after_resolution"),
         "calendar_session": session,
     }
-
-
-def _identity(user: dict[str, Any]) -> tuple[UUID, UUID]:
-    actor = _uuid(user.get("id"), "identity")
-    organization = user.get("organization_id") or user.get("org_id")
-    return actor, _uuid(organization, "organization context")
 
 
 def _assert_schedule_tenant(session: Session, schedule_version_id: UUID, organization_id: UUID) -> None:
@@ -904,12 +893,13 @@ def create_uctsm_router(
 
     @router.post("/schedule-versions/{schedule_version_id}/extraction-issues/{issue_id}/resolve")
     def resolve_extraction_issue(schedule_version_id: UUID, issue_id: UUID,
-                                 body: BulkConfirmIn, user: User, session: Db):
+                                 body: ResolveIssueIn, user: User, session: Db):
         actor_id, organization_id = _identity(user)
         _assert_schedule_tenant(session, schedule_version_id, organization_id)
         try:
             ScheduleReviewService(session).resolve_extraction_issue(
-                schedule_version_id, issue_id, reviewer_id=actor_id, reason=body.reason)
+                schedule_version_id, issue_id, reviewer_id=actor_id, reason=body.reason,
+                resolution=body.resolution)
             session.commit()
         except (KeyError, ValueError, ImmutableScheduleError) as error:
             session.rollback()
