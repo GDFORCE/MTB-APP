@@ -1,5 +1,10 @@
 # Saved Claude Code prompts
 
+## Deferred backlog - 22 October 2026 (not a current prompt)
+
+- [Extraction evidence verification backlog](extraction-evidence-verification-backlog-2026-10-22.md): design notes for a field-vs-quote check, OCR for scanned pages and a batched LLM meaning check. Deferred until the owner finishes reading the extraction code; it does not change the current continuation below.
+
+
 ## Current continuation - 19 October 2026 (after the second slice)
 
 - [Current continuation prompt](claude-code-continue-after-pdf-slice-2026-10-19.md): state, ordered remaining work, decisions that need a named owner, and boundaries. It supersedes [claude-code-continue-current-tree-2026-10-19.md](claude-code-continue-current-tree-2026-10-19.md) as the starting point (preserved).

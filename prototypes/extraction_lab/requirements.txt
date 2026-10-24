@@ -1,0 +1,10 @@
+# Standalone laboratory; no full backend/server installation is required.
+streamlit>=1.55,<2
+google-genai>=2.19,<3
+pydantic>=2.10,<3
+SQLAlchemy>=2.0.30,<3
+fastapi>=0.110.1,<1
+pypdfium2>=4.30,<6
+jsonschema>=4.23,<5
+python-dotenv>=1,<2
+pytest>=8,<9
