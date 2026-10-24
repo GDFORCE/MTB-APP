@@ -11,6 +11,8 @@
 //   A, how,     // anchor dates (timestamps) and how each was obtained
 //   E,          // anchor dates incl. planning estimates (used only for ordering)
 //   endAt, endEv // the ending event, if any
+//   stopped,    // visits a rule cancelled  [{ rule, at, key, code, t }]
+//   warnings,   // rule checks that failed  [{ rule, text }]
 // }
 //
 // participant = {
@@ -97,6 +99,45 @@ export function computeSchedule(model, site, part) {
   // ending events
   const endEv = evSorted.find((e) => model.events.find((d) => d.id === e.type)?.ends_schedule);
   const endAt = endEv ? parseD(endEv.date) : null;
+  // An anchor plus every anchor counted from it. Visits counted from the anchor an ending event
+  // sets (end-of-treatment follow-up, for example) are that event's consequences, so they stay.
+  const derivedFrom = (root) => {
+    const s = new Set(root ? [root] : []);
+    for (let i = 0; i < 25; i++) {
+      let ch = false;
+      for (const a of model.anchors) if (!s.has(a.id) && a.relative_to && s.has(a.relative_to)) { s.add(a.id); ch = true; }
+      if (!ch) break;
+    }
+    return s;
+  };
+  const endKeeps = derivedFrom(endEv ? model.events.find((d) => d.id === endEv.type)?.sets_anchor : null);
+
+  // rules: what happens to the schedule once something happens. A rule acts only when its date is
+  // known (an anchor's date or the first logged event of its type); until then the visits it would
+  // stop carry stopsIf so people can see what may change.
+  const rules = arr(model.rules).map((r) => {
+    let T = null;
+    if (r.when?.anchor) T = A[r.when.anchor] ?? null;
+    else if (r.when?.event) { const e = evSorted.find((x) => x.type === r.when.event); T = e ? parseD(e.date) : null; }
+    const opens = r.when?.anchor || model.events.find((d) => d.id === r.when?.event)?.sets_anchor || null;
+    // A trigger dated before the date it is measured from (Injection 2 before Injection 1) is a
+    // mistake, not a deviation: the rule is not applied and the date is flagged for correction.
+    const al = r.allowed;
+    let bad = null;
+    if (T != null && al?.relative_to && A[al.relative_to] != null && T < A[al.relative_to] && (al.min_days ?? 0) >= 0) {
+      bad = T; T = null;
+      // Nothing is dated from an impossible date either: those visits wait for a corrected one.
+      if (r.when?.anchor) for (const id of derivedFrom(r.when.anchor)) { A[id] = null; how[id] = "pending"; }
+    }
+    return { r, T, bad, keeps: r.stop_all ? derivedFrom(opens) : null };
+  });
+  const hits = (x, vid, anchor) => (x.r.stop_all ? !x.keeps.has(anchor) : arr(x.r.stop_visits).includes(vid));
+  const after = (x, t) => (x.r.same_day === "cancel" ? t >= x.T : t > x.T);
+  // A visit still waiting for a date when its rule has happened will not happen either.
+  const stopBy = (vid, anchor, t) => rules.find((x) => x.T != null && hits(x, vid, anchor) && (t == null || after(x, t))) || null;
+  // Rules that end everything (withdrawal, death) would tag every visit, so only targeted stops show.
+  const stopsIf = (vid, anchor) => rules.filter((x) => x.T == null && !x.r.stop_all && hits(x, vid, anchor)).map((x) => x.r.label);
+  const stopped = [];
 
   const day1 = model.anchors.find((a) => a.is_day1);
   const studyDay = (t) => {
@@ -136,7 +177,18 @@ export function computeSchedule(model, site, part) {
     const startN = Number.isFinite(+r?.start_n) ? +r.start_n : 1;
     const fo = v.follows ? (occ[v.follows] || []).filter((x) => !x.cancelled) : null;
     const lastMode = v.follows_occurrence === "last";
-    if (fo && !fo.length) { if ((occ[v.follows] || []).length) cancelled++; else skipped.push(v); occ[v.id] = []; continue; }
+    if (fo && !fo.length) {
+      // Every occurrence it follows was cancelled: by a rule (this visit goes with it) or by an ending event.
+      const prev = occ[v.follows] || [], why = prev.find((x) => x.stoppedBy);
+      if (why) {
+        const key = `${v.id}#${startN}`;
+        stopped.push({ rule: why.stoppedBy, at: why.stoppedAt, key, code: v.code, t: why.t != null ? addD(why.t, v.offset_days) : null });
+        occ[v.id] = [{ key, code: v.code, t: null, tE: null, actual: null, cancelled: true, stoppedBy: why.stoppedBy, stoppedAt: why.stoppedAt }];
+        continue;
+      }
+      if (prev.length) cancelled++; else skipped.push(v);
+      occ[v.id] = []; continue;
+    }
     const list = []; let cutN = 0;
     for (let n = 0; n < count; n++) {
       const numN = startN + n, key = `${v.id}#${numN}`;
@@ -165,13 +217,16 @@ export function computeSchedule(model, site, part) {
       const code = r?.code_pattern ? String(r.code_pattern).replaceAll("{n}", numN) : r ? `${v.code}·${numN}` : v.code;
       const name = r?.label_pattern ? String(r.label_pattern).replaceAll("{n}", numN) : r ? `${v.name} ${numN}` : v.name;
       if (n > 0 && until != null && actual == null && (t ?? tE) != null && (t ?? tE) > until) { cutN++; continue; }
-      if (endAt != null && actual == null && (t == null || t > endAt)) { cancelled++; list.push({ key, code, t, tE, actual, cancelled: true }); continue; }
+      const by = actual == null ? stopBy(v.id, v.anchor, t) : null;
+      if (by) { stopped.push({ rule: by.r, at: by.T, key, code, t }); list.push({ key, code, t, tE, actual, cancelled: true, stoppedBy: by.r, stoppedAt: by.T }); continue; }
+      if (endAt != null && actual == null && !endKeeps.has(v.anchor) && (t == null || t > endAt)) { cancelled++; list.push({ key, code, t, tE, actual, cancelled: true }); continue; }
       const { procs, occNote } = visitProcs(v, numN, ans);
       const row = {
         type: "visit", key, v, code, name, t, tE, actual, rel, cond: cs, procs, occNote, first: n === 0,
         lo: t != null ? addD(t, -v.window_before) : null, hi: t != null ? addD(t, v.window_after) : null,
         how: actual != null ? "done" : t != null ? (how[v.anchor] === "entered" && !fo && n === 0 ? "entered" : "derived") : "pending",
         untilPending: !!untilId && until == null, openEnded: !!r?.open_ended && n === count - 1, untilLabel: untilId ? byA[untilId]?.label : null,
+        stopsIf: actual == null ? stopsIf(v.id, v.anchor) : [],
       };
       list.push(row); finish(row);
     }
@@ -192,6 +247,8 @@ export function computeSchedule(model, site, part) {
         const key = `ev.${e.key}.${v.id}#${numN}`;
         const t = addD(ed, v.offset_days + n * num(r?.every_days));
         if (endAt != null && e !== endEv && ed < endAt && t > endAt && !actuals[key]) { cancelled++; continue; }
+        const by = actuals[key] ? null : rules.find((x) => x.T != null && x.r.stop_all && x.r.when?.event !== d.id && ed <= x.T && after(x, t));
+        if (by) { stopped.push({ rule: by.r, at: by.T, key, code: v.code, t }); continue; }
         const actual = actuals[key] ? parseD(actuals[key]) : null;
         const { procs, occNote } = visitProcs(v, numN, eAns);
         const row = {
@@ -220,8 +277,41 @@ export function computeSchedule(model, site, part) {
     rows.push({ type: "decision", key: "dec." + q.id, q, t, tE, at, answer: ans(q.id) });
   }
 
+  // 5. checks on the rules themselves: when a trigger may happen, and what one trigger rules out.
+  //    kind: "order" (impossible date, rule not applied), "window" / "visit_day" (outside what the
+  //    protocol allows), "blocked" (happened after something that rules it out), "info".
+  const warnings = [];
+  const days = (n) => `${n} day${Math.abs(n) === 1 ? "" : "s"}`;
+  for (const x of rules) {
+    const al = x.r.allowed;
+    if (x.bad != null) {
+      warnings.push({ rule: x.r.id, kind: "order", text: `${x.r.label} (${fmtS(x.bad)}) is before ${relOf(al.relative_to, 0)} (${fmtS(A[al.relative_to])}), so it was not applied. Check the date.` });
+      continue;
+    }
+    if (x.T == null) continue;
+    if (al?.relative_to && A[al.relative_to] != null && (al.min_days != null || al.max_days != null)) {
+      const d = Math.round((x.T - A[al.relative_to]) / DAY);
+      if ((al.min_days != null && d < al.min_days) || (al.max_days != null && d > al.max_days)) {
+        const range = al.min_days != null && al.max_days != null ? `${al.min_days} to ${al.max_days} days`
+          : al.min_days != null ? `at least ${days(al.min_days)}` : `at most ${days(al.max_days)}`;
+        warnings.push({ rule: x.r.id, kind: "window", text: `${x.r.label} is ${days(d)} after ${relOf(al.relative_to, 0)}; the protocol allows ${range}.` });
+      }
+    }
+    if (al?.not_on_visit) {
+      const o = (occ[al.not_on_visit] || []).find((y) => !y.cancelled);
+      const ot = o ? o.actual ?? o.t : null;
+      if (ot != null && ot === x.T) warnings.push({ rule: x.r.id, kind: "visit_day", text: `${x.r.label} falls on the ${o.code} visit day, which the protocol does not allow.` });
+    }
+    for (const b of arr(x.r.blocks)) {
+      const y = rules.find((z) => z.r.id === b);
+      if (!y) continue;
+      if (y.T == null) warnings.push({ rule: y.r.id, kind: "info", text: `${y.r.label} is no longer allowed after ${x.r.label} (${fmtS(x.T)}).` });
+      else if (y.T >= x.T) warnings.push({ rule: y.r.id, kind: "blocked", text: `${y.r.label} (${fmtS(y.T)}) comes after ${x.r.label} (${fmtS(x.T)}), which rules it out.` });
+    }
+  }
+
   const sortT = (r) => r.actual ?? r.t ?? r.tE ?? Infinity;
   rows.forEach((r, i) => (r._i = i));
   rows.sort((a, b) => sortT(a) - sortT(b) || (a.type === "decision") - (b.type === "decision") || a._i - b._i);
-  return { rows, skipped, cut, cancelled, A, how, E, endAt, endEv };
+  return { rows, skipped, cut, cancelled, A, how, E, endAt, endEv, stopped, warnings };
 }

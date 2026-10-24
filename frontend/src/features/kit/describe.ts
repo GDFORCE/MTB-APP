@@ -117,13 +117,33 @@ export function serializeSchedule(model, calc, part = {}) {
       timepoints: r.v.timepoints.length ? dayPlan(r.v, part.doseTimes?.[r.key]) : [],
       movesOthers: recordingMovesOthers(model, r.v),
       source: r.v.source || null,
+      stopsIf: r.stopsIf || [],
     };
   });
+  const groups = new Map();
+  for (const s of calc.stopped || []) {
+    if (!groups.has(s.rule.id)) groups.set(s.rule.id, { rule: s.rule.id, label: s.rule.label, effect: s.rule.effect || null, date: d(s.at), visits: [] });
+    groups.get(s.rule.id).visits.push({ key: s.key, code: s.code, date: d(s.t) });
+  }
   return {
     anchors: model.anchors.map((a) => ({ id: a.id, label: a.label, kind: a.kind, date: d(calc.A[a.id]), how: calc.A[a.id] != null ? calc.how[a.id] || "derived" : "pending", setByEvent: model.events.find((e) => e.sets_anchor === a.id)?.id || null })),
     rows,
     skipped: calc.skipped.map((v) => ({ id: v.id, code: v.code, name: v.name, onlyIf: v.include_if.length ? condText(model, v.include_if) : null })),
     stopped: calc.cut.map((x) => ({ visit: x.v.id, count: x.n, at: labelOf(model, x.anchor), date: d(calc.A[x.anchor]) })),
     ended: calc.endEv ? { event: calc.endEv.type, date: d(calc.endAt), cancelled: calc.cancelled } : null,
+    stoppedBy: [...groups.values()],
+    warnings: (calc.warnings || []).map((w) => w.text),
+    issues: calc.warnings || [],
+    // When each rule may happen, as dates, for the screens that ask for a rule's date.
+    ruleWindows: arr(model.rules).filter((r) => r.allowed).map((r) => {
+      const al = r.allowed, from = al.relative_to ? calc.A[al.relative_to] : null;
+      const nv = al.not_on_visit ? calc.rows.find((x) => x.type === "visit" && x.v.id === al.not_on_visit) : null;
+      return {
+        rule: r.id, label: r.label, anchor: r.when?.anchor || null, event: r.when?.event || null,
+        from: from != null && al.min_days != null ? d(addD(from, al.min_days)) : null,
+        to: from != null && al.max_days != null ? d(addD(from, al.max_days)) : null,
+        notOn: nv ? { code: nv.code, date: d(nv.actual ?? nv.t) } : null,
+      };
+    }),
   };
 }

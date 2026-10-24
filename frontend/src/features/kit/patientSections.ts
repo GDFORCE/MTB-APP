@@ -83,6 +83,7 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
       tags.push({ text: cond ? `Only if ${cond}` : "Depends on an answer", tone: "violet" });
     }
     if (row.until) tags.push({ text: `Until ${row.until}`, tone: "amber" });
+    if (row.status !== "done") for (const label of row.stopsIf || []) tags.push({ text: `Stops if ${label}`, tone: "grey" });
     drafts.push({
       ...blank(row.key, "visit", row.date), phase: row.phase || "Visit", name: `${row.code} · ${row.name}`, meta, dot, tags, visit: row,
       waitingAnchor: dot === "wait" && def && !def.follows && askAnchors.has(def.anchor) ? def.anchor : null,
@@ -101,7 +102,10 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
 
   for (const event of participant.events || []) {
     const def = model.events.find((e) => e.id === event.type);
+    const rule = (model.rules || []).find((r) => "event" in r.when && r.when.event === event.type);
+    const stops = rule && !rule.stop_all ? rule.stop_visits.length : 0;
     const effect = def?.ends_schedule ? { text: "Ends schedule", tone: "red" as PTone }
+      : stops ? { text: `Stops ${stops} visit${stops === 1 ? "" : "s"}`, tone: "red" as PTone }
       : def?.visits.length ? { text: `Adds ${def.visits.length} visit${def.visits.length === 1 ? "" : "s"}`, tone: "green" as PTone }
       : (def as { sets_anchor?: string | null } | undefined)?.sets_anchor ? { text: "Sets a date", tone: "amber" as PTone } : null;
     drafts.push({
@@ -112,10 +116,25 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
 
   // Visits a logged event took away show as one crossed-out row where the schedule changed, not
   // one row each, so a long list of cancelled cycles does not break the timeline into pieces.
+  // Visits a rule stopped (Injection 2 given, progression...) show the same way, one row per rule,
+  // at the rule's date, saying which rule did it.
+  const stoppedBy = current.stoppedBy || [];
+  const stoppedKeys = new Set(stoppedBy.flatMap((g) => g.visits.map((x) => x.key)));
+  for (const g of stoppedBy) {
+    const codes = g.visits.map((x) => x.code);
+    const at = g.date || g.visits.find((x) => x.date)?.date || null;
+    drafts.push({
+      ...blank(`stopped-${g.rule}`, "cancelled", at), phase: null,
+      name: `${codes.length} planned visit${codes.length === 1 ? "" : "s"} stopped`,
+      meta: codes.slice(0, 4).join(", ") + (codes.length > 4 ? ` and ${codes.length - 4} more` : ""), dot: "struck",
+      tags: [{ text: `By ${g.label}`, tone: "red" }],
+    });
+  }
+
   const currentKeys = new Set(currentVisits.map((r) => r.key));
-  const gone = visitsOf(withoutEvents).filter((r) => !currentKeys.has(r.key) && r.status !== "done" && !!r.date);
-  const cancelled = gone.length;
-  if (cancelled) {
+  const gone = visitsOf(withoutEvents).filter((r) => !currentKeys.has(r.key) && !stoppedKeys.has(r.key) && r.status !== "done" && !!r.date);
+  const cancelled = gone.length + stoppedKeys.size;
+  if (gone.length) {
     // Placed at the event that caused it: the ending event, else the last one logged before the
     // first cancelled visit (progression, for example, stops cycles without ending the schedule).
     const cause = [...(participant.events || [])].sort((x, y) => (x.date < y.date ? 1 : -1)).find((e) => e.date <= gone[0].date!);
@@ -124,7 +143,7 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
     const codes = gone.map((r) => r.code);
     drafts.push({
       ...blank("cancelled", "cancelled", at), phase: null,
-      name: `${cancelled} planned visit${cancelled === 1 ? "" : "s"} cancelled`,
+      name: `${gone.length} planned visit${gone.length === 1 ? "" : "s"} cancelled`,
       meta: codes.slice(0, 4).join(", ") + (codes.length > 4 ? ` and ${codes.length - 4} more` : ""), dot: "struck",
       tags: [{ text: causeLabel ? `By ${causeLabel}` : "By a logged event", tone: "red" }],
     });
@@ -168,6 +187,8 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
     sections, next,
     done: currentVisits.filter((r) => r.status === "done").length, total: currentVisits.length,
     overdue, moved, late, added, cancelled, pendingAnchors,
+    stopped: stoppedBy.map((g) => ({ label: g.label, count: g.visits.length, date: g.date })),
+    warnings: current.warnings || [],
     pendingDecisions: drafts.filter((d) => d.kind === "decision" && !d.decision?.answer).length,
     ended: current.ended ? { label: endedLabel!, date: current.ended.date } : null,
   };

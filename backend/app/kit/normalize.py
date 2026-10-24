@@ -107,6 +107,61 @@ def norm_visit(v: Any, i: int, prefix: str) -> dict[str, Any] | None:
     }
 
 
+def _opt_num(x: Any) -> float | None:
+    return None if x is None or x == "" or isinstance(x, bool) else num(x, None)  # type: ignore[arg-type]
+
+
+def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids: set[str]) -> list[dict[str, Any]]:
+    """What happens to the schedule if something happens. A rule whose trigger is unknown is dropped;
+    references to unknown visits, anchors or rules are removed rather than guessed."""
+    e_ids = {e["id"] for e in events}
+    rules: list[dict[str, Any]] = []
+    for i, r in enumerate(arr(items)):
+        if not isinstance(r, dict):
+            continue
+        when: dict[str, Any] = r["when"] if isinstance(r.get("when"), dict) else {}
+        if _s(when.get("anchor")) in a_ids:
+            trigger = {"anchor": _s(when["anchor"])}
+        elif _s(when.get("event")) in e_ids:
+            trigger = {"event": _s(when["event"])}
+        else:
+            continue
+        allowed = r.get("allowed") if isinstance(r.get("allowed"), dict) else None
+        if allowed is not None:
+            rel = _s(allowed.get("relative_to"))
+            lo, hi = _opt_num(allowed.get("min_days")), _opt_num(allowed.get("max_days"))
+            not_on = _s(allowed.get("not_on_visit"))
+            allowed = {
+                "relative_to": rel if rel in a_ids else None,
+                "min_days": lo if rel in a_ids else None, "max_days": hi if rel in a_ids else None,
+                "not_on_visit": not_on if not_on in v_ids else None,
+            }
+            if allowed["min_days"] is None and allowed["max_days"] is None and allowed["not_on_visit"] is None:
+                allowed = None
+        stop_visits = []
+        for vid in arr(r.get("stop_visits")):
+            if _s(vid) in v_ids and _s(vid) not in stop_visits:
+                stop_visits.append(_s(vid))
+        label = _s(r.get("label")).strip() or trigger.get("anchor") or trigger.get("event")
+        rules.append({
+            "id": _s(r.get("id") or f"rule{i + 1}"), "label": label, "when": trigger,
+            "stop_visits": stop_visits, "stop_all": bool(r.get("stop_all")),
+            "same_day": "cancel" if r.get("same_day") == "cancel" else "keep",
+            "starts": _s(r["starts"]) if _s(r.get("starts")) in a_ids else None,
+            "blocks": [_s(b) for b in arr(r.get("blocks"))],
+            "allowed": allowed,
+            "effect": _s(r.get("effect")).strip(),
+            "source": _s(r["source"]) if r.get("source") else None,
+        })
+    r_ids = {r["id"] for r in rules}
+    for r in rules:
+        r["blocks"] = [b for b in dict.fromkeys(r["blocks"]) if b in r_ids and b != r["id"]]
+        if r["stop_all"] and "event" in r["when"]:
+            # An event that ends participation ends the schedule the same way the event flag does.
+            next(e for e in events if e["id"] == r["when"]["event"])["ends_schedule"] = True
+    return rules
+
+
 def normalize(st: Any) -> dict[str, Any]:
     if not isinstance(st, dict):
         raise ValueError("bad")
@@ -172,6 +227,7 @@ def normalize(st: Any) -> dict[str, Any]:
                 "visits": [v for v in (norm_visit(v, i, f"{e['id']}_v") for i, v in enumerate(arr(e.get("visits")))) if v],
             })
     st["events"] = events
+    st["rules"] = norm_rules(st.get("rules"), a_ids, events, v_ids)
     review = []
     for q in arr(st.get("review_questions")):
         if isinstance(q, dict) and q.get("id") and q.get("text"):

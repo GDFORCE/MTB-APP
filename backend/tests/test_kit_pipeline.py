@@ -239,3 +239,62 @@ def test_an_unfinished_reply_is_asked_again_and_never_parsed_as_whole(monkeypatc
     with pytest.raises(AnalysisError) as raised:
         llm.OpenAIKitClient(api_key="k", model="m").json("p")
     assert raised.value.code == "invalid_json"
+
+
+def _with_rules(rules: list) -> dict:
+    model = normalize(sample())
+    model["rules"] = rules
+    return model
+
+
+def test_rules_keep_what_the_protocol_says_and_drop_unknown_references():
+    model = normalize(sample())
+    visit_ids = [v["id"] for v in model["visits"]]
+    anchor_id = model["anchors"][-1]["id"]
+    event = model["events"][0]
+    out = normalize(_with_rules([
+        {"id": "switch", "label": "Second period starts", "when": {"anchor": anchor_id},
+         "stop_visits": visit_ids[-2:] + ["no_such_visit"], "same_day": "cancel", "starts": anchor_id,
+         "blocks": ["ends", "missing", "switch"], "allowed": {"relative_to": anchor_id, "min_days": "29", "max_days": None},
+         "effect": "Later visits stop.", "source": "p. 23"},
+        {"id": "ends", "label": "Withdrawal", "when": {"event": event["id"]}, "stop_all": True, "effect": "Ends."},
+        {"id": "ghost", "label": "Unknown trigger", "when": {"event": "nope"}},
+    ]))["rules"]
+    assert [r["id"] for r in out] == ["switch", "ends"]
+    switch, ends = out
+    assert switch["stop_visits"] == visit_ids[-2:]
+    assert switch["same_day"] == "cancel" and switch["starts"] == anchor_id
+    assert switch["blocks"] == ["ends"]
+    assert switch["allowed"] == {"relative_to": anchor_id, "min_days": 29, "max_days": None, "not_on_visit": None}
+    assert ends["same_day"] == "keep" and ends["stop_visits"] == [] and ends["allowed"] is None
+    # An event rule that ends participation ends the schedule the same way the event flag does.
+    assert next(e for e in normalize(_with_rules(out))["events"] if e["id"] == event["id"])["ends_schedule"] is True
+
+
+def test_rules_survive_a_second_normalize_and_the_template_build():
+    model = normalize(sample())
+    rules = [{"id": "r", "label": "x", "when": {"anchor": model["anchors"][0]["id"]}, "stop_visits": [model["visits"][-1]["id"]]}]
+    base = normalize(_with_rules(rules))
+    assert normalize(copy.deepcopy(base))["rules"] == base["rules"]
+    assert build_template_model(base, default_review_answers(base))["rules"] == base["rules"]
+
+
+def test_the_cross_check_asks_for_missing_rules_and_adds_them():
+    base = sample()
+    review = build_review_prompt(normalize(copy.deepcopy(base)), "TABLE", [])
+    assert "rules_add" in review and "do not complete further Period 1 visits" in review
+    first = normalize(copy.deepcopy(base))
+    added = {"id": "late", "label": "Footnote rule", "when": {"anchor": first["anchors"][0]["id"]},
+             "stop_visits": [first["visits"][-1]["id"]], "effect": "Stops the last visit.", "source": "footnote 13"}
+    out = kit_analyze.analyze_protocol(
+        {"text": "t", "tableText": "t"}, FakeClient([base, {"corrections": [], "rules_add": [added, {"label": "no id"}]}]),
+        on_stage=lambda *_: None)
+    assert [r["id"] for r in out["baseModel"]["rules"]][-1] == "late"
+    assert "Rule added: Footnote rule" in out["corrections"]
+    assert out["model"]["rules"][-1]["source"] == "footnote 13"
+
+
+def test_the_model_prompt_asks_for_every_if_this_happens_rule():
+    prompt = build_prompt("x")
+    assert '"rules": [{"id": string' in prompt and "stop_visits" in prompt
+    assert "write one rule for EVERY statement" in prompt

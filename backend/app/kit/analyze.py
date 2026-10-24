@@ -48,6 +48,12 @@ def apply_corrections(st: dict[str, Any], res: Any) -> int:
         if "condition" in c:
             v["condition"] = str(c["condition"]) if c["condition"] else None
         log.append(f"{v['code']}: {c.get('reason') or 'corrected against the schedule table'}")
+    rule_ids = {r.get("id") for r in arr(st.get("rules")) if isinstance(r, dict)}
+    for r in arr((res or {}).get("rules_add") if isinstance(res, dict) else None):
+        if isinstance(r, dict) and r.get("id") and r["id"] not in rule_ids:
+            st.setdefault("rules", []).append(r)
+            rule_ids.add(r["id"])
+            log.append(f"Rule added: {r.get('label') or r['id']}")
     for n in arr((res or {}).get("notes") if isinstance(res, dict) else None):
         if n and str(n) not in st["notes"]:
             st["notes"].append(str(n))

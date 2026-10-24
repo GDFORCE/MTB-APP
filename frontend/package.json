@@ -10,7 +10,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:kit": "node --experimental-strip-types --test tests/kit-participant.test.ts tests/kit-sections.test.ts tests/kit-patient-timeline.test.ts",
+    "test:kit": "node --experimental-strip-types --import ./tests/kit-resolve-hook.mjs --test tests/kit-participant.test.ts tests/kit-sections.test.ts tests/kit-patient-timeline.test.ts tests/kit-rules.test.ts",
     "test:visit-timing": "node --experimental-strip-types --test tests/visit-timing.test.ts",
     "test:uctsm-presentation": "node --experimental-strip-types --test tests/uctsm-presentation.test.ts",
     "check:actions": "node ./scripts/action-map-check.js",

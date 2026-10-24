@@ -1,6 +1,6 @@
 // The protocol schedule as timeline sections: one section per run of visits with the same phase.
 // Pure and import-free (type imports only) so it runs under node --test.
-import type { KitDecisionRow, KitModel, KitSchedule, KitVisitRow } from "./index";
+import type { KitDecisionRow, KitModel, KitRule, KitSchedule, KitVisitRow } from "./index";
 
 export type Tone = "green" | "amber" | "violet" | "red";
 export type Dot = "site" | "remote" | "decision" | "repeat" | "wait";
@@ -9,7 +9,7 @@ export type TimelineRow = {
   tags: { text: string; tone: Tone }[]; timepoints: string[]; visitIds: string[]; occurrences: number;
 };
 export type TimelineSection = { key: string; label: string; range: string; rows: TimelineRow[]; visitIds: string[] };
-export type EventSummary = { id: string; label: string; effect: string; tone: Tone };
+export type EventSummary = { id: string; label: string; effect: string; tone: Tone; detail?: string | null };
 
 const DAY = 864e5;
 export const daysBetween = (from: string, to: string) =>
@@ -85,6 +85,7 @@ export function protocolTimeline(
       tags.push({ text: cond ? `Only if ${cond}` : "Only for some patients", tone: "amber" });
     }
     if (row.until) tags.push({ text: `Until ${row.until}`, tone: "amber" });
+    for (const label of row.stopsIf || []) tags.push({ text: `Stops if ${label}`, tone: "red" });
     if (def?.duration_days) tags.push({ text: `Lasts ${def.duration_days} days`, tone: "green" });
     if (row.timepoints.length) tags.push({ text: `${row.timepoints.length} time points`, tone: "green" });
     const meta = [MODALITY[row.modality] || "Visit", days == null ? row.relative : null, windowText(row.windowDays),
@@ -159,15 +160,38 @@ export function protocolTimeline(
   };
 }
 
+/** What a rule does, in one tag. */
+export function ruleEffect(model: KitModel, r: KitRule): { effect: string; tone: Tone } {
+  const label = (id: string) => model.anchors.find((a) => a.id === id)?.label || id;
+  const n = r.stop_visits.length;
+  if (r.stop_all) return { effect: "Ends schedule", tone: "red" };
+  if (n) return { effect: `Stops ${n} visit${n === 1 ? "" : "s"}`, tone: "red" };
+  if (r.starts) return { effect: `Starts ${label(r.starts)}`, tone: "green" };
+  if (r.blocks.length) return { effect: "Rules something out", tone: "amber" };
+  return { effect: "Visits continue", tone: "green" };
+}
+
+/**
+ * "If something happens": every rule read from the protocol, with what it changes and where the
+ * protocol says so, then the events no rule covers.
+ */
 export function eventSummaries(model: KitModel): EventSummary[] {
   const label = (id: string) => model.anchors.find((a) => a.id === id)?.label || id;
-  return model.events.map((e) => {
+  const rules = model.rules || [];
+  const covered = new Set(rules.map((r) => ("event" in r.when ? r.when.event : null)).filter(Boolean));
+  const fromRules: EventSummary[] = rules.map((r) => {
+    const blocked = r.blocks.map((b) => rules.find((x) => x.id === b)?.label).filter(Boolean);
+    const detail = [r.effect, blocked.length ? `Rules out: ${blocked.join(", ")}.` : "", r.source ? `(${r.source})` : ""]
+      .filter(Boolean).join(" ");
+    return { id: r.id, label: r.label, ...ruleEffect(model, r), detail: detail || null };
+  });
+  return fromRules.concat(model.events.filter((e) => !covered.has(e.id)).map((e): EventSummary => {
     const sets = (e as { sets_anchor?: string | null }).sets_anchor;
     if (e.ends_schedule) return { id: e.id, label: e.label, effect: "Ends schedule", tone: "red" };
     if (e.visits.length) return { id: e.id, label: e.label, effect: `Adds ${e.visits.length} visit${e.visits.length === 1 ? "" : "s"}`, tone: "green" };
     if (sets) return { id: e.id, label: e.label, effect: `Sets ${label(sets)}`, tone: "amber" };
     return { id: e.id, label: e.label, effect: "Recorded", tone: "green" };
-  });
+  }));
 }
 
 /** Rename every visit in a section; sections whose names then match join on their own. */

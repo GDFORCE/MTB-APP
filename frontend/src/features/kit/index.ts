@@ -24,6 +24,16 @@ export type KitEvent = {
   id: string; label: string; repeatable: boolean; ends_schedule: boolean; note: string | null;
   questions: KitQuestion[]; visits: KitVisitDefinition[];
 };
+/**
+ * What happens to the schedule if something happens, as read from the protocol. It acts once its
+ * date is known: an anchor's date (entered, or set by its visit) or the first logged event of a type.
+ */
+export type KitRule = {
+  id: string; label: string; when: { anchor: string } | { event: string };
+  stop_visits: string[]; stop_all: boolean; same_day: "keep" | "cancel"; starts: string | null; blocks: string[];
+  allowed: { relative_to: string | null; min_days: number | null; max_days: number | null; not_on_visit: string | null } | null;
+  effect: string; source: string | null;
+};
 export type KitModel = {
   protocol: { title?: string; number?: string | null; sponsor?: string | null; phase?: string | null;
     indication?: string | null; version?: string | null; design?: string };
@@ -32,6 +42,7 @@ export type KitModel = {
   questions: KitQuestion[];
   visits: KitVisitDefinition[];
   events: KitEvent[];
+  rules?: KitRule[];
   review_questions: KitReviewQuestion[];
   notes: string[];
   review?: string[] | null;
@@ -61,6 +72,8 @@ export type KitVisitRow = {
   dependsOnDecision: boolean; fromEvent: string | null; openEnded: boolean; until: string | null;
   procedures: { name: string; conditional: boolean; condition: string | null }[];
   notes: string[]; timepoints: KitTimepoint[]; source: string | null;
+  /** Labels of rules that would stop this visit once they happen (their date is not known yet). */
+  stopsIf: string[];
 };
 export type KitDecisionRow = {
   type: "decision"; key: string; questionId: string; text: string; help: string | null; at: string;
@@ -72,6 +85,14 @@ export type KitSchedule = {
   skipped: { id: string; code: string; name: string; onlyIf: string | null }[];
   stopped: { visit: string; count: number; at: string; date: string | null }[];
   ended: { event: string; date: string | null; cancelled: number } | null;
+  /** Visits each rule cancelled, grouped by rule. */
+  stoppedBy: { rule: string; label: string; effect: string | null; date: string | null; visits: { key: string; code: string; date: string | null }[] }[];
+  /** A rule's date breaks the protocol's limits, or one rule rules out another. */
+  warnings: string[];
+  /** The same checks with their kind: "order" means the date is impossible and the rule was not applied. */
+  issues: { rule: string; kind: "order" | "window" | "visit_day" | "blocked" | "info"; text: string }[];
+  /** When each rule may happen, as dates (null where the protocol sets no limit or a date is not known yet). */
+  ruleWindows: { rule: string; label: string; anchor: string | null; event: string | null; from: string | null; to: string | null; notOn: { code: string; date: string | null } | null }[];
 };
 
 /** Model + site settings + one participant's answers -> the dated schedule. */

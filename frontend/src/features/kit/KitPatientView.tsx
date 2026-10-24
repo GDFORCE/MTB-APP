@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { Trash2 } from "lucide-react-native";
 import { fonts } from "@/src/theme/tokens";
 import type { KitPatientRecord } from "./api";
-import { isoParts, todayIso, type KitDecisionRow, type KitParticipant, type KitVisitRow } from "./index";
+import { computeKitSchedule, isoParts, todayIso, type KitDecisionRow, type KitParticipant, type KitSchedule, type KitVisitRow } from "./index";
 import {
   answer, dmyToIso, formatDmyInput, isoToDmy, logEvent, recordVisit, removeEvent, setAnchorDate,
 } from "./participant";
@@ -15,7 +15,11 @@ type Sheet =
   | { kind: "visit"; row: KitVisitRow }
   | { kind: "decision"; row: KitDecisionRow }
   | { kind: "anchor"; id: string }
-  | { kind: "events" };
+  | { kind: "events" }
+  | { kind: "confirm"; participant: KitParticipant; issues: string[] };
+
+type Issue = KitSchedule["issues"][number];
+const issueKey = (i: Issue) => `${i.rule}|${i.kind}|${i.text}`;
 
 const short = (iso: string) => { const p = isoParts(iso); return `${+p.day} ${p.month}`; };
 
@@ -62,7 +66,21 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist }: 
   const data = usePatientTimeline(record?.model, record?.site_answers, record?.participant);
 
   const open = (next: Sheet) => { setSheetError(""); setSheet(next); };
-  const save = async (participant: KitParticipant) => {
+  const scheduleOf = (participant: KitParticipant) =>
+    record ? computeKitSchedule(record.model, record.site_answers || {}, participant) : null;
+  // A change that gives a rule an impossible date is refused; one outside what the protocol allows
+  // (a deviation that really happened) is saved only after the user confirms it.
+  const save = async (participant: KitParticipant, confirmed = false) => {
+    if (!confirmed && record) {
+      let fresh: Issue[] = [];
+      try {
+        const before = new Set((scheduleOf(record.participant)?.issues || []).map(issueKey));
+        fresh = (scheduleOf(participant)?.issues || []).filter((i) => !before.has(issueKey(i)) && i.kind !== "info");
+      } catch { /* the schedule itself reports a calculation failure */ }
+      const impossible = fresh.find((i) => i.kind === "order");
+      if (impossible) { setSheetError(impossible.text.replace(", so it was not applied. Check the date.", ". Check the date.")); return; }
+      if (fresh.length) { setSheetError(""); setSheet({ kind: "confirm", participant, issues: fresh.map((i) => i.text) }); return; }
+    }
     setSaving(true);
     setSheetError("");
     setSaveError("");
@@ -102,7 +120,13 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist }: 
         {data.ended && <Banner tone="red" title={`${data.ended.label} logged ${short(data.ended.date || todayIso())}.`}
           text={data.cancelled ? `${data.cancelled} planned visit${data.cancelled === 1 ? " was" : "s were"} cancelled.` : "Later visits were cancelled."}
           action={canEdit && endingEvent ? "Undo" : undefined} onAction={() => endingEvent && save(removeEvent(p, endingEvent.key))} />}
-        {!data.ended && data.cancelled > 0 && <Banner tone="red" title={`${data.cancelled} visit${data.cancelled === 1 ? "" : "s"} cancelled`} text="by a logged event." />}
+        {data.warnings.map((w) => <Banner key={w} tone="amber" title="Check:" text={w} />)}
+        {data.stopped.map((g) => <Banner key={g.label} tone="red" title={`${g.count} visit${g.count === 1 ? "" : "s"} stopped`}
+          text={`by ${g.label}${g.date ? ` (${short(g.date)})` : ""}.`} />)}
+        {(() => {
+          const byEvent = data.cancelled - data.stopped.reduce((n, g) => n + g.count, 0);
+          return !data.ended && byEvent > 0 ? <Banner tone="red" title={`${byEvent} visit${byEvent === 1 ? "" : "s"} cancelled`} text="by a logged event." /> : null;
+        })()}
         {data.overdue > 0 && <Banner tone="red" title={`${data.overdue} visit${data.overdue === 1 ? " is" : "s are"} overdue.`} text="Their window has closed." />}
         {data.moved > 0 && <Banner tone="amber" title={`${data.moved} visit${data.moved === 1 ? "" : "s"} moved`}
           text={data.late ? `after ${data.late === 1 ? "a visit was" : "visits were"} done off the planned day.` : "from the plan."} />}
@@ -128,7 +152,16 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist }: 
       <FlowButton label="Clear answer" variant="secondary" disabled={saving} onPress={() => save(answer(p, sheet.row.questionId, null))} />
       {!!sheetError && <Text style={f.error}>{sheetError}</Text>}
     </FlowSheet>}
+    {sheet?.kind === "confirm" && <FlowSheet visible title="Outside the protocol" onClose={() => setSheet(null)}>
+      {sheet.issues.map((text) => <Text key={text} style={[f.hint, { color: G.redInk }]}>{text}</Text>)}
+      <Text style={f.hint}>Save it only if this is what actually happened; it will be shown as a deviation.</Text>
+      {!!sheetError && <Text style={f.error}>{sheetError}</Text>}
+      <FlowButton label="Save anyway" loading={saving} onPress={() => save(sheet.participant, true)} />
+      <FlowButton label="Go back" variant="secondary" disabled={saving} onPress={() => setSheet(null)} />
+    </FlowSheet>}
     {sheet?.kind === "anchor" && p && record && <AnchorSheet label={record.model.anchors.find((a) => a.id === sheet.id)?.label || sheet.id}
+      effects={(record.model.rules || []).filter((r) => "anchor" in r.when && r.when.anchor === sheet.id && r.effect).map((r) => r.effect)}
+      window={windowText(scheduleOf(p)?.ruleWindows.find((w) => w.anchor === sheet.id))}
       date={p.answers["@" + sheet.id] || null} saving={saving} error={sheetError} onClose={() => setSheet(null)}
       onSave={(date) => save(setAnchorDate(p, sheet.id, date))} />}
     {sheet?.kind === "events" && p && record && <EventSheet record={record} saving={saving} error={sheetError} onClose={() => setSheet(null)}
@@ -177,13 +210,24 @@ function VisitSheet({ row, saving, error, onClose, onSave }: {
   </FlowSheet>;
 }
 
-function AnchorSheet({ label, date, saving, error, onClose, onSave }: {
-  label: string; date: string | null; saving: boolean; error: string; onClose: () => void; onSave: (date: string | null) => void;
+/** "Allowed 9 Jan 2027 – 30 Apr 2027, not on the P1W4 day (8 Jan)." */
+function windowText(w: KitSchedule["ruleWindows"][number] | undefined): string | null {
+  if (!w || (!w.from && !w.to && !w.notOn)) return null;
+  const long = (iso: string) => { const q = isoParts(iso); return `${+q.day} ${q.month} ${q.year}`; };
+  const range = w.from && w.to ? `${long(w.from)} – ${long(w.to)}` : w.from ? `from ${long(w.from)}` : w.to ? `until ${long(w.to)}` : "";
+  const notOn = w.notOn ? `not on the ${w.notOn.code} day${w.notOn.date ? ` (${short(w.notOn.date)})` : ""}` : "";
+  return `Allowed ${[range, notOn].filter(Boolean).join(", ")}.`;
+}
+
+function AnchorSheet({ label, effects, window, date, saving, error, onClose, onSave }: {
+  label: string; effects: string[]; window: string | null; date: string | null; saving: boolean; error: string; onClose: () => void; onSave: (date: string | null) => void;
 }) {
   const [value, setValue] = useState(date ? isoToDmy(date) : "");
   const iso = dmyToIso(value);
   return <FlowSheet visible title={`${label} date`} onClose={onClose}>
     <Text style={f.hint}>Visits that count from it get their dates from this.</Text>
+    {effects.map((text) => <Text key={text} style={[f.hint, { color: G.redInk }]}>{text}</Text>)}
+    {!!window && <Text style={[f.hint, { color: G.ink }]}>{window}</Text>}
     <DateField value={value} onChange={setValue} />
     {!!error && <Text style={f.error}>{error}</Text>}
     <FlowButton label="Save date" loading={saving} disabled={!iso} onPress={() => onSave(iso)} />
@@ -217,6 +261,8 @@ function EventSheet({ record, saving, error, onClose, onLog, onRemove }: {
       <Chips options={available.map((e) => ({ value: e.id, label: e.label }))} value={type} onChange={(value) => { setType(value); setAnswers({}); }} />
       {definition && <>
         {definition.ends_schedule && <Text style={[f.hint, { color: G.redInk }]}>This ends the schedule: later visits are cancelled.</Text>}
+        {(record.model.rules || []).filter((r) => "event" in r.when && r.when.event === definition.id && r.effect)
+          .map((r) => <Text key={r.id} style={f.hint}>{r.effect}</Text>)}
         <View style={{ gap: 6 }}><Text style={f.label}>Date</Text><DateField value={date} onChange={setDate} /></View>
         {definition.questions.map((q) => <View key={q.id} style={{ gap: 8 }}>
           <Text style={f.label}>{q.text || q.label}</Text>

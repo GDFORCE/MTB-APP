@@ -89,7 +89,10 @@ export function ProtocolTimeline({ data, onRename }: { data: ProtocolTimelineDat
     {!!data.events.length && <View style={s.section}>
       <Text style={[s.sectionTitle, s.eventsTitle]}>If something happens</Text>
       {data.events.map((event) => <View key={event.id} style={s.event}>
-        <Text style={s.eventLabel}>{event.label}</Text>
+        <View style={s.eventText}>
+          <Text style={s.eventLabel}>{event.label}</Text>
+          {!!event.detail && <Text style={s.eventDetail}>{event.detail}</Text>}
+        </View>
         <Text style={[s.tag, { backgroundColor: TONE[event.tone].bg, color: TONE[event.tone].fg }]}>{event.effect}</Text>
       </View>)}
     </View>}
@@ -123,5 +126,7 @@ const s = StyleSheet.create({
   tag: { fontFamily: fonts.medium, fontSize: 11, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, overflow: "hidden" },
   timepoint: { fontFamily: fonts.medium, fontSize: 11, color: G.ink, borderWidth: 1, borderColor: G.line, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   event: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: G.softLine },
-  eventLabel: { flex: 1, color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
+  eventText: { flex: 1, minWidth: 0, gap: 3 },
+  eventLabel: { color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
+  eventDetail: { color: G.muted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17 },
 });
