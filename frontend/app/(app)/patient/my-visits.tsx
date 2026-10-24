@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { View, ScrollView, Pressable, StyleSheet, ActivityIndicator } from "react-native";
+import { View, ScrollView, Pressable, StyleSheet, ActivityIndicator, Text } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { MapPin, User, Calendar as CalIcon, Clock, Building2, ChevronRight } from "lucide-react-native";
-import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
+import { colors, spacing, radii, dawnGradient, fonts } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
+import { getMyKit, type KitPatientRecord } from "@/src/features/kit/api";
+import { PatientTimeline, usePatientTimeline } from "@/src/features/kit/PatientTimeline";
+import { FOCUS } from "@/src/features/kit/focus";
 
 const fmtTime = (d?: string) =>
   d ? new Date(d).toLocaleTimeString("en-GB", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
@@ -20,11 +23,14 @@ export default function MyVisits() {
   const [loading, setLoading] = useState(true);
   const [trialId, setTrialId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // A patient on the trial's reviewed protocol schedule: dates are computed from their record.
+  const [kit, setKit] = useState<KitPatientRecord | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [t, v] = await Promise.all([api.get("/trials"), api.get("/visits/mine")]);
+        const [t, v, k] = await Promise.all([api.get("/trials"), api.get("/visits/mine"), getMyKit().catch(() => null)]);
+        setKit(k);
         const visitRows = Array.isArray(v.data) ? v.data : [];
         const enrolledIds = new Set(visitRows.map((row: any) => row.trial_id).filter(Boolean));
         setTrials((Array.isArray(t.data) ? t.data : []).filter((row: any) => enrolledIds.has(row.id)));
@@ -36,6 +42,26 @@ export default function MyVisits() {
       }
     })();
   }, []);
+
+  const kitTimeline = usePatientTimeline(kit?.model, kit?.site_answers, kit?.participant);
+
+  if (kitTimeline && kit) {
+    const next = kitTimeline.next;
+    return (
+      <ScreenContainer>
+        <ScreenHeader eyebrow={kit.trial.protocol_id || "Your trial"} title="My Visits" />
+        <ScrollView style={{ backgroundColor: FOCUS.bg }} contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 20, paddingBottom: PATIENT_NAV_CONTENT_BOTTOM }}>
+          <Text style={st.kitEyebrow}>{kit.trial.title || "Your study"}</Text>
+          <Text style={st.kitHeading}>
+            {kitTimeline.ended ? "Your visits have ended" : next?.date ? `Next visit: ${next.name} on ${formatIsoCalendarDate(next.date)}` : "No visit dated yet"}
+          </Text>
+          <Text style={st.kitSub}>{kitTimeline.done} of {kitTimeline.total} visits done</Text>
+          <PatientTimeline data={kitTimeline} />
+        </ScrollView>
+        <PatientBottomNav active="visits" />
+      </ScreenContainer>
+    );
+  }
 
   const trial = trials.find(t => t.id === trialId);
   const tv = visits.filter(v => v.trial_id === trialId);
@@ -156,6 +182,9 @@ export default function MyVisits() {
 }
 
 const st = StyleSheet.create({
+  kitEyebrow: { color: FOCUS.accent, fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 1.4, textTransform: "uppercase" },
+  kitHeading: { color: FOCUS.ink, fontFamily: fonts.semibold, fontSize: 24, lineHeight: 30, marginTop: 10 },
+  kitSub: { color: FOCUS.muted, fontFamily: fonts.regular, fontSize: 15, marginTop: 8 },
   protoTag: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.secondary },
   statusTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   hero: { borderRadius: radii.xl, padding: spacing.md },

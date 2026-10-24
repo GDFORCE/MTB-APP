@@ -22,6 +22,7 @@ import {
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
+import { fetchMyVisits } from "@/src/features/kit/patientVisits";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 
@@ -94,7 +95,9 @@ export default function PatientDashboard() {
     else setLoading(true);
     setError("");
     const [visitResult, notificationResult, adherenceResult, trialResult] = await Promise.allSettled([
-      api.get("/visits/mine"),
+      // A patient on the trial's reviewed protocol schedule has no visit rows on
+      // the server; their visits are computed from their record instead.
+      fetchMyVisits(),
       api.get("/notifications"),
       api.get("/adherence"),
       api.get("/trials"),
@@ -312,7 +315,7 @@ export default function PatientDashboard() {
           ) : sources.visits === "error" ? (
             <SectionError label="visit schedule" onRetry={() => void load(true)} />
           ) : next && nextDate ? (
-          <Pressable testID="next-visit-card" onPress={() => router.push({ pathname: "/(app)/patient/visit-detail", params: { id: next.id } })}>
+          <Pressable testID="next-visit-card" onPress={() => next.kit ? router.push("/(app)/patient/my-visits") : router.push({ pathname: "/(app)/patient/visit-detail", params: { id: next.id } })}>
             <View style={pst.card}>
               <View style={{ flexDirection: "row", gap: 16 }}>
                 <LinearGradient colors={DAWN as any} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={pst.dateBlock}>

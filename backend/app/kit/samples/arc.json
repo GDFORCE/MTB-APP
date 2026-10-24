@@ -1,0 +1,611 @@
+{
+  "name": "arc",
+  "blurb": "Run-in, two-period crossover, extension decision, exacerbation events",
+  "file": "ARC-12_protocol_v1.4.pdf",
+  "model": {
+    "protocol": {
+      "title": "A Randomized, Double-Blind, Placebo-Controlled, Two-Period Crossover Study of ARC-5 Inhaler in Moderate Asthma, With Open-Label Extension",
+      "number": "ARC-12",
+      "sponsor": "Sample Respiratory (fictional)",
+      "phase": "Phase II",
+      "indication": "Moderate persistent asthma",
+      "version": "v1.4",
+      "design": "A 14-day single-blind placebo run-in, then randomization to sequence AB or BA: two 28-day treatment periods separated by a washout. Participants who complete period 2 may enter a 48-week open-label extension."
+    },
+    "arms": [
+      {
+        "id": "AB",
+        "name": "Sequence AB · ARC-5 then placebo",
+        "description": ""
+      },
+      {
+        "id": "BA",
+        "name": "Sequence BA · placebo then ARC-5",
+        "description": ""
+      }
+    ],
+    "anchors": [
+      {
+        "id": "screening",
+        "label": "Screening",
+        "kind": "start"
+      },
+      {
+        "id": "runin",
+        "label": "Run-in start",
+        "kind": "relative",
+        "relative_to": "screening",
+        "offset_days": 7,
+        "set_by_visit": "run"
+      },
+      {
+        "id": "p1",
+        "label": "Period 1 start",
+        "kind": "relative",
+        "relative_to": "runin",
+        "offset_days": 14,
+        "is_day1": true,
+        "set_by_visit": "p1d1"
+      },
+      {
+        "id": "p2",
+        "label": "Period 2 start",
+        "kind": "relative",
+        "relative_to": "p1",
+        "offset_days": 42,
+        "set_by_visit": "p2d1",
+        "note": "28-day period plus at least 14 days washout."
+      },
+      {
+        "id": "ole",
+        "label": "Extension start",
+        "kind": "relative",
+        "relative_to": "p2",
+        "offset_days": 28
+      }
+    ],
+    "questions": [
+      {
+        "id": "seq",
+        "label": "Sequence",
+        "scope": "participant",
+        "text": "Sequence?",
+        "kind": "choice",
+        "options": [
+          {
+            "value": "AB",
+            "label": "AB"
+          },
+          {
+            "value": "BA",
+            "label": "BA"
+          }
+        ],
+        "help": "From randomization"
+      },
+      {
+        "id": "wocbp",
+        "label": "WOCBP",
+        "scope": "participant",
+        "text": "Childbearing potential?",
+        "kind": "boolean",
+        "help": ""
+      },
+      {
+        "id": "runin_ok",
+        "label": "Run-in passed",
+        "scope": "decision",
+        "ask_at": {
+          "visit": "p1d1"
+        },
+        "text": "Passed run-in (diary ≥ 80%, FEV1 40–85%)?",
+        "kind": "boolean",
+        "help": "No = run-in failure; later visits are dropped"
+      },
+      {
+        "id": "ole_yes",
+        "label": "Extension",
+        "scope": "decision",
+        "ask_at": {
+          "visit": "p2d28"
+        },
+        "text": "Entering the open-label extension?",
+        "kind": "boolean",
+        "help": ""
+      }
+    ],
+    "visits": [
+      {
+        "id": "scr",
+        "code": "SCR",
+        "name": "Screening",
+        "phase": "Screening",
+        "anchor": "screening",
+        "offset_days": 0,
+        "procedures": [
+          "Informed consent",
+          "Medical history",
+          "Spirometry with reversibility",
+          "Hematology & chemistry",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "run",
+        "code": "RUN",
+        "name": "Run-in start",
+        "phase": "Run-in",
+        "anchor": "runin",
+        "offset_days": 0,
+        "window_after": 3,
+        "duration_days": 14,
+        "procedures": [
+          "Dispense placebo inhaler",
+          "e-Diary training",
+          "ACQ-5"
+        ],
+        "condition": "Single-blind placebo for 14 days; e-diary every day."
+      },
+      {
+        "id": "p1d1",
+        "code": "P1D1",
+        "name": "Period 1 start",
+        "phase": "Period 1",
+        "anchor": "p1",
+        "offset_days": 0,
+        "window_after": 2,
+        "procedures": [
+          "Randomization (IWRS)",
+          "Dispense study inhaler",
+          "ACQ-5"
+        ],
+        "timepoints": [
+          {
+            "label": "Pre-dose",
+            "offset_min": 0,
+            "window_before_min": 30,
+            "procedures": [
+              "Spirometry"
+            ]
+          },
+          {
+            "label": "15 min",
+            "offset_min": 15,
+            "window_before_min": 5,
+            "window_after_min": 5,
+            "procedures": [
+              "Spirometry"
+            ]
+          },
+          {
+            "label": "1 h",
+            "offset_min": 60,
+            "window_before_min": 10,
+            "window_after_min": 10,
+            "procedures": [
+              "Spirometry"
+            ]
+          },
+          {
+            "label": "4 h",
+            "offset_min": 240,
+            "window_before_min": 15,
+            "window_after_min": 15,
+            "procedures": [
+              "Spirometry",
+              "Vital signs"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "p1d14",
+        "code": "P1D14",
+        "name": "Period 1 check-in",
+        "phase": "Period 1",
+        "modality": "phone",
+        "follows": "p1d1",
+        "offset_days": 13,
+        "window_before": 2,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "procedures": [
+          "AE review",
+          "Rescue use review"
+        ]
+      },
+      {
+        "id": "p1d28",
+        "code": "P1D28",
+        "name": "Period 1 end",
+        "phase": "Period 1",
+        "follows": "p1d1",
+        "offset_days": 27,
+        "window_before": 2,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "procedures": [
+          "Spirometry",
+          "ACQ-5",
+          "Return inhaler",
+          "AE review"
+        ]
+      },
+      {
+        "id": "p2d1",
+        "code": "P2D1",
+        "name": "Period 2 start",
+        "phase": "Period 2",
+        "anchor": "p2",
+        "offset_days": 0,
+        "window_after": 3,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "procedures": [
+          "Dispense study inhaler",
+          "ACQ-5"
+        ],
+        "timepoints": [
+          {
+            "label": "Pre-dose",
+            "offset_min": 0,
+            "window_before_min": 30,
+            "procedures": [
+              "Spirometry"
+            ]
+          },
+          {
+            "label": "15 min",
+            "offset_min": 15,
+            "window_before_min": 5,
+            "window_after_min": 5,
+            "procedures": [
+              "Spirometry"
+            ]
+          },
+          {
+            "label": "1 h",
+            "offset_min": 60,
+            "window_before_min": 10,
+            "window_after_min": 10,
+            "procedures": [
+              "Spirometry"
+            ]
+          },
+          {
+            "label": "4 h",
+            "offset_min": 240,
+            "window_before_min": 15,
+            "window_after_min": 15,
+            "procedures": [
+              "Spirometry",
+              "Vital signs"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "p2d14",
+        "code": "P2D14",
+        "name": "Period 2 check-in",
+        "phase": "Period 2",
+        "modality": "phone",
+        "follows": "p2d1",
+        "offset_days": 13,
+        "window_before": 2,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "procedures": [
+          "AE review",
+          "Rescue use review"
+        ]
+      },
+      {
+        "id": "p2d28",
+        "code": "P2D28",
+        "name": "Period 2 end",
+        "phase": "Period 2",
+        "follows": "p2d1",
+        "offset_days": 27,
+        "window_before": 2,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "procedures": [
+          "Spirometry",
+          "ACQ-5",
+          "Return inhaler",
+          "AE review",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "fu",
+        "code": "FU",
+        "name": "Follow-up call",
+        "phase": "Follow-up",
+        "modality": "phone",
+        "follows": "p2d28",
+        "offset_days": 14,
+        "window_before": 3,
+        "window_after": 3,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          },
+          {
+            "question": "ole_yes",
+            "in": [
+              "no"
+            ]
+          }
+        ],
+        "procedures": [
+          "AE review"
+        ]
+      },
+      {
+        "id": "ole",
+        "code": "OLE1",
+        "name": "Extension visit 1",
+        "phase": "Extension",
+        "anchor": "ole",
+        "offset_days": 84,
+        "window_before": 7,
+        "window_after": 7,
+        "include_if": [
+          {
+            "question": "runin_ok",
+            "in": [
+              "yes"
+            ]
+          },
+          {
+            "question": "ole_yes",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "repeat": {
+          "every_days": 84,
+          "count": 4,
+          "start_n": 1,
+          "label_pattern": "Extension visit {n}",
+          "code_pattern": "OLE{n}",
+          "overrides": [
+            {
+              "n": [
+                4
+              ],
+              "add": [
+                "Spirometry",
+                "Hematology & chemistry"
+              ],
+              "remove": [],
+              "note": "End of extension"
+            }
+          ]
+        },
+        "procedures": [
+          "ACQ-5",
+          "AE review",
+          "Dispense inhaler"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "exac",
+        "label": "Asthma exacerbation",
+        "repeatable": true,
+        "questions": [
+          {
+            "id": "ocs",
+            "label": "Oral steroids",
+            "text": "Oral steroids needed?",
+            "kind": "boolean",
+            "options": []
+          }
+        ],
+        "visits": [
+          {
+            "id": "exac_v",
+            "code": "EXAC",
+            "name": "Exacerbation visit",
+            "phase": "Event",
+            "offset_days": 0,
+            "window_after": 3,
+            "procedures": [
+              "Spirometry",
+              "AE review",
+              "Rescue use review"
+            ]
+          },
+          {
+            "id": "exac_fu",
+            "code": "EXAC-FU",
+            "name": "Exacerbation follow-up",
+            "phase": "Event",
+            "modality": "phone",
+            "offset_days": 14,
+            "window_before": 3,
+            "window_after": 3,
+            "include_if": [
+              {
+                "question": "ocs",
+                "in": [
+                  "yes"
+                ]
+              }
+            ],
+            "procedures": [
+              "Steroid course review",
+              "AE review"
+            ]
+          }
+        ],
+        "note": "Two exacerbations within 14 days share one follow-up call."
+      },
+      {
+        "id": "wd",
+        "label": "Early withdrawal",
+        "repeatable": false,
+        "ends_schedule": true,
+        "questions": [],
+        "visits": [
+          {
+            "id": "wd_v",
+            "code": "ET",
+            "name": "Early termination visit",
+            "phase": "Follow-up",
+            "offset_days": 0,
+            "window_after": 7,
+            "procedures": [
+              "Spirometry",
+              "Return inhaler",
+              "AE review"
+            ]
+          },
+          {
+            "id": "wd_fu",
+            "code": "ET-FU",
+            "name": "Safety call",
+            "phase": "Follow-up",
+            "modality": "phone",
+            "offset_days": 14,
+            "window_before": 3,
+            "window_after": 3,
+            "procedures": [
+              "AE review"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "preg",
+        "label": "Pregnancy",
+        "repeatable": false,
+        "ends_schedule": true,
+        "questions": [],
+        "visits": [
+          {
+            "id": "preg_v",
+            "code": "PREG",
+            "name": "Pregnancy follow-up",
+            "phase": "Follow-up",
+            "modality": "phone",
+            "offset_days": 90,
+            "window_before": 14,
+            "window_after": 14,
+            "repeat": {
+              "every_days": 90,
+              "count": 3,
+              "start_n": 1,
+              "code_pattern": "PREG{n}",
+              "label_pattern": "Pregnancy follow-up {n}"
+            },
+            "procedures": [
+              "Pregnancy outcome"
+            ]
+          }
+        ],
+        "note": "Study drug stops; follow until outcome."
+      }
+    ],
+    "review_questions": [
+      {
+        "id": "washout",
+        "text": "Washout is “at least 14 days”. What gap should be planned between periods?",
+        "why": "Section 4.2, p. 22",
+        "recommended": "42",
+        "options": [
+          {
+            "value": "42",
+            "label": "14 days (P2 on day 43)",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "p2",
+                "field": "offset_days",
+                "value": 42
+              }
+            ]
+          },
+          {
+            "value": "49",
+            "label": "21 days (P2 on day 50)",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "p2",
+                "field": "offset_days",
+                "value": 49
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "Recording the actual P1D1 or P2D1 date fixes that period; its later visits move with it.",
+      "Sequence does not change the visit schedule."
+    ]
+  }
+}

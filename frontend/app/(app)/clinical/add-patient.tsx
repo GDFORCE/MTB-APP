@@ -1,17 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, View, ScrollView, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, StatusBar, Text, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { ChevronLeft, ChevronRight, Calendar as CalIcon, Sparkles, AlertTriangle, RefreshCw, Users, UserRound, Phone as PhoneIcon, ClipboardList } from "lucide-react-native";
 import { api } from "@/src/api/client";
-import {
-  EMPTY_ASSIGNMENT, ProtocolAssignmentFields,
-} from "@/src/features/uctsm/ProtocolAssignmentFields";
-import type { ProtocolAssignment } from "@/src/features/uctsm/ProtocolAssignmentFields";
-import { ANCHOR_SOURCE_CHOICES, anchorDateSources, type AnchorDateSource } from "@/src/features/uctsm/anchorEntry";
 import { useAuth } from "@/src/auth/AuthContext";
-import { formatIsoCalendarDate } from "@/src/lib/visit-timing";
+import { getKitModel, type SavedKitModel } from "@/src/features/kit/api";
+import type { KitQuestion } from "@/src/features/kit";
+import { PatientTimeline, usePatientTimeline } from "@/src/features/kit/PatientTimeline";
+import { dmyToIso } from "@/src/features/kit/participant";
 import { sanitizeName } from "@/src/lib/validators";
 
 const C = {
@@ -22,7 +20,6 @@ const C = {
 
 type Trial = { id: string; title?: string; protocol_id?: string; condition?: string; phase?: string };
 type PiOption = { id: string; full_name?: string; email?: string; role?: string };
-type ScheduleVisit = { visit_template_id?: string; visit_number?: number; name: string; scheduled_date?: string; window_start?: string; window_end?: string; status: string; manual_review_reason?: string };
 
 // Accepts "5 May 2025", "2025-05-05" or "05/05/2025" → Date (or null).
 function parseDate(s: string): Date | null {
@@ -51,17 +48,6 @@ function parseDate(s: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-// Anchor-date fields take free text; only entries that parse to a real date
-// are sent — an unparseable value would otherwise 422 and, since the error
-// handler renders `detail` directly, crash instead of showing a message.
-const parsedAnchorDates = (raw: Record<string, string>): Record<string, string> => {
-  const result: Record<string, string> = {};
-  for (const [code, value] of Object.entries(raw)) {
-    const parsed = parseDate(value);
-    if (parsed) result[code] = toISO(parsed);
-  }
-  return result;
-};
 // The backend's validation-error detail can be a string (our own raised
 // errors) or an array of Pydantic error objects (422s) — only the former is
 // safe to render as text.
@@ -115,37 +101,12 @@ export default function AddPatient() {
   const [piLoading, setPiLoading] = useState(needsPiSelection);
   const [piLoadError, setPiLoadError] = useState<string | null>(null);
   const [piPermissionDenied, setPiPermissionDenied] = useState(false);
-  // Only populated for a trial with more than one independent Schedule of
-  // Assessments (substudy). Empty for every ordinary trial, and the picker
-  // below never renders in that case.
-  const [substudies, setSubstudies] = useState<string[]>([]);
-  const [substudyLabel, setSubstudyLabel] = useState<string | null>(null);
-  const [substudyOpen, setSubstudyOpen] = useState(false);
-  // Only populated for a trial whose visit templates are arm-tagged (more
-  // than one distinct arm/treatment-sequence). Empty for every ordinary
-  // trial, and the picker below never renders in that case.
-  const [arms, setArms] = useState<string[]>([]);
-  const [armLabel, setArmLabel] = useState<string | null>(null);
-  const [armOpen, setArmOpen] = useState(false);
-  // The groupings the APPROVED canonical schedule defines for this protocol.
-  // Empty for a trial with no canonical schedule, which then keeps the
-  // operational arm/substudy pickers below exactly as they were.
-  const [assignment, setAssignment] = useState<ProtocolAssignment>(EMPTY_ASSIGNMENT);
-  const [baseline, setBaseline] = useState("");
-  const [anchorDates, setAnchorDates] = useState<Record<string, string>>({});
-  // PT-01: each entered anchor date must be marked planned or actual.
-  const [anchorSources, setAnchorSources] = useState<Record<string, AnchorDateSource | undefined>>({});
-  const [previewVersion, setPreviewVersion] = useState<string | null>(null);
-  const previewInput = JSON.stringify([trialId, baseline, anchorDates, anchorSources, assignment.values, assignment.scheduleVersionId]);
-  const anchorEntry = anchorDateSources(parsedAnchorDates(anchorDates), anchorSources);
-  const latestPreviewInput = useRef(previewInput);
-  latestPreviewInput.current = previewInput;
-  const [scheduleGenerated, setScheduleGenerated] = useState(false);
-  const [scheduleVisits, setScheduleVisits] = useState<ScheduleVisit[]>([]);
-  const [scheduleHorizon, setScheduleHorizon] = useState<string | null>(null);
-  const [continuingRepeats, setContinuingRepeats] = useState<{ event_code: string; cadence: string; termination: string }[]>([]);
-  const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  // The trial's reviewed protocol schedule (from the Add Trial upload). The
+  // patient's dates are computed from it, their start date and their answers.
+  const [kit, setKit] = useState<SavedKitModel | null>(null);
+  const [kitState, setKitState] = useState<"loading" | "ready" | "none" | "error">("loading");
+  const [kitAnswers, setKitAnswers] = useState<Record<string, string>>({});
+  const [startDate, setStartDate] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [subjectDuplicate, setSubjectDuplicate] = useState<string | null>(null);
@@ -208,69 +169,27 @@ export default function AddPatient() {
 
   useEffect(() => {
     let alive = true;
-    setSubstudies([]);
-    setSubstudyLabel(null);
-    if (!trialId) return () => { alive = false; };
-    (async () => {
-      try {
-        const response = await api.get(`/trials/${trialId}/substudies`);
-        const labels: string[] = Array.isArray(response.data) ? response.data : [];
-        if (!alive) return;
-        setSubstudies(labels);
-        if (labels.length === 1) setSubstudyLabel(labels[0]);
-      } catch {
-        // A trial without this endpoint's data (or a permission edge case)
-        // just falls back to no picker — never blocks enrollment.
-        if (alive) setSubstudies([]);
-      }
-    })();
+    setKit(null);
+    setKitAnswers({});
+    if (!trialId) { setKitState("none"); return () => { alive = false; }; }
+    setKitState("loading");
+    getKitModel(trialId)
+      .then((saved) => { if (alive) { setKit(saved); setKitState("ready"); } })
+      .catch((e: any) => { if (alive) setKitState(e?.response?.status === 404 ? "none" : "error"); });
     return () => { alive = false; };
   }, [trialId]);
 
-  useEffect(() => {
-    let alive = true;
-    setArms([]);
-    setArmLabel(null);
-    if (!trialId) return () => { alive = false; };
-    (async () => {
-      try {
-        const response = await api.get(`/trials/${trialId}/arms`);
-        const labels: string[] = Array.isArray(response.data) ? response.data : [];
-        if (!alive) return;
-        setArms(labels);
-        if (labels.length === 1) setArmLabel(labels[0]);
-      } catch {
-        // A trial without this endpoint's data (or a permission edge case)
-        // just falls back to no picker — never blocks enrollment.
-        if (alive) setArms([]);
-      }
-    })();
-    return () => { alive = false; };
-  }, [trialId]);
-
-  // When the trial has an approved canonical schedule, that schedule is the
-  // source of truth for which protocol groupings exist. The operational
-  // arm/substudy pickers below stay for trials that do not have one yet, so a
-  // trial mid-cutover keeps working either way.
-  const canonicalDimensions = new Set(assignment.dimensionTypes);
-  const effectiveArmLabel = canonicalDimensions.has("ARM")
-    ? (assignment.labels.ARM || null)
-    : armLabel;
-  const effectiveSubstudyLabel = canonicalDimensions.has("SUBSTUDY")
-    ? (assignment.labels.SUBSTUDY || null)
-    : substudyLabel;
-  // ARM, COHORT and POPULATION have their own columns on the patient record;
-  // every other grouping the protocol defines travels by name.
-  const dimensionValues = Object.fromEntries(
-    Object.entries(assignment.values)
-      .filter(([key]) => !["ARM", "COHORT", "POPULATION"].includes(key))
-      .map(([key, value]) => [key, [value]]),
-  );
+  const startAnchor = kit?.model.anchors.find((anchor) => anchor.kind === "start");
+  const kitQuestions: KitQuestion[] = kit?.model.questions.filter((q) => q.scope === "participant") || [];
+  const unanswered = kitQuestions.filter((q) => !kitAnswers[q.id]);
+  const startIso = dmyToIso(startDate);
+  const participant = useMemo(() => (kit && startAnchor && startIso
+    ? { startAnchor: startAnchor.id, startDate: startIso, answers: kitAnswers } : null), [kit, startAnchor, startIso, kitAnswers]);
+  const preview = usePatientTimeline(kit?.model, kit?.site_answers, participant);
 
   const selectedTrial = trials.find(t => t.id === trialId);
   const selectedPi = pis.find(pi => pi.id === piId);
   const suggestedInitials = initialsFromName(fullName);
-  const visible = showAll ? scheduleVisits : scheduleVisits.slice(0, 5);
   const phoneDigits = phone.replace(/\D/g, "");
   const normalizedEmail = email.trim().toLowerCase();
   const optionalEmailValid = !normalizedEmail || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail);
@@ -280,21 +199,13 @@ export default function AddPatient() {
     && phoneDigits.length === 10
     && optionalEmailValid
     && !!trialId
-    && scheduleGenerated
-    && scheduleVisits.length > 0
+    && !!preview
+    && !unanswered.length
     && (!needsPiSelection || !!piId)
-    && (canonicalDimensions.has("SUBSTUDY") || substudies.length <= 1 || !!substudyLabel)
-    && (canonicalDimensions.has("ARM") || arms.length <= 1 || !!armLabel)
-    && assignment.complete
-    && assignment.ready
-    && previewVersion === assignment.scheduleVersionId
-    && !anchorEntry.missing.length
     && !subjectDuplicate
     && !emailDuplicate
     && !saving;
-  const submitHint = anchorEntry.missing.length
-    ? "Mark each entered protocol date as planned or actual"
-    : !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10
+  const submitHint = !subjectId.trim() || !fullName.trim() || !parseDate(dob) || phoneDigits.length !== 10
     ? "Complete the required patient details"
     : !optionalEmailValid
       ? "Enter a valid email address or leave it blank"
@@ -302,15 +213,15 @@ export default function AddPatient() {
         ? "Select a trial to continue"
         : needsPiSelection && !piId
           ? "Select the responsible PI"
-          : !assignment.complete
-            ? "Select the protocol group this patient is enrolled under"
-            : substudies.length > 1 && !substudyLabel && !canonicalDimensions.has("SUBSTUDY")
-            ? "Select which substudy this patient is enrolled in"
-            : arms.length > 1 && !armLabel && !canonicalDimensions.has("ARM")
-              ? "Select which arm this patient is enrolled in"
-              : !scheduleGenerated || !scheduleVisits.length
-                ? "Generate the visit schedule to continue"
-                : "Ready to send the patient invitation";
+          : kitState === "none"
+            ? "This trial has no protocol schedule yet"
+            : !startIso
+              ? `Enter the ${startAnchor?.label.toLowerCase() || "start"} date`
+              : unanswered.length
+                ? `Answer: ${unanswered.map((q) => q.label).join(", ")}`
+                : !preview
+                  ? "The schedule could not be calculated"
+                  : "Ready to send the patient invitation";
 
   const updateFullName = (raw: string) => {
     const value = sanitizeName(raw);
@@ -349,64 +260,11 @@ export default function AddPatient() {
     }
   };
 
-  const generateSchedule = async () => {
-    const input = latestPreviewInput.current;
-    const parsedBaseline = parseDate(baseline);
-    if (!parsedBaseline || !trialId || !assignment.complete) {
-      setError("Select a trial and enter a valid baseline date before generating the schedule.");
-      return;
-    }
-    if (anchorEntry.missing.length) {
-      setError("Mark each entered protocol date as planned or actual before generating the schedule.");
-      return;
-    }
-    setScheduleLoading(true);
-    setError(null);
-    setShowAll(false);
-    try {
-      const response = await api.post(`/trials/${trialId}/schedule-preview`, {
-        baseline_date: toISO(parsedBaseline),
-        substudy_label: effectiveSubstudyLabel || undefined,
-        arm_label: effectiveArmLabel || undefined,
-        cohort_label: assignment.labels.COHORT || undefined,
-        population_label: assignment.labels.POPULATION || undefined,
-        dimension_values: dimensionValues,
-        anchor_dates: parsedAnchorDates(anchorDates),
-        anchor_date_sources: anchorEntry.sources,
-        schedule_definition_id: assignment.scheduleDefinitionId,
-        schedule_version_id: assignment.scheduleVersionId,
-      });
-      if (input !== latestPreviewInput.current) return;
-      setScheduleVisits(response.data?.visits || []);
-      setScheduleHorizon(response.data?.horizon || null);
-      setContinuingRepeats((response.data?.repeat_summaries || []).filter((item: { continues: boolean }) => item.continues));
-      setPreviewVersion(response.data?.schedule_version_id || null);
-      setScheduleGenerated(true);
-    } catch (e: any) {
-      if (input !== latestPreviewInput.current) return;
-      setScheduleVisits([]);
-      setScheduleGenerated(false);
-      setError(errorMessage(e, "We couldn't generate this trial's schedule. Please review the protocol visit templates."));
-    } finally {
-      if (input === latestPreviewInput.current) setScheduleLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    setScheduleGenerated(false); setScheduleVisits([]); setPreviewVersion(null); setScheduleLoading(false);
-    if (!parseDate(baseline) || !assignment.complete || !assignment.ready || anchorEntry.missing.length) return;
-    const timer = setTimeout(() => { void generateSchedule(); }, 500);
-    return () => clearTimeout(timer);
-  }, [previewInput, assignment.complete, assignment.ready]);
-
   const submit = async () => {
-    // The schedule preview is deliberately generated from the selected
-    // protocol's templates; the form never falls back to demo offsets.
-    if (!canSubmit || !trialId) return;
+    if (!canSubmit || !trialId || !participant) return;
     setError(null);
     setSaving(true);
     try {
-      const parsedBaseline = parseDate(baseline);
       const parsedDob = parseDate(dob);
       const response = await api.post("/patients/invite", {
         full_name: fullName.trim(),
@@ -414,21 +272,12 @@ export default function AddPatient() {
         phone: `+91${phoneDigits}`,
         trial_id: trialId,                                  // the SELECTED trial
         pi_id: needsPiSelection ? piId : undefined,
-        substudy_label: effectiveSubstudyLabel || undefined,
-        arm_label: effectiveArmLabel || undefined,
-        cohort_label: assignment.labels.COHORT || undefined,
-        population_label: assignment.labels.POPULATION || undefined,
-        dimension_values: Object.keys(dimensionValues).length ? dimensionValues : undefined,
-        anchor_dates: parsedAnchorDates(anchorDates),
-        anchor_date_sources: anchorEntry.sources,
-        schedule_definition_id: assignment.scheduleDefinitionId,
-        schedule_version_id: previewVersion,
+        kit: participant,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
         dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
         gender: gender || undefined,
         language: lang || undefined,
         avatar_initials: initials || suggestedInitials || undefined,
-        baseline_date: parsedBaseline ? toISO(parsedBaseline) : undefined,
         enrolled_date: new Date().toISOString().slice(0, 10),
       });
       if (normalizedEmail) {
@@ -456,7 +305,9 @@ export default function AddPatient() {
         );
       }
     } catch (e: any) {
-      if (e?.response?.status === 409) {
+      if (e?.response?.status === 422 && typeof e?.response?.data?.detail === "string") {
+        setError(e.response.data.detail);
+      } else if (e?.response?.status === 409) {
         setError(errorMessage(e, `SUBJ-${subjectId} already exists in this trial.`));
       } else {
         setError("Couldn't add patient. Please check the details and try again.");
@@ -581,7 +432,7 @@ export default function AddPatient() {
             </Field>
           </FormSection>
 
-          <FormSection icon={<ClipboardList size={18} color={C.primary} />} index="03" title="Study assignment" subtitle="Connect the participant to the right trial and team" active={trialOpen || piOpen || substudyOpen || armOpen}>
+          <FormSection icon={<ClipboardList size={18} color={C.primary} />} index="03" title="Study assignment" subtitle="Connect the participant to the right trial and team" active={trialOpen || piOpen}>
           <Field label="Assign to Trial *" active={trialOpen}>
             <Pressable testID="trial-toggle" disabled={trialsLoading || !trials.length} onPress={() => setTrialOpen(open => !open)} style={[s.input, s.selectControl]}>
               {trialsLoading ? (
@@ -596,7 +447,7 @@ export default function AddPatient() {
             {trialOpen && trials.length > 0 && (
               <View style={s.dropdown}>
                 {trials.map(t => (
-                  <Pressable key={t.id} testID={`trial-opt-${t.id}`} onPress={() => { setTrialId(t.id); setTrialOpen(false); setScheduleGenerated(false); setScheduleVisits([]); }} style={s.dropdownRow}>
+                  <Pressable key={t.id} testID={`trial-opt-${t.id}`} onPress={() => { setTrialId(t.id); setTrialOpen(false); }} style={s.dropdownRow}>
                     <Text style={{ color: C.fg, fontSize: 14 }}>{trialLabel(t)}</Text>
                   </Pressable>
                 ))}
@@ -671,188 +522,47 @@ export default function AddPatient() {
             </Field>
           )}
 
-          {/* Screen B: only the groupings THIS protocol defines, taken from the
-              approved canonical schedule the patient will be enrolled onto. */}
-          <ProtocolAssignmentFields
-            trialId={trialId}
-            onChange={(next) => {
-              setAssignment(next);
-              if (next.scheduleVersionId !== assignment.scheduleVersionId) { setAnchorDates({}); setAnchorSources({}); }
-              if (next.scheduleVersionId !== assignment.scheduleVersionId || JSON.stringify(next.values) !== JSON.stringify(assignment.values)) {
-                // A schedule previewed under a different assignment no longer
-                // reflects what will be sent, so it has to be regenerated.
-                setScheduleGenerated(false);
-                setScheduleVisits([]);
-              }
-            }}
-          />
-
-          {substudies.length > 1 && !canonicalDimensions.has("SUBSTUDY") && (
-            <Field label="Substudy *" hint="This protocol has more than one Schedule of Assessments — pick the one this patient is enrolled under." active={substudyOpen}>
-              <Pressable testID="substudy-toggle" onPress={() => setSubstudyOpen(open => !open)} style={[s.input, s.selectControl]}>
-                <Text numberOfLines={1} style={[s.selectText, !substudyLabel && s.placeholderText]}>
-                  {substudyLabel || "Select"}
-                </Text>
-                <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: substudyOpen ? "-90deg" : "90deg" }] }} />
-              </Pressable>
-              {substudyOpen && (
-                <View style={s.dropdown}>
-                  {substudies.map(label => (
-                    <Pressable
-                      key={label}
-                      testID={`substudy-opt-${label}`}
-                      onPress={() => {
-                        setSubstudyLabel(label);
-                        setSubstudyOpen(false);
-                        // A schedule already previewed under a different (or
-                        // no) substudy no longer reflects what will actually
-                        // be sent — make the sponsor regenerate it.
-                        setScheduleGenerated(false);
-                        setScheduleVisits([]);
-                      }}
-                      style={s.dropdownRow}
-                    >
-                      <Text style={s.dropdownText}>{label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              )}
-            </Field>
-          )}
-
-          {arms.length > 1 && !canonicalDimensions.has("ARM") && (
-            <Field label="Arm *" hint="This trial has arm-specific visit templates — pick the arm this patient is enrolled under." active={armOpen}>
-              <Pressable testID="arm-toggle" onPress={() => setArmOpen(open => !open)} style={[s.input, s.selectControl]}>
-                <Text numberOfLines={1} style={[s.selectText, !armLabel && s.placeholderText]}>
-                  {armLabel || "Select"}
-                </Text>
-                <ChevronRight size={16} color={C.muted} style={{ transform: [{ rotate: armOpen ? "-90deg" : "90deg" }] }} />
-              </Pressable>
-              {armOpen && (
-                <View style={s.dropdown}>
-                  {arms.map(label => (
-                    <Pressable
-                      key={label}
-                      testID={`arm-opt-${label}`}
-                      onPress={() => {
-                        setArmLabel(label);
-                        setArmOpen(false);
-                        // A schedule already previewed under a different (or
-                        // no) arm no longer reflects what will actually be
-                        // sent — make the sponsor regenerate it.
-                        setScheduleGenerated(false);
-                        setScheduleVisits([]);
-                      }}
-                      style={s.dropdownRow}
-                    >
-                      <Text style={s.dropdownText}>{label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              )}
-            </Field>
-          )}
-
           {/* Patient Access Note */}
           <View style={s.infoNote}>
             <Sparkles size={16} color={C.info} />
             <Text style={s.infoNoteText}>
-              The patient receives an email invitation. Their account and visit schedule are created after registration.
+              The patient gets an invitation. Their visit dates come from this trial's protocol schedule.
             </Text>
           </View>
           </FormSection>
 
-          <FormSection icon={<CalIcon size={18} color={C.primary} />} index="04" title="Visit schedule" subtitle="Preview protocol dates before sending the invite">
-          <Field label={`${assignment.anchors?.find((anchor) => anchor.code === assignment.originCode)?.display_name || "Baseline date"} *`} hint="Enter this protocol's reference date. Visits using other anchors wait for those dates.">
-            <View style={{ position: "relative" }}>
-              <TextInput
-                testID="baseline"
-                value={baseline}
-                onChangeText={(value) => {
-                  setBaseline(/^[0-9/]*$/.test(value) ? formatDateInput(value) : value);
-                  setScheduleGenerated(false);
-                  setScheduleVisits([]);
-                }}
-                placeholder="DD/MM/YYYY"
-                placeholderTextColor={C.muted + "99"}
-                style={[s.input, { paddingRight: 48 }]}
-              />
-              <CalIcon size={20} color={C.primary} style={{ position: "absolute", right: 16, top: 14 }} />
-            </View>
-          </Field>
-
-          {assignment.anchors?.filter((anchor) => anchor.code !== assignment.originCode && !anchor.source_condition_code).map((anchor) =>
-            <Field key={anchor.code} label={anchor.display_name} hint="Enter a known date as YYYY-MM-DD. Leave blank until this event occurs.">
-              <TextInput value={anchorDates[anchor.code] || ""} placeholder="YYYY-MM-DD"
-                placeholderTextColor={C.muted} style={s.input}
-                onChangeText={(value) => setAnchorDates((current) => {
-                  const next = { ...current };
-                  if (value.trim()) next[anchor.code] = value.trim(); else delete next[anchor.code];
-                  return next;
-                })} />
-              {!!anchorDates[anchor.code]?.trim() && <View style={s.sourceRow} accessibilityRole="radiogroup"
-                accessibilityLabel={`Is the ${anchor.display_name} date planned or actual?`}>
-                {ANCHOR_SOURCE_CHOICES.map((choice) => {
-                  const selected = anchorSources[anchor.code] === choice.value;
-                  return <Pressable key={choice.value} accessibilityRole="radio" accessibilityState={{ selected }}
-                    accessibilityLabel={`${choice.label}: ${choice.hint}`}
-                    onPress={() => setAnchorSources((current) => ({ ...current, [anchor.code]: choice.value }))}
-                    style={[s.sourceChip, selected && s.sourceChipSelected]}>
-                    <Text style={[s.sourceChipText, selected && s.sourceChipTextSelected]}>{selected ? "✓ " : ""}{choice.label}</Text>
-                  </Pressable>;
-                })}
-              </View>}
-              {!!anchorDates[anchor.code]?.trim() && !anchorSources[anchor.code] && <Text style={s.fieldHint}>
-                Required: say whether this date is planned or has already happened.
-              </Text>}
-              {anchorSources[anchor.code] === "PLANNED" && !!anchorDates[anchor.code]?.trim() && <Text style={s.fieldHint}>
-                Planned: visits that must follow the real {anchor.display_name} keep waiting until it is recorded.
-              </Text>}
+          <FormSection icon={<CalIcon size={18} color={C.primary} />} index="04" title="Visit schedule" subtitle="Dates are worked out from the protocol">
+          {kitState === "loading" && <ActivityIndicator color={C.primary} />}
+          {kitState === "none" && <Text style={s.fieldHint}>This trial has no protocol schedule yet. Upload its protocol in Add Trial first.</Text>}
+          {kitState === "error" && <Text style={[s.fieldHint, { color: C.destructive }]}>Couldn't load this trial's protocol schedule.</Text>}
+          {kit && <>
+            <Field label={`${startAnchor?.label || "Start"} date *`}>
+              <View style={{ position: "relative" }}>
+                <TextInput testID="kit-start-date" value={startDate} onChangeText={(value) => setStartDate(formatDateInput(value))}
+                  placeholder="DD/MM/YYYY" placeholderTextColor={C.muted + "99"} keyboardType="number-pad" maxLength={10}
+                  style={[s.input, { paddingRight: 48 }]} />
+                <CalIcon size={20} color={C.primary} style={{ position: "absolute", right: 16, top: 14 }} />
+              </View>
+            </Field>
+            {kitQuestions.map((q) => <Field key={q.id} label={`${q.text || q.label} *`}>
+              {q.kind === "number"
+                ? <TextInput value={kitAnswers[q.id] || ""} keyboardType="number-pad" placeholder="Number" placeholderTextColor={C.muted + "99"}
+                    onChangeText={(value) => setKitAnswers((current) => ({ ...current, [q.id]: value.replace(/[^0-9.]/g, "") }))} style={s.input} />
+                : <View style={s.chips}>
+                    {(q.kind === "boolean" ? [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }] : q.options).map((o) => {
+                      const selected = kitAnswers[q.id] === o.value;
+                      return <Pressable key={o.value} testID={`kit-q-${q.id}-${o.value}`} accessibilityRole="radio" accessibilityState={{ selected }}
+                        onPress={() => setKitAnswers((current) => ({ ...current, [q.id]: o.value }))}
+                        style={[s.chip, selected && s.chipSelected]}>
+                        <Text style={[s.chipText, selected && s.chipTextSelected]}>{o.label}</Text>
+                      </Pressable>;
+                    })}
+                  </View>}
             </Field>)}
-
-          <Pressable
-            testID="generate-schedule"
-            onPress={() => void generateSchedule()}
-            disabled={scheduleLoading || !trialId}
-            style={[s.generateSchedule, (!trialId || scheduleLoading) && { opacity: 0.55 }]}
-          >
-            {scheduleLoading ? <ActivityIndicator size="small" color={C.primary} /> : <Sparkles size={16} color={C.primary} />}
-            <Text style={s.generateScheduleText}>{scheduleLoading ? "Generating…" : "Generate Schedule"}</Text>
-          </Pressable>
-
-          {/* Auto-calculated dates */}
-          {scheduleGenerated ? <View style={s.autoCalc}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <Sparkles size={20} color={C.primary} />
-              <Text style={{ color: C.fg, fontWeight: "600", fontSize: 15 }}>Auto-calculated Dates</Text>
-            </View>
-            <View style={{ gap: 8 }}>
-              {visible.map((v, index) => (
-                <View key={v.visit_template_id || `${v.name}-${index}`} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-                  <Text style={{ color: C.muted, fontSize: 13, flex: 1 }}>{v.name || `Visit ${v.visit_number || index + 1}`}</Text>
-                  <View style={{ flex: 1, alignItems: "flex-end" }}>
-                  <Text style={{ color: v.status === "manual_review" ? C.destructive : C.fg, fontWeight: "600", fontSize: 13 }}>
-                    {v.scheduled_date ? formatIsoCalendarDate(v.scheduled_date) : v.manual_review_reason || v.status.replace(/_/g, " ")}
-                  </Text>
-                  {!!v.scheduled_date && !!v.window_start && !!v.window_end &&
-                    <Text style={{ color: C.muted, fontSize: 12, textAlign: "right" }}>
-                      Window: {formatIsoCalendarDate(v.window_start)} to {formatIsoCalendarDate(v.window_end)}
-                    </Text>}
-                  </View>
-                </View>
-              ))}
-            </View>
-            {!!scheduleHorizon && <Text style={{ color: C.muted, fontSize: 12, marginTop: 12 }}>
-              Dates calculated through {formatIsoCalendarDate(scheduleHorizon)} from the selected approved schedule.
-            </Text>}
-            {continuingRepeats.map((repeat) => <Text key={repeat.event_code} style={{ color: C.muted, fontSize: 12, marginTop: 4 }}>
-              {repeat.event_code}: {repeat.cadence}; continues beyond these dates ({repeat.termination}).
-            </Text>)}
-            <Pressable testID="toggle-all-visits" onPress={() => setShowAll(a => !a)} style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 4 }}>
-              <Text style={{ color: C.accent, fontWeight: "600", fontSize: 13 }}>{showAll ? "Show Less" : `View All ${scheduleVisits.length} Visits`}</Text>
-              <ChevronRight size={16} color={C.accent} style={{ transform: [{ rotate: showAll ? "-90deg" : "90deg" }] }} />
-            </Pressable>
-          </View> : null}
+            {preview && !unanswered.length
+              ? <PatientTimeline data={preview} maxRows={5} />
+              : <Text style={s.fieldHint}>Enter the date{kitQuestions.length ? " and answers" : ""} above to see the visit dates.</Text>}
+          </>}
           </FormSection>
 
           {/* Error banner (server duplicate 409 or generic failure) */}
@@ -937,11 +647,11 @@ function InlineDuplicate({ message }: { message: string }) {
 }
 
 const s = StyleSheet.create({
-  sourceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
-  sourceChip: { minHeight: 40, paddingHorizontal: 14, justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
-  sourceChipSelected: { backgroundColor: C.primary, borderColor: C.primary },
-  sourceChipText: { color: C.fg, fontSize: 13, fontWeight: "700" },
-  sourceChipTextSelected: { color: C.primaryFg },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: { minHeight: 38, paddingHorizontal: 14, justifyContent: "center", borderRadius: 999, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  chipSelected: { backgroundColor: C.primary, borderColor: C.primary },
+  chipText: { color: C.fg, fontSize: 13, fontWeight: "700" },
+  chipTextSelected: { color: C.primaryFg },
   screen: { flex: 1, backgroundColor: C.surface },
   appBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10 },
   backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: C.card, borderWidth: 1, borderColor: C.border },
@@ -992,9 +702,6 @@ const s = StyleSheet.create({
   stateActionText: { color: C.primary, fontSize: 12, fontWeight: "700" },
   infoNote: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: 13, backgroundColor: "rgba(45,108,181,0.06)", borderWidth: 1, borderColor: "rgba(45,108,181,0.18)" },
   infoNoteText: { fontSize: 11, lineHeight: 16, color: C.info, flex: 1 },
-  autoCalc: { backgroundColor: "rgba(45,108,181,0.05)", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "rgba(45,108,181,0.12)" },
-  generateSchedule: { minHeight: 48, borderRadius: 13, borderWidth: 1, borderColor: "rgba(27,95,193,0.28)", backgroundColor: "rgba(27,95,193,0.06)", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
-  generateScheduleText: { color: C.primary, fontSize: 14, fontWeight: "700" },
   footer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 20 : 12, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.card },
   submitHint: { marginBottom: 7, color: C.muted, fontSize: 10, textAlign: "center" },
   submit: { minHeight: 50, borderRadius: 999, backgroundColor: C.primary, alignItems: "center", justifyContent: "center" },

@@ -9,6 +9,7 @@ import {
 } from "lucide-react-native";
 import { colors, spacing, radii, fonts, shadows, dawnGradient } from "@/src/theme/tokens";
 import { api } from "@/src/api/client";
+import { fetchMyVisits } from "@/src/features/kit/patientVisits";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 
 // ── Date helpers ────────────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ type Visit = {
   scheduled_date?: string; status?: string;
   window_start?: string; window_end?: string;
   site?: string; pi_name?: string;
+  kit?: boolean; // computed from the reviewed protocol schedule; has no visit-detail page
 };
 
 // ── Status tone (token colours only) ────────────────────────────────────────
@@ -76,7 +78,7 @@ export default function PatientCalendar() {
   async function load(isRefresh = false) {
     if (isRefresh) setRefreshing(true);
     try {
-      const r = await api.get("/visits/mine");
+      const r = await fetchMyVisits();
       setVisits(Array.isArray(r.data) ? r.data : []);
     } catch {
       setVisits([]);
@@ -417,7 +419,7 @@ function VisitCard({ v, variant, router }: { v: Visit; variant: "full" | "week" 
       {variant === "full" && (upcoming || v.status === "scheduled") && (
         <Pressable
           testID={`visit-details-${v.id}`}
-          onPress={() => router.push({ pathname: "/(app)/patient/visit-detail", params: { id: v.id } })}
+          onPress={() => v.kit ? router.push("/(app)/patient/my-visits") : router.push({ pathname: "/(app)/patient/visit-detail", params: { id: v.id } })}
           style={s.cardFooter}
         >
           <Text style={[s.footerText, { color: colors.info }]}>View details →</Text>

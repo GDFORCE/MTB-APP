@@ -1,0 +1,656 @@
+{
+  "name": "helix",
+  "blurb": "Dose escalation, 21- then 28-day cycles, until progression, PK time points",
+  "file": "HELIX-301_protocol_v2.1.pdf",
+  "model": {
+    "protocol": {
+      "title": "A Phase 1/2, Open-Label, Dose-Escalation and Expansion Study of Oral HX-77 in Advanced Solid Tumours",
+      "number": "HELIX-301",
+      "sponsor": "Sample Oncology (fictional)",
+      "phase": "Phase 1/2",
+      "indication": "Advanced solid tumours",
+      "version": "v2.1",
+      "design": "Part A escalates HX-77 dose with BOIN; Part B expands at the recommended dose. Cycle 1 is 21 days with intensive PK and safety visits; later cycles are 28 days. Treatment continues until progression or unacceptable toxicity."
+    },
+    "arms": [
+      {
+        "id": "A",
+        "name": "Part A · Dose escalation",
+        "description": ""
+      },
+      {
+        "id": "B",
+        "name": "Part B · Expansion",
+        "description": ""
+      }
+    ],
+    "anchors": [
+      {
+        "id": "screening",
+        "label": "Screening",
+        "kind": "start"
+      },
+      {
+        "id": "day1",
+        "label": "Day 1",
+        "kind": "relative",
+        "relative_to": "screening",
+        "offset_days": 14,
+        "is_day1": true,
+        "set_by_visit": "c1d1",
+        "note": "First dose within 28 days of screening. Recording C1D1 fixes Day 1."
+      },
+      {
+        "id": "pd",
+        "label": "Progression",
+        "kind": "ask",
+        "question": "Progression date",
+        "note": "Set by logging disease progression."
+      }
+    ],
+    "questions": [
+      {
+        "id": "part",
+        "label": "Part",
+        "scope": "participant",
+        "text": "Part?",
+        "kind": "choice",
+        "options": [
+          {
+            "value": "A",
+            "label": "A · escalation"
+          },
+          {
+            "value": "B",
+            "label": "B · expansion"
+          }
+        ],
+        "help": "Part A adds DLT visits and full PK"
+      },
+      {
+        "id": "dl",
+        "label": "Dose level",
+        "scope": "participant",
+        "text": "Dose level?",
+        "kind": "choice",
+        "options": [
+          {
+            "value": "1",
+            "label": "DL1"
+          },
+          {
+            "value": "2",
+            "label": "DL2"
+          },
+          {
+            "value": "3",
+            "label": "DL3"
+          },
+          {
+            "value": "4",
+            "label": "DL4"
+          }
+        ],
+        "help": "From the dose assignment"
+      },
+      {
+        "id": "wocbp",
+        "label": "WOCBP",
+        "scope": "participant",
+        "text": "Childbearing potential?",
+        "kind": "boolean",
+        "help": ""
+      },
+      {
+        "id": "biopsy",
+        "label": "Biopsy",
+        "scope": "decision",
+        "ask_at": {
+          "visit": "cnd1",
+          "n": 2
+        },
+        "text": "Paired on-treatment biopsy consented?",
+        "kind": "boolean",
+        "help": "Part B optional biopsy at C2D15"
+      }
+    ],
+    "visits": [
+      {
+        "id": "scr",
+        "code": "SCR",
+        "name": "Screening",
+        "phase": "Screening",
+        "anchor": "screening",
+        "offset_days": 0,
+        "procedures": [
+          "Informed consent",
+          "Medical history",
+          "CT/MRI tumour assessment",
+          "ECOG",
+          "Hematology & chemistry",
+          "12-lead ECG (triplicate)",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ],
+        "source": "Table 1, p. 52"
+      },
+      {
+        "id": "c1d1",
+        "code": "C1D1",
+        "name": "Cycle 1 Day 1",
+        "phase": "Cycle 1",
+        "anchor": "day1",
+        "offset_days": 0,
+        "procedures": [
+          "Physical exam",
+          "Hematology & chemistry",
+          "HX-77 first dose in clinic",
+          "AE review"
+        ],
+        "timepoints": [
+          {
+            "label": "Pre-dose",
+            "offset_min": 0,
+            "window_before_min": 30,
+            "window_after_min": 0,
+            "procedures": [
+              "PK sample",
+              "12-lead ECG"
+            ]
+          },
+          {
+            "label": "0.5 h",
+            "offset_min": 30,
+            "window_before_min": 5,
+            "window_after_min": 5,
+            "procedures": [
+              "PK sample"
+            ]
+          },
+          {
+            "label": "1 h",
+            "offset_min": 60,
+            "window_before_min": 5,
+            "window_after_min": 5,
+            "procedures": [
+              "PK sample"
+            ]
+          },
+          {
+            "label": "2 h",
+            "offset_min": 120,
+            "window_before_min": 10,
+            "window_after_min": 10,
+            "procedures": [
+              "PK sample",
+              "12-lead ECG"
+            ]
+          },
+          {
+            "label": "4 h",
+            "offset_min": 240,
+            "window_before_min": 15,
+            "window_after_min": 15,
+            "procedures": [
+              "PK sample"
+            ]
+          },
+          {
+            "label": "8 h",
+            "offset_min": 480,
+            "window_before_min": 30,
+            "window_after_min": 30,
+            "procedures": [
+              "PK sample",
+              "Vital signs"
+            ]
+          }
+        ],
+        "source": "Table 1, p. 52; Table 3, p. 55"
+      },
+      {
+        "id": "c1d2",
+        "code": "C1D2",
+        "name": "24 h PK",
+        "phase": "Cycle 1",
+        "follows": "c1d1",
+        "offset_days": 1,
+        "include_if": [
+          {
+            "question": "part",
+            "in": [
+              "A"
+            ]
+          }
+        ],
+        "procedures": [
+          "PK sample (24 h ± 2 h)"
+        ],
+        "source": "Table 3, p. 55"
+      },
+      {
+        "id": "c1d8",
+        "code": "C1D8",
+        "name": "Cycle 1 Day 8",
+        "phase": "Cycle 1",
+        "follows": "c1d1",
+        "offset_days": 7,
+        "window_before": 1,
+        "window_after": 1,
+        "procedures": [
+          "Hematology & chemistry",
+          "AE review"
+        ]
+      },
+      {
+        "id": "c1d15",
+        "code": "C1D15",
+        "name": "Cycle 1 Day 15",
+        "phase": "Cycle 1",
+        "follows": "c1d1",
+        "offset_days": 14,
+        "window_before": 1,
+        "window_after": 1,
+        "include_if": [
+          {
+            "question": "part",
+            "in": [
+              "A"
+            ]
+          }
+        ],
+        "procedures": [
+          "Hematology & chemistry",
+          "AE review",
+          "DLT assessment"
+        ]
+      },
+      {
+        "id": "cnd1",
+        "code": "C2D1",
+        "name": "Cycle 2 Day 1",
+        "phase": "Treatment",
+        "follows": "c1d1",
+        "offset_days": 21,
+        "window_before": 3,
+        "window_after": 3,
+        "repeat": {
+          "every_days": 28,
+          "count": 6,
+          "start_n": 2,
+          "chain": true,
+          "open_ended": true,
+          "until_anchor": "pd",
+          "label_pattern": "Cycle {n} Day 1",
+          "code_pattern": "C{n}D1",
+          "overrides": [
+            {
+              "n": [
+                2
+              ],
+              "add": [
+                "DLT period end review"
+              ],
+              "remove": []
+            }
+          ]
+        },
+        "procedures": [
+          "Physical exam",
+          "Hematology & chemistry",
+          "Drug dispensing",
+          "AE review",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "cnd15",
+        "code": "C2D15",
+        "name": "Cycle 2 Day 15",
+        "phase": "Treatment",
+        "follows": "cnd1",
+        "offset_days": 14,
+        "window_before": 2,
+        "window_after": 2,
+        "repeat": {
+          "every_days": 28,
+          "count": 2,
+          "start_n": 2,
+          "label_pattern": "Cycle {n} Day 15",
+          "code_pattern": "C{n}D15",
+          "overrides": [
+            {
+              "n": [
+                2
+              ],
+              "add": [
+                {
+                  "name": "Tumour biopsy",
+                  "if": [
+                    {
+                      "question": "biopsy",
+                      "in": [
+                        "yes"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "remove": []
+            }
+          ]
+        },
+        "procedures": [
+          "Hematology & chemistry",
+          "AE review"
+        ]
+      },
+      {
+        "id": "ta",
+        "code": "TA1",
+        "name": "Tumour assessment 1",
+        "phase": "Imaging",
+        "anchor": "day1",
+        "offset_days": 56,
+        "window_before": 7,
+        "window_after": 7,
+        "repeat": {
+          "every_days": 56,
+          "count": 6,
+          "start_n": 1,
+          "chain": false,
+          "open_ended": true,
+          "until_anchor": "pd",
+          "label_pattern": "Tumour assessment {n}",
+          "code_pattern": "TA{n}"
+        },
+        "procedures": [
+          "CT/MRI (RECIST 1.1)"
+        ],
+        "condition": "Every 8 weeks from Day 1, regardless of cycle delays."
+      },
+      {
+        "id": "surv",
+        "code": "SURV1",
+        "name": "Survival follow-up 1",
+        "phase": "Follow-up",
+        "modality": "phone",
+        "anchor": "pd",
+        "offset_days": 84,
+        "window_before": 14,
+        "window_after": 14,
+        "repeat": {
+          "every_days": 84,
+          "count": 4,
+          "start_n": 1,
+          "label_pattern": "Survival follow-up {n}",
+          "code_pattern": "SURV{n}"
+        },
+        "procedures": [
+          "Survival status",
+          "Subsequent therapy"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "pd",
+        "label": "Disease progression",
+        "repeatable": false,
+        "sets_anchor": "pd",
+        "questions": [
+          {
+            "id": "pd_conf",
+            "label": "Confirmed",
+            "text": "Confirmed by imaging?",
+            "kind": "boolean",
+            "options": []
+          }
+        ],
+        "visits": [
+          {
+            "id": "eot",
+            "code": "EOT",
+            "name": "End of treatment",
+            "phase": "Follow-up",
+            "offset_days": 7,
+            "window_before": 0,
+            "window_after": 7,
+            "procedures": [
+              "Physical exam",
+              "Hematology & chemistry",
+              "AE review"
+            ]
+          },
+          {
+            "id": "sfu",
+            "code": "SFU",
+            "name": "30-day safety follow-up",
+            "phase": "Follow-up",
+            "offset_days": 30,
+            "window_before": 7,
+            "window_after": 7,
+            "procedures": [
+              "AE review",
+              "Hematology & chemistry"
+            ]
+          },
+          {
+            "id": "confirm",
+            "code": "CONF",
+            "name": "Confirmatory scan",
+            "phase": "Imaging",
+            "offset_days": 28,
+            "window_before": 0,
+            "window_after": 7,
+            "include_if": [
+              {
+                "question": "pd_conf",
+                "in": [
+                  "no"
+                ]
+              }
+            ],
+            "procedures": [
+              "CT/MRI (iRECIST)"
+            ]
+          }
+        ],
+        "note": "If the sponsor approves treatment beyond progression, log progression only when treatment actually stops."
+      },
+      {
+        "id": "tox",
+        "label": "Stopped for toxicity",
+        "repeatable": false,
+        "ends_schedule": true,
+        "questions": [],
+        "visits": [
+          {
+            "id": "tox_eot",
+            "code": "EOT",
+            "name": "End of treatment",
+            "phase": "Follow-up",
+            "offset_days": 7,
+            "window_after": 7,
+            "procedures": [
+              "Physical exam",
+              "Hematology & chemistry",
+              "AE review"
+            ]
+          },
+          {
+            "id": "tox_sfu",
+            "code": "SFU",
+            "name": "30-day safety follow-up",
+            "phase": "Follow-up",
+            "offset_days": 30,
+            "window_before": 7,
+            "window_after": 7,
+            "procedures": [
+              "AE review"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "dlt",
+        "label": "Dose-limiting toxicity",
+        "repeatable": true,
+        "questions": [],
+        "visits": [
+          {
+            "id": "dlt_v",
+            "code": "DLT",
+            "name": "DLT evaluation visit",
+            "phase": "Event",
+            "offset_days": 1,
+            "window_after": 2,
+            "procedures": [
+              "Hematology & chemistry",
+              "AE grading",
+              "Sponsor notification"
+            ]
+          }
+        ],
+        "note": "Report within 24 hours of awareness."
+      },
+      {
+        "id": "uns",
+        "label": "Unscheduled visit",
+        "repeatable": true,
+        "questions": [],
+        "visits": [
+          {
+            "id": "uns_v",
+            "code": "UNS",
+            "name": "Unscheduled visit",
+            "phase": "Event",
+            "offset_days": 0,
+            "procedures": [
+              "As clinically indicated"
+            ]
+          }
+        ]
+      }
+    ],
+    "review_questions": [
+      {
+        "id": "ahead",
+        "text": "Treatment continues until progression. How many cycles should the schedule show ahead?",
+        "why": "Section 5.4, p. 41 has no fixed number of cycles.",
+        "recommended": "6",
+        "options": [
+          {
+            "value": "4",
+            "label": "4 cycles",
+            "patches": [
+              {
+                "target": "visit",
+                "id": "cnd1",
+                "field": "repeat.count",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "value": "6",
+            "label": "6 cycles",
+            "patches": [
+              {
+                "target": "visit",
+                "id": "cnd1",
+                "field": "repeat.count",
+                "value": 6
+              }
+            ]
+          },
+          {
+            "value": "12",
+            "label": "12 cycles",
+            "patches": [
+              {
+                "target": "visit",
+                "id": "cnd1",
+                "field": "repeat.count",
+                "value": 12
+              },
+              {
+                "target": "visit",
+                "id": "ta",
+                "field": "repeat.count",
+                "value": 12
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "c1start",
+        "text": "First dose can be up to 28 days after screening. Which gap should be planned?",
+        "why": "Section 6.1, p. 47",
+        "recommended": "14",
+        "options": [
+          {
+            "value": "7",
+            "label": "7 days",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "day1",
+                "field": "offset_days",
+                "value": 7
+              }
+            ]
+          },
+          {
+            "value": "14",
+            "label": "14 days",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "day1",
+                "field": "offset_days",
+                "value": 14
+              }
+            ]
+          },
+          {
+            "value": "21",
+            "label": "21 days",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "day1",
+                "field": "offset_days",
+                "value": 21
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "Dose level does not change the visit schedule; it is recorded for reference.",
+      "Cycles shift with delays; tumour assessments stay on the 8-week grid from Day 1."
+    ]
+  }
+}

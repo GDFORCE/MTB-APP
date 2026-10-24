@@ -46,6 +46,9 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { getCanonicalSchedules } from "@/src/features/uctsm/api";
 import type { CanonicalScheduleRow } from "@/src/features/uctsm/api";
+import { getKitModel, type SavedKitModel } from "@/src/features/kit/api";
+import { computeKitSchedule, todayIso } from "@/src/features/kit";
+import { nextVisit } from "@/src/features/kit/participant";
 import type {
   RecruitmentFunnel,
   SponsorTrialSubject,
@@ -178,6 +181,21 @@ function dateLabel(value?: string) {
 
 const scheduledDateLabel = (value?: string) => formatIsoCalendarDate(value, value || "Not recorded");
 
+// A kit subject's next visit, in the shape the subject card shows for everyone.
+function kitCurrentVisit(saved: SavedKitModel, participant: NonNullable<SponsorTrialSubject["kit"]>) {
+  try {
+    const schedule = computeKitSchedule(saved.model, saved.site_answers || {}, participant);
+    const next = nextVisit(schedule, todayIso());
+    if (!next) return null;
+    return {
+      visit_number: schedule.rows.filter((row) => row.type === "visit").indexOf(next) + 1,
+      name: `${next.code} · ${next.name}`, visit_type: next.phase, scheduled_date: next.date || undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const SCHEDULE_STATUS_LABELS: Record<string, string> = {
   DRAFT: "Draft",
   VALIDATION_REQUIRED: "Needs review",
@@ -211,6 +229,7 @@ export default function TrialSummary() {
   const [documents, setDocuments] = useState<UploadedFile[]>([]);
   const [versions, setVersions] = useState<Version[]>([]);
   const [canonicalSchedules, setCanonicalSchedules] = useState<CanonicalScheduleRow[]>([]);
+  const [kitSaved, setKitSaved] = useState<SavedKitModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -279,6 +298,13 @@ export default function TrialSummary() {
       } catch {
         setCanonicalSchedules([]);
       }
+      // The reviewed schedule saved by the Add Trial protocol upload lives in its own
+      // store, separate from the canonical engine; 404 just means none was saved.
+      try {
+        setKitSaved(await getKitModel(id));
+      } catch {
+        setKitSaved(null);
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Couldn't load this trial summary.");
     } finally {
@@ -304,6 +330,10 @@ export default function TrialSummary() {
   // instead of the flat visit_instances list this used to fetch inline -
   // same screen `clinical/visit-detail.tsx` already links to for one patient.
   const openSubject = (subject: SponsorTrialSubject) => {
+    if (subject.kit_schedule) {
+      router.push({ pathname: "/(app)/clinical/kit-patient", params: { id: subject.id } });
+      return;
+    }
     if (!subject.uctsm_patient_id) return;
     router.push({
       pathname: "/(app)/clinical/patient-schedule",
@@ -645,6 +675,7 @@ export default function TrialSummary() {
             ) : undefined}
           >
             {subjects.length ? subjects.map((subject) => {
+              const visit = subject.kit && kitSaved ? kitCurrentVisit(kitSaved, subject.kit) : subject.current_visit;
               const subjectStatus = subject.current_visit?.status === "overdue"
                 ? "overdue"
                 : subject.status;
@@ -653,7 +684,7 @@ export default function TrialSummary() {
                   key={subject.id}
                   testID={`subject-${subject.id}`}
                   onPress={() => openSubject(subject)}
-                  disabled={!subject.uctsm_patient_id}
+                  disabled={!subject.uctsm_patient_id && !subject.kit_schedule}
                   style={s.subjectCard}
                 >
                   <View style={s.between}>
@@ -693,12 +724,12 @@ export default function TrialSummary() {
                     </View>
                   </View>
                   <View style={s.patientVisitGrid}>
-                    <PatientField label="VISIT NO." value={subject.current_visit?.visit_number ? `Visit ${subject.current_visit.visit_number}` : "—"} />
-                    <PatientField label="VISIT NAME" value={subject.current_visit?.name || "Not scheduled"} />
-                    <PatientField label="VISIT TYPE" value={subject.current_visit?.visit_type || "—"} />
-                    <PatientField label="VISIT DATE" value={scheduledDateLabel(subject.current_visit?.scheduled_date)} />
+                    <PatientField label="VISIT NO." value={visit?.visit_number ? `Visit ${visit.visit_number}` : "—"} />
+                    <PatientField label="VISIT NAME" value={visit?.name || "Not scheduled"} />
+                    <PatientField label="VISIT TYPE" value={visit?.visit_type || "—"} />
+                    <PatientField label="VISIT DATE" value={scheduledDateLabel(visit?.scheduled_date)} />
                   </View>
-                  {subject.uctsm_patient_id && (
+                  {(subject.uctsm_patient_id || subject.kit_schedule) && (
                     <View style={s.subjectVisits}>
                       <Text style={s.viewScheduleLink}>View protocol schedule ›</Text>
                     </View>
@@ -739,6 +770,25 @@ export default function TrialSummary() {
               </Pressable>
             )}
           >
+            {kitSaved && (
+              <Pressable
+                testID="kit-schedule-summary"
+                onPress={() => router.push({
+                  pathname: "/(app)/sponsor/kit-schedule",
+                  params: { id: trial.id, trialName: trial.protocol_id || trial.title || "" },
+                })}
+                style={s.versionRow}
+              >
+                <View style={s.versionBadge}><CalendarDays size={14} color={colors.primary} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.versionTitle}>Reviewed protocol schedule</Text>
+                  <Text style={s.versionMeta}>
+                    {kitSaved.model.visits.length} visit types{kitSaved.file_name ? ` · ${kitSaved.file_name}` : ""}
+                  </Text>
+                </View>
+                <ChevronRight size={15} color={colors.mutedFg} />
+              </Pressable>
+            )}
             {canonicalSchedules.length ? canonicalSchedules.map((schedule) => (
               <Pressable
                 key={schedule.schedule_version_id}
@@ -759,7 +809,7 @@ export default function TrialSummary() {
                 </View>
                 <ChevronRight size={15} color={colors.mutedFg} />
               </Pressable>
-            )) : <Empty text="No schedule has been built yet. Upload a protocol PDF above to build one." />}
+            )) : kitSaved ? null : <Empty text="No schedule has been built yet. Upload a protocol PDF above to build one." />}
           </Section>
         </Entrance>
 

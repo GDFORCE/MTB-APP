@@ -7,6 +7,9 @@ import { api } from "@/src/api/client";
 import { PiBottomNav } from "@/src/features/clinical/components/PiBottomNav";
 import { useAuth } from "@/src/auth/AuthContext";
 import { useUnreadCount } from "@/src/hooks/use-unread-count";
+import { getKitModel, type SavedKitModel } from "@/src/features/kit/api";
+import { computeKitSchedule, todayIso, type KitParticipant } from "@/src/features/kit";
+import { kitStatus, nextVisit } from "@/src/features/kit/participant";
 
 const C = {
   bg: "#EDF1F6", surface: "#EDF1F6", card: "#FFFFFF", fg: "#0F1B2D", muted: "#556275", border: "#DDE3EA",
@@ -27,7 +30,26 @@ type PatientRow = {
   trial?: any;
   status: DerivedStatus;
   next_visit: NextVisit | null;
+  kit: boolean;
 };
+
+// Kit patients have no visit rows on the server: their status and next visit
+// are computed here from the trial's reviewed model, like their schedule screen.
+function kitRow(row: PatientRow, saved: SavedKitModel | undefined, participant: KitParticipant): PatientRow {
+  if (!saved) return row;
+  try {
+    const schedule = computeKitSchedule(saved.model, saved.site_answers || {}, participant);
+    const today = todayIso();
+    const next = nextVisit(schedule, today);
+    const seq = next ? schedule.rows.filter((r) => r.type === "visit").indexOf(next) + 1 : 0;
+    return {
+      ...row, status: kitStatus(schedule, today),
+      next_visit: next ? { id: next.key, name: `${next.code} · ${next.name}`, seq, scheduled_date: next.date || "", status: "scheduled" } : null,
+    };
+  } catch {
+    return row;
+  }
+}
 
 const STATUS_META: Record<DerivedStatus, { label: string; bg: string; fg: string }> = {
   active: { label: "Active", bg: "rgba(11,128,116,0.12)", fg: C.accent },
@@ -82,8 +104,15 @@ export default function PatientList() {
         trial: trialById[p.trial_id],
         status: (p.status as DerivedStatus) || "no_visits",
         next_visit: p.next_visit || null,
+        kit: !!p.kit,
       }));
-      setRows(mapped);
+      const kitTrialIds = [...new Set<string>((r.data || []).filter((p: any) => p.kit).map((p: any) => p.trial_id))];
+      const models = Object.fromEntries(await Promise.all(kitTrialIds.map(async (id) =>
+        [id, await getKitModel(id).catch(() => undefined)] as const)));
+      setRows(mapped.map((row, i) => {
+        const raw = r.data[i];
+        return raw.kit ? kitRow(row, models[raw.trial_id], raw.kit) : row;
+      }));
     } catch {
       setError("Couldn't load patients. Tap Retry to try again.");
       setRows([]);
@@ -213,7 +242,7 @@ export default function PatientList() {
                   <Pressable
                     key={p.id}
                     testID={`patient-${p.id}`}
-                    onPress={() => router.push({ pathname: "/(app)/clinical/visit-detail", params: { id: p.id } })}
+                    onPress={() => router.push({ pathname: p.kit ? "/(app)/clinical/kit-patient" : "/(app)/clinical/visit-detail", params: { id: p.id } })}
                     style={s.subjectCard}
                   >
                     <View style={s.subjectTop}>

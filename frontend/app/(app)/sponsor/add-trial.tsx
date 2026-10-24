@@ -1,47 +1,24 @@
-import React, { useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import React, { useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
-import {
-  ArrowRight,
-  CheckCircle2,
-  FileText,
-  LockKeyhole,
-  ShieldCheck,
-  UploadCloud,
-  X,
-} from "lucide-react-native";
+import { ArrowRight, Check, FileText, Pencil, ShieldCheck, UploadCloud, X } from "lucide-react-native";
 import { api } from "@/src/api/client";
-import { buildCanonicalSchedule } from "@/src/features/uctsm/api";
-import { ExtractionPreview, type ExtractionPreviewData } from "@/src/features/uctsm/ExtractionPreview";
-import { ProtocolIdentityNotice } from "@/src/features/uctsm/ProtocolIdentityNotice";
+import { useAuth } from "@/src/auth/AuthContext";
 import {
-  identityBlockFrom, type IdentityBlock, type ProtocolIdentity,
-} from "@/src/features/uctsm/protocolIdentity";
-import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
-import { Button, Card, Small } from "@/src/components/ui";
-import {
-  colors,
-  fonts,
-  radii,
-  shadows,
-  spacing,
-} from "@/src/theme/tokens";
+  KitAnalysisError, saveKitModel, startKitAnalysis, waitForKitJob, type KitStage,
+} from "@/src/features/kit/api";
+import { KitQuestionsModal, type KitConfirmed } from "@/src/features/kit/KitQuestionsModal";
+import type { KitAnalysis, KitModel } from "@/src/features/kit";
+import { FOCUS as G } from "@/src/features/kit/focus";
+import { FlowButton, FlowScreen, FlowSheet, flowStyles as f } from "@/src/features/kit/FlowScreen";
+import { ProtocolTimeline, useProtocolTimeline } from "@/src/features/kit/ProtocolTimeline";
+import type { TimelineSection } from "@/src/features/kit/sections";
+import { fonts } from "@/src/theme/tokens";
 
 type Source = "registry" | "organization" | "upload";
 type TrialStatus = "active" | "completed" | "terminated";
+type Step = "id" | "analysing" | "details" | "schedule" | "saved";
 type Details = {
   ctri_number: string;
   title: string;
@@ -141,66 +118,58 @@ function normalized(raw: any): Details {
   };
 }
 
+/** Section renames made on the schedule step, applied to a model by visit id. */
+function withPhases<T extends KitModel>(model: T, renames: Record<string, string>): T {
+  if (!Object.keys(renames).length) return model;
+  return { ...model, visits: model.visits.map((v) => (renames[v.id] ? { ...v, phase: renames[v.id] } : v)) };
+}
+
 export default function AddTrial() {
   const router = useRouter();
+  const { user } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
+  const analysisRun = useRef(0);
+  const [step, setStep] = useState<Step>("id");
   const [protocolId, setProtocolId] = useState("");
   const [details, setDetails] = useState<Details>(EMPTY);
   const [source, setSource] = useState<Source | null>(null);
-  const [resolved, setResolved] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [extracting, setExtracting] = useState(false);
-  const [extractionIds, setExtractionIds] = useState<string[]>([]);
-  const [previews, setPreviews] = useState<ExtractionPreviewData[]>([]);
-  const [showTrialDetails, setShowTrialDetails] = useState(false);
+  const [picked, setPicked] = useState<any>(null);
+  // The protocol upload is analysed by the Protocol Visit Scheduler kit: its reviewed model is
+  // what the schedule step shows and what Save stores.
+  const [kit, setKit] = useState<KitAnalysis | null>(null);
+  const [kitConfirmed, setKitConfirmed] = useState<KitConfirmed | null>(null);
+  const [showKitQuestions, setShowKitQuestions] = useState(false);
+  const [kitStages, setKitStages] = useState<KitStage[]>([]);
+  const [uploadName, setUploadName] = useState("");
+  const [renames, setRenames] = useState<Record<string, string>>({});
+  const [renaming, setRenaming] = useState<TimelineSection | null>(null);
+  const [renameText, setRenameText] = useState("");
+  const [showEdit, setShowEdit] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const [err, setErr] = useState("");
-  // P2: the protocol identity gate's outcome for the uploaded document. A block
-  // (quarantine) is shown as such - never as a generic extraction failure.
-  const [identityBlock, setIdentityBlock] = useState<IdentityBlock | null>(null);
-  const [identity, setIdentity] = useState<ProtocolIdentity | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [createdTrialId, setCreatedTrialId] = useState<string | null>(null);
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(true);
-  // UI-12: a failed canonical build stays on screen with its reason and a
-  // retry, instead of redirecting anywhere silently.
-  const [buildFailure, setBuildFailure] = useState<string | null>(null);
-  const [retryingBuild, setRetryingBuild] = useState(false);
 
-  const openVisitSchedule = (trialId: string, scheduleVersionId: string) => router.replace({
-    pathname: "/(app)/sponsor/protocol-schedule",
-    params: { id: trialId, scheduleVersionId, trialName: details.title.trim() || protocolId.trim() },
-  });
-  const buildFailureText = (error: any) => {
-    const detail = error?.response?.data?.detail;
-    const reason = typeof detail === "string" ? detail : detail?.message || error?.message;
-    return (reason ? `Building the Visit Schedule failed: ${reason}` : "Building the Visit Schedule failed.")
-      + " The trial and its extracted protocol are saved; retry the build below.";
-  };
-  const retryBuild = async () => {
-    if (!createdTrialId || retryingBuild) return;
-    setRetryingBuild(true);
-    try {
-      const built = await buildCanonicalSchedule(createdTrialId);
-      const version = built.schedules[0];
-      if (!version) throw new Error("No schedule was produced from the extracted protocol");
-      setBuildFailure(null);
-      openVisitSchedule(createdTrialId, version.schedule_version_id);
-    } catch (error: any) {
-      setBuildFailure(buildFailureText(error));
-    } finally { setRetryingBuild(false); }
-  };
+  const update = (patch: Partial<Details>) => setDetails((current) => ({ ...current, ...patch }));
+  const go = (next: Step) => { setErr(""); setStep(next); scrollRef.current?.scrollTo({ y: 0, animated: false }); };
 
-  const update = (patch: Partial<Details>) =>
-    setDetails((current) => ({ ...current, ...patch }));
+  const model = useMemo(() => {
+    const current = kitConfirmed?.model ?? kit?.model;
+    return current ? withPhases(current, renames) : null;
+  }, [kit, kitConfirmed, renames]);
+  const timeline = useProtocolTimeline(model, kitConfirmed?.siteAnswers);
+  const questionCount = kit ? kit.model.review_questions.length + kit.model.questions.filter((q) => q.scope === "study").length : 0;
 
-  const resetResolution = (value: string) => {
+  const changeProtocolId = (value: string) => {
     setProtocolId(value);
-    setResolved(false);
     setSource(null);
     setDetails(EMPTY);
-    setExtractionIds([]);
-    setPreviews([]);
+    setKit(null);
+    setKitConfirmed(null);
+    setRenames({});
     setErr("");
   };
 
@@ -214,10 +183,10 @@ export default function AddTrial() {
       if (response.data?.found) {
         setProtocolId(response.data.protocol_id || id);
         setDetails(normalized(response.data.details));
-        setExtractionIds([]);
         setSource(response.data.source === "organization" ? "organization" : "registry");
-        setResolved(true);
+        go("details");
       } else {
+        setPicked(null);
         setShowUpload(true);
       }
     } catch (error: any) {
@@ -227,93 +196,64 @@ export default function AddTrial() {
     }
   };
 
-  const runExtract = async (asset: any) => {
-    setExtractionIds([]);
-    setPreviews([]);
-    setResolved(false);
-    setExtracting(true);
-    setErr("");
-    setIdentityBlock(null);
-    setIdentity(null);
+  const pick = async () => {
+    const result = await DocumentPicker.getDocumentAsync({ type: ["application/pdf", "text/plain"], copyToCacheDirectory: true });
+    if (!result.canceled) { setPicked(result.assets[0]); setErr(""); }
+  };
+
+  const analyse = async () => {
+    if (!picked) return;
+    const run = ++analysisRun.current;
+    setShowUpload(false);
+    setKit(null);
+    setKitConfirmed(null);
+    setRenames({});
+    setKitStages([]);
+    setUploadName(picked.name || "protocol.pdf");
+    go("analysing");
     try {
-      const form = new FormData();
-      // Only an identifier the sponsor actually entered is an expected identity;
-      // the file name is never promoted to one.
-      if (protocolId.trim()) form.append("expected_protocol_id", protocolId.trim());
-      if (Platform.OS === "web") {
-        const file = asset.file || await (await fetch(asset.uri)).blob();
-        form.append("file", file, asset.name || "protocol.pdf");
-      } else {
-        form.append("file", {
-          uri: asset.uri,
-          name: asset.name || "protocol.pdf",
-          type: asset.mimeType || "application/pdf",
-        } as any);
-      }
-      const response = await api.post("/protocols/extract", form, {
-        // Every independent Schedule of Assessments the protocol prints is
-        // extracted in this one analysis (see backend extract_protocol_alias).
-        timeout: 1800000,
+      // Only an identifier the sponsor actually entered is an expected identity; the file name never is.
+      const started = await startKitAnalysis(picked, protocolId.trim());
+      if (run !== analysisRun.current) return;
+      setKitStages(started.stages);
+      const analysis = await waitForKitJob(started.job_id, (job) => { if (run === analysisRun.current) setKitStages(job.stages); });
+      if (run !== analysisRun.current) return;
+      setKit(analysis);
+      const found = normalized({
+        title: analysis.details.title, phase: analysis.details.phase, indications: analysis.details.indications,
+        total_visits: analysis.model.visits.length,
       });
-      setIdentity(response.data?.identity ?? null);
-      setDetails(normalized(response.data?.details));
-      const extractions: { extraction_id: string; preview?: ExtractionPreviewData }[] = response.data?.extractions
-        || (response.data?.extraction_id ? [response.data] : []);
-      setPreviews(extractions.flatMap((item) => item.preview ? [item.preview] : []));
-      setExtractionIds(extractions.map((item) => item.extraction_id).filter(Boolean));
-      setSource("upload");
-      setResolved(true);
-      setShowTrialDetails(false);
-      scrollRef.current?.scrollTo({ y: 0, animated: false });
-      setShowUpload(false);
+      // A registry match keeps its details; the protocol only fills what is still empty.
+      setDetails((current) => (source === "registry" || source === "organization")
+        ? { ...current, title: current.title || found.title, phase: current.phase || found.phase,
+            indications: current.indications.length ? current.indications : found.indications, total_visits: found.total_visits }
+        : found);
+      if (!protocolId.trim() && analysis.details.protocol_number) setProtocolId(analysis.details.protocol_number);
+      if (!source) setSource("upload");
+      const needsAnswers = analysis.model.review_questions.length > 0 || analysis.model.questions.some((q) => q.scope === "study");
+      if (needsAnswers) setShowKitQuestions(true);
+      else setKitConfirmed({ model: analysis.model, reviewAnswers: analysis.reviewAnswers, siteAnswers: {} });
+      go(source === "registry" || source === "organization" ? "schedule" : "details");
     } catch (error: any) {
-      const status = error?.response?.status;
-      const blocked = identityBlockFrom(error);
-      if (blocked) {
-        setIdentityBlock(blocked);
-        setExtractionIds([]);
-        setPreviews([]);
-        return;
-      }
-      setErr(
-        error?.response?.data?.detail ||
-        (status === 503
-          ? "Protocol extraction is not configured on the server yet."
-          : "We could not extract this PDF. Check the file and try again."),
-      );
-    } finally {
-      setExtracting(false);
+      if (run !== analysisRun.current) return;
+      go("id");
+      setShowUpload(true);
+      setErr(error instanceof KitAnalysisError ? error.message
+        : error?.response?.data?.detail || "We could not analyse this protocol. Check the file and try again.");
     }
   };
 
-  const extract = async () => {
-    const picked = await DocumentPicker.getDocumentAsync({
-      type: ["application/pdf", "text/plain"],
-      copyToCacheDirectory: true,
-    });
-    if (picked.canceled) return;
-    const asset = picked.assets[0];
-    await runExtract(asset);
-  };
+  const cancelAnalysis = () => { analysisRun.current += 1; go("id"); };
 
-  const submit = async () => {
-    if (source === "upload" && (!previews.length || previews.some((preview) => !preview.schedule?.events.length))) {
-      setErr("At least one schedule could not be extracted. Review the extraction messages and retry the upload before saving.");
-      return;
-    }
-    const indications = details.indications.map((item) => item.trim()).filter(Boolean);
-    const missing = [
-      !resolved || !protocolId.trim() ? "Protocol ID lookup or PDF upload" : "",
-      !details.title.trim() ? "Study Title" : "",
-      !details.phase ? "Phase" : "",
-      !indications.length ? "Disease / Indication" : "",
-    ].filter(Boolean);
-    if (missing.length) {
-      setShowTrialDetails(true);
-      setErr(`Please complete: ${missing.join(", ")}.`);
-      return;
-    }
-    setLoading(true);
+  const indications = details.indications.map((item) => item.trim()).filter(Boolean);
+  const missingRequired = [
+    !details.title.trim() ? "Title" : "", !details.phase ? "Phase" : "", !indications.length ? "Indication" : "",
+  ].filter(Boolean);
+
+  const save = async () => {
+    if (missingRequired.length) { go("details"); setErr(`Add: ${missingRequired.join(", ")}.`); return; }
+    if (kit && !kitConfirmed) { setShowKitQuestions(true); return; }
+    setSaving(true);
     setErr("");
     try {
       const response = createdTrialId ? { data: { id: createdTrialId } } : await api.post("/trials", {
@@ -334,429 +274,330 @@ export default function AddTrial() {
       });
       const trialId = response.data.id;
       setCreatedTrialId(trialId);
-      // Doc 9 / Phase 2 "surface the failure": schedules are built only from
-      // extraction now - there is no manual editor to fall back into. A
-      // build that can't run yet, or fails, is not a dead end: the sponsor
-      // lands on the trial page and can retry from Protocol & Schedule
-      // Versions (`buildCanonicalSchedule`, the same call made below), told
-      // plainly why they didn't land on the review screen they expected.
-      const goToTrialWithNotice = (message: string) => {
-        setErr(message);
-        if (Platform.OS === "web") return;
-        Alert.alert(
-        "Schedule not built yet", message,
-        [{ text: "OK", onPress: () => router.replace({
-          pathname: "/(app)/clinical/trial-summary", params: { id: trialId },
-        }) }],
-        );
-      };
-      // A newly created trial is scheduled by the canonical engine: the protocol
-      // just extracted becomes a DRAFT schedule version the sponsor reviews and
-      // approves, and that approved version is what patients are enrolled onto.
-      // Nothing here approves anything, and nothing reaches a patient yet.
-      if (!extractionIds.length) {
-        goToTrialWithNotice(
-          "This trial was created, but no protocol was extracted, so it has "
-          + "no schedule yet. Upload a protocol PDF from the trial page to build one."
-        );
-        return;
+      if (kit && kitConfirmed) {
+        try {
+          await saveKitModel(trialId, {
+            baseModel: withPhases(kit.baseModel, renames), reviewAnswers: kitConfirmed.reviewAnswers,
+            siteAnswers: kitConfirmed.siteAnswers, fileName: uploadName,
+          });
+        } catch (saveError: any) {
+          const detail = saveError?.response?.data?.detail;
+          setErr(`The trial was created, but its visit schedule could not be saved: ${
+            typeof detail === "string" ? detail : detail?.message || saveError?.message || "unknown error"}. Press Save again to retry.`);
+          return;
+        }
       }
-      try {
-        await Promise.all(extractionIds.map((extractionId) =>
-          api.post(`/trials/${trialId}/protocol-extractions/${extractionId}/consume`)));
-        const built = await buildCanonicalSchedule(trialId);
-        const version = built.schedules[0];
-        if (!version) throw new Error("No canonical schedule was produced");
-        // UI-01: saving leads straight to the draft Visit Schedule. Nothing is
-        // approved here; review and approval happen on that screen.
-        setBuildFailure(null);
-        openVisitSchedule(trialId, version.schedule_version_id);
-      } catch (canonicalError: any) {
-        // The trial exists and its protocol was extracted; only the canonical
-        // build failed. The reason and a retry stay on this screen (UI-12).
-        setBuildFailure(buildFailureText(canonicalError));
-      }
+      go("saved");
     } catch (error: any) {
       setErr(error?.response?.data?.detail || "Could not save this trial.");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const locked = !resolved;
-  return (
-    <ScreenContainer>
-      <ScreenHeader eyebrow="New study" title={previews.length ? "Visit Schedule" : "Add New Trial"} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={s.flex}
-      >
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={s.content}
-          keyboardShouldPersistTaps="handled"
-        >
-          <ProtocolIdentityNotice
-            block={identityBlock}
-            identity={identity}
-            onOpenReview={(identityId) => router.push({
-              pathname: "/(app)/sponsor/protocol-identity-review", params: { id: identityId },
-            })}
-          />
-          {previews.length > 0 && <ExtractionPreview previews={previews} />}
-          {previews.length > 0 && <Pressable accessibilityRole="button"
-            accessibilityState={{ expanded: showTrialDetails }} onPress={() => setShowTrialDetails((value) => !value)}
-            style={{ paddingVertical: 16 }}>
-            <Small color={colors.primary}>{showTrialDetails ? "Hide" : "Show"} trial details · {details.title || protocolId}</Small>
-          </Pressable>}
-          {(!previews.length || showTrialDetails) && <>
-          <View style={s.stepRow}>
-            <View style={s.stepNumber}><Text style={s.stepNumberText}>1</Text></View>
-            <View style={s.flex}>
-              <Text style={s.sectionTitle}>Find your protocol</Text>
-              <Small>We&apos;ll securely auto-fill the trial details when possible.</Small>
-            </View>
-          </View>
+  const trialName = details.title.trim() || protocolId.trim();
+  const openTrial = () => createdTrialId && router.replace({ pathname: "/(app)/clinical/trial-summary", params: { id: createdTrialId } });
 
-          <Label text="Protocol ID *" />
-          <View style={s.lookupRow}>
-            <TextInput
-              testID="trial-proto"
-              value={protocolId}
-              onChangeText={resetResolution}
-              onSubmitEditing={lookup}
-              placeholder="Enter protocol ID"
-              placeholderTextColor={colors.mutedFg}
-              autoCapitalize="characters"
-              style={[s.input, s.lookupInput]}
-            />
-            <Pressable
-              testID="protocol-lookup"
-              accessibilityLabel="Look up protocol"
-              disabled={!protocolId.trim() || lookingUp}
-              onPress={lookup}
-              style={({ pressed }) => [
-                s.lookupButton,
-                (!protocolId.trim() || lookingUp) && s.disabled,
-                pressed && { transform: [{ scale: 0.95 }] },
-              ]}
-            >
-              {lookingUp
-                ? <ActivityIndicator color={colors.primaryFg} />
-                : <ArrowRight size={21} color={colors.primaryFg} />}
+  return <>
+    {step === "id" && <FlowScreen title="Add trial" step={1} steps={5} onBack={() => router.back()} scrollRef={scrollRef}
+      eyebrow="Protocol" heading="Enter the protocol ID"
+      sub="If we have it on record, the details fill in. If not, you upload the protocol PDF.">
+      <Text style={[f.label, { marginTop: 32 }]}>Protocol ID</Text>
+      <View style={s.lookupRow}>
+        <TextInput testID="trial-proto" value={protocolId} onChangeText={changeProtocolId} onSubmitEditing={lookup}
+          placeholder="Enter protocol ID" placeholderTextColor={G.muted} autoCapitalize="characters"
+          style={[f.input, s.lookupInput, !!protocolId && { borderColor: G.accent, borderWidth: 2 }]} />
+        <Pressable testID="protocol-lookup" accessibilityRole="button" accessibilityLabel="Look up protocol"
+          disabled={!protocolId.trim() || lookingUp} onPress={lookup}
+          style={[s.lookupButton, (!protocolId.trim() || lookingUp) && { opacity: 0.4 }]}>
+          {lookingUp ? <ActivityIndicator color="#FFFFFF" /> : <ArrowRight size={22} color="#FFFFFF" />}
+        </Pressable>
+      </View>
+      <Text style={[f.hint, { marginTop: 10 }]}>For example an NCT number or your sponsor&apos;s study number.</Text>
+      {!!err && !showUpload && <Text style={[f.error, { marginTop: 12 }]}>{err}</Text>}
+    </FlowScreen>}
+
+    {step === "analysing" && <FlowScreen title="Add trial" step={2} steps={5} scrollRef={scrollRef}
+      eyebrow="Analysing" heading="Reading your protocol" sub={`${uploadName ? uploadName + " · " : ""}This usually takes 1 to 3 minutes.`}
+      footer={<View style={s.analysingFooter}>
+        <Text style={[f.hint, { flex: 1 }]}>Keep this screen open while we read it.</Text>
+        <View style={{ width: 110 }}><FlowButton label="Cancel" variant="secondary" onPress={cancelAnalysis} /></View>
+      </View>}>
+      <View style={{ marginTop: 28 }}>
+        {(kitStages.length ? kitStages : [{ id: "start", label: "Starting", status: "run", detail: "" } as KitStage]).map((stage, index, all) =>
+          <View key={stage.id} style={s.stage}>
+            <View style={s.stageRail}>
+              {stage.status === "done"
+                ? <View style={[s.stageDot, s.stageDone]}><Check size={14} color="#FFFFFF" strokeWidth={3} /></View>
+                : stage.status === "run"
+                  ? <View style={s.stageDot}><ActivityIndicator size="small" color={G.accent} /></View>
+                  : <View style={[s.stageDot, s.stageWait]} />}
+              {index < all.length - 1 && <View style={[s.stageLine, stage.status === "done" && { backgroundColor: G.accent }]} />}
+            </View>
+            <View style={s.stageText}>
+              <Text style={[s.stageLabel, stage.status === "wait" && { color: G.muted, fontFamily: fonts.medium }]}>{stage.label}</Text>
+              <Text style={f.hint}>{stage.status === "wait" ? "Waiting" : stage.detail || (stage.status === "run" ? "Working…" : "Done")}</Text>
+            </View>
+          </View>)}
+      </View>
+    </FlowScreen>}
+
+    {step === "details" && <FlowScreen title="Add trial" step={4} steps={5} onBack={() => go("id")} scrollRef={scrollRef}
+      eyebrow="Trial details" heading="Are these details right?"
+      sub={source === "upload" ? "Read from the protocol. Fix anything that is wrong." : "Found on record. Fix anything that is wrong."}
+      footer={<>
+        {!!missingRequired.length && <Text style={[f.hint, { textAlign: "center" }]}>Add {missingRequired.join(", ").toLowerCase()} to continue</Text>}
+        <FlowButton testID="details-continue" label="Looks right" arrow disabled={!!missingRequired.length} onPress={() => go("schedule")} />
+      </>}>
+      <View style={{ marginTop: 24 }}>
+        {[
+          ["Protocol ID", protocolId.trim(), false],
+          ["Title", details.title.trim(), true],
+          ["Phase", details.phase, true],
+          ["Indication", indications.join(", "), true],
+          ...(kit?.details.version ? [["Version", kit.details.version, false]] : []),
+          ["Study drug", details.drug.trim(), false],
+          ["Duration", details.duration.trim(), false],
+          ["Sample size", details.target_enrollment, false],
+          ["CTRI number", details.ctri_number.trim(), false],
+          ["Status", STATUSES.find((x) => x.value === details.status)?.label || "", false],
+        ].map(([label, value, required]) => <View key={String(label)} style={s.detailRow}>
+          <Text style={s.detailLabel}>{label}</Text>
+          <Text style={[s.detailValue, !value && { color: required ? G.error : G.amberText }]}>
+            {value || (required ? "Required" : source === "upload" ? "Not in the protocol" : "Not given")}
+          </Text>
+        </View>)}
+      </View>
+      <Pressable testID="edit-details" accessibilityRole="button" onPress={() => setShowEdit(true)} style={s.editButton}>
+        <Pencil size={16} color={G.accent} />
+        <Text style={s.editText}>Edit details</Text>
+      </Pressable>
+      {!!err && <Text style={[f.error, { marginTop: 12 }]}>{err}</Text>}
+    </FlowScreen>}
+
+    {step === "schedule" && <FlowScreen title="Add trial" step={5} steps={5} onBack={() => go("details")} scrollRef={scrollRef}
+      eyebrow="Visit schedule" heading={timeline ? timeline.title : "No visit schedule yet"}
+      sub={timeline ? `Check the schedule, then save. Each patient's dates count from their own ${timeline.startLabel}.`
+        : "Upload the protocol PDF to build the visit schedule, or save the trial without one."}
+      footer={<>
+        {!!err && <Text style={f.error}>{err}</Text>}
+        <FlowButton testID="add-trial-submit" label="Save trial" loading={saving} onPress={save} />
+      </>}>
+      {timeline && kit ? <>
+        <View style={s.checks}>
+          <View style={[s.check, kit.corrections === null ? s.checkWarn : s.checkOk]}>
+            {kit.corrections === null ? <X size={15} color={G.amberInk} /> : <Check size={15} color={G.accent} strokeWidth={2.5} />}
+            <Text style={s.checkText}>
+              {kit.corrections === null ? "Table check didn't run" : kit.corrections.length ? `${kit.corrections.length} fixed from the tables` : "Matches the tables"}
+            </Text>
+          </View>
+          {!!questionCount && <Pressable accessibilityRole="button" onPress={() => setShowKitQuestions(true)} style={[s.check, s.checkLink]}>
+            <Text style={s.checkText}>{questionCount} answer{questionCount === 1 ? "" : "s"}</Text>
+            <Text style={s.linkText}>Review</Text>
+          </Pressable>}
+        </View>
+        <ProtocolTimeline data={timeline} onRename={(section) => { setRenaming(section); setRenameText(section.label); }} />
+        {(!!model?.notes.length || !!kit.warnings.length) && <Pressable accessibilityRole="button" onPress={() => setShowNotes(true)} style={s.notesRow}>
+          <Text style={s.notesText}>{(model?.notes.length || 0) + kit.warnings.length} notes from the protocol</Text>
+          <Text style={s.linkText}>Read</Text>
+        </Pressable>}
+      </> : <View style={{ marginTop: 24 }}>
+        <FlowButton label="Upload protocol PDF" variant="secondary" onPress={() => { setPicked(null); setShowUpload(true); }} />
+      </View>}
+    </FlowScreen>}
+
+    {step === "saved" && <FlowScreen title="Add trial" eyebrow="Saved"
+      heading={timeline ? `${trialName} is ready for patients` : `${trialName} is saved`}
+      sub={timeline ? `${timeline.title}. Each patient gets their own dates when they are added.`
+        : "It has no visit schedule yet."}
+      footer={<>
+        {(user?.role === "pi" || user?.role === "crc") && !!timeline
+          ? <FlowButton label="Add first patient" onPress={() => createdTrialId && router.replace({
+              pathname: "/(app)/clinical/add-patient", params: { trialId: createdTrialId } })} />
+          : <FlowButton label="Open trial" onPress={openTrial} />}
+        {!!timeline && <FlowButton label="View visit schedule" variant="secondary" onPress={() => createdTrialId && router.replace({
+          pathname: "/(app)/sponsor/kit-schedule", params: { id: createdTrialId, trialName } })} />}
+      </>}>
+      <View style={s.savedCard}>
+        <View style={s.savedRow}><Text style={s.detailLabel}>Protocol</Text><Text style={s.savedValue}>{[protocolId.trim(), details.phase].filter(Boolean).join(" · ")}</Text></View>
+        {!!timeline && <View style={s.savedRow}><Text style={s.detailLabel}>Schedule starts at</Text><Text style={s.savedValue}>{timeline.startLabel}</Text></View>}
+        {!!model && <View style={[s.savedRow, { borderBottomWidth: 0 }]}>
+          <Text style={s.detailLabel}>Asked per patient</Text>
+          <Text style={s.savedValue}>{(() => {
+            const labels = model.questions.filter((q) => q.scope === "participant").map((q) => q.label);
+            return labels.length ? labels.slice(0, 2).join(", ") + (labels.length > 2 ? `, ${labels.length - 2} more` : "") : "Start date only";
+          })()}</Text>
+        </View>}
+      </View>
+    </FlowScreen>}
+
+    {/* Before anything is entered: the person confirms they may create a trial. */}
+    <Modal visible={showCreateConfirmation} transparent animationType="fade" onRequestClose={() => router.back()}>
+      <View style={s.backdrop}>
+        <View style={s.dialog}>
+          <View style={s.dialogIcon}><ShieldCheck size={24} color={G.accent} /></View>
+          <Text style={s.dialogTitle}>Before you add a trial</Text>
+          <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ gap: 12, paddingTop: 12 }}>
+            {CREATE_TRIAL_RESPONSIBILITIES.map((item, index) => <View key={item} style={s.point}>
+              <Text style={s.pointNumber}>{index + 1}</Text>
+              <Text style={[f.hint, { flex: 1, color: G.ink }]}>{item}</Text>
+            </View>)}
+          </ScrollView>
+          <View style={s.dialogActions}>
+            <View style={{ flex: 1 }}><FlowButton testID="cancel-create-trial" label="Cancel" variant="secondary" onPress={() => router.back()} /></View>
+            <View style={{ flex: 1.6 }}><FlowButton testID="confirm-create-trial" label="I confirm" onPress={() => setShowCreateConfirmation(false)} /></View>
+          </View>
+        </View>
+      </View>
+    </Modal>
+
+    <Modal visible={showUpload} transparent animationType="fade" onRequestClose={() => setShowUpload(false)}>
+      <View style={s.backdrop}>
+        <View style={s.dialog}>
+          <View style={s.dialogTop}>
+            <View style={s.dialogIcon}><FileText size={24} color={G.accent} /></View>
+            <Pressable testID="close-protocol-upload" accessibilityRole="button" accessibilityLabel="Close" hitSlop={12} onPress={() => setShowUpload(false)}>
+              <X size={20} color={G.muted} />
             </Pressable>
           </View>
-          <Small style={s.helper}>
-            If the ID isn&apos;t on record, upload the protocol PDF for extraction.
-          </Small>
-
-          {resolved && (
-            <View style={s.successBanner}>
-              <CheckCircle2 size={20} color={colors.success} />
-              <Text style={s.successText}>
-                {source === "upload"
-                  ? "Protocol details extracted. Review them before saving."
-                  : "Protocol found. Details have been auto-filled for review."}
-              </Text>
-            </View>
-          )}
-
-          <View style={s.stepRow}>
-            <View style={[s.stepNumber, locked && s.lockedNumber]}>
-              {locked
-                ? <LockKeyhole size={14} color={colors.mutedFg} />
-                : <Text style={s.stepNumberText}>2</Text>}
-            </View>
-            <View style={s.flex}>
-              <Text style={s.sectionTitle}>Trial details</Text>
-              <Small>{locked ? "Complete lookup or extraction to unlock." : "Review and correct any extracted value."}</Small>
-            </View>
-          </View>
-
-          <View
-            accessibilityState={{ disabled: locked }}
-            style={[s.details, locked && s.detailsLocked]}
-          >
-            <Field testID="trial-ctri" label="CTRI Number" value={details.ctri_number} onChange={(value) => update({ ctri_number: value })} disabled={locked} placeholder="Enter CTRI number (optional)" />
-            <Field testID="trial-title" label="Study Title *" value={details.title} onChange={(value) => update({ title: value })} disabled={locked} placeholder="Enter official study title" multiline />
-
-            <Label text="Phase *" />
-            <View style={s.choiceWrap}>
-              {PHASES.map((phase) => (
-                <Choice key={phase} label={phase} active={details.phase === phase} disabled={locked} onPress={() => update({ phase })} />
-              ))}
-            </View>
-
-            <Field
-              testID="trial-condition"
-              label="Disease / Indication *"
-              value={details.indications.join(", ")}
-              onChange={(value) => update({ indications: value.split(",").map((item) => item.trimStart()) })}
-              disabled={locked}
-              placeholder="e.g. Diabetes, Hypertension"
-              hint="One indication is enough. Use commas only when entering more than one."
-            />
-            <Field testID="trial-drug" label="Study Drug Name" value={details.drug} onChange={(value) => update({ drug: value })} disabled={locked} placeholder="Enter investigational drug" />
-            <Field testID="trial-duration" label="Duration of the Trial" value={details.duration} onChange={(value) => update({ duration: value })} disabled={locked} placeholder="e.g. 18 months (optional)" />
-            <View style={s.twoCol}>
-              <View style={s.flex}>
-                <Field testID="trial-sample-size" label="Sample Size" value={details.target_enrollment} onChange={(value) => update({ target_enrollment: value.replace(/\D/g, "") })} disabled={locked} placeholder="Optional" keyboardType="number-pad" />
-              </View>
-              <View style={s.flex}>
-                <Field testID="trial-total-visits" label="Total Visits" value={details.total_visits} onChange={(value) => update({ total_visits: value.replace(/\D/g, "") })} disabled={locked} placeholder="Optional" keyboardType="number-pad" />
-              </View>
-            </View>
-
-            <Label text="Status of Trial" />
-            <View style={s.choiceWrap}>
-              {STATUSES.map((status) => (
-                <Choice key={status.value} label={status.label} active={details.status === status.value} disabled={locked} onPress={() => update({ status: status.value })} />
-              ))}
-            </View>
-          </View>
-
-          </>}
-          {!!err && <Text style={s.error}>{err}</Text>}
-          {!!buildFailure && !!createdTrialId && <View style={s.buildFailure} accessibilityLiveRegion="polite">
-            <Text style={s.error}>{buildFailure}</Text>
-            <Button variant="secondary" onPress={retryBuild} loading={retryingBuild}>Retry Visit Schedule build</Button>
-            <Button variant="ghost" onPress={() => router.replace({
-              pathname: "/(app)/sponsor/schedule-versions", params: { id: createdTrialId },
-            })}>Open Protocol & Schedule Versions</Button>
+          <Text style={s.dialogTitle}>{protocolId.trim() ? `${protocolId.trim()} is not on record` : "Upload the protocol"}</Text>
+          <Text style={[f.hint, { fontSize: 15, lineHeight: 22, marginTop: 8 }]}>Upload the protocol PDF. We read it and build the visit schedule for you to check.</Text>
+          {!!err && <Text style={[f.error, { marginTop: 12 }]}>{err}</Text>}
+          <Pressable testID="upload-protocol" accessibilityRole="button" onPress={pick} style={s.dropZone}>
+            <UploadCloud size={24} color={G.accent} />
+            <Text style={s.dropTitle}>{picked ? "Choose a different file" : "Choose protocol PDF"}</Text>
+            <Text style={f.hint}>PDF or text · up to 25 MB</Text>
+          </Pressable>
+          {!!picked && <View style={s.fileChip}>
+            <Check size={18} color={G.accent} strokeWidth={2.5} />
+            <Text style={s.fileName} numberOfLines={1}>{picked.name}</Text>
           </View>}
-          <Button
-            testID="add-trial-submit"
-            onPress={submit}
-            loading={loading}
-            disabled={locked}
-            style={s.submit}
-          >
-            {previews.length ? "Save schedule and continue" : "Save & build visit schedule"}
-          </Button>
-        </ScrollView>
-      </KeyboardAvoidingView>
-
-      <Modal
-        visible={showCreateConfirmation}
-        transparent
-        animationType="fade"
-        onRequestClose={() => router.back()}
-      >
-        <View style={s.modalBackdrop}>
-          <Card style={s.confirmCard}>
-            <View style={s.confirmIcon}>
-              <ShieldCheck size={26} color={colors.primary} />
-            </View>
-            <Text style={s.confirmTitle}>Create New Trial</Text>
-            <ScrollView
-              style={s.confirmScroll}
-              contentContainerStyle={s.confirmScrollContent}
-              showsVerticalScrollIndicator
-              persistentScrollbar
-              nestedScrollEnabled
-            >
-              <Text style={s.confirmIntro}>Before creating a trial, please confirm that:</Text>
-
-              <View style={s.confirmPoints}>
-                {CREATE_TRIAL_RESPONSIBILITIES.map((responsibility, index) => (
-                  <View key={responsibility} style={s.confirmPoint}>
-                    <View style={s.confirmNumber}>
-                      <Text style={s.confirmNumberText}>{index + 1}</Text>
-                    </View>
-                    <Small color={colors.foreground} style={s.confirmPointText}>{responsibility}</Small>
-                  </View>
-                ))}
-              </View>
-
-              <View style={s.confirmDeclaration}>
-                <Small color={colors.foreground} style={s.confirmDeclarationText}>
-                  By clicking &quot;I Confirm&quot;, you acknowledge the above responsibilities.
-                </Small>
-              </View>
-            </ScrollView>
-
-            <View style={s.confirmActions}>
-              <Pressable testID="cancel-create-trial" onPress={() => router.back()} style={[s.confirmButton, s.confirmCancel]}>
-                <Text style={s.confirmCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable testID="confirm-create-trial" onPress={() => setShowCreateConfirmation(false)} style={[s.confirmButton, s.confirmAccept]}>
-                <Text style={s.confirmAcceptText}>I Confirm &amp; Create Trial</Text>
-              </Pressable>
-            </View>
-          </Card>
+          <View style={{ marginTop: 20 }}>
+            <FlowButton testID="analyse-protocol" label="Analyse protocol" disabled={!picked} onPress={analyse} />
+          </View>
         </View>
-      </Modal>
+      </View>
+    </Modal>
 
-      <Modal
-        visible={showUpload}
-        transparent
-        animationType="fade"
-        onRequestClose={() => !extracting && setShowUpload(false)}
-      >
-        <View style={s.modalBackdrop}>
-          <Card style={s.modalCard}>
-            {extracting ? (
-              <View style={s.extracting}>
-                <View style={s.uploadIcon}><FileText size={23} color={colors.primary} /></View>
-                <Text style={s.modalTitle}>Reading your protocol…</Text>
-                <Small style={s.modalCopy}>Analyzing trial details and preparing the complete visit schedule. Keep this screen open.</Small>
-                <Text style={s.progressText}>Processing…</Text>
-              </View>
-            ) : (
-              <>
-                <View style={s.modalHeader}>
-                  <View style={s.uploadIcon}><FileText size={23} color={colors.primary} /></View>
-                  <Pressable testID="close-protocol-upload" hitSlop={12} onPress={() => setShowUpload(false)}>
-                    <X size={21} color={colors.mutedFg} />
-                  </Pressable>
-                </View>
-                <Text style={s.modalTitle}>Protocol not found</Text>
-                <Small style={s.modalCopy}>
-                  Upload the latest approved protocol once to auto-populate the trial details and prepare the visit schedule. Please review and verify all extracted information before saving the trial.
-                </Small>
-                {!!err && <Text style={s.error}>{err}</Text>}
-                <Pressable testID="upload-protocol" onPress={extract} style={s.dropZone}>
-                  <View style={s.uploadIcon}><UploadCloud size={24} color={colors.primary} /></View>
-                  <Text style={s.dropTitle}>Choose protocol PDF or text</Text>
-                  <Small>PDF or UTF-8 text, up to 25 MB</Small>
-                </Pressable>
-              </>
-            )}
-          </Card>
+    <FlowSheet visible={showEdit} title="Trial details" onClose={() => setShowEdit(false)}>
+      <View style={{ gap: 6 }}>
+        <Text style={f.label}>Title</Text>
+        <TextInput testID="trial-title" value={details.title} onChangeText={(value) => update({ title: value })} multiline
+          placeholder="Official study title" placeholderTextColor={G.muted} style={[f.input, { minHeight: 76, textAlignVertical: "top" }]} />
+      </View>
+      <View style={{ gap: 8 }}>
+        <Text style={f.label}>Phase</Text>
+        <View style={f.chips}>
+          {PHASES.map((phase) => {
+            const on = details.phase === phase;
+            return <Pressable key={phase} accessibilityRole="radio" accessibilityState={{ selected: on }} onPress={() => update({ phase })} style={[f.chip, on && f.chipOn]}>
+              <Text style={[f.chipText, on && f.chipTextOn]}>{phase}</Text>
+            </Pressable>;
+          })}
         </View>
-      </Modal>
-    </ScreenContainer>
-  );
+      </View>
+      <SheetField label="Indication" testID="trial-condition" value={details.indications.join(", ")} placeholder="e.g. Type 1 diabetes"
+        onChange={(value) => update({ indications: value.split(",").map((item) => item.trimStart()) })} />
+      <SheetField label="Study drug" testID="trial-drug" value={details.drug} placeholder="Optional" onChange={(value) => update({ drug: value })} />
+      <SheetField label="Duration" testID="trial-duration" value={details.duration} placeholder="e.g. 18 months (optional)" onChange={(value) => update({ duration: value })} />
+      <View style={{ flexDirection: "row", gap: 12 }}>
+        <View style={{ flex: 1 }}><SheetField label="Sample size" testID="trial-sample-size" value={details.target_enrollment} placeholder="Optional"
+          numeric onChange={(value) => update({ target_enrollment: value.replace(/\D/g, "") })} /></View>
+        <View style={{ flex: 1 }}><SheetField label="CTRI number" testID="trial-ctri" value={details.ctri_number} placeholder="Optional"
+          onChange={(value) => update({ ctri_number: value })} /></View>
+      </View>
+      <View style={{ gap: 8 }}>
+        <Text style={f.label}>Status</Text>
+        <View style={f.chips}>
+          {STATUSES.map((status) => {
+            const on = details.status === status.value;
+            return <Pressable key={status.value} accessibilityRole="radio" accessibilityState={{ selected: on }} onPress={() => update({ status: status.value })} style={[f.chip, on && f.chipOn]}>
+              <Text style={[f.chipText, on && f.chipTextOn]}>{status.label}</Text>
+            </Pressable>;
+          })}
+        </View>
+      </View>
+      <FlowButton label="Done" onPress={() => setShowEdit(false)} />
+    </FlowSheet>
+
+    <FlowSheet visible={!!renaming} title="Rename section" onClose={() => setRenaming(null)}>
+      <Text style={f.hint}>Give it the same name as the section before or after it to join them.</Text>
+      <TextInput value={renameText} onChangeText={setRenameText} autoFocus style={f.input} placeholder="Section name" placeholderTextColor={G.muted} />
+      <FlowButton label="Save name" disabled={!renameText.trim()} onPress={() => {
+        if (!renaming) return;
+        const label = renameText.trim();
+        setRenames((current) => ({ ...current, ...Object.fromEntries(renaming.visitIds.map((id) => [id, label])) }));
+        setRenaming(null);
+      }} />
+    </FlowSheet>
+
+    <FlowSheet visible={showNotes} title="Notes from the protocol" onClose={() => setShowNotes(false)}>
+      {kit?.warnings.map((w) => <Text key={w} style={[f.hint, { color: G.amberText }]}>{w}</Text>)}
+      {model?.notes.map((note) => <Text key={note} style={[f.hint, { color: G.ink, fontSize: 14, lineHeight: 20 }]}>• {note}</Text>)}
+    </FlowSheet>
+
+    {kit && <KitQuestionsModal
+      visible={showKitQuestions}
+      baseModel={kit.baseModel}
+      model={kitConfirmed?.model ?? kit.model}
+      reviewAnswers={kitConfirmed?.reviewAnswers ?? kit.reviewAnswers}
+      siteAnswers={kitConfirmed?.siteAnswers ?? {}}
+      onConfirm={(confirmed) => { setKitConfirmed(confirmed); setShowKitQuestions(false); }}
+      onDismiss={kitConfirmed ? () => setShowKitQuestions(false) : undefined}
+    />}
+  </>;
 }
 
-function Label({ text }: { text: string }) {
-  return <Text style={s.label}>{text}</Text>;
-}
-
-type FieldProps = {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  disabled: boolean;
-  testID: string;
-  placeholder: string;
-  hint?: string;
-  multiline?: boolean;
-  keyboardType?: "default" | "number-pad";
-};
-
-function Field({
-  label,
-  value,
-  onChange,
-  disabled,
-  testID,
-  placeholder,
-  hint,
-  multiline,
-  keyboardType,
-}: FieldProps) {
-  return (
-    <View style={s.field}>
-      <Label text={label} />
-      <TextInput
-        testID={testID}
-        value={value}
-        onChangeText={onChange}
-        editable={!disabled}
-        placeholder={placeholder}
-        placeholderTextColor={colors.mutedFg}
-        multiline={multiline}
-        keyboardType={keyboardType}
-        style={[s.input, multiline && s.multiline]}
-      />
-      {!!hint && <Small style={s.fieldHint}>{hint}</Small>}
-    </View>
-  );
-}
-
-function Choice({
-  label,
-  active,
-  disabled,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
+function SheetField({ label, value, onChange, placeholder, testID, numeric }: {
+  label: string; value: string; onChange: (value: string) => void; placeholder: string; testID: string; numeric?: boolean;
 }) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={[s.choice, active && s.choiceActive]}
-    >
-      <Text style={[s.choiceText, active && s.choiceTextActive]}>{label}</Text>
-    </Pressable>
-  );
+  return <View style={{ gap: 6 }}>
+    <Text style={f.label}>{label}</Text>
+    <TextInput testID={testID} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={G.muted}
+      keyboardType={numeric ? "number-pad" : "default"} style={f.input} />
+  </View>;
 }
 
 const s = StyleSheet.create({
-  buildFailure: { gap: 8, marginTop: 8 },
-  flex: { flex: 1 },
-  content: { padding: spacing.md, paddingBottom: spacing.xxl },
-  stepRow: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 4, marginBottom: 16 },
-  stepNumber: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  lockedNumber: { backgroundColor: colors.surface },
-  stepNumberText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 12 },
-  sectionTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 18 },
-  label: { color: colors.foreground, fontFamily: fonts.semibold, fontSize: 12, marginBottom: 7 },
-  lookupRow: { flexDirection: "row", alignItems: "center", gap: 9 },
-  lookupInput: { flex: 1, fontFamily: fonts.mono },
-  lookupButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center", ...shadows.sm },
-  disabled: { opacity: 0.4 },
-  helper: { marginTop: 7, marginBottom: 16, lineHeight: 17 },
-  successBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: radii.lg, backgroundColor: "rgba(30,122,70,0.12)", padding: 13, marginBottom: 18 },
-  successText: { flex: 1, color: colors.foreground, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18 },
-  details: { marginBottom: 4 },
-  detailsLocked: { opacity: 0.42 },
-  field: { marginBottom: 15 },
-  input: { minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.card, paddingHorizontal: 14, paddingVertical: 12, color: colors.foreground, fontFamily: fonts.regular, fontSize: 14 },
-  multiline: { minHeight: 82, textAlignVertical: "top" },
-  fieldHint: { marginTop: 5 },
-  choiceWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 },
-  choice: { minHeight: 38, borderWidth: 1, borderColor: colors.border, borderRadius: radii.pill, backgroundColor: colors.card, paddingHorizontal: 14, alignItems: "center", justifyContent: "center" },
-  choiceActive: { borderColor: colors.primary, backgroundColor: colors.secondary },
-  choiceText: { color: colors.mutedFg, fontFamily: fonts.medium, fontSize: 12 },
-  choiceTextActive: { color: colors.primary, fontFamily: fonts.semibold },
-  twoCol: { flexDirection: "row", gap: 11 },
-  error: { color: colors.destructive, fontFamily: fonts.medium, fontSize: 12, lineHeight: 17, marginBottom: 12 },
-  submit: { marginTop: 4 },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(15,27,45,0.48)", justifyContent: "center", padding: 24 },
-  modalCard: { width: "100%", maxWidth: 390, alignSelf: "center", padding: 20 },
-  confirmCard: { width: "100%", maxWidth: 430, maxHeight: "94%", alignSelf: "center", padding: 20 },
-  confirmIcon: { width: 50, height: 50, borderRadius: 17, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", alignSelf: "center", marginBottom: 12 },
-  confirmTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 22, textAlign: "center" },
-  confirmScroll: { flexShrink: 1 },
-  confirmScrollContent: { paddingTop: 6 },
-  confirmIntro: { color: colors.mutedFg, fontFamily: fonts.medium, fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 6, marginBottom: 18 },
-  confirmPoints: { gap: 12 },
-  confirmPoint: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  confirmNumber: { width: 23, height: 23, borderRadius: 12, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center", marginTop: 1 },
-  confirmNumberText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 11 },
-  confirmPointText: { flex: 1, lineHeight: 19 },
-  confirmDeclaration: { marginTop: 18, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.background, padding: 12 },
-  confirmDeclarationText: { lineHeight: 19, fontFamily: fonts.semibold, textAlign: "center" },
-  confirmActions: { flexDirection: "row", gap: 10, marginTop: 18 },
-  confirmButton: { minHeight: 48, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
-  confirmCancel: { flex: 0.72, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  confirmAccept: { flex: 1.55, backgroundColor: colors.primary },
-  confirmCancelText: { color: colors.foreground, fontFamily: fonts.bold, fontSize: 13 },
-  confirmAcceptText: { color: colors.primaryFg, fontFamily: fonts.bold, fontSize: 13, textAlign: "center" },
-  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
-  modalTitle: { color: colors.foreground, fontFamily: fonts.heading, fontSize: 20, marginBottom: 7 },
-  modalCopy: { lineHeight: 18, marginBottom: 17 },
-  uploadIcon: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
-  dropZone: { borderWidth: 1.5, borderStyle: "dashed", borderColor: colors.primary + "77", borderRadius: radii.lg, backgroundColor: colors.background, padding: 24, alignItems: "center", gap: 7 },
-  dropTitle: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 14, marginTop: 3 },
-  extracting: { alignItems: "center", paddingVertical: 12 },
-  progressTrack: { width: "100%", height: 8, borderRadius: 4, backgroundColor: colors.secondary, overflow: "hidden", marginTop: 2 },
-  progressFill: { height: "100%", borderRadius: 4, backgroundColor: colors.primary },
-  progressText: { color: colors.primary, fontFamily: fonts.mono, fontSize: 12, marginTop: 8 },
+  lookupRow: { flexDirection: "row", gap: 10, marginTop: 8 },
+  lookupInput: { flex: 1, minHeight: 54, fontSize: 18, fontFamily: fonts.medium, letterSpacing: 1 },
+  lookupButton: { width: 54, height: 54, borderRadius: 14, backgroundColor: G.accent, alignItems: "center", justifyContent: "center" },
+  analysingFooter: { flexDirection: "row", alignItems: "center", gap: 12 },
+  stage: { flexDirection: "row", gap: 14 },
+  stageRail: { width: 24, alignItems: "center" },
+  stageDot: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  stageDone: { backgroundColor: G.accent },
+  stageWait: { borderWidth: 2, borderColor: G.line },
+  stageLine: { flex: 1, width: 2, backgroundColor: G.track, marginVertical: 4 },
+  stageText: { flex: 1, paddingTop: 1, paddingBottom: 20, gap: 2 },
+  stageLabel: { color: G.ink, fontFamily: fonts.semibold, fontSize: 16 },
+  detailRow: { flexDirection: "row", gap: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: G.softLine },
+  detailLabel: { width: 104, color: G.muted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 20 },
+  detailValue: { flex: 1, color: G.ink, fontFamily: fonts.medium, fontSize: 15, lineHeight: 21 },
+  editButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 18, minHeight: 48, borderWidth: 1, borderColor: G.line, borderRadius: 14 },
+  editText: { color: G.accent, fontFamily: fonts.semibold, fontSize: 15 },
+  checks: { flexDirection: "row", gap: 8, marginTop: 18 },
+  check: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12 },
+  checkOk: { backgroundColor: G.selected },
+  checkWarn: { backgroundColor: G.amberBg },
+  checkLink: { borderWidth: 1, borderColor: G.line, justifyContent: "space-between" },
+  checkText: { flexShrink: 1, color: G.ink, fontFamily: fonts.medium, fontSize: 13 },
+  linkText: { color: G.accent, fontFamily: fonts.semibold, fontSize: 14 },
+  notesRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14 },
+  notesText: { color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
+  savedCard: { marginTop: 28, borderWidth: 1, borderColor: G.line, borderRadius: 14, paddingHorizontal: 16 },
+  savedRow: { flexDirection: "row", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: G.softLine },
+  savedValue: { flex: 1, color: G.ink, fontFamily: fonts.semibold, fontSize: 14, textAlign: "right" },
+  backdrop: { flex: 1, backgroundColor: "rgba(22,53,42,0.45)", justifyContent: "center", padding: 20 },
+  dialog: { width: "100%", maxWidth: 440, maxHeight: "92%", alignSelf: "center", backgroundColor: "#FFFFFF", borderRadius: 22, padding: 24 },
+  dialogTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  dialogIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: G.tag, alignItems: "center", justifyContent: "center" },
+  dialogTitle: { color: G.ink, fontFamily: fonts.semibold, fontSize: 22, lineHeight: 28, marginTop: 16 },
+  dialogActions: { flexDirection: "row", gap: 10, marginTop: 20 },
+  point: { flexDirection: "row", gap: 10 },
+  pointNumber: { width: 22, height: 22, borderRadius: 11, backgroundColor: G.tag, color: G.accent, textAlign: "center", lineHeight: 22, fontFamily: fonts.bold, fontSize: 11, overflow: "hidden" },
+  dropZone: { marginTop: 20, alignItems: "center", gap: 6, paddingVertical: 22, paddingHorizontal: 16, borderWidth: 1.5, borderStyle: "dashed", borderColor: "#9DB8A6", borderRadius: 14, backgroundColor: "#F7FAF5" },
+  dropTitle: { color: G.ink, fontFamily: fonts.semibold, fontSize: 15 },
+  fileChip: { marginTop: 12, flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 12, backgroundColor: G.selected },
+  fileName: { flex: 1, color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
 });

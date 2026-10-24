@@ -26,6 +26,7 @@ import {
 } from "lucide-react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { api } from "@/src/api/client";
+import { fetchMyVisits } from "@/src/features/kit/patientVisits";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { Body, Card, Eyebrow, Small } from "@/src/components/ui";
 import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
@@ -140,7 +141,7 @@ export default function AboutTrial() {
     setPartialErrors([]);
 
     const results = await Promise.allSettled([
-      api.get("/visits/mine"),
+      fetchMyVisits(),
       api.get("/trials"),
       api.get("/medications"),
       api.get("/messaging/recipients"),

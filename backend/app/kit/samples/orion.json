@@ -1,0 +1,580 @@
+{
+  "name": "orion",
+  "blurb": "Two arms, surgery date, cycles that shift with delays",
+  "file": "ORION-214_protocol_v3.0.pdf",
+  "model": {
+    "protocol": {
+      "title": "A Phase II, Randomized, Open-Label Study of Perioperative ZT-301 With Chemotherapy Versus Surgery First in Resectable Gastric Adenocarcinoma",
+      "number": "ORION-214",
+      "sponsor": "Sample Therapeutics (fictional)",
+      "phase": "Phase II",
+      "indication": "Resectable gastric or GEJ adenocarcinoma",
+      "version": "v3.0",
+      "design": "Randomized 1:1. Arm A: 4 cycles of ZT-301 plus chemotherapy every 14 days, gastrectomy, then 4 adjuvant cycles. Arm B: surgery first, then 8 adjuvant cycles every 14 days."
+    },
+    "arms": [
+      {
+        "id": "A",
+        "name": "Arm A · Perioperative ZT-301 + chemotherapy",
+        "description": ""
+      },
+      {
+        "id": "B",
+        "name": "Arm B · Surgery first",
+        "description": ""
+      }
+    ],
+    "anchors": [
+      {
+        "id": "screening",
+        "label": "Screening",
+        "kind": "start",
+        "note": "Screening window is Day −28 to Day −1."
+      },
+      {
+        "id": "day1",
+        "label": "Day 1",
+        "kind": "relative",
+        "relative_to": "screening",
+        "offset_days": 14,
+        "is_day1": true,
+        "set_by_visit": "rand",
+        "note": "Randomization may fall 1–28 days after screening. Recording RAND fixes Day 1."
+      },
+      {
+        "id": "surgery",
+        "label": "Surgery",
+        "kind": "ask",
+        "question": "Surgery date",
+        "estimates": [
+          {
+            "when": [
+              {
+                "question": "arm",
+                "in": [
+                  "A"
+                ]
+              }
+            ],
+            "relative_to": "day1",
+            "offset_days": 77
+          },
+          {
+            "when": [
+              {
+                "question": "arm",
+                "in": [
+                  "B"
+                ]
+              }
+            ],
+            "relative_to": "day1",
+            "offset_days": 21
+          }
+        ],
+        "note": "Arm A: 4–6 weeks after the last neoadjuvant cycle. Arm B: within 28 days of randomization."
+      },
+      {
+        "id": "adj_c1",
+        "label": "Adjuvant start",
+        "kind": "relative",
+        "relative_to": "surgery",
+        "offset_days": 42,
+        "set_by_visit": "adja",
+        "note": "Adjuvant therapy starts 4–8 weeks after surgery."
+      }
+    ],
+    "questions": [
+      {
+        "id": "arm",
+        "label": "Arm",
+        "scope": "participant",
+        "text": "Arm?",
+        "kind": "choice",
+        "options": [
+          {
+            "value": "A",
+            "label": "A"
+          },
+          {
+            "value": "B",
+            "label": "B"
+          }
+        ],
+        "help": "A: chemo before and after surgery · B: surgery first"
+      },
+      {
+        "id": "wocbp",
+        "label": "WOCBP",
+        "scope": "participant",
+        "text": "Childbearing potential?",
+        "kind": "boolean",
+        "help": "Adds pregnancy tests"
+      },
+      {
+        "id": "pk",
+        "label": "PK",
+        "scope": "participant",
+        "text": "PK sub-study?",
+        "kind": "boolean",
+        "help": "Adds a 24 h PK draw"
+      }
+    ],
+    "visits": [
+      {
+        "id": "scr",
+        "code": "SCR",
+        "name": "Screening",
+        "phase": "Screening",
+        "anchor": "screening",
+        "offset_days": 0,
+        "procedures": [
+          "Informed consent",
+          "Medical history",
+          "CT chest/abdomen/pelvis",
+          "Endoscopy + biopsy",
+          "ECOG",
+          "Hematology & chemistry",
+          "12-lead ECG",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ],
+        "source": "Table 2, p. 38"
+      },
+      {
+        "id": "rand",
+        "code": "RAND",
+        "name": "Randomization",
+        "phase": "Screening",
+        "anchor": "day1",
+        "offset_days": 0,
+        "procedures": [
+          "Eligibility confirmation",
+          "IWRS randomization"
+        ]
+      },
+      {
+        "id": "neo",
+        "code": "C1D1",
+        "name": "Neoadjuvant cycle 1",
+        "phase": "Treatment",
+        "anchor": "day1",
+        "offset_days": 0,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "arm",
+            "in": [
+              "A"
+            ]
+          }
+        ],
+        "repeat": {
+          "every_days": 14,
+          "count": 4,
+          "start_n": 1,
+          "chain": true,
+          "label_pattern": "Neoadjuvant cycle {n}",
+          "code_pattern": "C{n}D1",
+          "overrides": [
+            {
+              "n": [
+                1
+              ],
+              "add": [
+                "Baseline QoL (EORTC QLQ-C30)"
+              ],
+              "remove": []
+            }
+          ]
+        },
+        "procedures": [
+          "Physical exam",
+          "Hematology & chemistry",
+          "ZT-301 infusion",
+          "Chemotherapy",
+          "AE review"
+        ],
+        "timepoints": [],
+        "source": "Table 2, p. 38"
+      },
+      {
+        "id": "pka",
+        "code": "C1D2",
+        "name": "PK sample (24 h)",
+        "phase": "Treatment",
+        "follows": "neo",
+        "offset_days": 1,
+        "include_if": [
+          {
+            "question": "arm",
+            "in": [
+              "A"
+            ]
+          },
+          {
+            "question": "pk",
+            "in": [
+              "yes"
+            ]
+          }
+        ],
+        "procedures": [
+          "PK blood draw"
+        ],
+        "source": "Table 4, p. 44"
+      },
+      {
+        "id": "preop",
+        "code": "PREOP",
+        "name": "Pre-op assessment",
+        "phase": "Surgery",
+        "anchor": "surgery",
+        "offset_days": -7,
+        "window_before": 7,
+        "window_after": 4,
+        "procedures": [
+          "CT restaging",
+          "Anesthesia review",
+          "Hematology & chemistry"
+        ]
+      },
+      {
+        "id": "surg",
+        "code": "SURG",
+        "name": "Surgery",
+        "phase": "Surgery",
+        "anchor": "surgery",
+        "offset_days": 0,
+        "procedures": [
+          "Gastrectomy with D2 lymphadenectomy",
+          "Tumor tissue collection"
+        ]
+      },
+      {
+        "id": "pod30",
+        "code": "POD30",
+        "name": "Post-op check",
+        "phase": "Surgery",
+        "anchor": "surgery",
+        "offset_days": 30,
+        "window_before": 5,
+        "window_after": 5,
+        "procedures": [
+          "Complications (Clavien–Dindo)",
+          "Pathology review",
+          "Hematology & chemistry"
+        ]
+      },
+      {
+        "id": "adja",
+        "code": "AC1D1",
+        "name": "Adjuvant cycle 1",
+        "phase": "Treatment",
+        "anchor": "adj_c1",
+        "offset_days": 0,
+        "window_before": 2,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "arm",
+            "in": [
+              "A"
+            ]
+          }
+        ],
+        "repeat": {
+          "every_days": 14,
+          "count": 4,
+          "start_n": 1,
+          "chain": true,
+          "label_pattern": "Adjuvant cycle {n}",
+          "code_pattern": "AC{n}D1"
+        },
+        "procedures": [
+          "Physical exam",
+          "Hematology & chemistry",
+          "ZT-301 infusion",
+          "Chemotherapy",
+          "AE review"
+        ]
+      },
+      {
+        "id": "adjb",
+        "code": "AC1D1",
+        "name": "Adjuvant cycle 1",
+        "phase": "Treatment",
+        "anchor": "adj_c1",
+        "offset_days": 0,
+        "window_before": 2,
+        "window_after": 2,
+        "include_if": [
+          {
+            "question": "arm",
+            "in": [
+              "B"
+            ]
+          }
+        ],
+        "repeat": {
+          "every_days": 14,
+          "count": 8,
+          "start_n": 1,
+          "chain": true,
+          "label_pattern": "Adjuvant cycle {n}",
+          "code_pattern": "AC{n}D1"
+        },
+        "procedures": [
+          "Physical exam",
+          "Hematology & chemistry",
+          "Chemotherapy",
+          "AE review"
+        ]
+      },
+      {
+        "id": "sfua",
+        "code": "SFU",
+        "name": "Safety follow-up",
+        "phase": "Follow-up",
+        "follows": "adja",
+        "follows_occurrence": "last",
+        "offset_days": 30,
+        "window_before": 7,
+        "window_after": 7,
+        "include_if": [
+          {
+            "question": "arm",
+            "in": [
+              "A"
+            ]
+          }
+        ],
+        "procedures": [
+          "AE review",
+          "Hematology & chemistry",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ],
+        "condition": "30 days after the last adjuvant dose."
+      },
+      {
+        "id": "sfub",
+        "code": "SFU",
+        "name": "Safety follow-up",
+        "phase": "Follow-up",
+        "follows": "adjb",
+        "follows_occurrence": "last",
+        "offset_days": 30,
+        "window_before": 7,
+        "window_after": 7,
+        "include_if": [
+          {
+            "question": "arm",
+            "in": [
+              "B"
+            ]
+          }
+        ],
+        "procedures": [
+          "AE review",
+          "Hematology & chemistry",
+          {
+            "name": "Pregnancy test",
+            "if": [
+              {
+                "question": "wocbp",
+                "in": [
+                  "yes"
+                ]
+              }
+            ]
+          }
+        ],
+        "condition": "30 days after the last adjuvant dose."
+      },
+      {
+        "id": "ltfu",
+        "code": "LTFU1",
+        "name": "Long-term follow-up 1",
+        "phase": "Follow-up",
+        "modality": "phone",
+        "anchor": "surgery",
+        "offset_days": 168,
+        "window_before": 14,
+        "window_after": 14,
+        "repeat": {
+          "every_days": 84,
+          "count": 7,
+          "start_n": 1,
+          "label_pattern": "Long-term follow-up {n}",
+          "code_pattern": "LTFU{n}"
+        },
+        "procedures": [
+          "Survival status",
+          "Recurrence check"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "et",
+        "label": "Early discontinuation",
+        "repeatable": false,
+        "ends_schedule": true,
+        "questions": [
+          {
+            "id": "et_reason",
+            "label": "Reason",
+            "text": "Main reason?",
+            "kind": "choice",
+            "options": [
+              {
+                "value": "ae",
+                "label": "Adverse event"
+              },
+              {
+                "value": "consent",
+                "label": "Consent withdrawn"
+              },
+              {
+                "value": "other",
+                "label": "Other"
+              }
+            ]
+          }
+        ],
+        "visits": [
+          {
+            "id": "et_v",
+            "code": "ET",
+            "name": "End-of-treatment visit",
+            "phase": "Follow-up",
+            "offset_days": 7,
+            "window_before": 7,
+            "window_after": 0,
+            "procedures": [
+              "Physical exam",
+              "Hematology & chemistry",
+              "AE review"
+            ]
+          },
+          {
+            "id": "et_fu",
+            "code": "ET-FU",
+            "name": "Survival call",
+            "phase": "Follow-up",
+            "modality": "phone",
+            "offset_days": 90,
+            "window_before": 14,
+            "window_after": 14,
+            "include_if": [
+              {
+                "question": "et_reason",
+                "in": [
+                  "ae",
+                  "other"
+                ]
+              }
+            ],
+            "repeat": {
+              "every_days": 90,
+              "count": 4,
+              "start_n": 1,
+              "code_pattern": "ET-FU{n}",
+              "label_pattern": "Survival call {n}"
+            },
+            "procedures": [
+              "Survival status"
+            ]
+          }
+        ],
+        "note": "Participants who withdraw consent get no further calls."
+      },
+      {
+        "id": "uns",
+        "label": "Unscheduled visit",
+        "repeatable": true,
+        "questions": [],
+        "visits": [
+          {
+            "id": "uns_v",
+            "code": "UNS",
+            "name": "Unscheduled visit",
+            "phase": "Event",
+            "offset_days": 0,
+            "procedures": [
+              "As clinically indicated"
+            ]
+          }
+        ]
+      }
+    ],
+    "review_questions": [
+      {
+        "id": "adj",
+        "text": "Adjuvant therapy may start 4–8 weeks after surgery. Which gap should be planned?",
+        "why": "Section 6.6, p. 36",
+        "recommended": "42",
+        "options": [
+          {
+            "value": "28",
+            "label": "4 weeks",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "adj_c1",
+                "field": "offset_days",
+                "value": 28
+              }
+            ]
+          },
+          {
+            "value": "42",
+            "label": "6 weeks",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "adj_c1",
+                "field": "offset_days",
+                "value": 42
+              }
+            ]
+          },
+          {
+            "value": "56",
+            "label": "8 weeks",
+            "patches": [
+              {
+                "target": "anchor",
+                "id": "adj_c1",
+                "field": "offset_days",
+                "value": 56
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "A cycle delayed for toxicity moves all later cycles: record the actual date and the rest shift."
+    ]
+  }
+}

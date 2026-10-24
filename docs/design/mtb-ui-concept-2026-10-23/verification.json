@@ -1,0 +1,130 @@
+{
+  "javascript_errors": [],
+  "failed_requests": [],
+  "layouts": [
+    {
+      "id": "sponsor-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "workday-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "patient-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "trials-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "schedule-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "visit-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "signin-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": false,
+      "footerClear": true
+    },
+    {
+      "id": "patient-visit-screen",
+      "width": 388,
+      "height": 842,
+      "horizontalOverflow": false,
+      "scrollable": true,
+      "footerClear": true
+    },
+    {
+      "id": "desktop-screen",
+      "width": 1406,
+      "height": 1018,
+      "horizontalOverflow": false,
+      "scrollable": false,
+      "footerClear": true
+    }
+  ],
+  "board_widths": [
+    {
+      "viewport": 390,
+      "document": 390
+    },
+    {
+      "viewport": 768,
+      "document": 768
+    },
+    {
+      "viewport": 1600,
+      "document": 1600
+    }
+  ],
+  "signinClear": true,
+  "contrast": [
+    {
+      "pair": "Primary text",
+      "ratio": 11.34,
+      "normal_text_AA": true
+    },
+    {
+      "pair": "Secondary text",
+      "ratio": 4.79,
+      "normal_text_AA": true
+    },
+    {
+      "pair": "Button text",
+      "ratio": 6.23,
+      "normal_text_AA": true
+    },
+    {
+      "pair": "Review badge",
+      "ratio": 5.78,
+      "normal_text_AA": true
+    },
+    {
+      "pair": "Overdue badge",
+      "ratio": 5.19,
+      "normal_text_AA": true
+    },
+    {
+      "pair": "Scheduled badge",
+      "ratio": 5.85,
+      "normal_text_AA": true
+    },
+    {
+      "pair": "Active badge",
+      "ratio": 5.45,
+      "normal_text_AA": true
+    }
+  ]
+}

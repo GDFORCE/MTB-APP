@@ -1,0 +1,131 @@
+{
+  "javascript_errors": [],
+  "http_requests": [],
+  "flow_checks": [
+    {
+      "design": "focus",
+      "no_preselection": true,
+      "answer_to_advance": true,
+      "single_visible_question": true,
+      "back_preserves_answer": true,
+      "evidence_disclosure": true,
+      "review_and_edit": true,
+      "confirm_requires_answers": true,
+      "restart": true,
+      "independent_state": true
+    },
+    {
+      "design": "card",
+      "no_preselection": true,
+      "answer_to_advance": true,
+      "single_visible_question": true,
+      "back_preserves_answer": true,
+      "evidence_disclosure": true,
+      "review_and_edit": true,
+      "confirm_requires_answers": true,
+      "restart": true,
+      "independent_state": true
+    },
+    {
+      "design": "sheet",
+      "no_preselection": true,
+      "answer_to_advance": true,
+      "single_visible_question": true,
+      "back_preserves_answer": true,
+      "evidence_disclosure": true,
+      "review_and_edit": true,
+      "confirm_requires_answers": true,
+      "restart": true,
+      "independent_state": true
+    }
+  ],
+  "widths": [
+    {
+      "design": "focus",
+      "viewport": 375,
+      "document": 375,
+      "questionWidth": 345,
+      "contentWidth": 345
+    },
+    {
+      "design": "card",
+      "viewport": 375,
+      "document": 375,
+      "questionWidth": 345,
+      "contentWidth": 345
+    },
+    {
+      "design": "sheet",
+      "viewport": 375,
+      "document": 375,
+      "questionWidth": 325,
+      "contentWidth": 325
+    },
+    {
+      "design": "focus",
+      "viewport": 390,
+      "document": 390,
+      "questionWidth": 360,
+      "contentWidth": 360
+    },
+    {
+      "design": "card",
+      "viewport": 390,
+      "document": 390,
+      "questionWidth": 360,
+      "contentWidth": 360
+    },
+    {
+      "design": "sheet",
+      "viewport": 390,
+      "document": 390,
+      "questionWidth": 340,
+      "contentWidth": 340
+    },
+    {
+      "design": "focus",
+      "viewport": 768,
+      "document": 768,
+      "questionWidth": 388,
+      "contentWidth": 388
+    },
+    {
+      "design": "card",
+      "viewport": 768,
+      "document": 768,
+      "questionWidth": 388,
+      "contentWidth": 388
+    },
+    {
+      "design": "sheet",
+      "viewport": 768,
+      "document": 768,
+      "questionWidth": 362,
+      "contentWidth": 362
+    },
+    {
+      "design": "focus",
+      "viewport": 1460,
+      "document": 1460,
+      "questionWidth": 388,
+      "contentWidth": 388
+    },
+    {
+      "design": "card",
+      "viewport": 1460,
+      "document": 1460,
+      "questionWidth": 388,
+      "contentWidth": 388
+    },
+    {
+      "design": "sheet",
+      "viewport": 1460,
+      "document": 1460,
+      "questionWidth": 362,
+      "contentWidth": 362
+    }
+  ],
+  "deep_link_design_selection": true,
+  "reduced_motion": true,
+  "pdf_pages": 9
+}

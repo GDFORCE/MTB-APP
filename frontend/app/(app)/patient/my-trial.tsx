@@ -7,6 +7,7 @@ import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
 import { Eyebrow, Body, Small, Card } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
+import { fetchMyVisits } from "@/src/features/kit/patientVisits";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 
@@ -99,7 +100,7 @@ export default function MyTrial() {
   useEffect(() => { (async () => {
     try {
       const [v, t] = await Promise.all([
-        api.get("/visits/mine").then(r => r.data).catch(() => []),
+        fetchMyVisits().then(r => r.data).catch(() => []),
         api.get("/trials").then(r => r.data).catch(() => []),
       ]);
       setVisits(v || []);
@@ -277,7 +278,7 @@ export default function MyTrial() {
               const Icon = isPhone ? Phone : isHome ? Home : Building2;
               const locationLabel = isPhone ? "Telephonic" : isHome ? "Home visit" : (v.site || "Study site");
               return (
-                <Pressable key={v.id} testID={`visit-${v.visit_number}`} onPress={() => router.push({ pathname: "/(app)/patient/visit-detail", params: { id: v.id } })} style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+                <Pressable key={v.id} testID={`visit-${v.visit_number}`} onPress={() => v.kit ? router.push("/(app)/patient/my-visits") : router.push({ pathname: "/(app)/patient/visit-detail", params: { id: v.id } })} style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
                   <View style={s.spineWrap}>
                     {i < visits.length - 1 && <View style={[s.spine, done && { backgroundColor: colors.accent }]} />}
                     <View style={[s.node, done && { backgroundColor: colors.accent }, isNext && { backgroundColor: colors.warning }]}>

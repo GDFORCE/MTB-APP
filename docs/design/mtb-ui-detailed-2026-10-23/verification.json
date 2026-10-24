@@ -1,0 +1,625 @@
+{
+  "javascript_errors": [],
+  "missing_routes": [],
+  "render_checks": [
+    {
+      "key": "sponsor-home",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "trials",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "add-trial",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "protocol-questions",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "trial-summary",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "sites",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "add-site",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "investigators",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "sponsor-participants",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "kit-protocol",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "versions",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "protocol-schedule",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "identity",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "review-inbox",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "footnotes",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "pi-home",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "crc-home",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "site-home",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "clinical-trials",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "patients",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "add-patient",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "kit-patient",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "kit-visit",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "kit-events",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "legacy-patient",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "legacy-visit",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "calendar",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "calendar-settings",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "team",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "team-member",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "invite-member",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "org-sponsor",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "org-site",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "org-smo",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "access-requests",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "ownership",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "patient-home",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "my-trial",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "my-visits",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "medications",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "about-study",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "patient-calendar",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "patient-visit",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "chat",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "thread",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "channel",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "notifications",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "sponsor-profile",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "clinical-profile",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "patient-profile",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-edit",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-entity-change",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-change-password",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-notifications",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-reports",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-tnc",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "profile-help",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "audit-trail",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "audit-list",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "site-audits",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "audit-workspace",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "evidence-capture",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "document-upload",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "audit-document",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "audit-decision",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "query",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "capa",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "virtual-session",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "plane",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "amendments",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "operations",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "action-board",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-index",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-users",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-organizations",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-trials",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-master-data",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-tickets",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-alerts",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-notification-monitoring",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-audit-logs",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-terms",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-delegation",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-emergency-access",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-messages",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-invitations",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-reports",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "admin-profile",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-welcome",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-sign-in",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-entity-type",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-register",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-verify-phone",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-verify-email",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-set-password",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-security-questions",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-register-success",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-join-invite",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-forgot-password",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-reset-password",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-login-support",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "auth-help-support",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-102",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-103",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-104",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-105",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-106",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-107",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-108",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-109",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-110",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-111",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-112",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-113",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-114",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-115",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-116",
+      "hasContent": true,
+      "horizontalOverflow": false
+    },
+    {
+      "key": "route-117",
+      "hasContent": true,
+      "horizontalOverflow": false
+    }
+  ],
+  "source_drift": [],
+  "navigation": {
+    "sponsor": [
+      "Home",
+      "Trials",
+      "Messages",
+      "Audits",
+      "Me"
+    ],
+    "crc": [
+      "Home",
+      "Patients",
+      "Actions",
+      "Messages",
+      "Calendar",
+      "Me"
+    ],
+    "pi": [
+      "Home",
+      "My Trials",
+      "Messages",
+      "Calendar",
+      "Me"
+    ]
+  },
+  "kit_read_only_preview": true,
+  "submit_schedule_still_selects_trial": true,
+  "state_variants": 6,
+  "source_inspection_and_decisions": true
+}

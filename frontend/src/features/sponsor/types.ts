@@ -54,6 +54,9 @@ export type SponsorTrialSubject = {
     window_end?: string;
   } | null;
   uctsm_patient_id?: string | null;
+  // On the trial's reviewed (kit) schedule; `kit` is the record, sent to site staff only.
+  kit_schedule?: boolean;
+  kit?: import("@/src/features/kit").KitParticipant | null;
   deidentified: true;
 };
 

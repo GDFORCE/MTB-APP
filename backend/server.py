@@ -492,6 +492,9 @@ class PatientInvitationIn(PatientIn):
     # Staff-created patient invitations are phone-first. Direct legacy patient
     # enrollment keeps its existing contract, while this flow requires phone.
     phone: str = Field(min_length=1)
+    # The patient's record on the trial's reviewed (kit) schedule: start date
+    # and answers. Required when the trial has one; see kit_routes.py.
+    kit: Optional[Dict[str, Any]] = None
 
 def patient_initials(value: Optional[str], full_name: str) -> str:
     """Normalize staff-entered initials, falling back to the first two name parts."""
@@ -1601,9 +1604,14 @@ async def _complete_registration(pending: dict) -> dict:
                     enrollment_actor = await db.users.find_one(
                         {'id': invitation.get('invited_by')}, {'_id': 0})
                     enrollment_actor = enrollment_actor or session['user']
-                    created_visits = await _project_operational_enrollment(
-                        patient_doc, enrollment_trial, enrollment_actor)
-                    schedule_source = 'canonical UCTSM'
+                    if patient_doc.get('kit'):
+                        # Kit patients keep no visit rows: dates are computed
+                        # from the trial's reviewed model (kit_routes.py).
+                        created_visits, schedule_source = 0, 'the reviewed protocol model'
+                    else:
+                        created_visits = await _project_operational_enrollment(
+                            patient_doc, enrollment_trial, enrollment_actor)
+                        schedule_source = 'canonical UCTSM'
                     if created_visits < 0:
                         created_visits = await materialize_visit_instances(patient_doc)
                         schedule_source = 'legacy templates'
@@ -3179,7 +3187,7 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
         {'trial_id': trial_id},
         {'_id': 0, 'id': 1, 'subject_id': 1, 'avatar_initials': 1,
          'pi_id': 1, 'crc_id': 1, 'created_by': 1, 'status': 1,
-         'enrolled_date': 1, 'created_at': 1, 'uctsm_patient_id': 1},
+         'enrolled_date': 1, 'created_at': 1, 'uctsm_patient_id': 1, 'kit': 1},
     ).to_list(5000)
     staff_ids = {
         staff_id for patient in patients
@@ -3320,6 +3328,11 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
             # visit-detail.tsx already reads for its own canonical-schedule
             # link) without a second lookup.
             'uctsm_patient_id': patient.get('uctsm_patient_id') or None,
+            'kit_schedule': bool(patient.get('kit')),
+            # The record the kit engine computes this subject's dates from; site
+            # staff only, since its answers (arm, childbearing potential, ...) are
+            # clinical detail the de-identified sponsor view leaves out.
+            'kit': patient.get('kit') if user.get('role') in ('pi', 'crc') else None,
             'deidentified': True,
         })
 
@@ -6939,7 +6952,14 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
             'This trial is not linked to an approved canonical schedule. '
             'Link it before inviting patients.',
         )
-    if trial.get('uctsm_trial_id'):
+    kit_model = await db.trial_kit_models.find_one(
+        {'trial_id': body.trial_id}, {'_id': 0, 'model': 1})
+    if kit_model:
+        from kit_routes import clean_participant
+        kit_participant = clean_participant(kit_model['model'], body.kit)
+    elif body.kit:
+        raise HTTPException(409, 'This trial has no reviewed protocol schedule')
+    elif trial.get('uctsm_trial_id'):
         await _validate_enrolment_schedule(trial, body, user)
 
     caller_org = (user.get('organization') or '').strip()
@@ -7016,6 +7036,11 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
     patient_data['phone'] = phone
     patient_data['pi_id'] = pi_id
     patient_data['crc_id'] = crc_id
+    if kit_model:
+        patient_data['kit'] = kit_participant
+        patient_data['baseline_date'] = kit_participant['startDate']
+    else:
+        patient_data.pop('kit', None)
     token = new_invite_code()
     invitation = {
         'id': str(uuid.uuid4()), 'token': token,
@@ -11422,10 +11447,12 @@ async def disable_legacy_schedule_authoring(request: Request, call_next):
 import admin_routes                              # noqa: E402
 import org_routes                                # noqa: E402
 import remote_audit_routes                       # noqa: E402
+import kit_routes                                # noqa: E402
 app.include_router(admin_routes.router)
 app.include_router(org_routes.router)
 app.include_router(org_routes.trial_access_router)
 app.include_router(remote_audit_routes.router)
+app.include_router(kit_routes.router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 from app.observability.install import install as install_observability  # noqa: E402
 
