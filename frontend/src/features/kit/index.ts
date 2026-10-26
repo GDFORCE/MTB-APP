@@ -1,9 +1,9 @@
 // Typed entry points for the Protocol Visit Scheduler kit engine. The engine files
 // beside this one are a mechanical port of the kit and are intentionally untyped.
 import { computeSchedule } from "./schedule";
-import { serializeSchedule, condText, timingText, phaseGroup, valText } from "./describe";
+import { serializeSchedule, condText, timingText, phaseGroup, valText, ruleIfText } from "./describe";
 
-export { condText, timingText, phaseGroup, valText };
+export { condText, timingText, phaseGroup, valText, ruleIfText };
 
 export type KitOption = { value: string; label: string };
 export type KitQuestion = {
@@ -33,7 +33,14 @@ export type KitRule = {
   stop_visits: string[]; stop_all: boolean; same_day: "keep" | "cancel"; starts: string | null; blocks: string[];
   allowed: { relative_to: string | null; min_days: number | null; max_days: number | null; not_on_visit: string | null } | null;
   effect: string; source: string | null;
+  /** All must hold for the rule to act; branches of one event are rules told apart by these. */
+  if?: KitRuleCondition[];
 };
+export type KitRuleCondition =
+  | { question: string; in: string[] }
+  | { event_question: string; in: string[] }
+  | { timing: { anchor?: string; visit?: string; n?: number | null; min_days: number | null; max_days: number | null } }
+  | { occurrence: number };
 export type KitModel = {
   protocol: { title?: string; number?: string | null; sponsor?: string | null; phase?: string | null;
     indication?: string | null; version?: string | null; design?: string };

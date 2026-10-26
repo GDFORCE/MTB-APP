@@ -24,6 +24,25 @@ export function condText(model, conds) {
   return arr(conds).map((c) => `${allQuestions(model).find((q) => q.id === c.question)?.label || c.question} = ${arr(c.in).map((v) => valText(model, c.question, v)).join(" or ")}`).join(" and ");
 }
 
+/** A rule's conditions in words: "if Arm = A, before Cycle 3 and Grade = 3". "" when it has none. */
+export function ruleIfText(model, r) {
+  const visitCode = (id) => model.visits.find((v) => v.id === id)?.code || id;
+  const ordinal = (n) => (n === 1 ? "first" : n === 2 ? "second" : n === 3 ? "third" : `${n}th`);
+  const parts = arr(r?.if).map((c) => {
+    if (c.occurrence != null) return `the ${ordinal(+c.occurrence)} time`;
+    if (c.event_question != null) return condText(model, [{ question: c.event_question, in: c.in }]);
+    if (c.timing) {
+      const t = c.timing, what = t.anchor ? labelOf(model, t.anchor) : `${visitCode(t.visit)}${t.n != null ? ` #${t.n}` : ""}`;
+      if (t.max_days != null && t.min_days == null) return t.max_days < 0 ? `before ${what}${t.max_days < -1 ? ` by ${-t.max_days}+ days` : ""}` : `up to ${t.max_days} days after ${what}`;
+      if (t.min_days != null && t.max_days == null) return t.min_days <= 0 ? `on or after ${what}` : `${t.min_days}+ days after ${what}`;
+      return `${t.min_days} to ${t.max_days} days after ${what}`;
+    }
+    if (c.question != null) return condText(model, [c]);
+    return "";
+  }).filter(Boolean);
+  return parts.length ? `If ${parts.join(" and ")}` : "";
+}
+
 /** A visit definition's timing rule in words, e.g. "C1D1 + 7 d" or "Day 1, then every 14 d after the previous one × 4". */
 export function timingText(model, v) {
   let s = v.follows

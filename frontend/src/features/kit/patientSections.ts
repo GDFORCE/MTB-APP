@@ -102,7 +102,10 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
 
   for (const event of participant.events || []) {
     const def = model.events.find((e) => e.id === event.type);
-    const rule = (model.rules || []).find((r) => "event" in r.when && r.when.event === event.type);
+    const forEvent = (model.rules || []).filter((r) => "event" in r.when && r.when.event === event.type);
+    // With branches (before / after Week 12, grade 3 / grade 1) the one that acted is the one to show.
+    const rule = forEvent.find((r) => current.stoppedBy.some((b) => b.rule === r.id))
+      || forEvent.find((r) => !r.if?.length) || null;
     const stops = rule && !rule.stop_all ? rule.stop_visits.length : 0;
     const effect = def?.ends_schedule ? { text: "Ends schedule", tone: "red" as PTone }
       : stops ? { text: `Stops ${stops} visit${stops === 1 ? "" : "s"}`, tone: "red" as PTone }

@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { Trash2 } from "lucide-react-native";
 import { fonts } from "@/src/theme/tokens";
 import type { KitPatientRecord } from "./api";
-import { computeKitSchedule, isoParts, todayIso, type KitDecisionRow, type KitParticipant, type KitSchedule, type KitVisitRow } from "./index";
+import { computeKitSchedule, isoParts, ruleIfText, todayIso, type KitDecisionRow, type KitParticipant, type KitSchedule, type KitVisitRow } from "./index";
 import {
   answer, dmyToIso, formatDmyInput, isoToDmy, logEvent, recordVisit, removeEvent, setAnchorDate,
 } from "./participant";
@@ -262,7 +262,7 @@ function EventSheet({ record, saving, error, onClose, onLog, onRemove }: {
       {definition && <>
         {definition.ends_schedule && <Text style={[f.hint, { color: G.redInk }]}>This ends the schedule: later visits are cancelled.</Text>}
         {(record.model.rules || []).filter((r) => "event" in r.when && r.when.event === definition.id && r.effect)
-          .map((r) => <Text key={r.id} style={f.hint}>{r.effect}</Text>)}
+          .map((r) => { const when = ruleIfText(record.model, r); return <Text key={r.id} style={f.hint}>{when ? `${when}: ` : ""}{r.effect}</Text>; })}
         <View style={{ gap: 6 }}><Text style={f.label}>Date</Text><DateField value={date} onChange={setDate} /></View>
         {definition.questions.map((q) => <View key={q.id} style={{ gap: 8 }}>
           <Text style={f.label}>{q.text || q.label}</Text>

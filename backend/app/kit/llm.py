@@ -158,7 +158,7 @@ class OpenAIKitClient:
 
         content: list[dict[str, Any]] = []
         for img in images or []:
-            content.append({"type": "text", "text": f"Page {img.get('page', '')} image:"})
+            content.append({"type": "text", "text": img.get("label") or f"Page {img.get('page', '')} image:"})
             content.append({"type": "image_url", "image_url": {
                 "url": f"data:{img.get('mediaType', 'image/jpeg')};base64,{img['base64']}"}})
         content.append({"type": "text", "text": prompt
@@ -170,10 +170,19 @@ class OpenAIKitClient:
 
         busy: Exception | None = None
         bad_reply = False
-        for model in [self.model, *self.fallbacks]:
+        models = [self.model, *self.fallbacks]
+        missing: list[str] = []
+        for model in models:
             for attempt in range(len(RETRY_WAITS) + 1):
                 try:
                     text, finish, refusal = self._stream_once(openai, model, content, on_text)
+                except openai.NotFoundError as error:
+                    # A model that no longer exists (retired, misspelt) is skipped, not retried.
+                    missing.append(model)
+                    if len(missing) == len(models):
+                        raise AnalysisError("upstream_error", f"None of the configured models exist: {error}") from error
+                    status(f"{model} is not available, trying another model")
+                    break
                 except openai.AuthenticationError as error:
                     raise AnalysisError("auth", "The model key was rejected.") from error
                 except openai.RateLimitError as error:
@@ -184,7 +193,14 @@ class OpenAIKitClient:
                 except (openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError) as error:
                     busy, bad_reply = error, False
                 except openai.BadRequestError as error:
-                    raise AnalysisError("prompt_too_large" if "context" in str(error).lower() else "upstream_error",
+                    message = str(error).lower()
+                    too_large = getattr(error, "code", None) in {
+                        "context_length_exceeded", "input_too_long", "max_input_tokens_exceeded",
+                    } or any(term in message for term in (
+                        "context length", "context window", "context_length_exceeded",
+                        "maximum input length", "too many input tokens", "input is too long",
+                    ))
+                    raise AnalysisError("prompt_too_large" if too_large else "upstream_error",
                                         f"The model request was rejected: {error}") from error
                 except openai.OpenAIError as error:
                     raise AnalysisError("upstream_error", f"The model request failed: {error}") from error
@@ -213,7 +229,9 @@ class OpenAIKitClient:
                     wait = RETRY_WAITS[attempt]
                     status(f"{model} is busy, retrying in {wait}s")
                     time.sleep(wait)
-            if model != (self.fallbacks or [self.model])[-1]:
+            if model in missing:
+                continue
+            if model != models[-1]:
                 status(f"{model} did not give a usable reply, trying another model")
         if bad_reply:
             raise AnalysisError(

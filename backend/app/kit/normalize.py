@@ -111,7 +111,56 @@ def _opt_num(x: Any) -> float | None:
     return None if x is None or x == "" or isinstance(x, bool) else num(x, None)  # type: ignore[arg-type]
 
 
-def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids: set[str]) -> list[dict[str, Any]]:
+def _in_values(c: dict[str, Any]) -> list[str] | None:
+    values = c.get("in")
+    values = values if isinstance(values, list) else [values] if values not in (None, "") else []
+    out = [_s(v) for v in values if v is not None and _s(v) != ""]
+    return out or None
+
+
+def norm_rule_if(conds: Any, trigger: dict[str, Any], q_ids: set[str], events: list[dict[str, Any]],
+                 a_ids: set[str], v_ids: set[str]) -> list[dict[str, Any]] | None:
+    """A rule's conditions ("if", all must hold), checked. None when any condition is unusable:
+    the rule is then dropped, because keeping it without the condition would make it act for
+    every branch of its event."""
+    out: list[dict[str, Any]] = []
+    event = next((e for e in events if e["id"] == trigger.get("event")), None)
+    event_q = {q["id"] for q in (event or {}).get("questions", [])}
+    for c in arr(conds):
+        if not isinstance(c, dict):
+            return None
+        if "occurrence" in c:
+            n = _opt_num(c.get("occurrence"))
+            if event is None or n is None or n < 1 or n != int(n):
+                return None
+            out.append({"occurrence": int(n)})
+        elif "event_question" in c:
+            values = _in_values(c)
+            if event is None or _s(c["event_question"]) not in event_q or values is None:
+                return None
+            out.append({"event_question": _s(c["event_question"]), "in": values})
+        elif "timing" in c:
+            t = c["timing"] if isinstance(c.get("timing"), dict) else {}
+            target = ({"anchor": _s(t["anchor"])} if _s(t.get("anchor")) in a_ids
+                      else {"visit": _s(t["visit"])} if _s(t.get("visit")) in v_ids else None)
+            lo, hi = _opt_num(t.get("min_days")), _opt_num(t.get("max_days"))
+            if target is None or (lo is None and hi is None):
+                return None
+            n = _opt_num(t.get("n"))
+            out.append({"timing": {**target, "n": int(n) if n is not None and "visit" in target else None,
+                                   "min_days": lo, "max_days": hi}})
+        elif "question" in c:
+            values = _in_values(c)
+            if _s(c["question"]) not in q_ids or values is None:
+                return None
+            out.append({"question": _s(c["question"]), "in": values})
+        else:
+            return None
+    return out
+
+
+def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids: set[str],
+               q_ids: set[str] | None = None, notes: list[str] | None = None) -> list[dict[str, Any]]:
     """What happens to the schedule if something happens. A rule whose trigger is unknown is dropped;
     references to unknown visits, anchors or rules are removed rather than guessed."""
     e_ids = {e["id"] for e in events}
@@ -138,6 +187,12 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
             }
             if allowed["min_days"] is None and allowed["max_days"] is None and allowed["not_on_visit"] is None:
                 allowed = None
+        conditions = norm_rule_if(r.get("if"), trigger, q_ids or set(), events, a_ids, v_ids)
+        if conditions is None:
+            if notes is not None:
+                notes.append(f"Rule \"{_s(r.get('label')) or _s(r.get('id'))}\" was left out: one of its conditions "
+                             "refers to something the model does not have. Check this rule against the protocol.")
+            continue
         stop_visits = []
         for vid in arr(r.get("stop_visits")):
             if _s(vid) in v_ids and _s(vid) not in stop_visits:
@@ -152,11 +207,12 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
             "allowed": allowed,
             "effect": _s(r.get("effect")).strip(),
             "source": _s(r["source"]) if r.get("source") else None,
+            "if": conditions,
         })
     r_ids = {r["id"] for r in rules}
     for r in rules:
         r["blocks"] = [b for b in dict.fromkeys(r["blocks"]) if b in r_ids and b != r["id"]]
-        if r["stop_all"] and "event" in r["when"]:
+        if r["stop_all"] and "event" in r["when"] and not r["if"]:
             # An event that ends participation ends the schedule the same way the event flag does.
             next(e for e in events if e["id"] == r["when"]["event"])["ends_schedule"] = True
     return rules
@@ -227,7 +283,8 @@ def normalize(st: Any) -> dict[str, Any]:
                 "visits": [v for v in (norm_visit(v, i, f"{e['id']}_v") for i, v in enumerate(arr(e.get("visits")))) if v],
             })
     st["events"] = events
-    st["rules"] = norm_rules(st.get("rules"), a_ids, events, v_ids)
+    st["rules"] = norm_rules(st.get("rules"), a_ids, events, v_ids,
+                             q_ids={q["id"] for q in st["questions"]}, notes=st["notes"])
     review = []
     for q in arr(st.get("review_questions")):
         if isinstance(q, dict) and q.get("id") and q.get("text"):

@@ -1,6 +1,7 @@
 // The protocol schedule as timeline sections: one section per run of visits with the same phase.
 // Pure and import-free (type imports only) so it runs under node --test.
 import type { KitDecisionRow, KitModel, KitRule, KitSchedule, KitVisitRow } from "./index";
+import { ruleIfText } from "./describe";
 
 export type Tone = "green" | "amber" | "violet" | "red";
 export type Dot = "site" | "remote" | "decision" | "repeat" | "wait";
@@ -181,7 +182,8 @@ export function eventSummaries(model: KitModel): EventSummary[] {
   const covered = new Set(rules.map((r) => ("event" in r.when ? r.when.event : null)).filter(Boolean));
   const fromRules: EventSummary[] = rules.map((r) => {
     const blocked = r.blocks.map((b) => rules.find((x) => x.id === b)?.label).filter(Boolean);
-    const detail = [r.effect, blocked.length ? `Rules out: ${blocked.join(", ")}.` : "", r.source ? `(${r.source})` : ""]
+    const when = ruleIfText(model, r);
+    const detail = [when ? `${when}:` : "", r.effect, blocked.length ? `Rules out: ${blocked.join(", ")}.` : "", r.source ? `(${r.source})` : ""]
       .filter(Boolean).join(" ");
     return { id: r.id, label: r.label, ...ruleEffect(model, r), detail: detail || null };
   });

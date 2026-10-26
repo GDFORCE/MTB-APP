@@ -142,6 +142,7 @@ export default function AddTrial() {
   const [kitConfirmed, setKitConfirmed] = useState<KitConfirmed | null>(null);
   const [showKitQuestions, setShowKitQuestions] = useState(false);
   const [kitStages, setKitStages] = useState<KitStage[]>([]);
+  const summaryStage = kitStages.find((stage) => stage.id === "summarize");
   const [uploadName, setUploadName] = useState("");
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [renaming, setRenaming] = useState<TimelineSection | null>(null);
@@ -318,7 +319,12 @@ export default function AddTrial() {
     </FlowScreen>}
 
     {step === "analysing" && <FlowScreen title="Add trial" step={2} steps={5} scrollRef={scrollRef}
-      eyebrow="Analysing" heading="Reading your protocol" sub={`${uploadName ? uploadName + " · " : ""}This usually takes 1 to 3 minutes.`}
+      eyebrow="Analysing" heading={summaryStage?.status === "run" ? "Summarising your protocol" : "Reading your protocol"}
+      sub={`${uploadName ? uploadName + " · " : ""}${summaryStage
+        ? summaryStage.status === "done"
+          ? "Building your schedule from summaries of every section, then checking the original schedule tables."
+          : "This protocol is too large to analyse at once. We’re summarising every section for visit timings, assessments, conditions and footnotes. This may take longer."
+        : "This usually takes 1 to 3 minutes."}`}
       footer={<View style={s.analysingFooter}>
         <Text style={[f.hint, { flex: 1 }]}>Keep this screen open while we read it.</Text>
         <View style={{ width: 110 }}><FlowButton label="Cancel" variant="secondary" onPress={cancelAnalysis} /></View>

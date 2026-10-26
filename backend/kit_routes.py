@@ -69,7 +69,20 @@ def _new_job(user_id: str, file_name: str) -> Dict[str, Any]:
     return job
 
 
+# Stages that appear only when they are needed, shown just before "model".
+OPTIONAL_STAGES = {
+    "tables": "Reading tables without cell borders",
+    "summarize": "Summarising the large protocol",
+}
+
+
 def _set_stage(job: Dict[str, Any], stage_id: str, status: str, detail: Any = "") -> None:
+    if stage_id in OPTIONAL_STAGES and not any(s["id"] == stage_id for s in job["stages"]):
+        index = next((i for i, s in enumerate(job["stages"]) if s["id"] == "model"), len(job["stages"]))
+        job["stages"].insert(index, {
+            "id": stage_id, "label": OPTIONAL_STAGES[stage_id],
+            "status": "wait", "detail": "",
+        })
     for stage in job["stages"]:
         if stage["id"] == stage_id:
             stage["status"] = status
@@ -87,6 +100,7 @@ def _prepare(job: Dict[str, Any], data: bytes, file_name: str) -> Dict[str, Any]
         _set_stage(job, "locate", "done", "text file")
         return {"pageCount": 1, "tablePages": [], "picked": [0], "scanned": False,
                 "text": f"[[Page 1]]\n{text}", "tableText": f"[[Page 1]]\n{text}",
+                "fullText": True, "pageTexts": [f"[[Page 1]]\n{text}"],
                 "tableImages": [], "scanImages": []}
     _set_stage(job, "read", "run", "opening")
 
@@ -99,14 +113,22 @@ def _prepare(job: Dict[str, Any], data: bytes, file_name: str) -> Dict[str, Any]
     if prepared["scanned"]:
         _set_stage(job, "locate", "done", f"no text layer; {len(prepared['scanImages'])} page images")
     elif prepared["tablePages"]:
-        _set_stage(job, "locate", "done", "tables on p. " + ", ".join(str(p) for p in prepared["tablePages"]))
+        borderless = [t["page"] for t in prepared.get("alignedTables") or []]
+        how = f" ({len(borderless)} without cell borders)" if borderless else ""
+        _set_stage(job, "locate", "done", "tables on p. " + ", ".join(str(p) for p in prepared["tablePages"]) + how)
     else:
         _set_stage(job, "locate", "done", f"{len(prepared['picked'])} relevant pages")
     return prepared
 
 
 def _run(job: Dict[str, Any], data: bytes, file_name: str) -> Dict[str, Any]:
-    on_stage = lambda stage_id, status, detail="": _set_stage(job, stage_id, status, detail)  # noqa: E731
+    active_stage = "model"
+
+    def on_stage(stage_id: str, status: str, detail: Any = "") -> None:
+        nonlocal active_stage
+        if status == "run":
+            active_stage = stage_id
+        _set_stage(job, stage_id, status, detail)
     sample = (os.getenv("KIT_SAMPLE_MODEL") or "").strip()
     if sample:
         _set_stage(job, "read", "done", "sample mode")
@@ -120,7 +142,7 @@ def _run(job: Dict[str, Any], data: bytes, file_name: str) -> Dict[str, Any]:
         _set_stage(job, "model", "run", f"{round(written / 1000)}k characters")
 
     # A busy model is retried automatically; show it instead of looking stuck.
-    client.on_status = lambda message: _set_stage(job, "model", "run", message)
+    client.on_status = lambda message: _set_stage(job, active_stage, "run", message)
 
     return kit_analyze.analyze_protocol(prepared, client, on_stage=on_stage, on_text=on_text)
 

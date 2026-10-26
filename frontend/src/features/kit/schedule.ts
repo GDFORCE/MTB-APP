@@ -112,13 +112,66 @@ export function computeSchedule(model, site, part) {
   };
   const endKeeps = derivedFrom(endEv ? model.events.find((d) => d.id === endEv.type)?.sets_anchor : null);
 
+  // A visit occurrence's date for rule conditions: recorded if done, otherwise planned from its
+  // anchor, the visit it follows or the previous occurrence. null while that is not known.
+  const plannedVisit = (vid, n, depth = 0) => {
+    const v = byV[vid];
+    if (!v || depth > 20) return null;
+    const startN = Number.isFinite(+v.repeat?.start_n) ? +v.repeat.start_n : 1;
+    const k = n ?? startN;
+    if (actuals[`${vid}#${k}`]) return parseD(actuals[`${vid}#${k}`]);
+    if (v.repeat && k > startN) {
+      if (!v.repeat.chain && !v.follows) return A[v.anchor] != null ? addD(A[v.anchor], v.offset_days + (k - startN) * num(v.repeat.every_days)) : null;
+      const p = plannedVisit(vid, k - 1, depth + 1);
+      return p == null ? null : addD(p, num(v.repeat.every_days));
+    }
+    if (v.follows) { const b = plannedVisit(v.follows, k, depth + 1); return b == null ? null : addD(b, v.offset_days); }
+    return A[v.anchor] != null ? addD(A[v.anchor], v.offset_days) : null;
+  };
+  // A rule's conditions ("if", all must hold): an answer, an answer logged with the triggering
+  // event, the trigger's timing against an anchor or a visit, or which time the event is logged.
+  // "unknown" when something it depends on is not recorded yet: the rule then waits.
+  const ruleCond = (c, T, e, idx) => {
+    if (c.occurrence != null) return e ? (idx + 1 === +c.occurrence ? "yes" : "no") : "yes";
+    if (c.event_question != null) return e ? condState([{ question: c.event_question, in: c.in }], (q) => e.answers?.[q]) : "unknown";
+    if (c.timing) {
+      const tg = c.timing;
+      const base = tg.anchor ? A[tg.anchor] ?? null : tg.visit ? plannedVisit(tg.visit, tg.n ?? null) : null;
+      if (base == null || T == null) return "unknown";
+      const d = Math.round((T - base) / DAY);
+      if ((tg.min_days != null && d < tg.min_days) || (tg.max_days != null && d > tg.max_days)) return "no";
+      return "yes";
+    }
+    if (c.question != null) return condState([c], ans);
+    return "yes";
+  };
+  const ruleIf = (r, T, e, idx) => {
+    let unknown = false;
+    for (const c of arr(r.if)) { const s = ruleCond(c, T, e, idx); if (s === "no") return "no"; if (s === "unknown") unknown = true; }
+    return unknown ? "unknown" : "yes";
+  };
+
   // rules: what happens to the schedule once something happens. A rule acts only when its date is
-  // known (an anchor's date or the first logged event of its type); until then the visits it would
-  // stop carry stopsIf so people can see what may change.
+  // known (an anchor's date, or the first logged event of its type that meets the rule's conditions);
+  // until then the visits it would stop carry stopsIf so people can see what may change. Branches
+  // of one event (before / after Week 12, grade 3 / grade 1, arm A / arm B) are separate rules
+  // whose conditions choose which one applies.
+  const waiting = [];
   const rules = arr(model.rules).map((r) => {
     let T = null;
-    if (r.when?.anchor) T = A[r.when.anchor] ?? null;
-    else if (r.when?.event) { const e = evSorted.find((x) => x.type === r.when.event); T = e ? parseD(e.date) : null; }
+    if (r.when?.anchor) {
+      const t = A[r.when.anchor] ?? null;
+      const s = t != null ? ruleIf(r, t, null, 0) : null;
+      if (s === "yes") T = t; else if (s === "unknown") waiting.push({ r, at: t });
+    } else if (r.when?.event) {
+      const list = evSorted.filter((x) => x.type === r.when.event);
+      let pending = null;
+      for (let i = 0; i < list.length && T == null; i++) {
+        const t = parseD(list[i].date), s = ruleIf(r, t, list[i], i);
+        if (s === "yes") T = t; else if (s === "unknown" && pending == null) pending = t;
+      }
+      if (T == null && pending != null) waiting.push({ r, at: pending });
+    }
     const opens = r.when?.anchor || model.events.find((d) => d.id === r.when?.event)?.sets_anchor || null;
     // A trigger dated before the date it is measured from (Injection 2 before Injection 1) is a
     // mistake, not a deviation: the rule is not applied and the date is flagged for correction.
@@ -282,6 +335,8 @@ export function computeSchedule(model, site, part) {
   //    protocol allows), "blocked" (happened after something that rules it out), "info".
   const warnings = [];
   const days = (n) => `${n} day${Math.abs(n) === 1 ? "" : "s"}`;
+  for (const w of waiting)
+    warnings.push({ rule: w.r.id, kind: "info", text: `${w.r.label}: whether this applies from ${fmtS(w.at)} depends on something not recorded yet (an answer or a date). Record it to update the schedule.` });
   for (const x of rules) {
     const al = x.r.allowed;
     if (x.bad != null) {
