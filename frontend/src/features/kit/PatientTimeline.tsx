@@ -15,7 +15,7 @@ export function usePatientTimeline(model: KitModel | null | undefined, siteAnswe
       const site = siteAnswers || {};
       const current = computeKitSchedule(model, site, participant);
       const withoutEvents = computeKitSchedule(model, site, { ...participant, events: [] });
-      const baseline = computeKitSchedule(model, site, { ...participant, events: [], actuals: {} });
+      const baseline = computeKitSchedule(model, site, { ...participant, events: [], actuals: {}, checks: {} });
       const conditionOf = (visitId: string) => {
         const def = model.visits.find((v) => v.id === visitId);
         if (!def?.include_if?.length) return null;
@@ -66,7 +66,13 @@ function Row({ row, last, actions }: { row: PatientRow; last: boolean; actions: 
         <Text style={s.decisionEyebrow}>Decision{row.decision?.at ? ` · at ${row.decision.at}` : ""}</Text>
         <Text style={s.decisionText}>{row.name}</Text>
         {!!row.decision?.help && <Text style={s.meta}>{row.decision.help}</Text>}
-        {actions.onAnswer
+        {actions.onAnswer && row.decision!.kind === "number" && actions.onPressDecision
+          ? <View style={s.answers}>
+              <Pressable accessibilityRole="button" style={s.answer} onPress={() => actions.onPressDecision!(row.decision!)}>
+                <Text style={s.answerText}>Enter value</Text>
+              </Pressable>
+            </View>
+          : actions.onAnswer
           ? <View style={s.answers}>
               {row.decision!.options.map((o) => <Pressable key={o.value} accessibilityRole="button" style={s.answer}
                 onPress={() => actions.onAnswer!(row.decision!, o.value)}>

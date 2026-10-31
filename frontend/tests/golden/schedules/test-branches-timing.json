@@ -1,0 +1,1039 @@
+{
+  "case": "test-branches-timing",
+  "enrolmentAnchors": [],
+  "anchorPositions": {
+    "day1": 0,
+    "stopped": null
+  },
+  "records": {
+    "none": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "start",
+            "date": "2026-01-05",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "stopped",
+            "label": "Treatment stopped",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": "stop"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "c1#1",
+            "visitId": "c1",
+            "code": "C1",
+            "name": "c1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-05",
+            "planned": "2026-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-01-05",
+            "windowEnd": "2026-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c2#1",
+            "visitId": "c2",
+            "code": "C2",
+            "name": "c2",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-02",
+            "planned": "2026-02-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 28 d",
+            "windowStart": "2026-02-02",
+            "windowEnd": "2026-02-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.responder",
+            "questionId": "responder",
+            "text": "Responded at C2?",
+            "help": null,
+            "at": "C2",
+            "date": "2026-02-02",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "c3#1",
+            "visitId": "c3",
+            "code": "C3",
+            "name": "c3",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-02",
+            "planned": "2026-03-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2026-03-02",
+            "windowEnd": "2026-03-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "c4#1",
+            "visitId": "c4",
+            "code": "C4",
+            "name": "c4",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-30",
+            "planned": "2026-03-30",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 84 d",
+            "windowStart": "2026-03-30",
+            "windowEnd": "2026-03-30",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 85,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3",
+              "Stopped after Cycle 3"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "safe#1",
+            "visitId": "safe",
+            "code": "SAFE",
+            "name": "safe",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Treatment stopped + 30 d",
+            "rule": "Treatment stopped + 30 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped after Cycle 3"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "ltfu#1",
+            "visitId": "ltfu",
+            "code": "LTFU·1",
+            "name": "ltfu 1",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Treatment stopped + 90 d",
+            "rule": "Treatment stopped + 90 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "ltfu#2",
+            "visitId": "ltfu",
+            "code": "LTFU·2",
+            "name": "ltfu 2",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Treatment stopped + 180 d",
+            "rule": "Treatment stopped + 180 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3"
+            ]
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "c1#1",
+          "code": "C1",
+          "name": "c1",
+          "date": "2026-01-05",
+          "rel": null
+        },
+        "needs": [
+          "Treatment stopped date"
+        ]
+      }
+    },
+    "stop-day41": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "start",
+            "date": "2026-01-05",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "stopped",
+            "label": "Treatment stopped",
+            "kind": "ask",
+            "date": "2026-02-15",
+            "how": "entered",
+            "setByEvent": "stop"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "c1#1",
+            "visitId": "c1",
+            "code": "C1",
+            "name": "c1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-05",
+            "planned": "2026-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-01-05",
+            "windowEnd": "2026-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c2#1",
+            "visitId": "c2",
+            "code": "C2",
+            "name": "c2",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-02",
+            "planned": "2026-02-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 28 d",
+            "windowStart": "2026-02-02",
+            "windowEnd": "2026-02-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.responder",
+            "questionId": "responder",
+            "text": "Responded at C2?",
+            "help": null,
+            "at": "C2",
+            "date": "2026-02-02",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "safe#1",
+            "visitId": "safe",
+            "code": "SAFE",
+            "name": "safe",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-17",
+            "planned": "2026-03-17",
+            "actual": null,
+            "relative": null,
+            "rule": "Treatment stopped + 30 d",
+            "windowStart": "2026-03-17",
+            "windowEnd": "2026-03-17",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 72,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped after Cycle 3"
+            ]
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "early",
+            "label": "Stopped before Cycle 3",
+            "effect": "Stopped before Cycle 3",
+            "date": "2026-02-15",
+            "visits": [
+              {
+                "key": "c3#1",
+                "code": "C3",
+                "date": "2026-03-02"
+              },
+              {
+                "key": "c4#1",
+                "code": "C4",
+                "date": "2026-03-30"
+              },
+              {
+                "key": "ltfu#1",
+                "code": "LTFU·1",
+                "date": "2026-05-16"
+              },
+              {
+                "key": "ltfu#2",
+                "code": "LTFU·2",
+                "date": "2026-08-14"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "safe#1",
+          "code": "SAFE",
+          "name": "safe",
+          "date": "2026-03-17",
+          "rel": null
+        },
+        "needs": [
+          "Responder"
+        ]
+      }
+    },
+    "stop-day74": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "start",
+            "date": "2026-01-05",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "stopped",
+            "label": "Treatment stopped",
+            "kind": "ask",
+            "date": "2026-03-20",
+            "how": "entered",
+            "setByEvent": "stop"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "c1#1",
+            "visitId": "c1",
+            "code": "C1",
+            "name": "c1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-05",
+            "planned": "2026-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-01-05",
+            "windowEnd": "2026-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c2#1",
+            "visitId": "c2",
+            "code": "C2",
+            "name": "c2",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-02",
+            "planned": "2026-02-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 28 d",
+            "windowStart": "2026-02-02",
+            "windowEnd": "2026-02-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.responder",
+            "questionId": "responder",
+            "text": "Responded at C2?",
+            "help": null,
+            "at": "C2",
+            "date": "2026-02-02",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "c3#1",
+            "visitId": "c3",
+            "code": "C3",
+            "name": "c3",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-02",
+            "planned": "2026-03-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2026-03-02",
+            "windowEnd": "2026-03-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "ltfu#1",
+            "visitId": "ltfu",
+            "code": "LTFU·1",
+            "name": "ltfu 1",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-06-18",
+            "planned": "2026-06-18",
+            "actual": null,
+            "relative": null,
+            "rule": "Treatment stopped + 90 d",
+            "windowStart": "2026-06-18",
+            "windowEnd": "2026-06-18",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 165,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "ltfu#2",
+            "visitId": "ltfu",
+            "code": "LTFU·2",
+            "name": "ltfu 2",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-09-16",
+            "planned": "2026-09-16",
+            "actual": null,
+            "relative": null,
+            "rule": "Treatment stopped + 180 d",
+            "windowStart": "2026-09-16",
+            "windowEnd": "2026-09-16",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 255,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped before Cycle 3"
+            ]
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "late",
+            "label": "Stopped after Cycle 3",
+            "effect": "Stopped after Cycle 3",
+            "date": "2026-03-20",
+            "visits": [
+              {
+                "key": "c4#1",
+                "code": "C4",
+                "date": "2026-03-30"
+              },
+              {
+                "key": "safe#1",
+                "code": "SAFE",
+                "date": "2026-04-19"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "ltfu#1",
+          "code": "LTFU·1",
+          "name": "ltfu 1",
+          "date": "2026-06-18",
+          "rel": null
+        },
+        "needs": [
+          "Responder"
+        ]
+      }
+    },
+    "c3-late-stop-day65": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "start",
+            "date": "2026-01-05",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "stopped",
+            "label": "Treatment stopped",
+            "kind": "ask",
+            "date": "2026-03-11",
+            "how": "entered",
+            "setByEvent": "stop"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "c1#1",
+            "visitId": "c1",
+            "code": "C1",
+            "name": "c1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-05",
+            "planned": "2026-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-01-05",
+            "windowEnd": "2026-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c2#1",
+            "visitId": "c2",
+            "code": "C2",
+            "name": "c2",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-02",
+            "planned": "2026-02-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 28 d",
+            "windowStart": "2026-02-02",
+            "windowEnd": "2026-02-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.responder",
+            "questionId": "responder",
+            "text": "Responded at C2?",
+            "help": null,
+            "at": "C2",
+            "date": "2026-02-02",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "c3#1",
+            "visitId": "c3",
+            "code": "C3",
+            "name": "c3",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-03-16",
+            "planned": "2026-03-02",
+            "actual": "2026-03-16",
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2026-03-02",
+            "windowEnd": "2026-03-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 71,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "safe#1",
+            "visitId": "safe",
+            "code": "SAFE",
+            "name": "safe",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-04-10",
+            "planned": "2026-04-10",
+            "actual": null,
+            "relative": null,
+            "rule": "Treatment stopped + 30 d",
+            "windowStart": "2026-04-10",
+            "windowEnd": "2026-04-10",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 96,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Stopped after Cycle 3"
+            ]
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "early",
+            "label": "Stopped before Cycle 3",
+            "effect": "Stopped before Cycle 3",
+            "date": "2026-03-11",
+            "visits": [
+              {
+                "key": "c4#1",
+                "code": "C4",
+                "date": "2026-03-30"
+              },
+              {
+                "key": "ltfu#1",
+                "code": "LTFU·1",
+                "date": "2026-06-09"
+              },
+              {
+                "key": "ltfu#2",
+                "code": "LTFU·2",
+                "date": "2026-09-07"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "safe#1",
+          "code": "SAFE",
+          "name": "safe",
+          "date": "2026-04-10",
+          "rel": null
+        },
+        "needs": [
+          "Responder"
+        ]
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Text } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getKitModel, type SavedKitModel } from "@/src/features/kit/api";
+import { downloadProtocolFile, getKitModel, type SavedKitModel } from "@/src/features/kit/api";
 import { FlowButton, FlowScreen, flowStyles as f } from "@/src/features/kit/FlowScreen";
 import { ProtocolTimeline, useProtocolTimeline } from "@/src/features/kit/ProtocolTimeline";
 import { FOCUS as G } from "@/src/features/kit/focus";
@@ -12,6 +12,8 @@ export default function KitScheduleScreen() {
   const { id, trialName } = useLocalSearchParams<{ id: string; trialName?: string }>();
   const [saved, setSaved] = useState<SavedKitModel | null>(null);
   const [error, setError] = useState("");
+  const [fileError, setFileError] = useState("");
+  const [downloading, setDownloading] = useState(false);
   const timeline = useProtocolTimeline(saved?.model, saved?.site_answers);
 
   useEffect(() => {
@@ -32,6 +34,14 @@ export default function KitScheduleScreen() {
     {!saved && !error && <ActivityIndicator color={G.accent} style={{ marginTop: 32 }} />}
     {!!error && <Text style={[f.error, { marginTop: 16 }]}>{error}</Text>}
     {saved && !timeline && <Text style={[f.error, { marginTop: 16 }]}>This schedule could not be laid out.</Text>}
+    {saved?.file_stored && <Text accessibilityRole="button" style={[f.hint, { color: G.accent, marginTop: 8 }]}
+      onPress={downloading ? undefined : async () => {
+        setDownloading(true); setFileError("");
+        try { await downloadProtocolFile(String(id), saved.file_name || "protocol.pdf"); }
+        catch (e: any) { setFileError(e?.response?.status === 404 ? "The protocol file was not stored." : "Couldn't download the protocol file."); }
+        finally { setDownloading(false); }
+      }}>{downloading ? "Downloading…" : `Download the protocol (${saved.file_name || "PDF"})`}{saved.version ? ` · model version ${saved.version}` : ""}</Text>}
+    {!!fileError && <Text style={f.error}>{fileError}</Text>}
     {timeline && <ProtocolTimeline data={timeline} />}
   </FlowScreen>;
 }

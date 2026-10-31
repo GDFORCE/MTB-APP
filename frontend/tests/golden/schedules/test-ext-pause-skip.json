@@ -1,0 +1,220 @@
+{
+  "case": "test-ext-pause-skip",
+  "enrolmentAnchors": [
+    "d1"
+  ],
+  "anchorPositions": {
+    "scr": 0,
+    "d1": 14,
+    "res": null
+  },
+  "records": {
+    "held-and-resumed": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "scr",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-01-05",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "d1",
+            "label": "Day 1",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          },
+          {
+            "id": "res",
+            "label": "Resumed",
+            "kind": "ask",
+            "date": "2026-01-31",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "screen#1",
+            "visitId": "screen",
+            "code": "SCREEN",
+            "name": "screen",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-05",
+            "planned": "2026-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-01-05",
+            "windowEnd": "2026-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cyc#1",
+            "visitId": "cyc",
+            "code": "CYC·1",
+            "name": "cyc 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-05",
+            "planned": "2026-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-01-05",
+            "windowEnd": "2026-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cyc#3",
+            "visitId": "cyc",
+            "code": "CYC·3",
+            "name": "cyc 3",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-02",
+            "planned": "2026-02-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening + 28 d",
+            "windowStart": "2026-02-02",
+            "windowEnd": "2026-02-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cyc#4",
+            "visitId": "cyc",
+            "code": "CYC·4",
+            "name": "cyc 4",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-16",
+            "planned": "2026-02-16",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening + 42 d",
+            "windowStart": "2026-02-16",
+            "windowEnd": "2026-02-16",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "h",
+            "label": "Treatment held",
+            "effect": null,
+            "date": "2026-01-10",
+            "visits": [
+              {
+                "key": "cyc#2",
+                "code": "CYC·2",
+                "date": "2026-01-19"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "cyc#4",
+          "code": "CYC·4",
+          "name": "cyc 4",
+          "date": "2026-02-16",
+          "rel": null
+        },
+        "needs": []
+      }
+    }
+  }
+}

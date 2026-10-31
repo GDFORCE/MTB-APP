@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import math
 import os
 import re
 import time
@@ -26,7 +28,7 @@ import uuid
 from datetime import date
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -46,6 +48,7 @@ STAGES = [
     ("locate", "Locating the schedule tables"),
     ("model", "Building the protocol model"),
     ("verify", "Cross-checking against the schedule tables"),
+    ("events", "Checking what each event changes"),
     ("check", "Sorting the questions for review"),
 ]
 _jobs: Dict[str, Dict[str, Any]] = {}
@@ -109,7 +112,10 @@ def _prepare(job: Dict[str, Any], data: bytes, file_name: str) -> Dict[str, Any]
 
     prepared = prepare_protocol_input(data, on_progress=progress)
     sent = "all pages" if prepared["fullText"] else f"{len(prepared['picked'])} selected pages"
-    _set_stage(job, "read", "done", f"{prepared['pageCount']} pages · {round(len(prepared['text']) / 1000)}k characters · {sent}")
+    hidden = prepared.get("hiddenPages") or []
+    shown = (f" · hidden content read on p. {', '.join(str(h['page']) for h in hidden)}" if hidden else "")
+    _set_stage(job, "read", "done",
+               f"{prepared['pageCount']} pages · {round(len(prepared['text']) / 1000)}k characters · {sent}{shown}")
     if prepared["scanned"]:
         _set_stage(job, "locate", "done", f"no text layer; {len(prepared['scanImages'])} page images")
     elif prepared["tablePages"]:
@@ -150,6 +156,10 @@ def _run(job: Dict[str, Any], data: bytes, file_name: str) -> Dict[str, Any]:
 async def _execute(job: Dict[str, Any], data: bytes, file_name: str) -> None:
     try:
         job["result"] = await run_in_threadpool(_run, job, data, file_name)
+        # Which file the model was read from, so a saved model can be matched to its protocol.
+        # The file itself stays with the job until the model is saved (or the job expires).
+        job["result"]["fileSha256"] = hashlib.sha256(data).hexdigest()
+        job["file"] = data
         job["status"] = "done"
     except AnalysisError as error:
         job["status"], job["error"] = "failed", {"code": error.code, "message": str(error)}
@@ -231,6 +241,55 @@ class KitModelIn(BaseModel):
     reviewAnswers: Dict[str, str] = Field(default_factory=dict)
     siteAnswers: Dict[str, str] = Field(default_factory=dict)
     fileName: Optional[str] = None
+    fileSha256: Optional[str] = None
+    # What the analysis reported but the model itself does not carry.
+    warnings: list[str] = Field(default_factory=list)
+    corrections: Optional[list[str]] = None
+    # The analysis job the model came from: its protocol file is stored with the saved model.
+    analysisJobId: Optional[str] = None
+
+
+PROTOCOL_FILES = "kit_protocol_files"
+
+
+async def _store_protocol_file(sha: str, data: bytes, file_name: Optional[str], trial_id: str) -> None:
+    """The protocol a model was read from, kept once per content hash (GridFS: files can exceed
+    a document's size limit)."""
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    if await db[f"{PROTOCOL_FILES}.files"].find_one({"filename": sha}, {"_id": 1}):
+        return
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name=PROTOCOL_FILES)
+    is_pdf = data[:5] == b"%PDF-"
+    await bucket.upload_from_stream(sha, data, metadata={
+        "trial_id": trial_id, "file_name": file_name, "content_type": "application/pdf" if is_pdf else "text/plain"})
+
+
+async def _read_protocol_file(sha: str) -> Optional[tuple[bytes, dict]]:
+    from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+    meta = await db[f"{PROTOCOL_FILES}.files"].find_one({"filename": sha})
+    if not meta:
+        return None
+    stream = await AsyncIOMotorGridFSBucket(db, bucket_name=PROTOCOL_FILES).open_download_stream(meta["_id"])
+    data: Any = await stream.read()  # type: ignore[misc]  # motor's read() is a coroutine
+    return data, meta.get("metadata") or {}
+
+
+async def _model_doc(trial_id: Any, version: Any) -> Optional[dict]:
+    """The saved model a patient is scheduled with: the current one, or the earlier version they
+    were enrolled on (kept in history when the model was saved again)."""
+    current = await db.trial_kit_models.find_one({"trial_id": trial_id}, {"_id": 0})
+    if not current or version is None or int(current.get("version") or 1) == int(version):
+        return current
+    return await db.trial_kit_model_history.find_one({"trial_id": trial_id, "version": int(version)}, {"_id": 0})
+
+
+def _record_problem(model: dict, record: Any) -> Optional[str]:
+    """Why a patient's record does not fit a model, or None when it does."""
+    try:
+        clean_participant(model, record)
+        return None
+    except HTTPException as error:
+        return str(error.detail)
 
 
 async def _trial_for(user: dict, trial_id: str) -> dict:
@@ -268,21 +327,83 @@ async def save_kit_model(trial_id: str, body: KitModelIn, user=Depends(current_u
                if q["scope"] == "study" and not _checked(q, body.siteAnswers.get(q["id"]))]
     if missing:
         raise HTTPException(400, {"message": "Answer every site setting.", "fields": missing})
+    previous = await db.trial_kit_models.find_one({"trial_id": trial_id}, {"_id": 0})
+    sha = (body.fileSha256 or "").strip().lower()
     doc = {
         "trial_id": trial_id, "base_model": base, "review_answers": body.reviewAnswers,
         "site_answers": body.siteAnswers, "model": model, "file_name": body.fileName,
+        "file_sha256": sha if re.fullmatch(r"[0-9a-f]{64}", sha) else None,
+        "analysis_warnings": [str(w) for w in body.warnings][:50],
+        "corrections": None if body.corrections is None else [str(c) for c in body.corrections][:200],
+        "version": int((previous or {}).get("version") or (1 if previous else 0)) + 1,
         "saved_by": user["id"], "saved_at": now(),
     }
+    # Earlier versions are kept, never overwritten: patients were scheduled with them, and they
+    # stay on the version they were enrolled on until staff move them (nobody moves by default).
+    if previous:
+        previous_version = int(previous.get("version") or 1)
+        await db.trial_kit_model_history.insert_one({**previous, "version": previous_version,
+                                                     "replaced_at": doc["saved_at"], "replaced_by": user["id"]})
+        await db.patients.update_many(
+            {"trial_id": trial_id, "kit": {"$exists": True}, "kit_model_version": {"$exists": False}},
+            {"$set": {"kit_model_version": previous_version}})
+        # Invited but not yet registered: the patient record is created from the invitation.
+        await db.invitations.update_many(
+            {"trial_id": trial_id, "status": "pending", "patient_data.kit": {"$exists": True},
+             "patient_data.kit_model_version": {"$exists": False}},
+            {"$set": {"patient_data.kit_model_version": previous_version}})
+    job = _jobs.get(body.analysisJobId or "")
+    if job and job["user_id"] == user["id"] and job.get("file") and doc["file_sha256"] \
+            and hashlib.sha256(job["file"]).hexdigest() == doc["file_sha256"]:
+        await _store_protocol_file(doc["file_sha256"], job["file"], body.fileName, trial_id)
+        doc["file_stored"] = True
+    elif doc["file_sha256"] and previous and previous.get("file_sha256") == doc["file_sha256"]:
+        doc["file_stored"] = bool(previous.get("file_stored"))
+    else:
+        doc["file_stored"] = False
     await db.trial_kit_models.replace_one({"trial_id": trial_id}, doc, upsert=True)
+
+    # Which patients on earlier versions could move to this one as they are.
+    earlier, movable, blocked = 0, 0, []
+    async for patient in db.patients.find(
+            {"trial_id": trial_id, "kit": {"$exists": True}, "kit_model_version": {"$ne": doc["version"]}},
+            {"_id": 0, "id": 1, "subject_id": 1, "kit": 1}):
+        earlier += 1
+        problem = _record_problem(model, patient["kit"])
+        if problem is None:
+            movable += 1
+        elif len(blocked) < 20:
+            blocked.append({"patient_id": patient["id"], "subject_id": patient.get("subject_id"), "problem": problem})
     await write_audit(user, "trial.kit_model_save", f"Saved the reviewed protocol model ({len(model['visits'])} visits)",
                       target_id=trial_id, trial_id=trial_id)
-    return {"trial_id": trial_id, "visits": len(model["visits"]), "saved_at": doc["saved_at"]}
+    return {"trial_id": trial_id, "visits": len(model["visits"]), "saved_at": doc["saved_at"], "version": doc["version"],
+            "file_stored": doc["file_stored"],
+            "patients": {"on_earlier_version": earlier, "can_move": movable, "cannot_move": blocked}}
+
+
+@router.get("/trials/{trial_id}/kit-model/file")
+async def download_protocol_file(trial_id: str, version: Optional[int] = None, user=Depends(current_user)):
+    """The protocol file a saved model (current, or an earlier version) was read from."""
+    if user["role"] == "patient":
+        raise HTTPException(403, "Not available")
+    await _trial_for(user, trial_id)
+    saved = await _model_doc(trial_id, version)
+    if not saved or not saved.get("file_sha256") or not saved.get("file_stored"):
+        raise HTTPException(404, "The protocol file was not stored with this model")
+    found = await _read_protocol_file(saved["file_sha256"])
+    if not found:
+        raise HTTPException(404, "The protocol file was not stored with this model")
+    data, meta = found
+    name = (saved.get("file_name") or meta.get("file_name") or "protocol.pdf").replace('"', "")
+    return Response(data, media_type=meta.get("content_type") or "application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/trials/{trial_id}/kit-model")
-async def read_kit_model(trial_id: str, user=Depends(current_user)):
+async def read_kit_model(trial_id: str, version: Optional[int] = None, user=Depends(current_user)):
+    """The trial's current reviewed model, or an earlier version patients may still be on."""
     await _trial_for(user, trial_id)
-    doc = await db.trial_kit_models.find_one({"trial_id": trial_id}, {"_id": 0})
+    doc = await _model_doc(trial_id, version)
     if not doc:
         raise HTTPException(404, "No reviewed protocol model has been saved for this trial")
     return doc
@@ -320,8 +441,8 @@ def clean_participant(model: Dict[str, Any], raw: Any) -> Dict[str, Any]:
     """Check one patient's kit record against the trial's reviewed model.
 
     Raises 422 naming the first problem. Participant questions must all be
-    answered (they are known at enrolment by definition); decisions, ask-anchor
-    dates, events and recorded visits are optional and filled in over time.
+    answered (they are known at enrolment by definition); decisions, entered
+    protocol dates, events and recorded visits are optional and filled in over time.
     """
     if not isinstance(raw, dict):
         raise HTTPException(422, "The schedule details are missing")
@@ -336,7 +457,10 @@ def clean_participant(model: Dict[str, Any], raw: Any) -> Dict[str, Any]:
         key = str(key)
         if key.startswith("@"):
             anchor = anchors.get(key[1:])
-            if not anchor or anchor["kind"] != "ask":
+            # Any protocol date except the start date (stored as startDate) can be entered;
+            # an entered date replaces one counted from another date.
+            # The last of several visits (last dose) is worked out from them, never entered.
+            if not anchor or anchor["kind"] in ("start", "last_visit"):
                 raise HTTPException(422, f"Unknown protocol date “{key[1:]}”")
             answers[key] = _iso(value, anchor["label"])
         elif key in questions:
@@ -369,6 +493,8 @@ def clean_participant(model: Dict[str, Any], raw: Any) -> Dict[str, Any]:
         })
 
     visit_ids = {v["id"] for v in model["visits"]} | {v["id"] for e in model["events"] for v in e["visits"]}
+    # Visits a logged event added are keyed "ev.<logged event key>.<visit id>#n" by the engine.
+    visit_ids |= {f"ev.{e['key']}.{v['id']}" for e in events for v in events_by_id[e["type"]]["visits"]}
 
     def occurrence(key: Any) -> str:
         text = str(key)
@@ -386,20 +512,120 @@ def clean_participant(model: Dict[str, Any], raw: Any) -> Dict[str, Any]:
             raise HTTPException(422, "Dose time: enter HH:MM")
         dose_times[occurrence(key)] = str(value)
 
-    return {
+    measures = {m["id"]: m for m in model.get("measures") or []}
+
+    def measured(m: Dict[str, Any], value: Any, what: str) -> float:
+        """A value entered for a measure: a number, and a whole grade 0-5 for a toxicity grade."""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"{what}: enter a number for {m['label']}")
+        if not math.isfinite(number) or (m["kind"] == "grade" and (number != int(number) or not 0 <= number <= 5)):
+            raise HTTPException(422, f"{what}: {m['label']} must be " + ("a grade from 0 to 5" if m["kind"] == "grade" else "a number"))
+        return int(number) if number == int(number) else number
+
+    # Answers to visit checks ("ANC ≥ 1.0?"), per occurrence, kept in date order. An answer may be
+    # values entered for the check's measures (the engine works out Yes/No), a Yes/No, or both; with a
+    # dosing table also "skip" or "reduce" (staff chose that row). Visits a logged event added have
+    # checks when they repeat until met ("follow until resolved").
+    checked = {v["id"]: v["check"] for v in model["visits"] if v.get("check")}
+    for e in events:
+        for v in events_by_id[e["type"]]["visits"]:
+            if v.get("check"):
+                checked[f"ev.{e['key']}.{v['id']}"] = v["check"]
+    checks: Dict[str, list] = {}
+    for key, items in (raw.get("checks") or {}).items():
+        key = occurrence(key)
+        check = checked.get(key.rpartition("#")[0])
+        if not check:
+            raise HTTPException(422, f"“{key}” has no check to answer")
+        if not isinstance(items, list) or len(items) > 100:
+            raise HTTPException(422, "Check answers: a list of dated answers")
+        given = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise HTTPException(422, "Check answer: Yes or No")
+            entry: Dict[str, Any] = {"date": _iso(item.get("date"), "Check date")}
+            values = {}
+            for mid, value in (item.get("values") or {}).items() if isinstance(item.get("values"), dict) else []:
+                if value in (None, ""):
+                    continue
+                if mid not in check.get("measures", []) or mid not in measures:
+                    raise HTTPException(422, f"“{mid}” is not measured at this check")
+                values[mid] = measured(measures[mid], value, "Check value")
+            if values:
+                entry["values"] = values
+            rows = {a.get("do") for a in check.get("actions") or []}
+            allowed = ("yes", "no") + tuple(x for x in ("skip", "reduce") if x in rows)
+            if item.get("answer") in allowed:
+                entry["answer"] = item["answer"]
+            elif item.get("answer") not in (None, "") or not values:
+                names = [x.capitalize() for x in allowed]
+                raise HTTPException(422, f"Check answer: {', '.join(names[:-1])} or {names[-1]}, or the measured values")
+            given.append(entry)
+        if given:
+            checks[key] = sorted(given, key=lambda x: x["date"])
+
+    # Baseline values the limits compare with ("creatinine ≤ 1.5 × baseline").
+    baselines = {}
+    for mid, value in (raw.get("baselines") or {}).items():
+        if value in (None, ""):
+            continue
+        if mid not in measures:
+            raise HTTPException(422, f"Unknown measure “{mid}”")
+        baselines[mid] = measured(measures[mid], value, "Baseline")
+
+    # Dose levels staff set at a dose ("reduced at investigator's discretion"), kept from that dose on.
+    doses = {d["id"]: d for d in model.get("doses") or []}
+    dose_levels: Dict[str, Dict[str, str]] = {}
+    for key, chosen in (raw.get("doseLevels") or {}).items():
+        key = occurrence(key)
+        if not isinstance(chosen, dict):
+            raise HTTPException(422, "Dose level: choose a level")
+        kept = {}
+        for did, level in chosen.items():
+            d = doses.get(did)
+            if not d or key.rpartition("#")[0] not in d["visits"]:
+                raise HTTPException(422, f"“{did}” is not given at {key}")
+            if level in (None, ""):
+                continue
+            if not any(lv["id"] == level for lv in d["levels"]):
+                raise HTTPException(422, f"{d['label']} has no level “{level}”")
+            kept[did] = str(level)
+        if kept:
+            dose_levels[key] = kept
+
+    out = {
         "startAnchor": start["id"], "startDate": _iso(raw.get("startDate"), start["label"]),
         "answers": answers, "events": events, "actuals": actuals, "doseTimes": dose_times,
     }
+    if checks:
+        out["checks"] = checks
+    if baselines:
+        out["baselines"] = baselines
+    if dose_levels:
+        out["doseLevels"] = dose_levels
+    return out
 
 
 async def _kit_payload(patient: dict, user: dict) -> dict:
     if not patient.get("kit"):
         raise HTTPException(404, "This patient is not on a reviewed protocol schedule")
-    saved = await db.trial_kit_models.find_one({"trial_id": patient.get("trial_id")}, {"_id": 0})
+    saved = await _model_doc(patient.get("trial_id"), patient.get("kit_model_version"))
     if not saved:
         raise HTTPException(409, "The trial's reviewed protocol schedule is missing")
     trial = await db.trials.find_one({"id": patient.get("trial_id")}, {"_id": 0, "id": 1, "title": 1, "protocol_id": 1}) or {}
+    version = int(saved.get("version") or 1)
+    latest = None
+    if user["role"] in ("pi", "crc") and patient.get("kit_model_version") is not None:
+        current = await db.trial_kit_models.find_one({"trial_id": patient.get("trial_id")}, {"_id": 0})
+        if current and int(current.get("version") or 1) != version:
+            # A newer reviewed model exists: staff can compare and move this patient to it.
+            latest = {"version": int(current.get("version") or 1), "model": current["model"],
+                      "site_answers": current.get("site_answers") or {},
+                      "problem": _record_problem(current["model"], patient["kit"])}
     return {
+        "model_version": version, "latest": latest,
         # Sponsors and CROs see subjects de-identified, as everywhere else.
         "patient": {key: patient.get(key) for key in ("id", "subject_id", "full_name", "avatar_initials", "trial_id")
                     if not (key == "full_name" and user["role"] in ("sponsor", "cro"))},
@@ -433,7 +659,7 @@ async def save_patient_kit(patient_id: str, body: Dict[str, Any], user=Depends(c
     patient = await _require_patient(user, patient_id)
     if not patient.get("kit"):
         raise HTTPException(404, "This patient is not on a reviewed protocol schedule")
-    saved = await db.trial_kit_models.find_one({"trial_id": patient.get("trial_id")}, {"_id": 0, "model": 1})
+    saved = await _model_doc(patient.get("trial_id"), patient.get("kit_model_version"))
     if not saved:
         raise HTTPException(409, "The trial's reviewed protocol schedule is missing")
     participant = clean_participant(saved["model"], body)
@@ -443,3 +669,23 @@ async def save_patient_kit(patient_id: str, body: Dict[str, Any], user=Depends(c
                       f"Updated schedule: {len(participant['actuals'])} visits recorded, {len(participant['events'])} events",
                       target_id=patient_id, trial_id=patient.get("trial_id"))
     return await _kit_payload({**patient, "kit": participant, "kit_updated_at": stamp}, user)
+
+
+@router.post("/patients/{patient_id}/kit/move-to-latest", dependencies=[Depends(require_roles("pi", "crc"))])
+async def move_patient_to_latest(patient_id: str, user=Depends(current_user)):
+    """Put a patient on the trial's current reviewed model. Their recorded dates, answers and
+    events are kept; the record must fit the new model as it is."""
+    patient = await _require_patient(user, patient_id)
+    if not patient.get("kit"):
+        raise HTTPException(404, "This patient is not on a reviewed protocol schedule")
+    current = await db.trial_kit_models.find_one({"trial_id": patient.get("trial_id")}, {"_id": 0})
+    if not current:
+        raise HTTPException(409, "The trial's reviewed protocol schedule is missing")
+    version = int(current.get("version") or 1)
+    participant = clean_participant(current["model"], patient["kit"])
+    stamp = now()
+    await db.patients.update_one({"id": patient_id}, {"$set": {
+        "kit": participant, "kit_model_version": version, "kit_updated_at": stamp}})
+    await write_audit(user, "patient.kit_model_move", f"Moved to protocol model version {version}",
+                      target_id=patient_id, trial_id=patient.get("trial_id"))
+    return await _kit_payload({**patient, "kit": participant, "kit_model_version": version, "kit_updated_at": stamp}, user)

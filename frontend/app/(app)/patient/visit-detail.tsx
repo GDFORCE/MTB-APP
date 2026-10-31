@@ -7,6 +7,7 @@ import { colors, spacing, radii, dawnGradient } from "@/src/theme/tokens";
 import { Eyebrow, H1, Body, Small, Card, Button } from "@/src/components/ui";
 import { ScreenContainer, ScreenHeader } from "@/src/components/ScreenHeader";
 import { api } from "@/src/api/client";
+import { fetchMyKitVisit } from "@/src/features/kit/patientVisits";
 import { PatientBottomNav, PATIENT_NAV_CONTENT_BOTTOM } from "@/src/features/patient/components/PatientBottomNav";
 import { formatIsoCalendarDate, formatVisitTiming } from "@/src/lib/visit-timing";
 
@@ -47,6 +48,9 @@ export default function VisitDetail() {
           setVisit(null);
           return;
         }
+        // Kit visits are computed on the device from the patient's protocol schedule.
+        const kitVisit = String(id).includes("#") ? await fetchMyKitVisit(String(id)) : null;
+        if (kitVisit) { setVisit(kitVisit); return; }
         const response = await api.get(`/visits/mine/${id}`);
         setVisit(response.data || null);
       } catch (requestError: any) {

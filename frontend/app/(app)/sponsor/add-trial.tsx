@@ -219,7 +219,7 @@ export default function AddTrial() {
       setKitStages(started.stages);
       const analysis = await waitForKitJob(started.job_id, (job) => { if (run === analysisRun.current) setKitStages(job.stages); });
       if (run !== analysisRun.current) return;
-      setKit(analysis);
+      setKit({ ...analysis, jobId: started.job_id });
       const found = normalized({
         title: analysis.details.title, phase: analysis.details.phase, indications: analysis.details.indications,
         total_visits: analysis.model.visits.length,
@@ -280,6 +280,8 @@ export default function AddTrial() {
           await saveKitModel(trialId, {
             baseModel: withPhases(kit.baseModel, renames), reviewAnswers: kitConfirmed.reviewAnswers,
             siteAnswers: kitConfirmed.siteAnswers, fileName: uploadName,
+            fileSha256: kit.fileSha256 ?? null, warnings: kit.warnings, corrections: kit.corrections,
+            analysisJobId: kit.jobId || undefined,
           });
         } catch (saveError: any) {
           const detail = saveError?.response?.data?.detail;

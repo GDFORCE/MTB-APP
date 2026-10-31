@@ -1,8 +1,9 @@
 """Steps 3-6 of the kit: build, cross-check and clean up the protocol model.
 
 ``analyze_protocol`` mirrors the kit's analyzeProtocol: request 1 builds the
-model, request 2 cross-checks every visit against the schedule tables, then the
-review questions are sorted and the recommended answers preselected.
+model, request 2 cross-checks every visit against the schedule tables, request 3
+reads the whole protocol for what logging each event changes (kit/events.py),
+then the review questions are sorted and the recommended answers preselected.
 Oversized protocols are summarized section by section before model building.
 """
 
@@ -13,9 +14,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .events import run_event_check
 from .llm import AnalysisError
 from .normalize import arr, build_template_model, default_review_answers, normalize
-from .pdf_input import cross_check_material
+from .pdf_input import cross_check_material, hidden_pages_note
 from .prompts import build_prompt, build_review_prompt
 from .summarize import analyze_from_summaries
 from .tables import read_borderless_tables
@@ -179,6 +181,8 @@ def analyze_protocol(
     on_text: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     warnings: list[str] = []
+    if prepared.get("hiddenPages"):
+        warnings.append(hidden_pages_note(prepared["hiddenPages"]))
     scanned = prepared.get("scanned", False)
     scan_images = prepared.get("scanImages") if scanned else []
     # Symbols the text cannot spell, shown as printed (see pdf_input.SymbolLegend).
@@ -241,12 +245,28 @@ def analyze_protocol(
         warnings.append(f"Cross-check skipped: {error}")
         on_stage("verify", "done", "skipped")
 
+    # What logging each event (pregnancy, withdrawal, death…) changes, read on its own.
+    try:
+        run_event_check(prepared, model, client, on_stage=on_stage, symbol_note=legend_note,
+                        images=legend_images)
+        model = normalize(model)
+    except AnalysisError as error:
+        if error.code in ("no_credits", "auth", "no_api_key"):
+            raise
+        model["event_check"] = {"ran": False, "changes": [], "events": []}
+        model["notes"].append(
+            "The events check could not run. Check what logging each event (pregnancy, withdrawal, death, "
+            "serious adverse events…) changes against the protocol.")
+        warnings.append(f"Events check skipped: {error}")
+        on_stage("events", "done", "skipped")
+
     answers = default_review_answers(model)
     counts = _counts(model, material["pages"])
     on_stage("check", "done", counts)
     return {
         "baseModel": model, "model": build_template_model(model, answers), "reviewAnswers": answers,
-        "corrections": model.get("review"), "counts": counts, "warnings": warnings,
+        "corrections": model.get("review"), "eventCheck": model.get("event_check"), "counts": counts,
+        "warnings": warnings,
     }
 
 
@@ -264,6 +284,7 @@ def sample_analysis(name: str, on_stage: StageCallback) -> dict[str, Any]:
     on_stage("verify", "run", "sample model")
     time.sleep(1.2)
     on_stage("verify", "done", "sample model, not cross-checked")
+    on_stage("events", "done", "sample model, not checked")
     answers = default_review_answers(base)
     counts = _counts(base, [])
     on_stage("check", "done", counts)

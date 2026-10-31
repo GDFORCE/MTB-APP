@@ -1,5 +1,23 @@
 # Saved Claude Code prompts
 
+## Current Claude Code task - 28 October 2026
+
+- [Kit schedule atoms implementation prompt](claude-code-kit-schedule-atoms-implementation-2026-10-28.md): add tracks, measures and recorded results, derived events, wait-until gates, calendar units, earliest-of/counters, doses and study-level events to the kit system as optional fields, behind a frozen-results test, without changing current behaviour. [Launcher](claude-code-next-prompt.md) updated.
+- Website version (claude.ai, one step per chat, with the files to upload): [claude-website-kit-schedule-atoms-prompt-2026-10-28.md](claude-website-kit-schedule-atoms-prompt-2026-10-28.md).
+
+## Protocol elements, fresh start - 29 October 2026 (chat prompt, not a Claude Code task)
+
+- **Current:** [Fresh-chat prompt: discover protocol symbols](protocol-symbols-discovery-fresh-chat-prompt-2026-10-29.md): the output is a growing symbol list. It starts from a seed list of about 50 symbols (things, time, reading a value, comparison, logic, actions, rule/evidence); each protocol's rules are written in those symbols, rules that can't be written propose new symbols (not values, not combinations), the list is versioned, and a saturation file shows when protocols stop adding symbols. Approach discussion first, code on request.
+- Superseded (preserved): [Fresh-chat prompt: basic elements of protocols](protocol-elements-fresh-chat-prompt-2026-10-29.md): for a new chat with no project knowledge. It describes the batch problem (upload ~10 protocols, capture the basic elements and conditions of each, see which repeat and whether the list stops growing) and asks for an approach discussion before any code. Version 2 (same day) fixes the output to one JSON format (allowed values, vocabulary, a per-protocol file and a combined summary) with a worked example and the reasons for fixing it. It deliberately doesn't use the v1–v4 study prompts below or the kit inventory, which remain as they were.
+
+## Protocol element study - 28 October 2026 (chat prompt, not a Claude Code task)
+
+- **Current:** [Protocol schedule atoms prompt v4](protocol-schedule-atoms-prompt-v4-2026-10-28.md): writes every scheduling rule as a combination of about 25 basic atoms (things, time, logic, actions, When-If-Then rules) and reports missing atoms; v3 pattern names stay as recipe labels.
+- Superseded v3 (preserved): [Protocol design pattern prompt v3](protocol-design-pattern-prompt-v3-2026-10-28.md): v2 plus the 16 patterns from the 5-protocol pilot (N-16…N-31), primitive vs combination, and a saturation count per protocol.
+- Superseded v2 (preserved): [Protocol design pattern prompt v2](protocol-design-pattern-prompt-v2-2026-10-28.md): collects only the patterns (anchors, timing, facts, conditions, reactions) that change when or whether something happens, in general form, with 15 named new patterns from the first pilot outputs. For chats or an agent run over a folder.
+- Superseded v1 (preserved): [Protocol element extraction prompt](protocol-element-extraction-prompt-2026-10-28.md): paste into any chat AI (Claude, ChatGPT, Gemini) with 4-5 protocol PDFs to collect the building blocks those protocols use, mapped to the IDs in [kit-schema-element-inventory.md](kit-schema-element-inventory.md), plus a merge prompt for several chats. Current for the manual study; it does not change the Claude Code continuation below.
+
+
 ## Deferred backlog - 22 October 2026 (not a current prompt)
 
 - [Extraction evidence verification backlog](extraction-evidence-verification-backlog-2026-10-22.md): design notes for a field-vs-quote check, OCR for scanned pages and a batched LLM meaning check. Deferred until the owner finishes reading the extraction code; it does not change the current continuation below.

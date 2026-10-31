@@ -679,6 +679,74 @@ def prepare_protocol_input(
                                        on_progress=on_progress)
 
 
+HIDDEN_TEXT_MIN = 200  # characters a crop must hide to count (a cut-off running header does not)
+HIDDEN_IMAGE_SHARE = 0.2  # share of a picture outside the visible area that counts as hidden
+
+
+def _same_box(a: Any, b: Any, tol: float = 1.0) -> bool:
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def uncrop_pages(doc: Any) -> list[dict[str, Any]]:
+    """Show every page whole. A PDF can crop a page so only part of it is visible (its crop box),
+    while the rest stays in the file: a schedule table's header or its footnotes ("visits at 7-day
+    intervals, +/- 3 days") can sit there, and text extraction and page images would both miss it.
+    Every page is reset to its full sheet (media box) before anything is read. Returns the pages
+    where the crop hid real content: {"page", "text_chars", "image"}; a few hidden characters (a
+    running header) are read but not reported."""
+    hidden: list[dict[str, Any]] = []
+    for i in range(doc.page_count):
+        page = doc[i]
+        crop, media = getattr(page, "cropbox", None), getattr(page, "mediabox", None)
+        if crop is None or media is None or _same_box(crop, media):
+            continue
+        before = len(page.get_text().strip())
+        visible = page.rect
+        image_cut = False
+        for info in page.get_image_info():
+            box = fitz_rect(info.get("bbox"))
+            if box is None or box.is_empty:
+                continue
+            inside = box & visible
+            shown = 0 if inside.is_empty else inside.get_area()
+            if 1 - shown / max(box.get_area(), 1) >= HIDDEN_IMAGE_SHARE:
+                image_cut = True
+        try:
+            page.set_cropbox(page.mediabox)
+        except Exception:  # noqa: BLE001 - an odd page box: keep the page as it was
+            continue
+        extra = len(page.get_text().strip()) - before
+        if extra >= HIDDEN_TEXT_MIN or image_cut:
+            hidden.append({"page": i + 1, "text_chars": max(0, extra), "image": image_cut})
+    return hidden
+
+
+def fitz_rect(box: Any) -> Any:
+    import fitz
+
+    try:
+        return fitz.Rect(box)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def open_pdf(pdf_bytes: bytes) -> Any:
+    """Open a PDF with every page shown whole (see ``uncrop_pages``), so text, tables, page
+    images and their coordinates all describe the same full page."""
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    uncrop_pages(doc)
+    return doc
+
+
+def hidden_pages_note(hidden: list[dict[str, Any]]) -> str:
+    pages = ", ".join(str(h["page"]) for h in hidden)
+    return (f"The PDF hides part of page{'s' if len(hidden) != 1 else ''} {pages} outside the visible page "
+            "area (the pages are cropped). The whole page was read, including the hidden part; check these "
+            "pages in the original file, since a viewer shows only the cropped part.")
+
+
 def _prepare_protocol_input(
     pdf_bytes: bytes, *, budget: int, full_text_max_chars: int | None,
     on_progress: Callable[[int, int], None] | None,
@@ -691,6 +759,7 @@ def _prepare_protocol_input(
         raise PdfReadError("This file could not be read as a PDF.") from error
     if doc.page_count == 0:
         raise PdfReadError("This PDF has no pages.")
+    hidden = uncrop_pages(doc)
     pages: list[str] = []
     layout: list[str] = []
     ruled: dict[int, list[dict[str, Any]]] = {}  # 0-based page -> its ruled schedule tables
@@ -767,6 +836,7 @@ def _prepare_protocol_input(
             else text if send_everything else selected_text)
     result = {
         "pageCount": doc.page_count, "tablePages": table_pages, "tableSource": table_source,
+        "hiddenPages": hidden,
         "alignedTables": [aligned[i] for i in sorted(aligned)],
         "picked": picked, "selected": selected, "scanned": scanned,
         "text": text, "selectedText": selected_text, "fullText": send_everything and not scanned,
@@ -813,7 +883,7 @@ def cross_check_material(prepared: dict[str, Any], model_pages: list[int]) -> di
         import fitz
 
         with PDF_LOCK:
-            doc = fitz.open(stream=prepared["pdfBytes"], filetype="pdf")
+            doc = open_pdf(prepared["pdfBytes"])
             try:
                 have.update({img["page"]: img for img in render_page_images(doc, missing)})
             finally:

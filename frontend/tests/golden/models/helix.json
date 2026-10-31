@@ -1,0 +1,951 @@
+{
+  "model": {
+    "anchors": [
+      {
+        "day_zero": false,
+        "estimates": [],
+        "id": "screening",
+        "is_day1": false,
+        "kind": "start",
+        "label": "Screening",
+        "offset_days": 0,
+        "optional": false,
+        "range": null
+      },
+      {
+        "day_zero": false,
+        "estimates": [
+          {
+            "offset_days": 14,
+            "relative_to": "screening",
+            "when": []
+          }
+        ],
+        "id": "day1",
+        "is_day1": true,
+        "kind": "ask",
+        "label": "Day 1",
+        "note": "First dose within 28 days of screening. Recording C1D1 fixes Day 1.",
+        "offset_days": 14,
+        "optional": true,
+        "range": {
+          "max_days": 21,
+          "min_days": 7,
+          "relative_to": "screening"
+        },
+        "relative_to": "screening",
+        "set_by_visit": "c1d1"
+      },
+      {
+        "day_zero": false,
+        "estimates": [],
+        "id": "pd",
+        "is_day1": false,
+        "kind": "ask",
+        "label": "Progression",
+        "note": "Set by logging disease progression.",
+        "offset_days": 0,
+        "optional": true,
+        "question": "Progression date",
+        "range": null
+      }
+    ],
+    "arms": [
+      {
+        "description": "",
+        "id": "A",
+        "name": "Part A · Dose escalation"
+      },
+      {
+        "description": "",
+        "id": "B",
+        "name": "Part B · Expansion"
+      }
+    ],
+    "events": [
+      {
+        "ends_schedule": false,
+        "id": "pd",
+        "label": "Disease progression",
+        "note": "If the sponsor approves treatment beyond progression, log progression only when treatment actually stops.",
+        "questions": [
+          {
+            "ask_at": null,
+            "help": "",
+            "id": "pd_conf",
+            "kind": "boolean",
+            "label": "Confirmed",
+            "options": [],
+            "scope": "event",
+            "text": "Confirmed by imaging?"
+          }
+        ],
+        "repeatable": false,
+        "sets_anchor": "pd",
+        "visits": [
+          {
+            "check": null,
+            "code": "EOT",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "eot",
+            "include_if": [],
+            "min_gap": null,
+            "modality": "site",
+            "name": "End of treatment",
+            "offset_days": 7,
+            "phase": "Follow-up",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "Physical exam"
+              },
+              {
+                "if": [],
+                "name": "Hematology & chemistry"
+              },
+              {
+                "if": [],
+                "name": "AE review"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 7,
+            "window_before": 0
+          },
+          {
+            "check": null,
+            "code": "SFU",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "sfu",
+            "include_if": [],
+            "min_gap": null,
+            "modality": "site",
+            "name": "30-day safety follow-up",
+            "offset_days": 30,
+            "phase": "Follow-up",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "AE review"
+              },
+              {
+                "if": [],
+                "name": "Hematology & chemistry"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 7,
+            "window_before": 7
+          },
+          {
+            "check": null,
+            "code": "CONF",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "confirm",
+            "include_if": [
+              {
+                "in": [
+                  "no"
+                ],
+                "question": "pd_conf"
+              }
+            ],
+            "min_gap": null,
+            "modality": "site",
+            "name": "Confirmatory scan",
+            "offset_days": 28,
+            "phase": "Imaging",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "CT/MRI (iRECIST)"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 7,
+            "window_before": 0
+          }
+        ]
+      },
+      {
+        "ends_schedule": true,
+        "id": "tox",
+        "label": "Stopped for toxicity",
+        "note": null,
+        "questions": [],
+        "repeatable": false,
+        "sets_anchor": null,
+        "visits": [
+          {
+            "check": null,
+            "code": "EOT",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "tox_eot",
+            "include_if": [],
+            "min_gap": null,
+            "modality": "site",
+            "name": "End of treatment",
+            "offset_days": 7,
+            "phase": "Follow-up",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "Physical exam"
+              },
+              {
+                "if": [],
+                "name": "Hematology & chemistry"
+              },
+              {
+                "if": [],
+                "name": "AE review"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 7,
+            "window_before": 0
+          },
+          {
+            "check": null,
+            "code": "SFU",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "tox_sfu",
+            "include_if": [],
+            "min_gap": null,
+            "modality": "site",
+            "name": "30-day safety follow-up",
+            "offset_days": 30,
+            "phase": "Follow-up",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "AE review"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 7,
+            "window_before": 7
+          }
+        ]
+      },
+      {
+        "ends_schedule": false,
+        "id": "dlt",
+        "label": "Dose-limiting toxicity",
+        "note": "Report within 24 hours of awareness.",
+        "questions": [],
+        "repeatable": true,
+        "sets_anchor": null,
+        "visits": [
+          {
+            "check": null,
+            "code": "DLT",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "dlt_v",
+            "include_if": [],
+            "min_gap": null,
+            "modality": "site",
+            "name": "DLT evaluation visit",
+            "offset_days": 1,
+            "phase": "Event",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "Hematology & chemistry"
+              },
+              {
+                "if": [],
+                "name": "AE grading"
+              },
+              {
+                "if": [],
+                "name": "Sponsor notification"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 2,
+            "window_before": 0
+          }
+        ]
+      },
+      {
+        "ends_schedule": false,
+        "id": "uns",
+        "label": "Unscheduled visit",
+        "note": null,
+        "questions": [],
+        "repeatable": true,
+        "sets_anchor": null,
+        "visits": [
+          {
+            "check": null,
+            "code": "UNS",
+            "condition": null,
+            "duration_days": null,
+            "follows": null,
+            "follows_occurrence": null,
+            "id": "uns_v",
+            "include_if": [],
+            "min_gap": null,
+            "modality": "site",
+            "name": "Unscheduled visit",
+            "offset_days": 0,
+            "phase": "Event",
+            "prep": null,
+            "procedures": [
+              {
+                "if": [],
+                "name": "As clinically indicated"
+              }
+            ],
+            "repeat": null,
+            "timepoints": [],
+            "window_after": 0,
+            "window_before": 0
+          }
+        ]
+      }
+    ],
+    "notes": [
+      "Dose level does not change the visit schedule; it is recorded for reference.",
+      "Cycles shift with delays; tumour assessments stay on the 8-week grid from Day 1.",
+      "Day 1 is entered for each participant (the protocol allows 7 to 21 days after Screening) instead of asking for one fixed gap."
+    ],
+    "protocol": {
+      "design": "Part A escalates HX-77 dose with BOIN; Part B expands at the recommended dose. Cycle 1 is 21 days with intensive PK and safety visits; later cycles are 28 days. Treatment continues until progression or unacceptable toxicity.",
+      "indication": "Advanced solid tumours",
+      "number": "HELIX-301",
+      "phase": "Phase 1/2",
+      "sponsor": "Sample Oncology (fictional)",
+      "title": "A Phase 1/2, Open-Label, Dose-Escalation and Expansion Study of Oral HX-77 in Advanced Solid Tumours",
+      "version": "v2.1"
+    },
+    "questions": [
+      {
+        "ask_at": null,
+        "help": "Part A adds DLT visits and full PK",
+        "id": "part",
+        "kind": "choice",
+        "label": "Part",
+        "options": [
+          {
+            "label": "A · escalation",
+            "value": "A"
+          },
+          {
+            "label": "B · expansion",
+            "value": "B"
+          }
+        ],
+        "scope": "participant",
+        "text": "Part?"
+      },
+      {
+        "ask_at": null,
+        "help": "From the dose assignment",
+        "id": "dl",
+        "kind": "choice",
+        "label": "Dose level",
+        "options": [
+          {
+            "label": "DL1",
+            "value": "1"
+          },
+          {
+            "label": "DL2",
+            "value": "2"
+          },
+          {
+            "label": "DL3",
+            "value": "3"
+          },
+          {
+            "label": "DL4",
+            "value": "4"
+          }
+        ],
+        "scope": "participant",
+        "text": "Dose level?"
+      },
+      {
+        "ask_at": null,
+        "help": "",
+        "id": "wocbp",
+        "kind": "boolean",
+        "label": "WOCBP",
+        "options": [],
+        "scope": "participant",
+        "text": "Childbearing potential?"
+      },
+      {
+        "ask_at": {
+          "n": 2,
+          "visit": "cnd1"
+        },
+        "help": "Part B optional biopsy at C2D15",
+        "id": "biopsy",
+        "kind": "boolean",
+        "label": "Biopsy",
+        "options": [],
+        "scope": "decision",
+        "text": "Paired on-treatment biopsy consented?"
+      }
+    ],
+    "review_questions": [],
+    "rules": [],
+    "visits": [
+      {
+        "anchor": "screening",
+        "check": null,
+        "code": "SCR",
+        "condition": null,
+        "duration_days": null,
+        "follows": null,
+        "follows_occurrence": null,
+        "id": "scr",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Screening",
+        "offset_days": 0,
+        "phase": "Screening",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Informed consent"
+          },
+          {
+            "if": [],
+            "name": "Medical history"
+          },
+          {
+            "if": [],
+            "name": "CT/MRI tumour assessment"
+          },
+          {
+            "if": [],
+            "name": "ECOG"
+          },
+          {
+            "if": [],
+            "name": "Hematology & chemistry"
+          },
+          {
+            "if": [],
+            "name": "12-lead ECG (triplicate)"
+          },
+          {
+            "if": [
+              {
+                "in": [
+                  "yes"
+                ],
+                "question": "wocbp"
+              }
+            ],
+            "name": "Pregnancy test"
+          }
+        ],
+        "repeat": null,
+        "source": "Table 1, p. 52",
+        "timepoints": [],
+        "window_after": 0,
+        "window_before": 0
+      },
+      {
+        "anchor": "day1",
+        "check": null,
+        "code": "C1D1",
+        "condition": null,
+        "duration_days": null,
+        "follows": null,
+        "follows_occurrence": null,
+        "id": "c1d1",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Cycle 1 Day 1",
+        "offset_days": 0,
+        "phase": "Cycle 1",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Physical exam"
+          },
+          {
+            "if": [],
+            "name": "Hematology & chemistry"
+          },
+          {
+            "if": [],
+            "name": "HX-77 first dose in clinic"
+          },
+          {
+            "if": [],
+            "name": "AE review"
+          }
+        ],
+        "repeat": null,
+        "source": "Table 1, p. 52; Table 3, p. 55",
+        "timepoints": [
+          {
+            "label": "Pre-dose",
+            "offset_min": 0,
+            "procedures": [
+              {
+                "if": [],
+                "name": "PK sample"
+              },
+              {
+                "if": [],
+                "name": "12-lead ECG"
+              }
+            ],
+            "window_after_min": 0,
+            "window_before_min": 30
+          },
+          {
+            "label": "0.5 h",
+            "offset_min": 30,
+            "procedures": [
+              {
+                "if": [],
+                "name": "PK sample"
+              }
+            ],
+            "window_after_min": 5,
+            "window_before_min": 5
+          },
+          {
+            "label": "1 h",
+            "offset_min": 60,
+            "procedures": [
+              {
+                "if": [],
+                "name": "PK sample"
+              }
+            ],
+            "window_after_min": 5,
+            "window_before_min": 5
+          },
+          {
+            "label": "2 h",
+            "offset_min": 120,
+            "procedures": [
+              {
+                "if": [],
+                "name": "PK sample"
+              },
+              {
+                "if": [],
+                "name": "12-lead ECG"
+              }
+            ],
+            "window_after_min": 10,
+            "window_before_min": 10
+          },
+          {
+            "label": "4 h",
+            "offset_min": 240,
+            "procedures": [
+              {
+                "if": [],
+                "name": "PK sample"
+              }
+            ],
+            "window_after_min": 15,
+            "window_before_min": 15
+          },
+          {
+            "label": "8 h",
+            "offset_min": 480,
+            "procedures": [
+              {
+                "if": [],
+                "name": "PK sample"
+              },
+              {
+                "if": [],
+                "name": "Vital signs"
+              }
+            ],
+            "window_after_min": 30,
+            "window_before_min": 30
+          }
+        ],
+        "window_after": 0,
+        "window_before": 0
+      },
+      {
+        "anchor": "screening",
+        "check": null,
+        "code": "C1D2",
+        "condition": null,
+        "duration_days": null,
+        "follows": "c1d1",
+        "follows_occurrence": null,
+        "id": "c1d2",
+        "include_if": [
+          {
+            "in": [
+              "A"
+            ],
+            "question": "part"
+          }
+        ],
+        "min_gap": null,
+        "modality": "site",
+        "name": "24 h PK",
+        "offset_days": 1,
+        "phase": "Cycle 1",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "PK sample (24 h ± 2 h)"
+          }
+        ],
+        "repeat": null,
+        "source": "Table 3, p. 55",
+        "timepoints": [],
+        "window_after": 0,
+        "window_before": 0
+      },
+      {
+        "anchor": "screening",
+        "check": null,
+        "code": "C1D8",
+        "condition": null,
+        "duration_days": null,
+        "follows": "c1d1",
+        "follows_occurrence": null,
+        "id": "c1d8",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Cycle 1 Day 8",
+        "offset_days": 7,
+        "phase": "Cycle 1",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Hematology & chemistry"
+          },
+          {
+            "if": [],
+            "name": "AE review"
+          }
+        ],
+        "repeat": null,
+        "timepoints": [],
+        "window_after": 1,
+        "window_before": 1
+      },
+      {
+        "anchor": "screening",
+        "check": null,
+        "code": "C1D15",
+        "condition": null,
+        "duration_days": null,
+        "follows": "c1d1",
+        "follows_occurrence": null,
+        "id": "c1d15",
+        "include_if": [
+          {
+            "in": [
+              "A"
+            ],
+            "question": "part"
+          }
+        ],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Cycle 1 Day 15",
+        "offset_days": 14,
+        "phase": "Cycle 1",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Hematology & chemistry"
+          },
+          {
+            "if": [],
+            "name": "AE review"
+          },
+          {
+            "if": [],
+            "name": "DLT assessment"
+          }
+        ],
+        "repeat": null,
+        "timepoints": [],
+        "window_after": 1,
+        "window_before": 1
+      },
+      {
+        "anchor": "screening",
+        "check": null,
+        "code": "C2D1",
+        "condition": null,
+        "duration_days": null,
+        "follows": "c1d1",
+        "follows_occurrence": null,
+        "id": "cnd1",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Cycle 2 Day 1",
+        "offset_days": 21,
+        "phase": "Treatment",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Physical exam"
+          },
+          {
+            "if": [],
+            "name": "Hematology & chemistry"
+          },
+          {
+            "if": [],
+            "name": "Drug dispensing"
+          },
+          {
+            "if": [],
+            "name": "AE review"
+          },
+          {
+            "if": [
+              {
+                "in": [
+                  "yes"
+                ],
+                "question": "wocbp"
+              }
+            ],
+            "name": "Pregnancy test"
+          }
+        ],
+        "repeat": {
+          "chain": true,
+          "code_pattern": "C{n}D1",
+          "count": 6,
+          "delay_effect": null,
+          "every_days": 28,
+          "label_pattern": "Cycle {n} Day 1",
+          "max_days": null,
+          "max_delay_days": null,
+          "open_ended": true,
+          "overrides": [
+            {
+              "add": [
+                {
+                  "if": [],
+                  "name": "DLT period end review"
+                }
+              ],
+              "n": [
+                2
+              ],
+              "note": null,
+              "remove": []
+            }
+          ],
+          "stages": [],
+          "start_n": 2,
+          "until_anchor": "pd"
+        },
+        "timepoints": [],
+        "window_after": 3,
+        "window_before": 3
+      },
+      {
+        "anchor": "screening",
+        "check": null,
+        "code": "C2D15",
+        "condition": null,
+        "duration_days": null,
+        "follows": "cnd1",
+        "follows_occurrence": null,
+        "id": "cnd15",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Cycle 2 Day 15",
+        "offset_days": 14,
+        "phase": "Treatment",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Hematology & chemistry"
+          },
+          {
+            "if": [],
+            "name": "AE review"
+          }
+        ],
+        "repeat": {
+          "chain": false,
+          "code_pattern": "C{n}D15",
+          "count": 2,
+          "delay_effect": null,
+          "every_days": 28,
+          "label_pattern": "Cycle {n} Day 15",
+          "max_days": null,
+          "max_delay_days": null,
+          "open_ended": false,
+          "overrides": [
+            {
+              "add": [
+                {
+                  "if": [
+                    {
+                      "in": [
+                        "yes"
+                      ],
+                      "question": "biopsy"
+                    }
+                  ],
+                  "name": "Tumour biopsy"
+                }
+              ],
+              "n": [
+                2
+              ],
+              "note": null,
+              "remove": []
+            }
+          ],
+          "stages": [],
+          "start_n": 2
+        },
+        "timepoints": [],
+        "window_after": 2,
+        "window_before": 2
+      },
+      {
+        "anchor": "day1",
+        "check": null,
+        "code": "TA1",
+        "condition": "Every 8 weeks from Day 1, regardless of cycle delays.",
+        "duration_days": null,
+        "follows": null,
+        "follows_occurrence": null,
+        "id": "ta",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "site",
+        "name": "Tumour assessment 1",
+        "offset_days": 56,
+        "phase": "Imaging",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "CT/MRI (RECIST 1.1)"
+          }
+        ],
+        "repeat": {
+          "chain": false,
+          "code_pattern": "TA{n}",
+          "count": 6,
+          "delay_effect": null,
+          "every_days": 56,
+          "label_pattern": "Tumour assessment {n}",
+          "max_days": null,
+          "max_delay_days": null,
+          "open_ended": true,
+          "overrides": [],
+          "stages": [],
+          "start_n": 1,
+          "until_anchor": "pd"
+        },
+        "timepoints": [],
+        "window_after": 7,
+        "window_before": 7
+      },
+      {
+        "anchor": "pd",
+        "check": null,
+        "code": "SURV1",
+        "condition": null,
+        "duration_days": null,
+        "follows": null,
+        "follows_occurrence": null,
+        "id": "surv",
+        "include_if": [],
+        "min_gap": null,
+        "modality": "phone",
+        "name": "Survival follow-up 1",
+        "offset_days": 84,
+        "phase": "Follow-up",
+        "prep": null,
+        "procedures": [
+          {
+            "if": [],
+            "name": "Survival status"
+          },
+          {
+            "if": [],
+            "name": "Subsequent therapy"
+          }
+        ],
+        "repeat": {
+          "chain": false,
+          "code_pattern": "SURV{n}",
+          "count": 4,
+          "delay_effect": null,
+          "every_days": 84,
+          "label_pattern": "Survival follow-up {n}",
+          "max_days": null,
+          "max_delay_days": null,
+          "open_ended": false,
+          "overrides": [],
+          "stages": [],
+          "start_n": 1
+        },
+        "timepoints": [],
+        "window_after": 14,
+        "window_before": 14
+      }
+    ]
+  },
+  "name": "helix",
+  "siteAnswers": {}
+}

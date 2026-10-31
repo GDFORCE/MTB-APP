@@ -1,0 +1,2993 @@
+{
+  "case": "test-rules-sp102",
+  "enrolmentAnchors": [],
+  "anchorPositions": {
+    "p1d1": 0,
+    "p2d1": null
+  },
+  "records": {
+    "none": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w12#1",
+            "visitId": "p1w12",
+            "code": "P1W12",
+            "name": "p1w12",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-26",
+            "planned": "2026-03-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 84 d",
+            "windowStart": "2026-03-23",
+            "windowEnd": "2026-03-29",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 85,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w16#1",
+            "visitId": "p1w16",
+            "code": "P1W16",
+            "name": "p1w16",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-04-23",
+            "planned": "2026-04-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 112 d",
+            "windowStart": "2026-04-20",
+            "windowEnd": "2026-04-26",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 113,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w20#1",
+            "visitId": "p1w20",
+            "code": "P1W20",
+            "name": "p1w20",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-05-21",
+            "planned": "2026-05-21",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 140 d",
+            "windowStart": "2026-05-18",
+            "windowEnd": "2026-05-24",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 141,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w24#1",
+            "visitId": "p1w24",
+            "code": "P1W24",
+            "name": "p1w24",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-06-18",
+            "planned": "2026-06-18",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 168 d",
+            "windowStart": "2026-06-15",
+            "windowEnd": "2026-06-21",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 169,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Injection 2",
+            "rule": "Injection 2",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Injection 2 + 14 d",
+            "rule": "Injection 2 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Injection 2 + 28 d",
+            "rule": "Injection 2 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p1w4#1",
+          "code": "P1W4",
+          "name": "p1w4",
+          "date": "2026-01-29",
+          "rel": null
+        },
+        "needs": [
+          "Injection 2 date"
+        ]
+      }
+    },
+    "inj2-day60": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-03-02",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-02",
+            "planned": "2026-03-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-02-27",
+            "windowEnd": "2026-03-05",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 61,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-16",
+            "planned": "2026-03-16",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-03-13",
+            "windowEnd": "2026-03-19",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 75,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-30",
+            "planned": "2026-03-30",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-03-27",
+            "windowEnd": "2026-04-02",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 89,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-03-02",
+            "visits": [
+              {
+                "key": "p1w12#1",
+                "code": "P1W12",
+                "date": "2026-03-26"
+              },
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p2w2#1",
+          "code": "P2W2",
+          "name": "p2w2",
+          "date": "2026-03-16",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "inj2-on-w8-day": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-02-26",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-12",
+            "planned": "2026-03-12",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-03-09",
+            "windowEnd": "2026-03-15",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 71,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-26",
+            "planned": "2026-03-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-03-23",
+            "windowEnd": "2026-03-29",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 85,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-02-26",
+            "visits": [
+              {
+                "key": "p1w12#1",
+                "code": "P1W12",
+                "date": "2026-03-26"
+              },
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p2w2#1",
+          "code": "P2W2",
+          "name": "p2w2",
+          "date": "2026-03-12",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "inj2-by-visit-date": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-04-11",
+            "how": "done",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w12#1",
+            "visitId": "p1w12",
+            "code": "P1W12",
+            "name": "p1w12",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-26",
+            "planned": "2026-03-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 84 d",
+            "windowStart": "2026-03-23",
+            "windowEnd": "2026-03-29",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 85,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-04-11",
+            "planned": "2026-04-11",
+            "actual": "2026-04-11",
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-04-08",
+            "windowEnd": "2026-04-14",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 101,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-04-25",
+            "planned": "2026-04-25",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-04-22",
+            "windowEnd": "2026-04-28",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 115,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-04-24",
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-05-09",
+            "planned": "2026-05-09",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-05-06",
+            "windowEnd": "2026-05-12",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 129,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-05-08",
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-04-11",
+            "visits": [
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p2w2#1",
+          "code": "P2W2",
+          "name": "p2w2",
+          "date": "2026-04-25",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "inj2-too-early": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-01-21",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-21",
+            "planned": "2026-01-21",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-01-18",
+            "windowEnd": "2026-01-24",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 21,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-04",
+            "planned": "2026-02-04",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-02-01",
+            "windowEnd": "2026-02-07",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 35,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-18",
+            "planned": "2026-02-18",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-02-15",
+            "windowEnd": "2026-02-21",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 49,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-01-21",
+            "visits": [
+              {
+                "key": "p1w8#1",
+                "code": "P1W8",
+                "date": "2026-02-26"
+              },
+              {
+                "key": "p1w12#1",
+                "code": "P1W12",
+                "date": "2026-03-26"
+              },
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [
+          "Injection 2 given is 20 days after Period 1 Day 1; the protocol allows 29 to 140 days."
+        ],
+        "issues": [
+          {
+            "rule": "inj2",
+            "kind": "window",
+            "text": "Injection 2 given is 20 days after Period 1 Day 1; the protocol allows 29 to 140 days."
+          }
+        ],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p1w4#1",
+          "code": "P1W4",
+          "name": "p1w4",
+          "date": "2026-01-29",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "inj2-on-w4-day": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-01-29",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-12",
+            "planned": "2026-02-12",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-02-09",
+            "windowEnd": "2026-02-15",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 43,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-01-29",
+            "visits": [
+              {
+                "key": "p1w8#1",
+                "code": "P1W8",
+                "date": "2026-02-26"
+              },
+              {
+                "key": "p1w12#1",
+                "code": "P1W12",
+                "date": "2026-03-26"
+              },
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [
+          "Injection 2 given is 28 days after Period 1 Day 1; the protocol allows 29 to 140 days.",
+          "Injection 2 given falls on the P1W4 visit day, which the protocol does not allow."
+        ],
+        "issues": [
+          {
+            "rule": "inj2",
+            "kind": "window",
+            "text": "Injection 2 given is 28 days after Period 1 Day 1; the protocol allows 29 to 140 days."
+          },
+          {
+            "rule": "inj2",
+            "kind": "visit_day",
+            "text": "Injection 2 given falls on the P1W4 visit day, which the protocol does not allow."
+          }
+        ],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p1w4#1",
+          "code": "P1W4",
+          "name": "p1w4",
+          "date": "2026-01-29",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "inj2-before-start": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Injection 2",
+            "rule": "Injection 2",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Injection 2 + 14 d",
+            "rule": "Injection 2 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Injection 2 + 28 d",
+            "rule": "Injection 2 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w12#1",
+            "visitId": "p1w12",
+            "code": "P1W12",
+            "name": "p1w12",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-26",
+            "planned": "2026-03-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 84 d",
+            "windowStart": "2026-03-23",
+            "windowEnd": "2026-03-29",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 85,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w16#1",
+            "visitId": "p1w16",
+            "code": "P1W16",
+            "name": "p1w16",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-04-23",
+            "planned": "2026-04-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 112 d",
+            "windowStart": "2026-04-20",
+            "windowEnd": "2026-04-26",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 113,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w20#1",
+            "visitId": "p1w20",
+            "code": "P1W20",
+            "name": "p1w20",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-05-21",
+            "planned": "2026-05-21",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 140 d",
+            "windowStart": "2026-05-18",
+            "windowEnd": "2026-05-24",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 141,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          },
+          {
+            "type": "visit",
+            "key": "p1w24#1",
+            "visitId": "p1w24",
+            "code": "P1W24",
+            "name": "p1w24",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-06-18",
+            "planned": "2026-06-18",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 168 d",
+            "windowStart": "2026-06-15",
+            "windowEnd": "2026-06-21",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 169,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": [
+              "Injection 2 given"
+            ]
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [
+          "Injection 2 given (22 Dec) is before Period 1 Day 1 (01 Jan), so it was not applied. Check the date."
+        ],
+        "issues": [
+          {
+            "rule": "inj2",
+            "kind": "order",
+            "text": "Injection 2 given (22 Dec) is before Period 1 Day 1 (01 Jan), so it was not applied. Check the date."
+          }
+        ],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p2d1v#1",
+          "code": "P2D1V",
+          "name": "p2d1v",
+          "date": null,
+          "rel": "Injection 2"
+        },
+        "needs": [
+          "Injection 2 date"
+        ]
+      }
+    },
+    "aesi-then-inj2": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-03-02",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-02",
+            "planned": "2026-03-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-02-27",
+            "windowEnd": "2026-03-05",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 61,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-16",
+            "planned": "2026-03-16",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-03-13",
+            "windowEnd": "2026-03-19",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 75,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-30",
+            "planned": "2026-03-30",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-03-27",
+            "windowEnd": "2026-04-02",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 89,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-03-02",
+            "visits": [
+              {
+                "key": "p1w12#1",
+                "code": "P1W12",
+                "date": "2026-03-26"
+              },
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [
+          "Injection 2 given (02 Mar) comes after AESI (10 Feb), which rules it out."
+        ],
+        "issues": [
+          {
+            "rule": "inj2",
+            "kind": "blocked",
+            "text": "Injection 2 given (02 Mar) comes after AESI (10 Feb), which rules it out."
+          }
+        ],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p2w2#1",
+          "code": "P2W2",
+          "name": "p2w2",
+          "date": "2026-03-16",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "w12-done-anyway": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "p1d1",
+            "label": "Period 1 Day 1",
+            "kind": "start",
+            "date": "2026-01-01",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "p2d1",
+            "label": "Injection 2",
+            "kind": "ask",
+            "date": "2026-03-02",
+            "how": "entered",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "p1d1v#1",
+            "visitId": "p1d1v",
+            "code": "P1D1V",
+            "name": "p1d1v",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-01",
+            "planned": "2026-01-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1",
+            "windowStart": "2025-12-29",
+            "windowEnd": "2026-01-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w4#1",
+            "visitId": "p1w4",
+            "code": "P1W4",
+            "name": "p1w4",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-01-29",
+            "planned": "2026-01-29",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 28 d",
+            "windowStart": "2026-01-26",
+            "windowEnd": "2026-02-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 29,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w8#1",
+            "visitId": "p1w8",
+            "code": "P1W8",
+            "name": "p1w8",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-02-26",
+            "planned": "2026-02-26",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 Day 1 + 56 d",
+            "windowStart": "2026-02-23",
+            "windowEnd": "2026-03-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1v#1",
+            "visitId": "p2d1v",
+            "code": "P2D1V",
+            "name": "p2d1v",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-02",
+            "planned": "2026-03-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2",
+            "windowStart": "2026-02-27",
+            "windowEnd": "2026-03-05",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 61,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w2#1",
+            "visitId": "p2w2",
+            "code": "P2W2",
+            "name": "p2w2",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-16",
+            "planned": "2026-03-16",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 14 d",
+            "windowStart": "2026-03-13",
+            "windowEnd": "2026-03-19",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 75,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1w12#1",
+            "visitId": "p1w12",
+            "code": "P1W12",
+            "name": "p1w12",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-03-27",
+            "planned": "2026-03-26",
+            "actual": "2026-03-27",
+            "relative": null,
+            "rule": "Period 1 Day 1 + 84 d",
+            "windowStart": "2026-03-23",
+            "windowEnd": "2026-03-29",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 86,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2w4#1",
+            "visitId": "p2w4",
+            "code": "P2W4",
+            "name": "p2w4",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-03-30",
+            "planned": "2026-03-30",
+            "actual": null,
+            "relative": null,
+            "rule": "Injection 2 + 28 d",
+            "windowStart": "2026-03-27",
+            "windowEnd": "2026-04-02",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 89,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "effect": "Later Period 1 visits stop; Period 2 follows Injection 2.",
+            "date": "2026-03-02",
+            "visits": [
+              {
+                "key": "p1w16#1",
+                "code": "P1W16",
+                "date": "2026-04-23"
+              },
+              {
+                "key": "p1w20#1",
+                "code": "P1W20",
+                "date": "2026-05-21"
+              },
+              {
+                "key": "p1w24#1",
+                "code": "P1W24",
+                "date": "2026-06-18"
+              }
+            ]
+          }
+        ],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": [
+          {
+            "rule": "inj2",
+            "label": "Injection 2 given",
+            "anchor": "p2d1",
+            "event": null,
+            "from": "2026-01-30",
+            "to": "2026-05-21",
+            "notOn": {
+              "code": "P1W4",
+              "date": "2026-01-29"
+            }
+          }
+        ]
+      },
+      "summary": {
+        "next": {
+          "key": "p2w4#1",
+          "code": "P2W4",
+          "name": "p2w4",
+          "date": "2026-03-30",
+          "rel": null
+        },
+        "needs": []
+      }
+    }
+  }
+}

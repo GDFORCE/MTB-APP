@@ -64,6 +64,10 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
         tags.push({ text: `${d > 0 ? "+" : "−"}${Math.abs(d)} day${Math.abs(d) === 1 ? "" : "s"}`, tone: "amber" });
         meta += ` · planned ${short(row.planned)}`;
       }
+    } else if (row.status === "skipped") {
+      dot = "struck";
+      meta = `Skipped${row.check?.skip ? ` ${short(row.check.skip.date)}` : ""} · not made up`;
+      if (row.check?.skip?.why) tags.push({ text: row.check.skip.why, tone: "grey" });
     } else if (row.status === "waiting" || !row.date) {
       dot = "wait";
       meta = row.relative || "Waits for a date";
@@ -83,6 +87,15 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
       tags.push({ text: cond ? `Only if ${cond}` : "Depends on an answer", tone: "violet" });
     }
     if (row.until) tags.push({ text: `Until ${row.until}`, tone: "amber" });
+    if (row.check && row.status !== "done") {
+      if (row.check.state === "held") tags.push({ text: row.check.nextCheck ? `Held · check again ${short(row.check.nextCheck)}` : "Held", tone: "red" });
+      else if (row.check.state === "ask") tags.push({ text: `Check: ${row.check.text}`, tone: "violet" });
+      else if (row.check.state === "again") tags.push({ text: "Not met yet · comes back", tone: "amber" });
+      else if (row.check.state === "met") tags.push({ text: "Met · last one", tone: "green" });
+      if (row.check.reduce) tags.push({ text: `${row.check.reduce.percent}% dose this time`, tone: "amber" });
+    }
+    // A dose below the drug's starting level (reduced, or set lower by staff).
+    for (const d of row.doses || []) if (d.reduced && d.levelLabel) tags.push({ text: `${d.label} ${d.levelLabel}`, tone: "amber" });
     if (row.status !== "done") for (const label of row.stopsIf || []) tags.push({ text: `Stops if ${label}`, tone: "grey" });
     drafts.push({
       ...blank(row.key, "visit", row.date), phase: row.phase || "Visit", name: `${row.code} · ${row.name}`, meta, dot, tags, visit: row,

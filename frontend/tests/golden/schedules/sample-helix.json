@@ -1,0 +1,6211 @@
+{
+  "case": "sample-helix",
+  "enrolmentAnchors": [
+    "day1"
+  ],
+  "anchorPositions": {
+    "screening": 0,
+    "day1": 14,
+    "pd": null
+  },
+  "records": {
+    "empty": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          },
+          {
+            "id": "pd",
+            "label": "Progression",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": "pd"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "CT/MRI tumour assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ECOG",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "12-lead ECG (triplicate)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 1, p. 52",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d1#1",
+            "visitId": "c1d1",
+            "code": "C1D1",
+            "name": "Cycle 1 Day 1",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1",
+            "rule": "Day 1",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "HX-77 first dose in clinic",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "0.5 h",
+                "offsetMin": 30,
+                "at": "+30 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "2 h",
+                "offsetMin": 120,
+                "at": "+2 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "8 h",
+                "offsetMin": 480,
+                "at": "+8 h",
+                "window": "−30 / +30 min",
+                "procedures": [
+                  "PK sample",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": "Table 1, p. 52; Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d2#1",
+            "visitId": "c1d2",
+            "code": "C1D2",
+            "name": "24 h PK",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C1D1 + 1 d",
+            "rule": "C1D1 + 1 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "PK sample (24 h ± 2 h)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d8#1",
+            "visitId": "c1d8",
+            "code": "C1D8",
+            "name": "Cycle 1 Day 8",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C1D1 + 7 d",
+            "rule": "C1D1 + 7 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d15#1",
+            "visitId": "c1d15",
+            "code": "C1D15",
+            "name": "Cycle 1 Day 15",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C1D1 + 14 d",
+            "rule": "C1D1 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#2",
+            "visitId": "cnd1",
+            "code": "C2D1",
+            "name": "Cycle 2 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C1D1 + 21 d",
+            "rule": "C1D1 + 21 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT period end review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.biopsy",
+            "questionId": "biopsy",
+            "text": "Paired on-treatment biopsy consented?",
+            "help": "Part B optional biopsy at C2D15",
+            "at": "C2D1",
+            "date": null,
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#2",
+            "visitId": "cnd15",
+            "code": "C2D15",
+            "name": "Cycle 2 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C2D1 + 14 d",
+            "rule": "C2D1 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Tumour biopsy",
+                "conditional": true,
+                "condition": "Biopsy = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#3",
+            "visitId": "cnd1",
+            "code": "C3D1",
+            "name": "Cycle 3 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C2D1 + 28 d",
+            "rule": "C2D1 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#1",
+            "visitId": "ta",
+            "code": "TA1",
+            "name": "Tumour assessment 1",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1 + 56 d",
+            "rule": "Day 1 + 56 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Every 8 weeks from Day 1, regardless of cycle delays."
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#3",
+            "visitId": "cnd15",
+            "code": "C3D15",
+            "name": "Cycle 3 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C3D1 + 14 d",
+            "rule": "C3D1 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#4",
+            "visitId": "cnd1",
+            "code": "C4D1",
+            "name": "Cycle 4 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C3D1 + 28 d",
+            "rule": "C3D1 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#5",
+            "visitId": "cnd1",
+            "code": "C5D1",
+            "name": "Cycle 5 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C4D1 + 28 d",
+            "rule": "C4D1 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#2",
+            "visitId": "ta",
+            "code": "TA2",
+            "name": "Tumour assessment 2",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1 + 112 d",
+            "rule": "Day 1 + 112 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#6",
+            "visitId": "cnd1",
+            "code": "C6D1",
+            "name": "Cycle 6 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C5D1 + 28 d",
+            "rule": "C5D1 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#7",
+            "visitId": "cnd1",
+            "code": "C7D1",
+            "name": "Cycle 7 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "C6D1 + 28 d",
+            "rule": "C6D1 + 28 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": true,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#3",
+            "visitId": "ta",
+            "code": "TA3",
+            "name": "Tumour assessment 3",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1 + 168 d",
+            "rule": "Day 1 + 168 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#4",
+            "visitId": "ta",
+            "code": "TA4",
+            "name": "Tumour assessment 4",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1 + 224 d",
+            "rule": "Day 1 + 224 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#5",
+            "visitId": "ta",
+            "code": "TA5",
+            "name": "Tumour assessment 5",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1 + 280 d",
+            "rule": "Day 1 + 280 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#6",
+            "visitId": "ta",
+            "code": "TA6",
+            "name": "Tumour assessment 6",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Day 1 + 336 d",
+            "rule": "Day 1 + 336 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": true,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#1",
+            "visitId": "surv",
+            "code": "SURV1",
+            "name": "Survival follow-up 1",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 84 d",
+            "rule": "Progression + 84 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#2",
+            "visitId": "surv",
+            "code": "SURV2",
+            "name": "Survival follow-up 2",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 168 d",
+            "rule": "Progression + 168 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#3",
+            "visitId": "surv",
+            "code": "SURV3",
+            "name": "Survival follow-up 3",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 252 d",
+            "rule": "Progression + 252 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#4",
+            "visitId": "surv",
+            "code": "SURV4",
+            "name": "Survival follow-up 4",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 336 d",
+            "rule": "Progression + 336 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "scr#1",
+          "code": "SCR",
+          "name": "Screening",
+          "date": "2026-11-02",
+          "rel": null
+        },
+        "needs": [
+          "Day 1 date",
+          "Progression date"
+        ]
+      }
+    },
+    "answered": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "ask",
+            "date": "2026-11-16",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "pd",
+            "label": "Progression",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": "pd"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -14,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "CT/MRI tumour assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ECOG",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "12-lead ECG (triplicate)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 1, p. 52",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d1#1",
+            "visitId": "c1d1",
+            "code": "C1D1",
+            "name": "Cycle 1 Day 1",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-16",
+            "planned": "2026-11-16",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-11-16",
+            "windowEnd": "2026-11-16",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "HX-77 first dose in clinic",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "0.5 h",
+                "offsetMin": 30,
+                "at": "+30 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "2 h",
+                "offsetMin": 120,
+                "at": "+2 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "8 h",
+                "offsetMin": 480,
+                "at": "+8 h",
+                "window": "−30 / +30 min",
+                "procedures": [
+                  "PK sample",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": "Table 1, p. 52; Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d2#1",
+            "visitId": "c1d2",
+            "code": "C1D2",
+            "name": "24 h PK",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-17",
+            "planned": "2026-11-17",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 1 d",
+            "windowStart": "2026-11-17",
+            "windowEnd": "2026-11-17",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 2,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "PK sample (24 h ± 2 h)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d8#1",
+            "visitId": "c1d8",
+            "code": "C1D8",
+            "name": "Cycle 1 Day 8",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 7 d",
+            "windowStart": "2026-11-22",
+            "windowEnd": "2026-11-24",
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": 8,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d15#1",
+            "visitId": "c1d15",
+            "code": "C1D15",
+            "name": "Cycle 1 Day 15",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-30",
+            "planned": "2026-11-30",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 14 d",
+            "windowStart": "2026-11-29",
+            "windowEnd": "2026-12-01",
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": 15,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#2",
+            "visitId": "cnd1",
+            "code": "C2D1",
+            "name": "Cycle 2 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-07",
+            "planned": "2026-12-07",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 21 d",
+            "windowStart": "2026-12-04",
+            "windowEnd": "2026-12-10",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 22,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT period end review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.biopsy",
+            "questionId": "biopsy",
+            "text": "Paired on-treatment biopsy consented?",
+            "help": "Part B optional biopsy at C2D15",
+            "at": "C2D1",
+            "date": "2026-12-07",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "yes"
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#2",
+            "visitId": "cnd15",
+            "code": "C2D15",
+            "name": "Cycle 2 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-21",
+            "planned": "2026-12-21",
+            "actual": null,
+            "relative": null,
+            "rule": "C2D1 + 14 d",
+            "windowStart": "2026-12-19",
+            "windowEnd": "2026-12-23",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 36,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Tumour biopsy",
+                "conditional": false,
+                "condition": "Biopsy = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#3",
+            "visitId": "cnd1",
+            "code": "C3D1",
+            "name": "Cycle 3 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-04",
+            "planned": "2027-01-04",
+            "actual": null,
+            "relative": null,
+            "rule": "C2D1 + 28 d",
+            "windowStart": "2027-01-01",
+            "windowEnd": "2027-01-07",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 50,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#1",
+            "visitId": "ta",
+            "code": "TA1",
+            "name": "Tumour assessment 1",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-11",
+            "planned": "2027-01-11",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2027-01-04",
+            "windowEnd": "2027-01-18",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Every 8 weeks from Day 1, regardless of cycle delays."
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#3",
+            "visitId": "cnd15",
+            "code": "C3D15",
+            "name": "Cycle 3 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-18",
+            "planned": "2027-01-18",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 14 d",
+            "windowStart": "2027-01-16",
+            "windowEnd": "2027-01-20",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 64,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#4",
+            "visitId": "cnd1",
+            "code": "C4D1",
+            "name": "Cycle 4 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-02-01",
+            "planned": "2027-02-01",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 28 d",
+            "windowStart": "2027-01-29",
+            "windowEnd": "2027-02-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 78,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#5",
+            "visitId": "cnd1",
+            "code": "C5D1",
+            "name": "Cycle 5 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-01",
+            "planned": "2027-03-01",
+            "actual": null,
+            "relative": null,
+            "rule": "C4D1 + 28 d",
+            "windowStart": "2027-02-26",
+            "windowEnd": "2027-03-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 106,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#2",
+            "visitId": "ta",
+            "code": "TA2",
+            "name": "Tumour assessment 2",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-08",
+            "planned": "2027-03-08",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 112 d",
+            "windowStart": "2027-03-01",
+            "windowEnd": "2027-03-15",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 113,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#6",
+            "visitId": "cnd1",
+            "code": "C6D1",
+            "name": "Cycle 6 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-29",
+            "planned": "2027-03-29",
+            "actual": null,
+            "relative": null,
+            "rule": "C5D1 + 28 d",
+            "windowStart": "2027-03-26",
+            "windowEnd": "2027-04-01",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 134,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#7",
+            "visitId": "cnd1",
+            "code": "C7D1",
+            "name": "Cycle 7 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-04-26",
+            "planned": "2027-04-26",
+            "actual": null,
+            "relative": null,
+            "rule": "C6D1 + 28 d",
+            "windowStart": "2027-04-23",
+            "windowEnd": "2027-04-29",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 162,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": true,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#3",
+            "visitId": "ta",
+            "code": "TA3",
+            "name": "Tumour assessment 3",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-05-03",
+            "planned": "2027-05-03",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 168 d",
+            "windowStart": "2027-04-26",
+            "windowEnd": "2027-05-10",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 169,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#4",
+            "visitId": "ta",
+            "code": "TA4",
+            "name": "Tumour assessment 4",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-06-28",
+            "planned": "2027-06-28",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 224 d",
+            "windowStart": "2027-06-21",
+            "windowEnd": "2027-07-05",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 225,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#5",
+            "visitId": "ta",
+            "code": "TA5",
+            "name": "Tumour assessment 5",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-08-23",
+            "planned": "2027-08-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 280 d",
+            "windowStart": "2027-08-16",
+            "windowEnd": "2027-08-30",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 281,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#6",
+            "visitId": "ta",
+            "code": "TA6",
+            "name": "Tumour assessment 6",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-10-18",
+            "planned": "2027-10-18",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 336 d",
+            "windowStart": "2027-10-11",
+            "windowEnd": "2027-10-25",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 337,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": true,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#1",
+            "visitId": "surv",
+            "code": "SURV1",
+            "name": "Survival follow-up 1",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 84 d",
+            "rule": "Progression + 84 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#2",
+            "visitId": "surv",
+            "code": "SURV2",
+            "name": "Survival follow-up 2",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 168 d",
+            "rule": "Progression + 168 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#3",
+            "visitId": "surv",
+            "code": "SURV3",
+            "name": "Survival follow-up 3",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 252 d",
+            "rule": "Progression + 252 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#4",
+            "visitId": "surv",
+            "code": "SURV4",
+            "name": "Survival follow-up 4",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 336 d",
+            "rule": "Progression + 336 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "c1d1#1",
+          "code": "C1D1",
+          "name": "Cycle 1 Day 1",
+          "date": "2026-11-16",
+          "rel": null
+        },
+        "needs": [
+          "Progression date"
+        ]
+      }
+    },
+    "recorded": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "ask",
+            "date": "2026-11-18",
+            "how": "done",
+            "setByEvent": null
+          },
+          {
+            "id": "pd",
+            "label": "Progression",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": "pd"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -16,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "CT/MRI tumour assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ECOG",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "12-lead ECG (triplicate)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 1, p. 52",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d1#1",
+            "visitId": "c1d1",
+            "code": "C1D1",
+            "name": "Cycle 1 Day 1",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-18",
+            "planned": "2026-11-18",
+            "actual": "2026-11-18",
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-11-18",
+            "windowEnd": "2026-11-18",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "HX-77 first dose in clinic",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "08:30",
+                "window": "08:00 – 08:30",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "0.5 h",
+                "offsetMin": 30,
+                "at": "09:00",
+                "window": "08:55 – 09:05",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "09:30",
+                "window": "09:25 – 09:35",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "2 h",
+                "offsetMin": 120,
+                "at": "10:30",
+                "window": "10:20 – 10:40",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "12:30",
+                "window": "12:15 – 12:45",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "8 h",
+                "offsetMin": 480,
+                "at": "16:30",
+                "window": "16:00 – 17:00",
+                "procedures": [
+                  "PK sample",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": "Table 1, p. 52; Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d8#1",
+            "visitId": "c1d8",
+            "code": "C1D8",
+            "name": "Cycle 1 Day 8",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-25",
+            "planned": "2026-11-25",
+            "actual": "2026-11-25",
+            "relative": null,
+            "rule": "C1D1 + 7 d",
+            "windowStart": "2026-11-24",
+            "windowEnd": "2026-11-26",
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": 8,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#2",
+            "visitId": "cnd1",
+            "code": "C2D1",
+            "name": "Cycle 2 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-12-12",
+            "planned": "2026-12-09",
+            "actual": "2026-12-12",
+            "relative": null,
+            "rule": "C1D1 + 21 d",
+            "windowStart": "2026-12-06",
+            "windowEnd": "2026-12-12",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 25,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT period end review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.biopsy",
+            "questionId": "biopsy",
+            "text": "Paired on-treatment biopsy consented?",
+            "help": "Part B optional biopsy at C2D15",
+            "at": "C2D1",
+            "date": "2026-12-12",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#2",
+            "visitId": "cnd15",
+            "code": "C2D15",
+            "name": "Cycle 2 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-12-26",
+            "planned": "2026-12-26",
+            "actual": "2026-12-26",
+            "relative": null,
+            "rule": "C2D1 + 14 d",
+            "windowStart": "2026-12-24",
+            "windowEnd": "2026-12-28",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 39,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Tumour biopsy",
+                "conditional": true,
+                "condition": "Biopsy = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#3",
+            "visitId": "cnd1",
+            "code": "C3D1",
+            "name": "Cycle 3 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2027-01-12",
+            "planned": "2027-01-09",
+            "actual": "2027-01-12",
+            "relative": null,
+            "rule": "C2D1 + 28 d",
+            "windowStart": "2027-01-06",
+            "windowEnd": "2027-01-12",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 56,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#1",
+            "visitId": "ta",
+            "code": "TA1",
+            "name": "Tumour assessment 1",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "done",
+            "date": "2027-01-13",
+            "planned": "2027-01-13",
+            "actual": "2027-01-13",
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2027-01-06",
+            "windowEnd": "2027-01-20",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Every 8 weeks from Day 1, regardless of cycle delays."
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#3",
+            "visitId": "cnd15",
+            "code": "C3D15",
+            "name": "Cycle 3 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-26",
+            "planned": "2027-01-26",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 14 d",
+            "windowStart": "2027-01-24",
+            "windowEnd": "2027-01-28",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 70,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#4",
+            "visitId": "cnd1",
+            "code": "C4D1",
+            "name": "Cycle 4 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-02-09",
+            "planned": "2027-02-09",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 28 d",
+            "windowStart": "2027-02-06",
+            "windowEnd": "2027-02-12",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 84,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#5",
+            "visitId": "cnd1",
+            "code": "C5D1",
+            "name": "Cycle 5 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-09",
+            "planned": "2027-03-09",
+            "actual": null,
+            "relative": null,
+            "rule": "C4D1 + 28 d",
+            "windowStart": "2027-03-06",
+            "windowEnd": "2027-03-12",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 112,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#2",
+            "visitId": "ta",
+            "code": "TA2",
+            "name": "Tumour assessment 2",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-10",
+            "planned": "2027-03-10",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 112 d",
+            "windowStart": "2027-03-03",
+            "windowEnd": "2027-03-17",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 113,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#6",
+            "visitId": "cnd1",
+            "code": "C6D1",
+            "name": "Cycle 6 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-04-06",
+            "planned": "2027-04-06",
+            "actual": null,
+            "relative": null,
+            "rule": "C5D1 + 28 d",
+            "windowStart": "2027-04-03",
+            "windowEnd": "2027-04-09",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 140,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#7",
+            "visitId": "cnd1",
+            "code": "C7D1",
+            "name": "Cycle 7 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-05-04",
+            "planned": "2027-05-04",
+            "actual": null,
+            "relative": null,
+            "rule": "C6D1 + 28 d",
+            "windowStart": "2027-05-01",
+            "windowEnd": "2027-05-07",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 168,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": true,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#3",
+            "visitId": "ta",
+            "code": "TA3",
+            "name": "Tumour assessment 3",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-05-05",
+            "planned": "2027-05-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 168 d",
+            "windowStart": "2027-04-28",
+            "windowEnd": "2027-05-12",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 169,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#4",
+            "visitId": "ta",
+            "code": "TA4",
+            "name": "Tumour assessment 4",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-06-30",
+            "planned": "2027-06-30",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 224 d",
+            "windowStart": "2027-06-23",
+            "windowEnd": "2027-07-07",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 225,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#5",
+            "visitId": "ta",
+            "code": "TA5",
+            "name": "Tumour assessment 5",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-08-25",
+            "planned": "2027-08-25",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 280 d",
+            "windowStart": "2027-08-18",
+            "windowEnd": "2027-09-01",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 281,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#6",
+            "visitId": "ta",
+            "code": "TA6",
+            "name": "Tumour assessment 6",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-10-20",
+            "planned": "2027-10-20",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 336 d",
+            "windowStart": "2027-10-13",
+            "windowEnd": "2027-10-27",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 337,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": true,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#1",
+            "visitId": "surv",
+            "code": "SURV1",
+            "name": "Survival follow-up 1",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 84 d",
+            "rule": "Progression + 84 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#2",
+            "visitId": "surv",
+            "code": "SURV2",
+            "name": "Survival follow-up 2",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 168 d",
+            "rule": "Progression + 168 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#3",
+            "visitId": "surv",
+            "code": "SURV3",
+            "name": "Survival follow-up 3",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 252 d",
+            "rule": "Progression + 252 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#4",
+            "visitId": "surv",
+            "code": "SURV4",
+            "name": "Survival follow-up 4",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Progression + 336 d",
+            "rule": "Progression + 336 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [
+          {
+            "id": "c1d2",
+            "code": "C1D2",
+            "name": "24 h PK",
+            "onlyIf": "Part = A · escalation"
+          },
+          {
+            "id": "c1d15",
+            "code": "C1D15",
+            "name": "Cycle 1 Day 15",
+            "onlyIf": "Part = A · escalation"
+          }
+        ],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "cnd15#3",
+          "code": "C3D15",
+          "name": "Cycle 3 Day 15",
+          "date": "2027-01-26",
+          "rel": null
+        },
+        "needs": [
+          "Biopsy",
+          "Progression date"
+        ]
+      }
+    },
+    "dlt-and-progression": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "ask",
+            "date": "2026-11-16",
+            "how": "done",
+            "setByEvent": null
+          },
+          {
+            "id": "pd",
+            "label": "Progression",
+            "kind": "ask",
+            "date": "2027-02-10",
+            "how": "entered",
+            "setByEvent": "pd"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -14,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "CT/MRI tumour assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ECOG",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "12-lead ECG (triplicate)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 1, p. 52",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d1#1",
+            "visitId": "c1d1",
+            "code": "C1D1",
+            "name": "Cycle 1 Day 1",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-16",
+            "planned": "2026-11-16",
+            "actual": "2026-11-16",
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-11-16",
+            "windowEnd": "2026-11-16",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "HX-77 first dose in clinic",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "0.5 h",
+                "offsetMin": 30,
+                "at": "+30 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "2 h",
+                "offsetMin": 120,
+                "at": "+2 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "8 h",
+                "offsetMin": 480,
+                "at": "+8 h",
+                "window": "−30 / +30 min",
+                "procedures": [
+                  "PK sample",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": "Table 1, p. 52; Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d2#1",
+            "visitId": "c1d2",
+            "code": "C1D2",
+            "name": "24 h PK",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-17",
+            "planned": "2026-11-17",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 1 d",
+            "windowStart": "2026-11-17",
+            "windowEnd": "2026-11-17",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 2,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "PK sample (24 h ± 2 h)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d8#1",
+            "visitId": "c1d8",
+            "code": "C1D8",
+            "name": "Cycle 1 Day 8",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 7 d",
+            "windowStart": "2026-11-22",
+            "windowEnd": "2026-11-24",
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": 8,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d15#1",
+            "visitId": "c1d15",
+            "code": "C1D15",
+            "name": "Cycle 1 Day 15",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-30",
+            "planned": "2026-11-30",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 14 d",
+            "windowStart": "2026-11-29",
+            "windowEnd": "2026-12-01",
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": 15,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.d1.dlt_v#1",
+            "visitId": "dlt_v",
+            "code": "DLT",
+            "name": "DLT evaluation visit",
+            "phase": "Event",
+            "phaseGroup": "procedure",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-01",
+            "planned": "2026-12-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Dose-limiting toxicity + 1 d",
+            "windowStart": "2026-12-01",
+            "windowEnd": "2026-12-03",
+            "windowDays": [
+              0,
+              2
+            ],
+            "studyDay": 16,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Dose-limiting toxicity · 30 Nov",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE grading",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Sponsor notification",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#2",
+            "visitId": "cnd1",
+            "code": "C2D1",
+            "name": "Cycle 2 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-07",
+            "planned": "2026-12-07",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 21 d",
+            "windowStart": "2026-12-04",
+            "windowEnd": "2026-12-10",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 22,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT period end review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.biopsy",
+            "questionId": "biopsy",
+            "text": "Paired on-treatment biopsy consented?",
+            "help": "Part B optional biopsy at C2D15",
+            "at": "C2D1",
+            "date": "2026-12-07",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "no"
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#2",
+            "visitId": "cnd15",
+            "code": "C2D15",
+            "name": "Cycle 2 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-21",
+            "planned": "2026-12-21",
+            "actual": null,
+            "relative": null,
+            "rule": "C2D1 + 14 d",
+            "windowStart": "2026-12-19",
+            "windowEnd": "2026-12-23",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 36,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#3",
+            "visitId": "cnd1",
+            "code": "C3D1",
+            "name": "Cycle 3 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-04",
+            "planned": "2027-01-04",
+            "actual": null,
+            "relative": null,
+            "rule": "C2D1 + 28 d",
+            "windowStart": "2027-01-01",
+            "windowEnd": "2027-01-07",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 50,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.u1.uns_v#1",
+            "visitId": "uns_v",
+            "code": "UNS",
+            "name": "Unscheduled visit",
+            "phase": "Event",
+            "phaseGroup": "procedure",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-05",
+            "planned": "2027-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Unscheduled visit",
+            "windowStart": "2027-01-05",
+            "windowEnd": "2027-01-05",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 51,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Unscheduled visit · 05 Jan",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "As clinically indicated",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#1",
+            "visitId": "ta",
+            "code": "TA1",
+            "name": "Tumour assessment 1",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-11",
+            "planned": "2027-01-11",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2027-01-04",
+            "windowEnd": "2027-01-18",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Every 8 weeks from Day 1, regardless of cycle delays."
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#3",
+            "visitId": "cnd15",
+            "code": "C3D15",
+            "name": "Cycle 3 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-18",
+            "planned": "2027-01-18",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 14 d",
+            "windowStart": "2027-01-16",
+            "windowEnd": "2027-01-20",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 64,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#4",
+            "visitId": "cnd1",
+            "code": "C4D1",
+            "name": "Cycle 4 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-02-01",
+            "planned": "2027-02-01",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 28 d",
+            "windowStart": "2027-01-29",
+            "windowEnd": "2027-02-04",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 78,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.p1.eot#1",
+            "visitId": "eot",
+            "code": "EOT",
+            "name": "End of treatment",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-02-17",
+            "planned": "2027-02-17",
+            "actual": null,
+            "relative": null,
+            "rule": "Disease progression + 7 d",
+            "windowStart": "2027-02-17",
+            "windowEnd": "2027-02-24",
+            "windowDays": [
+              0,
+              7
+            ],
+            "studyDay": 94,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Disease progression · 10 Feb",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.p1.confirm#1",
+            "visitId": "confirm",
+            "code": "CONF",
+            "name": "Confirmatory scan",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-10",
+            "planned": "2027-03-10",
+            "actual": null,
+            "relative": null,
+            "rule": "Disease progression + 28 d",
+            "windowStart": "2027-03-10",
+            "windowEnd": "2027-03-17",
+            "windowDays": [
+              0,
+              7
+            ],
+            "studyDay": 115,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Disease progression · 10 Feb",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "CT/MRI (iRECIST)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.p1.sfu#1",
+            "visitId": "sfu",
+            "code": "SFU",
+            "name": "30-day safety follow-up",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-03-12",
+            "planned": "2027-03-12",
+            "actual": null,
+            "relative": null,
+            "rule": "Disease progression + 30 d",
+            "windowStart": "2027-03-05",
+            "windowEnd": "2027-03-19",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 117,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Disease progression · 10 Feb",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#1",
+            "visitId": "surv",
+            "code": "SURV1",
+            "name": "Survival follow-up 1",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2027-05-05",
+            "planned": "2027-05-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Progression + 84 d",
+            "windowStart": "2027-04-21",
+            "windowEnd": "2027-05-19",
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": 171,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#2",
+            "visitId": "surv",
+            "code": "SURV2",
+            "name": "Survival follow-up 2",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2027-07-28",
+            "planned": "2027-07-28",
+            "actual": null,
+            "relative": null,
+            "rule": "Progression + 168 d",
+            "windowStart": "2027-07-14",
+            "windowEnd": "2027-08-11",
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": 255,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#3",
+            "visitId": "surv",
+            "code": "SURV3",
+            "name": "Survival follow-up 3",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2027-10-20",
+            "planned": "2027-10-20",
+            "actual": null,
+            "relative": null,
+            "rule": "Progression + 252 d",
+            "windowStart": "2027-10-06",
+            "windowEnd": "2027-11-03",
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": 339,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "surv#4",
+            "visitId": "surv",
+            "code": "SURV4",
+            "name": "Survival follow-up 4",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2028-01-12",
+            "planned": "2028-01-12",
+            "actual": null,
+            "relative": null,
+            "rule": "Progression + 336 d",
+            "windowStart": "2027-12-29",
+            "windowEnd": "2028-01-26",
+            "windowDays": [
+              14,
+              14
+            ],
+            "studyDay": 423,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Survival status",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Subsequent therapy",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [
+          {
+            "visit": "cnd1",
+            "count": 3,
+            "at": "Progression",
+            "date": "2027-02-10"
+          },
+          {
+            "visit": "ta",
+            "count": 5,
+            "at": "Progression",
+            "date": "2027-02-10"
+          }
+        ],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "ev.p1.eot#1",
+          "code": "EOT",
+          "name": "End of treatment",
+          "date": "2027-02-17",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "stopped-for-toxicity": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "day1",
+            "label": "Day 1",
+            "kind": "ask",
+            "date": "2026-11-16",
+            "how": "done",
+            "setByEvent": null
+          },
+          {
+            "id": "pd",
+            "label": "Progression",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": "pd"
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -14,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "CT/MRI tumour assessment",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ECOG",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "12-lead ECG (triplicate)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": "Table 1, p. 52",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d1#1",
+            "visitId": "c1d1",
+            "code": "C1D1",
+            "name": "Cycle 1 Day 1",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-16",
+            "planned": "2026-11-16",
+            "actual": "2026-11-16",
+            "relative": null,
+            "rule": "Day 1",
+            "windowStart": "2026-11-16",
+            "windowEnd": "2026-11-16",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "HX-77 first dose in clinic",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "0.5 h",
+                "offsetMin": 30,
+                "at": "+30 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "2 h",
+                "offsetMin": 120,
+                "at": "+2 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "PK sample",
+                  "12-lead ECG"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "PK sample"
+                ]
+              },
+              {
+                "label": "8 h",
+                "offsetMin": 480,
+                "at": "+8 h",
+                "window": "−30 / +30 min",
+                "procedures": [
+                  "PK sample",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": "Table 1, p. 52; Table 3, p. 55",
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "c1d8#1",
+            "visitId": "c1d8",
+            "code": "C1D8",
+            "name": "Cycle 1 Day 8",
+            "phase": "Cycle 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 7 d",
+            "windowStart": "2026-11-22",
+            "windowEnd": "2026-11-24",
+            "windowDays": [
+              1,
+              1
+            ],
+            "studyDay": 8,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#2",
+            "visitId": "cnd1",
+            "code": "C2D1",
+            "name": "Cycle 2 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-07",
+            "planned": "2026-12-07",
+            "actual": null,
+            "relative": null,
+            "rule": "C1D1 + 21 d",
+            "windowStart": "2026-12-04",
+            "windowEnd": "2026-12-10",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 22,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "DLT period end review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.biopsy",
+            "questionId": "biopsy",
+            "text": "Paired on-treatment biopsy consented?",
+            "help": "Part B optional biopsy at C2D15",
+            "at": "C2D1",
+            "date": "2026-12-07",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#2",
+            "visitId": "cnd15",
+            "code": "C2D15",
+            "name": "Cycle 2 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-21",
+            "planned": "2026-12-21",
+            "actual": null,
+            "relative": null,
+            "rule": "C2D1 + 14 d",
+            "windowStart": "2026-12-19",
+            "windowEnd": "2026-12-23",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 36,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Tumour biopsy",
+                "conditional": true,
+                "condition": "Biopsy = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd1#3",
+            "visitId": "cnd1",
+            "code": "C3D1",
+            "name": "Cycle 3 Day 1",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-04",
+            "planned": "2027-01-04",
+            "actual": null,
+            "relative": null,
+            "rule": "C2D1 + 28 d",
+            "windowStart": "2027-01-01",
+            "windowEnd": "2027-01-07",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 50,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Drug dispensing",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ta#1",
+            "visitId": "ta",
+            "code": "TA1",
+            "name": "Tumour assessment 1",
+            "phase": "Imaging",
+            "phaseGroup": "other",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-11",
+            "planned": "2027-01-11",
+            "actual": null,
+            "relative": null,
+            "rule": "Day 1 + 56 d",
+            "windowStart": "2027-01-04",
+            "windowEnd": "2027-01-18",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 57,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": "Progression",
+            "procedures": [
+              {
+                "name": "CT/MRI (RECIST 1.1)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Every 8 weeks from Day 1, regardless of cycle delays."
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "cnd15#3",
+            "visitId": "cnd15",
+            "code": "C3D15",
+            "name": "Cycle 3 Day 15",
+            "phase": "Treatment",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-18",
+            "planned": "2027-01-18",
+            "actual": null,
+            "relative": null,
+            "rule": "C3D1 + 14 d",
+            "windowStart": "2027-01-16",
+            "windowEnd": "2027-01-20",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 64,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.t1.tox_eot#1",
+            "visitId": "tox_eot",
+            "code": "EOT",
+            "name": "End of treatment",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-27",
+            "planned": "2027-01-27",
+            "actual": null,
+            "relative": null,
+            "rule": "Stopped for toxicity + 7 d",
+            "windowStart": "2027-01-27",
+            "windowEnd": "2027-02-03",
+            "windowDays": [
+              0,
+              7
+            ],
+            "studyDay": 73,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Stopped for toxicity · 20 Jan",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Physical exam",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.t1.tox_sfu#1",
+            "visitId": "tox_sfu",
+            "code": "SFU",
+            "name": "30-day safety follow-up",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-02-19",
+            "planned": "2027-02-19",
+            "actual": null,
+            "relative": null,
+            "rule": "Stopped for toxicity + 30 d",
+            "windowStart": "2027-02-12",
+            "windowEnd": "2027-02-26",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 96,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Stopped for toxicity · 20 Jan",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [
+          {
+            "id": "c1d2",
+            "code": "C1D2",
+            "name": "24 h PK",
+            "onlyIf": "Part = A · escalation"
+          },
+          {
+            "id": "c1d15",
+            "code": "C1D15",
+            "name": "Cycle 1 Day 15",
+            "onlyIf": "Part = A · escalation"
+          }
+        ],
+        "stopped": [],
+        "ended": {
+          "event": "tox",
+          "date": "2027-01-20",
+          "cancelled": 13
+        },
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "ev.t1.tox_eot#1",
+          "code": "EOT",
+          "name": "End of treatment",
+          "date": "2027-01-27",
+          "rel": null
+        },
+        "needs": [
+          "Ended"
+        ]
+      }
+    }
+  }
+}

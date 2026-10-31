@@ -72,3 +72,23 @@ def test_unknown_visits_and_repeated_one_off_events_are_refused(model):
     assert "Unknown event" in refused(model, valid(events=[{"type": "nope", "date": "2026-12-01"}]))
     assert "only be logged once" in refused(model, valid(events=[
         {"type": "wd", "date": "2026-12-01"}, {"type": "wd", "date": "2026-12-02"}]))
+
+
+def test_a_counted_protocol_date_can_be_entered_but_not_the_start_date(model):
+    # The real gap from screening to the next date differs per patient, so a site may enter it.
+    out = clean_participant(model, valid(answers={"seq": "AB", "wocbp": "no", "@runin": "2026-11-20"}))
+    assert out["answers"]["@runin"] == "2026-11-20"
+    assert "Unknown protocol date" in refused(model, valid(answers={"seq": "AB", "wocbp": "no", "@screening": "2026-11-02"}))
+    assert "Unknown protocol date" in refused(model, valid(answers={"seq": "AB", "wocbp": "no", "@nope": "2026-11-02"}))
+
+
+def test_a_visit_added_by_a_logged_event_can_be_recorded():
+    m = normalize({"anchors": [{"id": "s", "label": "S", "kind": "start"}],
+                   "visits": [{"id": "v1", "code": "V1", "name": "V1", "anchor": "s"}],
+                   "events": [{"id": "pd", "label": "Progression",
+                               "visits": [{"id": "fu", "code": "FU", "name": "Follow-up", "offset_days": 30}]}]})
+    logged = {"startDate": "2026-11-02", "answers": {}, "events": [{"key": "e1", "type": "pd", "date": "2026-12-01"}]}
+    out = clean_participant(m, {**logged, "actuals": {"ev.e1.fu#1": "2026-12-31"}})
+    assert out["actuals"] == {"ev.e1.fu#1": "2026-12-31"}
+    # Only for an event that was logged.
+    assert "Unknown visit" in refused(m, {**logged, "actuals": {"ev.e9.fu#1": "2026-12-31"}})

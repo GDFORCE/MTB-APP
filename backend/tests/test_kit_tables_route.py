@@ -48,6 +48,8 @@ def test_the_upload_job_reads_a_borderless_table_and_the_result_can_be_saved_and
                 return copy.deepcopy(wrong)  # the same misreading every time
             if "MODEL VISITS:" in prompt:
                 return {"corrections": []}
+            if "MODEL EVENTS:" in prompt:
+                return {"events": []}
             return copy.deepcopy(base)
 
     monkeypatch.setattr(kit_routes, "OpenAIKitClient", Client)
@@ -55,7 +57,7 @@ def test_the_upload_job_reads_a_borderless_table_and_the_result_can_be_saved_and
     result = kit_routes._run(job, _borderless_pdf(), "protocol.pdf")
 
     ids = [s["id"] for s in job["stages"]]
-    assert ids == ["read", "locate", "tables", "model", "verify", "check"]
+    assert ids == ["read", "locate", "tables", "model", "verify", "events", "check"]
     locate = next(s for s in job["stages"] if s["id"] == "locate")
     assert locate["detail"] == "tables on p. 1 (1 without cell borders)"
     flag = next(q for q in result["model"]["review_questions"] if q["id"] == "table_check_p1")

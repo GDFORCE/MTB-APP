@@ -3333,6 +3333,8 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
             # staff only, since its answers (arm, childbearing potential, ...) are
             # clinical detail the de-identified sponsor view leaves out.
             'kit': patient.get('kit') if user.get('role') in ('pi', 'crc') else None,
+            # The reviewed model version the record belongs to (None = the current one).
+            'kit_model_version': patient.get('kit_model_version'),
             'deidentified': True,
         })
 
@@ -6953,7 +6955,7 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
             'Link it before inviting patients.',
         )
     kit_model = await db.trial_kit_models.find_one(
-        {'trial_id': body.trial_id}, {'_id': 0, 'model': 1})
+        {'trial_id': body.trial_id}, {'_id': 0, 'model': 1, 'version': 1})
     if kit_model:
         from kit_routes import clean_participant
         kit_participant = clean_participant(kit_model['model'], body.kit)
@@ -7038,6 +7040,8 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
     patient_data['crc_id'] = crc_id
     if kit_model:
         patient_data['kit'] = kit_participant
+        # The reviewed model version this patient is scheduled with; a later save never moves them.
+        patient_data['kit_model_version'] = int(kit_model.get('version') or 1)
         patient_data['baseline_date'] = kit_participant['startDate']
     else:
         patient_data.pop('kit', None)

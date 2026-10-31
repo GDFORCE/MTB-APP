@@ -33,6 +33,8 @@ class FakeClient:
         self.prompts: list[str] = []
 
     def json(self, prompt, *, images=None, on_text=None):
+        if not self.replies:  # a request the test did not script (e.g. the events check)
+            raise AnalysisError("invalid_json", "no scripted reply")
         self.prompts.append(prompt)
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
@@ -54,7 +56,13 @@ def test_normalize_rejects_a_model_without_visits():
 
 
 def test_review_answer_patches_change_the_model():
-    base = normalize(sample())
+    raw = sample()
+    visit = raw["visits"][0]["id"]
+    # A real choice (which window the protocol means) stays a review question.
+    raw["review_questions"] = [{"id": "win", "text": "Which window applies?", "recommended": "3", "options": [
+        {"value": "3", "label": "±3 days", "patches": [{"target": "visit", "id": visit, "field": "window_after", "value": 3}]},
+        {"value": "7", "label": "±7 days", "patches": [{"target": "visit", "id": visit, "field": "window_after", "value": 7}]}]}]
+    base = normalize(raw)
     question = base["review_questions"][0]
     patched = [build_template_model(base, {question["id"]: o["value"]}) for o in question["options"]]
     assert patched[0] != patched[1]
@@ -79,7 +87,7 @@ def test_pipeline_applies_cross_check_corrections():
         on_stage=lambda *args: stages.append(args))
     assert out["corrections"] and "Table 3" in out["corrections"][0]
     assert out["baseModel"]["visits"][0]["window_after"] == 9
-    assert [s[0] for s in stages if s[1] == "done"] == ["model", "verify", "check"]
+    assert [s[0] for s in stages if s[1] == "done"] == ["model", "verify", "events", "check"]
     assert "PROTOCOL TEXT:" in client.prompts[0] and "MODEL VISITS:" in client.prompts[1]
 
 
@@ -204,7 +212,7 @@ def test_a_too_large_protocol_summarizes_every_section_then_checks_original_tabl
     assert out["baseModel"]["visits"] and out["warnings"]
     assert any("summaries" in n for n in out["baseModel"]["notes"])
     assert any(s[0] == "summarize" and s[1] == "run" and "section 2 of" in s[2] for s in stages)
-    assert [s[0] for s in stages if s[1] == "done"] == ["summarize", "model", "verify", "check"]
+    assert [s[0] for s in stages if s[1] == "done"] == ["summarize", "model", "verify", "events", "check"]
 
 
 def test_summary_sections_keep_boundary_text_and_page_references():
@@ -647,7 +655,8 @@ def test_the_legend_goes_to_the_model_build_and_the_cross_check():
                 "tableImages": [{"page": 1, "base64": "p"}], "symbolLegend": legend}
     kit_analyze.analyze_protocol(prepared, client, on_stage=lambda *_: None)
     assert all("SYMBOL LEGEND. test note" in p for p in client.prompts)
-    assert client.images == [["Symbol legend image"], [1, "Symbol legend image"]]
+    # Model build, cross-check, then the events check (which reads the [S#] tags too).
+    assert client.images == [["Symbol legend image"], [1, "Symbol legend image"], ["Symbol legend image"]]
 
 
 # ── Tables without cell borders: read from the image, checked against the page ──
@@ -685,6 +694,8 @@ class TableClient:
         self.calls: list[tuple[str, list]] = []
 
     def json(self, prompt, *, images=None, on_text=None):
+        if not self.replies:  # a request the test did not script (e.g. the events check)
+            raise AnalysisError("invalid_json", "no scripted reply")
         self.calls.append((prompt, [i.get("label") for i in images or []]))
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
@@ -761,7 +772,7 @@ def test_a_borderless_table_flows_through_the_whole_pipeline_and_saves():
     client = TableClient([wrong, wrong, sample(), {"corrections": []}])
     stages: list[tuple] = []
     out = kit_analyze.analyze_protocol(prepared, client, on_stage=lambda *a: stages.append(a))
-    assert [s[0] for s in stages if s[1] == "done"] == ["tables", "model", "verify", "check"]
+    assert [s[0] for s in stages if s[1] == "done"] == ["tables", "model", "verify", "events", "check"]
     build_prompt_text = client.calls[2][0]
     assert f"[[Page 1 · {READ_LABEL}]]" in build_prompt_text  # the model build sees the reading
     flag = next(q for q in out["model"]["review_questions"] if q["id"] == "table_check_p1")
@@ -1025,3 +1036,31 @@ def test_the_prompts_ask_for_one_conditional_rule_per_branch():
     assert '"if": [condition]' in prompt and "never chooses between branches" in prompt
     review = build_review_prompt(normalize(_branchy([])), "TABLE", [])
     assert '"if": [condition]' in review and "tell them apart" in review
+
+
+def _cropped_pdf(hidden_text: str, top_cut: float) -> bytes:
+    """One page whose crop box hides its top part, where ``hidden_text`` is written."""
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=841)
+    page.insert_textbox(fitz.Rect(40, 20, 555, top_cut - 10), hidden_text, fontsize=9)
+    page.insert_text((40, top_cut + 40), "Visible body text of the protocol page. " * 3, fontsize=9)
+    page.set_cropbox(fitz.Rect(0, top_cut, 595, 841))
+    return doc.tobytes()
+
+
+def test_a_cropped_page_is_read_whole_and_reported():
+    note = ("Note: Weekly visits are expected to occur at 7-day intervals, +/- 3 days, counting from Day 1, Week 1. "
+            "CBC, chemistries and urinalysis must be performed within 7 days prior to Day 1, Week 1. ") * 2
+    prepared = prepare_protocol_input(_cropped_pdf(note, 400))
+    assert "+/- 3 days" in prepared["text"] and "within 7 days prior to Day 1" in prepared["text"]
+    assert [h["page"] for h in prepared["hiddenPages"]] == [1]
+    out = kit_analyze.analyze_protocol(prepared, FakeClient([sample(), {"corrections": []}]), on_stage=lambda *_: None)
+    assert any("hides part of page 1" in w for w in out["warnings"])
+    assert any("hides part of page 1" in n for n in out["baseModel"]["notes"])
+
+
+def test_a_crop_that_only_hides_a_running_header_is_read_but_not_reported():
+    prepared = prepare_protocol_input(_cropped_pdf("Sponsor Inc. Protocol HZ2-05-01", 60))
+    assert "Protocol HZ2-05-01" in prepared["text"]
+    assert prepared["hiddenPages"] == []

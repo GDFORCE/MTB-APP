@@ -3,9 +3,12 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { Trash2 } from "lucide-react-native";
 import { fonts } from "@/src/theme/tokens";
 import type { KitPatientRecord } from "./api";
-import { computeKitSchedule, isoParts, ruleIfText, todayIso, type KitDecisionRow, type KitParticipant, type KitSchedule, type KitVisitRow } from "./index";
 import {
-  answer, dmyToIso, formatDmyInput, isoToDmy, logEvent, recordVisit, removeEvent, setAnchorDate,
+  computeKitSchedule, isoParts, ruleIfText, todayIso, type KitDecisionRow, type KitMeasure, type KitParticipant, type KitSchedule, type KitVisitRow,
+} from "./index";
+import {
+  anchorDateProblems, answer, dmyToIso, enterableAnchors, formatDmyInput, formatTimeInput, isoToDmy, logEvent, parseMeasured, recordCheck, recordVisit,
+  removeCheck, removeEvent, setAnchorDate, setBaseline, setDoseLevel, setVisitTime, validTime,
 } from "./participant";
 import { FOCUS as G } from "./focus";
 import { FlowButton, FlowScreen, FlowSheet, flowStyles as f } from "./FlowScreen";
@@ -15,6 +18,7 @@ type Sheet =
   | { kind: "visit"; row: KitVisitRow }
   | { kind: "decision"; row: KitDecisionRow }
   | { kind: "anchor"; id: string }
+  | { kind: "baseline"; id: string }
   | { kind: "events" }
   | { kind: "confirm"; participant: KitParticipant; issues: string[] };
 
@@ -54,9 +58,11 @@ function Banner({ tone, title, text, action, onAction }: {
  * record, and every change (visit done, decision, date, event) goes back through `persist` as a new
  * record. `record` null with no `loadError` shows a spinner.
  */
-export function KitPatientView({ record, loadError, canEdit, onBack, persist }: {
+export function KitPatientView({ record, loadError, canEdit, onBack, persist, moveToLatest }: {
   record: KitPatientRecord | null; loadError?: string; canEdit: boolean; onBack: () => void;
   persist: (participant: KitParticipant) => Promise<void>;
+  /** Put the patient on the trial's newer reviewed model (offered when `record.latest` is set). */
+  moveToLatest?: () => Promise<void>;
 }) {
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [saving, setSaving] = useState(false);
@@ -117,6 +123,14 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist }: 
     {record && !data && <Text style={[f.error, { marginTop: 16 }]}>This schedule could not be calculated.</Text>}
     {record && data && p && <>
       <View style={s.banners}>
+        {canEdit && record.latest && <LatestModelBanner record={record} saving={saving}
+          onMove={moveToLatest ? async () => {
+            setSaving(true); setSaveError("");
+            try { await moveToLatest(); } catch (e: any) {
+              const detail = e?.response?.data?.detail;
+              setSaveError(typeof detail === "string" ? detail : "Couldn't move this patient. Try again.");
+            } finally { setSaving(false); }
+          } : undefined} />}
         {data.ended && <Banner tone="red" title={`${data.ended.label} logged ${short(data.ended.date || todayIso())}.`}
           text={data.cancelled ? `${data.cancelled} planned visit${data.cancelled === 1 ? " was" : "s were"} cancelled.` : "Later visits were cancelled."}
           action={canEdit && endingEvent ? "Undo" : undefined} onAction={() => endingEvent && save(removeEvent(p, endingEvent.key))} />}
@@ -141,14 +155,24 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist }: 
         onPressDecision={canEdit ? (row) => open({ kind: "decision", row }) : undefined}
         onSetAnchor={canEdit ? (anchorId) => open({ kind: "anchor", id: anchorId }) : undefined}
         onPressEvent={canEdit ? () => open({ kind: "events" }) : undefined} />
-      {canEdit && <SetDates record={record} onSet={(anchorId) => open({ kind: "anchor", id: anchorId })} />}
+      {canEdit && <SetDates record={record} schedule={scheduleOf(p)} onSet={(anchorId) => open({ kind: "anchor", id: anchorId })} />}
+      {canEdit && <Baselines record={record} onSet={(measureId) => open({ kind: "baseline", id: measureId })} />}
     </>}
 
     {sheet?.kind === "visit" && p && <VisitSheet row={sheet.row} saving={saving} error={sheetError} onClose={() => setSheet(null)}
-      onSave={(date) => save(recordVisit(p, sheet.row.key, date))} />}
+      onSave={(date) => save(recordVisit(p, sheet.row.key, date))}
+      onCheck={(date, value, values) => save(recordCheck(p, sheet.row.key, date, value, values))}
+      onRemoveCheck={(index) => save(removeCheck(p, sheet.row.key, index))}
+      onSetDose={(doseId, level) => save(setDoseLevel(p, sheet.row.key, doseId, level))}
+      onTime={(time) => save(setVisitTime(p, sheet.row.key, time))} />}
+    {sheet?.kind === "baseline" && p && record && <BaselineSheet measure={record.model.measures?.find((m) => m.id === sheet.id)}
+      value={p.baselines?.[sheet.id] ?? null} saving={saving} error={sheetError} onClose={() => setSheet(null)}
+      onSave={(value) => save(setBaseline(p, sheet.id, value))} />}
     {sheet?.kind === "decision" && p && <FlowSheet visible title={sheet.row.text} onClose={() => setSheet(null)}>
       {!!sheet.row.help && <Text style={f.hint}>{sheet.row.help}</Text>}
-      <Chips options={sheet.row.options} value={sheet.row.answer} onChange={(value) => save(answer(p, sheet.row.questionId, value))} />
+      {sheet.row.kind === "number"
+        ? <NumberAnswer value={sheet.row.answer} saving={saving} onSave={(value) => save(answer(p, sheet.row.questionId, value))} />
+        : <Chips options={sheet.row.options} value={sheet.row.answer} onChange={(value) => save(answer(p, sheet.row.questionId, value))} />}
       <FlowButton label="Clear answer" variant="secondary" disabled={saving} onPress={() => save(answer(p, sheet.row.questionId, null))} />
       {!!sheetError && <Text style={f.error}>{sheetError}</Text>}
     </FlowSheet>}
@@ -163,41 +187,222 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist }: 
       effects={(record.model.rules || []).filter((r) => "anchor" in r.when && r.when.anchor === sheet.id && r.effect).map((r) => r.effect)}
       window={windowText(scheduleOf(p)?.ruleWindows.find((w) => w.anchor === sheet.id))}
       date={p.answers["@" + sheet.id] || null} saving={saving} error={sheetError} onClose={() => setSheet(null)}
-      onSave={(date) => save(setAnchorDate(p, sheet.id, date))} />}
+      onSave={(date) => {
+        const next = setAnchorDate(p, sheet.id, date);
+        const problem = anchorDateProblems(record.model, p.startAnchor, p.startDate, next.answers)[sheet.id];
+        if (problem) setSheetError(problem); else save(next);
+      }} />}
     {sheet?.kind === "events" && p && record && <EventSheet record={record} saving={saving} error={sheetError} onClose={() => setSheet(null)}
       onRemove={(key) => save(removeEvent(p, key))} onLog={(event) => save(logEvent(p, event))} />}
   </FlowScreen>;
 }
 
-/** Dates already entered for "ask" anchors, so they can be corrected. Pending ones show on the timeline. */
-function SetDates({ record, onSet }: { record: KitPatientRecord; onSet: (anchorId: string) => void }) {
-  const set = record.model.anchors.filter((a) => a.kind === "ask" && record.participant.answers["@" + a.id]);
-  if (!set.length) return null;
+/**
+ * The protocol dates a site enters (randomisation / Day 1, surgery, ...), added here once they
+ * happen. Entered ones can be corrected; ones counted from another date show that date and can be
+ * replaced by the real one. Missing ones also show on the timeline where visits wait for them.
+ */
+function SetDates({ record, schedule, onSet }: { record: KitPatientRecord; schedule: KitSchedule | null; onSet: (anchorId: string) => void }) {
+  const answers = record.participant.answers;
+  const list = enterableAnchors(record.model);
+  if (!list.length) return null;
   return <View style={s.setDates}>
-    <Text style={f.sectionTitle}>Dates entered</Text>
-    {set.map((a) => <Pressable key={a.id} accessibilityRole="button" onPress={() => onSet(a.id)} style={s.setDate}>
-      <Text style={s.setDateLabel}>{a.label}</Text>
-      <Text style={s.setDateValue}>{short(record.participant.answers["@" + a.id])}</Text>
-      <Text style={s.link}>Change</Text>
-    </Pressable>)}
+    <Text style={f.sectionTitle}>Protocol dates</Text>
+    {list.map((a) => {
+      const entered = answers["@" + a.id];
+      const counted = schedule?.anchors.find((x) => x.id === a.id)?.date || null;
+      return <Pressable key={a.id} accessibilityRole="button" onPress={() => onSet(a.id)} style={s.setDate}>
+        <Text style={s.setDateLabel}>{a.label}</Text>
+        <Text style={[s.setDateValue, !entered && { color: G.amberText }]}>
+          {entered ? short(entered) : counted ? `${short(counted)} (counted)` : "Not set"}
+        </Text>
+        <Text style={s.link}>{entered ? "Change" : "Add date"}</Text>
+      </Pressable>;
+    })}
   </View>;
 }
 
-function VisitSheet({ row, saving, error, onClose, onSave }: {
+/** "ANC 0.8 · Creatinine 1.2" for the values entered with a check answer. */
+function valuesText(check: NonNullable<KitVisitRow["check"]>, values?: Record<string, number>) {
+  return Object.entries(values || {}).map(([id, v]) => {
+    const m = check.measures.find((x) => x.id === id);
+    return m?.kind === "grade" ? `${m.label} grade ${v}` : `${m?.label || id} ${v}`;
+  }).join(" · ");
+}
+
+function answerText(check: NonNullable<KitVisitRow["check"]>, a: NonNullable<KitVisitRow["check"]>["answers"][number]) {
+  const values = valuesText(check, a.values);
+  // With a dosing table, the row that decided it; otherwise Met / Not met.
+  const result = a.outcomeText ? a.outcomeText.split(" → ").pop()!.replace(/^./, (c) => c.toUpperCase())
+    : a.outcome === "skip" ? "Skip (not made up)" : a.outcome === "reduce" ? "Reduced dose this time"
+    : a.result === "skip" ? "Skip (not made up)"
+    : a.result === "yes" ? (a.by === "values" ? "Met" : "Yes")
+    : a.result === "no" ? (a.failed.length ? `Not met (${a.failed.join(", ")})` : check.until ? "Not met yet" : "No") : "Can't tell yet";
+  return [short(a.date), values, result].filter(Boolean).join(" · ");
+}
+
+/** A decision answered with a number ("Eosinophil count, × ULN"). */
+function NumberAnswer({ value, saving, onSave }: { value: string | null; saving: boolean; onSave: (value: string) => void }) {
+  const [text, setText] = useState(value ?? "");
+  const parsed = parseMeasured(text, "value");
+  return <View style={{ gap: 8 }}>
+    <TextInput value={text} onChangeText={setText} keyboardType="decimal-pad" placeholder="Value" placeholderTextColor={G.muted}
+      style={f.input} testID="kit-decision-value" />
+    {!!text && parsed == null && <Text style={f.error}>Enter a number.</Text>}
+    <FlowButton label="Save answer" loading={saving} disabled={parsed == null || String(parsed) === value} onPress={() => parsed != null && onSave(String(parsed))} />
+  </View>;
+}
+
+/** Measures whose limits compare with the patient's baseline ("creatinine ≤ 1.5 × baseline"). */
+function baselineMeasures(model: KitPatientRecord["model"]) {
+  const used = new Set<string>();
+  const walk = (l: any) => { if (Array.isArray(l?.any)) l.any.forEach(walk); else if (l?.baseline_factor != null) used.add(l.measure); };
+  for (const v of model.visits) {
+    for (const l of v.check?.limits || []) walk(l);
+    for (const c of v.check?.dose_changes || []) for (const l of c.if) walk(l);
+  }
+  return (model.measures || []).filter((m) => used.has(m.id));
+}
+
+/** The baseline values the protocol's limits compare with, entered once per patient. */
+function Baselines({ record, onSet }: { record: KitPatientRecord; onSet: (measureId: string) => void }) {
+  const list = baselineMeasures(record.model);
+  if (!list.length) return null;
+  return <View style={s.setDates}>
+    <Text style={f.sectionTitle}>Baseline values</Text>
+    {list.map((m) => {
+      const value = record.participant.baselines?.[m.id];
+      return <Pressable key={m.id} accessibilityRole="button" onPress={() => onSet(m.id)} style={s.setDate}>
+        <Text style={s.setDateLabel}>{m.label}{m.unit ? ` (${m.unit})` : ""}</Text>
+        <Text style={[s.setDateValue, value == null && { color: G.amberText }]}>{value == null ? "Not set" : String(value)}</Text>
+        <Text style={s.link}>{value == null ? "Add" : "Change"}</Text>
+      </Pressable>;
+    })}
+  </View>;
+}
+
+function BaselineSheet({ measure, value, saving, error, onClose, onSave }: {
+  measure: KitMeasure | undefined; value: number | null; saving: boolean; error: string; onClose: () => void;
+  onSave: (value: number | null) => void;
+}) {
+  const [text, setText] = useState(value == null ? "" : String(value));
+  if (!measure) return null;
+  const parsed = parseMeasured(text, measure.kind);
+  return <FlowSheet visible title={`Baseline ${measure.label}`} onClose={onClose}>
+    {!!measure.baseline && <Text style={f.hint}>The protocol's baseline: {measure.baseline}.</Text>}
+    <TextInput value={text} onChangeText={setText} keyboardType="decimal-pad" placeholder={measure.unit || "Value"}
+      placeholderTextColor={G.muted} style={f.input} testID="kit-baseline-value" />
+    {!!text && parsed == null && <Text style={f.error}>Enter a number{measure.kind === "grade" ? " from 0 to 5" : ""}.</Text>}
+    {!!error && <Text style={f.error}>{error}</Text>}
+    <FlowButton label="Save" loading={saving} disabled={parsed == null} onPress={() => onSave(parsed)} />
+    {value != null && <FlowButton label="Clear" variant="secondary" disabled={saving} onPress={() => onSave(null)} />}
+  </FlowSheet>;
+}
+
+function VisitSheet({ row, saving, error, onClose, onSave, onCheck, onRemoveCheck, onSetDose, onTime }: {
   row: KitVisitRow; saving: boolean; error: string; onClose: () => void; onSave: (date: string | null) => void;
+  onCheck: (date: string, value: "yes" | "no" | "skip" | "reduce" | null, values?: Record<string, number>) => void; onRemoveCheck: (index: number) => void;
+  onSetDose: (doseId: string, level: string | null) => void; onTime: (time: string | null) => void;
 }) {
   const [date, setDate] = useState(isoToDmy(row.actual || todayIso()));
+  const [time, setTime] = useState(row.time || "");
+  const timeOk = validTime(time);
+  const [checkDate, setCheckDate] = useState(isoToDmy(todayIso()));
+  const [typed, setTyped] = useState<Record<string, string>>({});
   const [showProcs, setShowProcs] = useState(false);
   const iso = dmyToIso(date);
+  const checkIso = dmyToIso(checkDate);
+  const check = row.check;
+  // Asked until it is answered Yes (or skipped); a "No" holds the visit and the question comes back.
+  // A repeat-until check is asked at each occurrence until it is met.
+  const canAnswer = !!check && row.status !== "done" && (check.state === "ask" || check.state === "held" || check.state === "again");
+  const canSkip = !!check?.actions.some((a) => a.do === "skip");
+  const reduceRow = check?.actions.find((a) => a.do === "reduce");
+  const measured = check?.measures.length ? check.measures : null;
+  const values: Record<string, number> = {};
+  let badValue = false;
+  for (const m of measured || []) {
+    if (!typed[m.id]) continue;
+    const n = parseMeasured(typed[m.id], m.kind);
+    if (n == null) badValue = true; else values[m.id] = n;
+  }
+  const hasValues = Object.keys(values).length > 0;
+  // Values are enough when the limits can be worked out; otherwise (no limits, or a baseline still
+  // missing) staff also answer Yes or No.
+  const byHand = !measured || (!check?.limits.length && !check?.actions.length) || check.needsBaseline.length > 0;
   const plan = row.planned ? `Planned ${short(row.planned)}` : row.relative || "";
   const window = row.windowStart && row.windowEnd && row.windowStart !== row.windowEnd ? ` · window ${short(row.windowStart)} – ${short(row.windowEnd)}` : "";
   return <FlowSheet visible title={`${row.code} · ${row.name}`} onClose={onClose}>
     {!!(plan + window) && <Text style={f.hint}>{plan + window}</Text>}
+    {row.notes.map((note) => <Text key={note} style={[f.hint, { color: G.amberText }]}>{note}</Text>)}
+    {check && <View style={s.check}>
+      <Text style={f.label}>Before this visit: {check.text}</Text>
+      {!!check.limits.length && <Text style={f.hint}>{check.until ? "Comes back until" : "Goes ahead if"} {check.limits.join(" and ")}.</Text>}
+      {!!check.actions.length && <View style={{ gap: 2 }}>
+        <Text style={f.hint}>What happens, from the values entered:</Text>
+        {check.actions.map((a) => <Text key={a.text} style={[f.hint, { color: G.ink }]}>• {a.text}</Text>)}
+      </View>}
+      {!!check.help && <Text style={f.hint}>{check.help}</Text>}
+      {check.answers.map((a, i) => <View key={`${a.date}-${i}`} style={s.logged}>
+        <Text style={[s.loggedText, { flex: 1 }]}>{answerText(check, a)}</Text>
+        <Pressable disabled={saving} onPress={() => onRemoveCheck(i)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Remove answer">
+          <Trash2 size={18} color={G.redInk} />
+        </Pressable>
+      </View>)}
+      {canAnswer && <>
+        <View style={{ gap: 6 }}>
+          <Text style={f.label}>Date checked</Text>
+          <DateField value={checkDate} onChange={setCheckDate} testID="kit-check-date" />
+        </View>
+        {measured?.map((m) => <View key={m.id} style={{ gap: 6 }}>
+          <Text style={f.label}>{m.label}{m.unit ? ` (${m.unit})` : ""}{m.kind === "grade" ? " grade" : ""}</Text>
+          {m.kind === "grade"
+            ? <Chips options={["0", "1", "2", "3", "4", "5"].map((g) => ({ value: g, label: g }))} value={typed[m.id]}
+              onChange={(g) => setTyped((t) => ({ ...t, [m.id]: t[m.id] === g ? "" : g }))} />
+            : <TextInput value={typed[m.id] || ""} onChangeText={(v) => setTyped((t) => ({ ...t, [m.id]: v }))} keyboardType="decimal-pad"
+              placeholder="Value" placeholderTextColor={G.muted} style={f.input} testID={`kit-check-value-${m.id}`} />}
+        </View>)}
+        {badValue && <Text style={f.error}>Enter numbers only.</Text>}
+        {!!check.needsBaseline.length && <Text style={f.hint}>
+          Enter the baseline {check.needsBaseline.join(", ")} under Baseline values to work this out; until then answer by hand.
+        </Text>}
+        {!byHand && <FlowButton label="Save values" loading={saving} disabled={!checkIso || !hasValues || badValue}
+          onPress={() => checkIso && onCheck(checkIso, null, values)} />}
+        {byHand && <>
+          <FlowButton label={check.until ? "Met (this is the last one)" : "Yes"} loading={saving} disabled={!checkIso || badValue}
+            onPress={() => checkIso && onCheck(checkIso, "yes", values)} />
+          <FlowButton label={check.until ? "Not yet (comes back next time)" : "No, hold this visit"} variant="secondary"
+            disabled={saving || !checkIso || badValue} onPress={() => checkIso && onCheck(checkIso, "no", values)} />
+          {!check.until && reduceRow && <FlowButton label={`Give ${reduceRow.percent}% this time`} variant="secondary"
+            disabled={saving || !checkIso || badValue} onPress={() => checkIso && onCheck(checkIso, "reduce", values)} />}
+          {!check.until && canSkip && <FlowButton label="Skip this dose (not made up)" variant="secondary"
+            disabled={saving || !checkIso || badValue} onPress={() => checkIso && onCheck(checkIso, "skip", values)} />}
+        </>}
+      </>}
+      {!!check.source && <Text style={f.hint}>From the protocol: {check.source}</Text>}
+    </View>}
+    {row.doses.map((d) => <View key={d.dose} style={s.check}>
+      <Text style={f.label}>{d.label}: {d.levelLabel || "level not stated"}</Text>
+      {!!d.changed && !d.manual && <Text style={f.hint}>Changed here: {d.changed}.</Text>}
+      <Chips options={d.levels.map((l) => ({ value: l.id, label: l.label }))} value={d.manual ? d.level : null}
+        onChange={(level) => onSetDose(d.dose, level)} />
+      <Text style={f.hint}>{d.manual ? "Set by staff; later doses continue from it." : "Choose a level only if staff changed the dose here."}</Text>
+      {d.manual && <FlowButton label="Use the protocol's level" variant="secondary" disabled={saving} onPress={() => onSetDose(d.dose, null)} />}
+    </View>)}
     <View style={{ gap: 6 }}>
       <Text style={f.label}>Date of visit</Text>
       <DateField value={date} onChange={setDate} testID="kit-visit-date" />
       {row.movesOthers && <Text style={f.hint}>Later visits move with this date.</Text>}
     </View>
+    {row.timeKind && <View style={{ gap: 6 }}>
+      <Text style={f.label}>{row.timeKind === "checkin" ? "Check-in time" : "Dose time"}</Text>
+      <TextInput testID="kit-visit-time" value={time} onChangeText={(v) => setTime(formatTimeInput(v))} placeholder="HH:MM"
+        placeholderTextColor={G.muted} keyboardType="number-pad" maxLength={5} style={f.input} />
+      {!!time && !timeOk && <Text style={f.error}>Enter the time as HH:MM, e.g. 20:30.</Text>}
+      <FlowButton label={row.time ? "Update time" : "Save time"} variant="secondary" disabled={saving || !timeOk || time === row.time}
+        onPress={() => timeOk && onTime(timeOk)} />
+      {!!row.time && <FlowButton label="Clear time" variant="secondary" disabled={saving} onPress={() => onTime(null)} />}
+    </View>}
     {!!error && <Text style={f.error}>{error}</Text>}
     <FlowButton label={row.actual ? "Update date" : "Mark done"} loading={saving} disabled={!iso} onPress={() => onSave(iso)} />
     {!!row.actual && <FlowButton label="Undo" variant="secondary" disabled={saving} onPress={() => onSave(null)} />}
@@ -205,9 +410,44 @@ function VisitSheet({ row, saving, error, onClose, onSave }: {
       <Text style={s.link}>{showProcs ? "Hide" : "Show"} assessments ({row.procedures.length})</Text>
     </Pressable>}
     {showProcs && row.procedures.map((proc, i) => <Text key={`${proc.name}-${i}`} style={[f.hint, { color: G.ink }]}>
-      • {proc.name}{proc.conditional ? " (if applicable)" : ""}
+      • {proc.name}{procedureTags(proc)}
     </Text>)}
   </FlowSheet>;
+}
+
+/**
+ * The trial's model was reviewed again after this patient was enrolled. They stay on their version
+ * until staff move them; the banner says how many visit dates the move changes, or why it can't.
+ */
+function LatestModelBanner({ record, saving, onMove }: { record: KitPatientRecord; saving: boolean; onMove?: () => void }) {
+  const latest = record.latest!;
+  const changed = (() => {
+    if (latest.problem) return null;
+    try {
+      const dated = (m: KitPatientRecord["model"], site: Record<string, string>) => new Map(computeKitSchedule(m, site, record.participant).rows
+        .filter((r): r is KitVisitRow => r.type === "visit").map((r) => [r.key, r.date]));
+      const now = dated(record.model, record.site_answers || {}), next = dated(latest.model, latest.site_answers || {});
+      let n = 0;
+      for (const key of new Set([...now.keys(), ...next.keys()])) if (now.get(key) !== next.get(key)) n++;
+      return n;
+    } catch { return null; }
+  })();
+  const title = `Protocol model version ${latest.version} is available (this patient uses version ${record.model_version ?? 1}).`;
+  const text = latest.problem ? `Their record doesn't fit it yet: ${latest.problem}`
+    : changed === 0 ? "Moving keeps every visit date." : changed ? `Moving changes ${changed} visit date${changed === 1 ? "" : "s"}.` : "";
+  return <Banner tone="violet" title={title} text={text}
+    action={!latest.problem && onMove && !saving ? "Move" : undefined} onAction={onMove} />;
+}
+
+/** " (if clinically indicated · results from the last 3 days can be used)" for one assessment. */
+function procedureTags(proc: KitVisitRow["procedures"][number]): string {
+  const tags = [
+    proc.need === "if_indicated" ? "if clinically indicated" : proc.need === "optional" ? "optional" : null,
+    proc.conditional ? `if ${proc.condition || "applicable"}` : null,
+    proc.reuseWithinDays ? `results from the last ${proc.reuseWithinDays} day${proc.reuseWithinDays === 1 ? "" : "s"} can be used` : null,
+    proc.withinBefore ? `within ${"hours" in proc.withinBefore ? `${proc.withinBefore.hours} h` : `${proc.withinBefore.days} days`} before${proc.withinBefore.from ? `, from ${short(proc.withinBefore.from)}` : ""}` : null,
+  ].filter(Boolean);
+  return tags.length ? ` (${tags.join(" · ")})` : "";
 }
 
 /** "Allowed 9 Jan 2027 – 30 Apr 2027, not on the P1W4 day (8 Jan)." */
@@ -290,4 +530,5 @@ const s = StyleSheet.create({
   setDateValue: { color: G.ink, fontFamily: fonts.semibold, fontSize: 14 },
   logged: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, backgroundColor: G.selected },
   loggedText: { color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
+  check: { gap: 8, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: G.line },
 });

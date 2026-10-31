@@ -1,5 +1,18 @@
 # Current continuation prompt
 
+Updated 28 October 2026. **Current next action: add schedule atoms to the kit system** without changing
+current behaviour. Preserve the current uncommitted work on `kit/protocol-rules`.
+
+```text
+Read AGENTS.md and docs/claude-code-kit-schedule-atoms-implementation-2026-10-28.md, then carry out the
+prompt in that file from the actual uncommitted tree. Check git status yourself; nothing was committed.
+```
+
+- [Kit schedule atoms implementation prompt](claude-code-kit-schedule-atoms-implementation-2026-10-28.md)
+- [Kit schema element inventory](kit-schema-element-inventory.md)
+
+## Previous launcher (19 October 2026, superseded as the next action; preserved)
+
 Updated 19 October 2026 after the second implementation slice. Preserve the current uncommitted work.
 
 ```text

@@ -17,7 +17,7 @@ import re
 from typing import Any, Callable
 
 from .llm import AnalysisError
-from .pdf_input import PDF_LOCK, READ_LABEL, _legend_word, grid_text, mark_word
+from .pdf_input import PDF_LOCK, READ_LABEL, _legend_word, grid_text, mark_word, open_pdf
 
 MAX_RECHECKS = 2
 PAGE_LIMIT = 12
@@ -38,7 +38,7 @@ def _render(pdf_bytes: bytes, page_no: int, clip: tuple | None = None, long_edge
     import fitz
 
     with PDF_LOCK:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        doc = open_pdf(pdf_bytes)  # whole pages, as the table coordinates were measured
         try:
             page = doc[page_no - 1]
             area = fitz.Rect(clip) & page.rect if clip else page.rect

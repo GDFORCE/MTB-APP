@@ -1,0 +1,3647 @@
+{
+  "case": "sample-arc",
+  "enrolmentAnchors": [
+    "p1",
+    "runin"
+  ],
+  "anchorPositions": {
+    "screening": 0,
+    "runin": 7,
+    "p1": 21,
+    "p2": 63,
+    "ole": 91
+  },
+  "records": {
+    "empty": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "runin",
+            "label": "Run-in start",
+            "kind": "relative",
+            "date": "2026-11-09",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p1",
+            "label": "Period 1 start",
+            "kind": "relative",
+            "date": "2026-11-23",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p2",
+            "label": "Period 2 start",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          },
+          {
+            "id": "ole",
+            "label": "Extension start",
+            "kind": "relative",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -21,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry with reversibility",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "run#1",
+            "visitId": "run",
+            "code": "RUN",
+            "name": "Run-in start",
+            "phase": "Run-in",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-09",
+            "planned": "2026-11-09",
+            "actual": null,
+            "relative": null,
+            "rule": "Run-in start",
+            "windowStart": "2026-11-09",
+            "windowEnd": "2026-11-12",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": -14,
+            "endDay": "2026-11-22",
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense placebo inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "e-Diary training",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Single-blind placebo for 14 days; e-diary every day."
+            ],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d1#1",
+            "visitId": "p1d1",
+            "code": "P1D1",
+            "name": "Period 1 start",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 start",
+            "windowStart": "2026-11-23",
+            "windowEnd": "2026-11-25",
+            "windowDays": [
+              0,
+              2
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Randomization (IWRS)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.runin_ok",
+            "questionId": "runin_ok",
+            "text": "Passed run-in (diary ≥ 80%, FEV1 40–85%)?",
+            "help": "No = run-in failure; later visits are dropped",
+            "at": "P1D1",
+            "date": "2026-11-23",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "p1d14#1",
+            "visitId": "p1d14",
+            "code": "P1D14",
+            "name": "Period 1 check-in",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2026-12-06",
+            "planned": "2026-12-06",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 13 d",
+            "windowStart": "2026-12-04",
+            "windowEnd": "2026-12-08",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 14,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-07",
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d28#1",
+            "visitId": "p1d28",
+            "code": "P1D28",
+            "name": "Period 1 end",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-20",
+            "planned": "2026-12-20",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 27 d",
+            "windowStart": "2026-12-18",
+            "windowEnd": "2026-12-22",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 28,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-21",
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1#1",
+            "visitId": "p2d1",
+            "code": "P2D1",
+            "name": "Period 2 start",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Period 2 start",
+            "rule": "Period 2 start",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d14#1",
+            "visitId": "p2d14",
+            "code": "P2D14",
+            "name": "Period 2 check-in",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "P2D1 + 13 d",
+            "rule": "P2D1 + 13 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d28#1",
+            "visitId": "p2d28",
+            "code": "P2D28",
+            "name": "Period 2 end",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "P2D1 + 27 d",
+            "rule": "P2D1 + 27 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": true,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.ole_yes",
+            "questionId": "ole_yes",
+            "text": "Entering the open-label extension?",
+            "help": null,
+            "at": "P2D28",
+            "date": null,
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": null
+          },
+          {
+            "type": "visit",
+            "key": "fu#1",
+            "visitId": "fu",
+            "code": "FU",
+            "name": "Follow-up call",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "P2D28 + 14 d",
+            "rule": "P2D28 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#1",
+            "visitId": "ole",
+            "code": "OLE1",
+            "name": "Extension visit 1",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Extension start + 84 d",
+            "rule": "Extension start + 84 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#2",
+            "visitId": "ole",
+            "code": "OLE2",
+            "name": "Extension visit 2",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Extension start + 168 d",
+            "rule": "Extension start + 168 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#3",
+            "visitId": "ole",
+            "code": "OLE3",
+            "name": "Extension visit 3",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Extension start + 252 d",
+            "rule": "Extension start + 252 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#4",
+            "visitId": "ole",
+            "code": "OLE4",
+            "name": "Extension visit 4",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Extension start + 336 d",
+            "rule": "Extension start + 336 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": true,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "End of extension"
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "scr#1",
+          "code": "SCR",
+          "name": "Screening",
+          "date": "2026-11-02",
+          "rel": null
+        },
+        "needs": [
+          "Period 2 start date"
+        ]
+      }
+    },
+    "answered": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "runin",
+            "label": "Run-in start",
+            "kind": "relative",
+            "date": "2026-11-09",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p1",
+            "label": "Period 1 start",
+            "kind": "relative",
+            "date": "2026-11-23",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p2",
+            "label": "Period 2 start",
+            "kind": "ask",
+            "date": "2027-01-08",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "ole",
+            "label": "Extension start",
+            "kind": "relative",
+            "date": "2027-02-05",
+            "how": "derived",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -21,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry with reversibility",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "run#1",
+            "visitId": "run",
+            "code": "RUN",
+            "name": "Run-in start",
+            "phase": "Run-in",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-09",
+            "planned": "2026-11-09",
+            "actual": null,
+            "relative": null,
+            "rule": "Run-in start",
+            "windowStart": "2026-11-09",
+            "windowEnd": "2026-11-12",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": -14,
+            "endDay": "2026-11-22",
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense placebo inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "e-Diary training",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Single-blind placebo for 14 days; e-diary every day."
+            ],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d1#1",
+            "visitId": "p1d1",
+            "code": "P1D1",
+            "name": "Period 1 start",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 start",
+            "windowStart": "2026-11-23",
+            "windowEnd": "2026-11-25",
+            "windowDays": [
+              0,
+              2
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Randomization (IWRS)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.runin_ok",
+            "questionId": "runin_ok",
+            "text": "Passed run-in (diary ≥ 80%, FEV1 40–85%)?",
+            "help": "No = run-in failure; later visits are dropped",
+            "at": "P1D1",
+            "date": "2026-11-23",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "yes"
+          },
+          {
+            "type": "visit",
+            "key": "p1d14#1",
+            "visitId": "p1d14",
+            "code": "P1D14",
+            "name": "Period 1 check-in",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2026-12-06",
+            "planned": "2026-12-06",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 13 d",
+            "windowStart": "2026-12-04",
+            "windowEnd": "2026-12-08",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 14,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-07",
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d28#1",
+            "visitId": "p1d28",
+            "code": "P1D28",
+            "name": "Period 1 end",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-20",
+            "planned": "2026-12-20",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 27 d",
+            "windowStart": "2026-12-18",
+            "windowEnd": "2026-12-22",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 28,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-21",
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1#1",
+            "visitId": "p2d1",
+            "code": "P2D1",
+            "name": "Period 2 start",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-08",
+            "planned": "2027-01-08",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 2 start",
+            "windowStart": "2027-01-08",
+            "windowEnd": "2027-01-11",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": 47,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d14#1",
+            "visitId": "p2d14",
+            "code": "P2D14",
+            "name": "Period 2 check-in",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2027-01-21",
+            "planned": "2027-01-21",
+            "actual": null,
+            "relative": null,
+            "rule": "P2D1 + 13 d",
+            "windowStart": "2027-01-19",
+            "windowEnd": "2027-01-23",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 60,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d28#1",
+            "visitId": "p2d28",
+            "code": "P2D28",
+            "name": "Period 2 end",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-02-04",
+            "planned": "2027-02-04",
+            "actual": null,
+            "relative": null,
+            "rule": "P2D1 + 27 d",
+            "windowStart": "2027-02-02",
+            "windowEnd": "2027-02-06",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 74,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.ole_yes",
+            "questionId": "ole_yes",
+            "text": "Entering the open-label extension?",
+            "help": null,
+            "at": "P2D28",
+            "date": "2027-02-04",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "yes"
+          },
+          {
+            "type": "visit",
+            "key": "ole#1",
+            "visitId": "ole",
+            "code": "OLE1",
+            "name": "Extension visit 1",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-04-30",
+            "planned": "2027-04-30",
+            "actual": null,
+            "relative": null,
+            "rule": "Extension start + 84 d",
+            "windowStart": "2027-04-23",
+            "windowEnd": "2027-05-07",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 159,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#2",
+            "visitId": "ole",
+            "code": "OLE2",
+            "name": "Extension visit 2",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-07-23",
+            "planned": "2027-07-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Extension start + 168 d",
+            "windowStart": "2027-07-16",
+            "windowEnd": "2027-07-30",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 243,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#3",
+            "visitId": "ole",
+            "code": "OLE3",
+            "name": "Extension visit 3",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-10-15",
+            "planned": "2027-10-15",
+            "actual": null,
+            "relative": null,
+            "rule": "Extension start + 252 d",
+            "windowStart": "2027-10-08",
+            "windowEnd": "2027-10-22",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 327,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ole#4",
+            "visitId": "ole",
+            "code": "OLE4",
+            "name": "Extension visit 4",
+            "phase": "Extension",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2028-01-07",
+            "planned": "2028-01-07",
+            "actual": null,
+            "relative": null,
+            "rule": "Extension start + 336 d",
+            "windowStart": "2027-12-31",
+            "windowEnd": "2028-01-14",
+            "windowDays": [
+              7,
+              7
+            ],
+            "studyDay": 411,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "End of extension"
+            ],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [
+          {
+            "id": "fu",
+            "code": "FU",
+            "name": "Follow-up call",
+            "onlyIf": "Run-in passed = Yes and Extension = No"
+          }
+        ],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "p1d1#1",
+          "code": "P1D1",
+          "name": "Period 1 start",
+          "date": "2026-11-23",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "runin-failed": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "runin",
+            "label": "Run-in start",
+            "kind": "relative",
+            "date": "2026-11-09",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p1",
+            "label": "Period 1 start",
+            "kind": "relative",
+            "date": "2026-11-23",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p2",
+            "label": "Period 2 start",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          },
+          {
+            "id": "ole",
+            "label": "Extension start",
+            "kind": "relative",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -21,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry with reversibility",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "run#1",
+            "visitId": "run",
+            "code": "RUN",
+            "name": "Run-in start",
+            "phase": "Run-in",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-09",
+            "planned": "2026-11-09",
+            "actual": null,
+            "relative": null,
+            "rule": "Run-in start",
+            "windowStart": "2026-11-09",
+            "windowEnd": "2026-11-12",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": -14,
+            "endDay": "2026-11-22",
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense placebo inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "e-Diary training",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Single-blind placebo for 14 days; e-diary every day."
+            ],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d1#1",
+            "visitId": "p1d1",
+            "code": "P1D1",
+            "name": "Period 1 start",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": null,
+            "relative": null,
+            "rule": "Period 1 start",
+            "windowStart": "2026-11-23",
+            "windowEnd": "2026-11-25",
+            "windowDays": [
+              0,
+              2
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Randomization (IWRS)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.runin_ok",
+            "questionId": "runin_ok",
+            "text": "Passed run-in (diary ≥ 80%, FEV1 40–85%)?",
+            "help": "No = run-in failure; later visits are dropped",
+            "at": "P1D1",
+            "date": "2026-11-23",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "no"
+          }
+        ],
+        "skipped": [
+          {
+            "id": "p1d14",
+            "code": "P1D14",
+            "name": "Period 1 check-in",
+            "onlyIf": "Run-in passed = Yes"
+          },
+          {
+            "id": "p1d28",
+            "code": "P1D28",
+            "name": "Period 1 end",
+            "onlyIf": "Run-in passed = Yes"
+          },
+          {
+            "id": "p2d1",
+            "code": "P2D1",
+            "name": "Period 2 start",
+            "onlyIf": "Run-in passed = Yes"
+          },
+          {
+            "id": "p2d14",
+            "code": "P2D14",
+            "name": "Period 2 check-in",
+            "onlyIf": "Run-in passed = Yes"
+          },
+          {
+            "id": "p2d28",
+            "code": "P2D28",
+            "name": "Period 2 end",
+            "onlyIf": "Run-in passed = Yes"
+          },
+          {
+            "id": "fu",
+            "code": "FU",
+            "name": "Follow-up call",
+            "onlyIf": "Run-in passed = Yes and Extension = No"
+          },
+          {
+            "id": "ole",
+            "code": "OLE1",
+            "name": "Extension visit 1",
+            "onlyIf": "Run-in passed = Yes and Extension = Yes"
+          }
+        ],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "p1d1#1",
+          "code": "P1D1",
+          "name": "Period 1 start",
+          "date": "2026-11-23",
+          "rel": null
+        },
+        "needs": []
+      }
+    },
+    "recorded": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "runin",
+            "label": "Run-in start",
+            "kind": "relative",
+            "date": "2026-11-10",
+            "how": "done",
+            "setByEvent": null
+          },
+          {
+            "id": "p1",
+            "label": "Period 1 start",
+            "kind": "relative",
+            "date": "2026-11-25",
+            "how": "done",
+            "setByEvent": null
+          },
+          {
+            "id": "p2",
+            "label": "Period 2 start",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          },
+          {
+            "id": "ole",
+            "label": "Extension start",
+            "kind": "relative",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": "2026-11-02",
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -23,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry with reversibility",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "run#1",
+            "visitId": "run",
+            "code": "RUN",
+            "name": "Run-in start",
+            "phase": "Run-in",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-10",
+            "planned": "2026-11-10",
+            "actual": "2026-11-10",
+            "relative": null,
+            "rule": "Run-in start",
+            "windowStart": "2026-11-10",
+            "windowEnd": "2026-11-13",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": -15,
+            "endDay": "2026-11-23",
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense placebo inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "e-Diary training",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Single-blind placebo for 14 days; e-diary every day."
+            ],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d1#1",
+            "visitId": "p1d1",
+            "code": "P1D1",
+            "name": "Period 1 start",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-25",
+            "planned": "2026-11-25",
+            "actual": "2026-11-25",
+            "relative": null,
+            "rule": "Period 1 start",
+            "windowStart": "2026-11-25",
+            "windowEnd": "2026-11-27",
+            "windowDays": [
+              0,
+              2
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Randomization (IWRS)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "09:15",
+                "window": "08:45 – 09:15",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "09:30",
+                "window": "09:25 – 09:35",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "10:15",
+                "window": "10:05 – 10:25",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "13:15",
+                "window": "13:00 – 13:30",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.runin_ok",
+            "questionId": "runin_ok",
+            "text": "Passed run-in (diary ≥ 80%, FEV1 40–85%)?",
+            "help": "No = run-in failure; later visits are dropped",
+            "at": "P1D1",
+            "date": "2026-11-25",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "yes"
+          },
+          {
+            "type": "visit",
+            "key": "p1d14#1",
+            "visitId": "p1d14",
+            "code": "P1D14",
+            "name": "Period 1 check-in",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "done",
+            "date": "2026-12-08",
+            "planned": "2026-12-08",
+            "actual": "2026-12-08",
+            "relative": null,
+            "rule": "P1D1 + 13 d",
+            "windowStart": "2026-12-06",
+            "windowEnd": "2026-12-10",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 14,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d28#1",
+            "visitId": "p1d28",
+            "code": "P1D28",
+            "name": "Period 1 end",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-22",
+            "planned": "2026-12-22",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 27 d",
+            "windowStart": "2026-12-20",
+            "windowEnd": "2026-12-24",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 28,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d1#1",
+            "visitId": "p2d1",
+            "code": "P2D1",
+            "name": "Period 2 start",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "Period 2 start",
+            "rule": "Period 2 start",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d14#1",
+            "visitId": "p2d14",
+            "code": "P2D14",
+            "name": "Period 2 check-in",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "P2D1 + 13 d",
+            "rule": "P2D1 + 13 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p2d28#1",
+            "visitId": "p2d28",
+            "code": "P2D28",
+            "name": "Period 2 end",
+            "phase": "Period 2",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "P2D1 + 27 d",
+            "rule": "P2D1 + 27 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.ole_yes",
+            "questionId": "ole_yes",
+            "text": "Entering the open-label extension?",
+            "help": null,
+            "at": "P2D28",
+            "date": null,
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "no"
+          },
+          {
+            "type": "visit",
+            "key": "fu#1",
+            "visitId": "fu",
+            "code": "FU",
+            "name": "Follow-up call",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "waiting",
+            "date": null,
+            "planned": null,
+            "actual": null,
+            "relative": "P2D28 + 14 d",
+            "rule": "P2D28 + 14 d",
+            "windowStart": null,
+            "windowEnd": null,
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": null,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [
+          {
+            "id": "ole",
+            "code": "OLE1",
+            "name": "Extension visit 1",
+            "onlyIf": "Run-in passed = Yes and Extension = Yes"
+          }
+        ],
+        "stopped": [],
+        "ended": null,
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "p1d28#1",
+          "code": "P1D28",
+          "name": "Period 1 end",
+          "date": "2026-12-22",
+          "rel": null
+        },
+        "needs": [
+          "Period 2 start date"
+        ]
+      }
+    },
+    "events": {
+      "schedule": {
+        "anchors": [
+          {
+            "id": "screening",
+            "label": "Screening",
+            "kind": "start",
+            "date": "2026-11-02",
+            "how": "entered",
+            "setByEvent": null
+          },
+          {
+            "id": "runin",
+            "label": "Run-in start",
+            "kind": "relative",
+            "date": "2026-11-09",
+            "how": "derived",
+            "setByEvent": null
+          },
+          {
+            "id": "p1",
+            "label": "Period 1 start",
+            "kind": "relative",
+            "date": "2026-11-23",
+            "how": "done",
+            "setByEvent": null
+          },
+          {
+            "id": "p2",
+            "label": "Period 2 start",
+            "kind": "ask",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          },
+          {
+            "id": "ole",
+            "label": "Extension start",
+            "kind": "relative",
+            "date": null,
+            "how": "pending",
+            "setByEvent": null
+          }
+        ],
+        "rows": [
+          {
+            "type": "visit",
+            "key": "scr#1",
+            "visitId": "scr",
+            "code": "SCR",
+            "name": "Screening",
+            "phase": "Screening",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-02",
+            "planned": "2026-11-02",
+            "actual": null,
+            "relative": null,
+            "rule": "Screening",
+            "windowStart": "2026-11-02",
+            "windowEnd": "2026-11-02",
+            "windowDays": [
+              0,
+              0
+            ],
+            "studyDay": -21,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Informed consent",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Medical history",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Spirometry with reversibility",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Hematology & chemistry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Pregnancy test",
+                "conditional": false,
+                "condition": "WOCBP = Yes",
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "run#1",
+            "visitId": "run",
+            "code": "RUN",
+            "name": "Run-in start",
+            "phase": "Run-in",
+            "phaseGroup": "screening",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-11-09",
+            "planned": "2026-11-09",
+            "actual": null,
+            "relative": null,
+            "rule": "Run-in start",
+            "windowStart": "2026-11-09",
+            "windowEnd": "2026-11-12",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": -14,
+            "endDay": "2026-11-22",
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Dispense placebo inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "e-Diary training",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [
+              "Single-blind placebo for 14 days; e-diary every day."
+            ],
+            "timepoints": [],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d1#1",
+            "visitId": "p1d1",
+            "code": "P1D1",
+            "name": "Period 1 start",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "done",
+            "date": "2026-11-23",
+            "planned": "2026-11-23",
+            "actual": "2026-11-23",
+            "relative": null,
+            "rule": "Period 1 start",
+            "windowStart": "2026-11-23",
+            "windowEnd": "2026-11-25",
+            "windowDays": [
+              0,
+              2
+            ],
+            "studyDay": 1,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Randomization (IWRS)",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Dispense study inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [
+              {
+                "label": "Pre-dose",
+                "offsetMin": 0,
+                "at": "dose",
+                "window": "−30 / +0 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "15 min",
+                "offsetMin": 15,
+                "at": "+15 min",
+                "window": "−5 / +5 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "1 h",
+                "offsetMin": 60,
+                "at": "+1 h",
+                "window": "−10 / +10 min",
+                "procedures": [
+                  "Spirometry"
+                ]
+              },
+              {
+                "label": "4 h",
+                "offsetMin": 240,
+                "at": "+4 h",
+                "window": "−15 / +15 min",
+                "procedures": [
+                  "Spirometry",
+                  "Vital signs"
+                ]
+              }
+            ],
+            "movesOthers": true,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "decision",
+            "key": "dec.runin_ok",
+            "questionId": "runin_ok",
+            "text": "Passed run-in (diary ≥ 80%, FEV1 40–85%)?",
+            "help": "No = run-in failure; later visits are dropped",
+            "at": "P1D1",
+            "date": "2026-11-23",
+            "options": [
+              {
+                "value": "yes",
+                "label": "Yes"
+              },
+              {
+                "value": "no",
+                "label": "No"
+              }
+            ],
+            "answer": "yes"
+          },
+          {
+            "type": "visit",
+            "key": "ev.e1.exac_v#1",
+            "visitId": "exac_v",
+            "code": "EXAC",
+            "name": "Exacerbation visit",
+            "phase": "Event",
+            "phaseGroup": "procedure",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-01",
+            "planned": "2026-12-01",
+            "actual": null,
+            "relative": null,
+            "rule": "Asthma exacerbation",
+            "windowStart": "2026-12-01",
+            "windowEnd": "2026-12-04",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": 9,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Asthma exacerbation · 01 Dec",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d14#1",
+            "visitId": "p1d14",
+            "code": "P1D14",
+            "name": "Period 1 check-in",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2026-12-06",
+            "planned": "2026-12-06",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 13 d",
+            "windowStart": "2026-12-04",
+            "windowEnd": "2026-12-08",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 14,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-07",
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.e1.exac_fu#1",
+            "visitId": "exac_fu",
+            "code": "EXAC-FU",
+            "name": "Exacerbation follow-up",
+            "phase": "Event",
+            "phaseGroup": "procedure",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2026-12-15",
+            "planned": "2026-12-15",
+            "actual": null,
+            "relative": null,
+            "rule": "Asthma exacerbation + 14 d",
+            "windowStart": "2026-12-12",
+            "windowEnd": "2026-12-18",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 23,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Asthma exacerbation · 01 Dec",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Steroid course review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "p1d28#1",
+            "visitId": "p1d28",
+            "code": "P1D28",
+            "name": "Period 1 end",
+            "phase": "Period 1",
+            "phaseGroup": "treatment",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-20",
+            "planned": "2026-12-20",
+            "actual": null,
+            "relative": null,
+            "rule": "P1D1 + 27 d",
+            "windowStart": "2026-12-18",
+            "windowEnd": "2026-12-22",
+            "windowDays": [
+              2,
+              2
+            ],
+            "studyDay": 28,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-21",
+            "dependsOnDecision": false,
+            "fromEvent": null,
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "ACQ-5",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.e2.exac_v#1",
+            "visitId": "exac_v",
+            "code": "EXAC",
+            "name": "Exacerbation visit",
+            "phase": "Event",
+            "phaseGroup": "procedure",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2026-12-20",
+            "planned": "2026-12-20",
+            "actual": null,
+            "relative": null,
+            "rule": "Asthma exacerbation",
+            "windowStart": "2026-12-20",
+            "windowEnd": "2026-12-23",
+            "windowDays": [
+              0,
+              3
+            ],
+            "studyDay": 28,
+            "endDay": null,
+            "weekend": true,
+            "nearestWeekday": "2026-12-21",
+            "dependsOnDecision": false,
+            "fromEvent": "Asthma exacerbation · 20 Dec",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Rescue use review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.e3.wd_v#1",
+            "visitId": "wd_v",
+            "code": "ET",
+            "name": "Early termination visit",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "site",
+            "status": "scheduled",
+            "date": "2027-01-05",
+            "planned": "2027-01-05",
+            "actual": null,
+            "relative": null,
+            "rule": "Early withdrawal",
+            "windowStart": "2027-01-05",
+            "windowEnd": "2027-01-12",
+            "windowDays": [
+              0,
+              7
+            ],
+            "studyDay": 44,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Early withdrawal · 05 Jan",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "Spirometry",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "Return inhaler",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              },
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          },
+          {
+            "type": "visit",
+            "key": "ev.e3.wd_fu#1",
+            "visitId": "wd_fu",
+            "code": "ET-FU",
+            "name": "Safety call",
+            "phase": "Follow-up",
+            "phaseGroup": "follow-up",
+            "modality": "phone",
+            "status": "scheduled",
+            "date": "2027-01-19",
+            "planned": "2027-01-19",
+            "actual": null,
+            "relative": null,
+            "rule": "Early withdrawal + 14 d",
+            "windowStart": "2027-01-16",
+            "windowEnd": "2027-01-22",
+            "windowDays": [
+              3,
+              3
+            ],
+            "studyDay": 58,
+            "endDay": null,
+            "weekend": false,
+            "nearestWeekday": null,
+            "dependsOnDecision": false,
+            "fromEvent": "Early withdrawal · 05 Jan",
+            "openEnded": false,
+            "until": null,
+            "procedures": [
+              {
+                "name": "AE review",
+                "conditional": false,
+                "condition": null,
+                "need": "required",
+                "reuseWithinDays": null
+              }
+            ],
+            "notes": [],
+            "timepoints": [],
+            "movesOthers": false,
+            "source": null,
+            "stopsIf": []
+          }
+        ],
+        "skipped": [
+          {
+            "id": "fu",
+            "code": "FU",
+            "name": "Follow-up call",
+            "onlyIf": "Run-in passed = Yes and Extension = No"
+          }
+        ],
+        "stopped": [],
+        "ended": {
+          "event": "wd",
+          "date": "2027-01-05",
+          "cancelled": 7
+        },
+        "stoppedBy": [],
+        "warnings": [],
+        "issues": [],
+        "ruleWindows": []
+      },
+      "summary": {
+        "next": {
+          "key": "ev.e3.wd_v#1",
+          "code": "ET",
+          "name": "Early termination visit",
+          "date": "2027-01-05",
+          "rel": null
+        },
+        "needs": [
+          "Ended"
+        ]
+      }
+    }
+  }
+}

@@ -106,12 +106,14 @@ export default function PatientList() {
         next_visit: p.next_visit || null,
         kit: !!p.kit,
       }));
-      const kitTrialIds = [...new Set<string>((r.data || []).filter((p: any) => p.kit).map((p: any) => p.trial_id))];
-      const models = Object.fromEntries(await Promise.all(kitTrialIds.map(async (id) =>
-        [id, await getKitModel(id).catch(() => undefined)] as const)));
+      // Each patient is scheduled with the model version they were enrolled on.
+      const modelKey = (p: any) => `${p.trial_id}:${p.kit_model_version ?? ""}`;
+      const kitKeys = [...new Map<string, any>((r.data || []).filter((p: any) => p.kit).map((p: any) => [modelKey(p), p])).values()];
+      const models = Object.fromEntries(await Promise.all(kitKeys.map(async (p: any) =>
+        [modelKey(p), await getKitModel(p.trial_id, p.kit_model_version ?? null).catch(() => undefined)] as const)));
       setRows(mapped.map((row, i) => {
         const raw = r.data[i];
-        return raw.kit ? kitRow(row, models[raw.trial_id], raw.kit) : row;
+        return raw.kit ? kitRow(row, models[modelKey(raw)], raw.kit) : row;
       }));
     } catch {
       setError("Couldn't load patients. Tap Retry to try again.");
