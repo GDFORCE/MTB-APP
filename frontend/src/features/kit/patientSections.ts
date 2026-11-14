@@ -23,6 +23,7 @@ const phaseKey = (label: string) => label.trim().toLowerCase().replace(/[\s\-_]+
 const MODALITY: Record<string, string> = { phone: "Phone call", home: "Home visit", remote: "Remote visit" };
 
 function windowLine(row: KitVisitRow) {
+  if (row.windowStated === false) return "Window not stated in the protocol";
   if (row.windowStart && row.windowEnd && row.windowStart !== row.windowEnd) return `Window ${short(row.windowStart)} – ${short(row.windowEnd)}`;
   return "Exact day";
 }

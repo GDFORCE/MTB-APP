@@ -1,0 +1,1916 @@
+{
+ "fixture": "syn04-crossover-borderless",
+ "constructed": true,
+ "cases": [
+  {
+   "name": "A: sequence AB, Period 2 dosed 7 days after Period 1",
+   "given": {
+    "today": "2026-04-20",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2026-04-20"
+     },
+     {
+      "what": [
+       [
+        "period 1",
+        "dos*"
+       ],
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "p1d1"
+       ],
+       [
+        "p1",
+        "dos*"
+       ],
+       [
+        "first dose"
+       ],
+       [
+        "period 1"
+       ]
+      ],
+      "date": "2026-05-05"
+     },
+     {
+      "what": [
+       [
+        "period 2",
+        "dos*"
+       ],
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "p2d1"
+       ],
+       [
+        "p2",
+        "dos*"
+       ],
+       [
+        "second dose"
+       ],
+       [
+        "period 2"
+       ]
+      ],
+      "date": "2026-05-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "sequence"
+      ],
+      "answer": [
+       "AB"
+      ]
+     },
+     {
+      "what": [
+       "female",
+       "sex",
+       "childbearing",
+       "pregnan*"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Screening",
+      "match": [
+       "screening",
+       "scr"
+      ],
+      "date": "2026-04-20",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 check-in (Day -1)",
+      "match": [
+       [
+        "period 1",
+        "check in"
+       ],
+       [
+        "period 1",
+        "admission"
+       ],
+       [
+        "period 1",
+        "day -1"
+       ],
+       [
+        "period 1",
+        "d -1"
+       ],
+       [
+        "p1",
+        "check in"
+       ],
+       [
+        "p1",
+        "admission"
+       ],
+       [
+        "p1",
+        "day -1"
+       ],
+       [
+        "p1",
+        "d -1"
+       ],
+       "p1d-1",
+       "p1ci"
+      ],
+      "date": "2026-05-04",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 dosing (Day 1)",
+      "match": [
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "period 1",
+        "dosing"
+       ],
+       [
+        "period 1",
+        "dose"
+       ],
+       [
+        "period 1",
+        "d1"
+       ],
+       [
+        "p1",
+        "day 1"
+       ],
+       [
+        "p1",
+        "dosing"
+       ],
+       [
+        "p1",
+        "dose"
+       ],
+       [
+        "p1",
+        "d1"
+       ],
+       "p1d1"
+      ],
+      "date": "2026-05-05",
+      "has": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       },
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "High-fat breakfast",
+        "any": [
+         "breakfast",
+         "high fat",
+         "fed"
+        ]
+       }
+      ],
+      "says": [
+       {
+        "name": "PK at 0.5, 1, 2, 4, 8, 12 h after dosing",
+        "any": [
+         [
+          "0.5 h",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30 min",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30",
+          "480",
+          "720"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 Day 2 (24-hour sample, discharge)",
+      "match": [
+       [
+        "period 1",
+        "day 2"
+       ],
+       [
+        "period 1",
+        "d2"
+       ],
+       [
+        "period 1",
+        "discharge"
+       ],
+       [
+        "p1",
+        "day 2"
+       ],
+       [
+        "p1",
+        "d2"
+       ],
+       [
+        "p1",
+        "discharge"
+       ],
+       "p1d2"
+      ],
+      "date": "2026-05-06",
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 Day 3 (48-hour sample)",
+      "match": [
+       [
+        "period 1",
+        "day 3"
+       ],
+       [
+        "period 1",
+        "d3"
+       ],
+       [
+        "period 1",
+        "48"
+       ],
+       [
+        "p1",
+        "day 3"
+       ],
+       [
+        "p1",
+        "d3"
+       ],
+       [
+        "p1",
+        "48"
+       ],
+       "p1d3"
+      ],
+      "date": "2026-05-07",
+      "has": [],
+      "lacks": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       },
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 check-in (Day -1)",
+      "match": [
+       [
+        "period 2",
+        "check in"
+       ],
+       [
+        "period 2",
+        "admission"
+       ],
+       [
+        "period 2",
+        "day -1"
+       ],
+       [
+        "period 2",
+        "d -1"
+       ],
+       [
+        "p2",
+        "check in"
+       ],
+       [
+        "p2",
+        "admission"
+       ],
+       [
+        "p2",
+        "day -1"
+       ],
+       [
+        "p2",
+        "d -1"
+       ],
+       "p2d-1",
+       "p2ci"
+      ],
+      "date": "2026-05-11",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 dosing (Day 1)",
+      "match": [
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "period 2",
+        "dosing"
+       ],
+       [
+        "period 2",
+        "dose"
+       ],
+       [
+        "period 2",
+        "d1"
+       ],
+       [
+        "p2",
+        "day 1"
+       ],
+       [
+        "p2",
+        "dosing"
+       ],
+       [
+        "p2",
+        "dose"
+       ],
+       [
+        "p2",
+        "d1"
+       ],
+       "p2d1"
+      ],
+      "date": "2026-05-12",
+      "has": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       },
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       },
+       {
+        "name": "High-fat breakfast",
+        "any": [
+         "breakfast",
+         "high fat",
+         "fed"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       }
+      ],
+      "says": [
+       {
+        "name": "PK at 0.5, 1, 2, 4, 8, 12 h after dosing",
+        "any": [
+         [
+          "0.5 h",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30 min",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30",
+          "480",
+          "720"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 Day 2 (24-hour sample, discharge)",
+      "match": [
+       [
+        "period 2",
+        "day 2"
+       ],
+       [
+        "period 2",
+        "d2"
+       ],
+       [
+        "period 2",
+        "discharge"
+       ],
+       [
+        "p2",
+        "day 2"
+       ],
+       [
+        "p2",
+        "d2"
+       ],
+       [
+        "p2",
+        "discharge"
+       ],
+       "p2d2"
+      ],
+      "date": "2026-05-13",
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 Day 3 (48-hour sample)",
+      "match": [
+       [
+        "period 2",
+        "day 3"
+       ],
+       [
+        "period 2",
+        "d3"
+       ],
+       [
+        "period 2",
+        "48"
+       ],
+       [
+        "p2",
+        "day 3"
+       ],
+       [
+        "p2",
+        "d3"
+       ],
+       [
+        "p2",
+        "48"
+       ],
+       "p2d3"
+      ],
+      "date": "2026-05-14",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Follow-up call (7 days after the last dose)",
+      "match": [
+       [
+        "follow up"
+       ],
+       [
+        "followup"
+       ],
+       [
+        "fu"
+       ]
+      ],
+      "date": "2026-05-19",
+      "window": [
+       "2026-05-17",
+       "2026-05-21"
+      ],
+      "modality": "phone"
+     }
+    ]
+   }
+  },
+  {
+   "name": "B: sequence BA, Period 2 dosed 10 days after Period 1",
+   "given": {
+    "today": "2026-04-20",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2026-04-20"
+     },
+     {
+      "what": [
+       [
+        "period 1",
+        "dos*"
+       ],
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "p1d1"
+       ],
+       [
+        "p1",
+        "dos*"
+       ],
+       [
+        "first dose"
+       ],
+       [
+        "period 1"
+       ]
+      ],
+      "date": "2026-05-05"
+     },
+     {
+      "what": [
+       [
+        "period 2",
+        "dos*"
+       ],
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "p2d1"
+       ],
+       [
+        "p2",
+        "dos*"
+       ],
+       [
+        "second dose"
+       ],
+       [
+        "period 2"
+       ]
+      ],
+      "date": "2026-05-15"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "sequence"
+      ],
+      "answer": [
+       "BA"
+      ]
+     },
+     {
+      "what": [
+       "female",
+       "sex",
+       "childbearing",
+       "pregnan*"
+      ],
+      "answer": true,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Period 1 check-in (Day -1)",
+      "match": [
+       [
+        "period 1",
+        "check in"
+       ],
+       [
+        "period 1",
+        "admission"
+       ],
+       [
+        "period 1",
+        "day -1"
+       ],
+       [
+        "period 1",
+        "d -1"
+       ],
+       [
+        "p1",
+        "check in"
+       ],
+       [
+        "p1",
+        "admission"
+       ],
+       [
+        "p1",
+        "day -1"
+       ],
+       [
+        "p1",
+        "d -1"
+       ],
+       "p1d-1",
+       "p1ci"
+      ],
+      "date": "2026-05-04",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 dosing (Day 1)",
+      "match": [
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "period 1",
+        "dosing"
+       ],
+       [
+        "period 1",
+        "dose"
+       ],
+       [
+        "period 1",
+        "d1"
+       ],
+       [
+        "p1",
+        "day 1"
+       ],
+       [
+        "p1",
+        "dosing"
+       ],
+       [
+        "p1",
+        "dose"
+       ],
+       [
+        "p1",
+        "d1"
+       ],
+       "p1d1"
+      ],
+      "date": "2026-05-05",
+      "has": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       },
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       },
+       {
+        "name": "High-fat breakfast",
+        "any": [
+         "breakfast",
+         "high fat",
+         "fed"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       }
+      ],
+      "says": [
+       {
+        "name": "PK at 0.5, 1, 2, 4, 8, 12 h after dosing",
+        "any": [
+         [
+          "0.5 h",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30 min",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30",
+          "480",
+          "720"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 Day 2 (24-hour sample, discharge)",
+      "match": [
+       [
+        "period 1",
+        "day 2"
+       ],
+       [
+        "period 1",
+        "d2"
+       ],
+       [
+        "period 1",
+        "discharge"
+       ],
+       [
+        "p1",
+        "day 2"
+       ],
+       [
+        "p1",
+        "d2"
+       ],
+       [
+        "p1",
+        "discharge"
+       ],
+       "p1d2"
+      ],
+      "date": "2026-05-06",
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 1 Day 3 (48-hour sample)",
+      "match": [
+       [
+        "period 1",
+        "day 3"
+       ],
+       [
+        "period 1",
+        "d3"
+       ],
+       [
+        "period 1",
+        "48"
+       ],
+       [
+        "p1",
+        "day 3"
+       ],
+       [
+        "p1",
+        "d3"
+       ],
+       [
+        "p1",
+        "48"
+       ],
+       "p1d3"
+      ],
+      "date": "2026-05-07",
+      "has": [],
+      "lacks": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       },
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 check-in (Day -1)",
+      "match": [
+       [
+        "period 2",
+        "check in"
+       ],
+       [
+        "period 2",
+        "admission"
+       ],
+       [
+        "period 2",
+        "day -1"
+       ],
+       [
+        "period 2",
+        "d -1"
+       ],
+       [
+        "p2",
+        "check in"
+       ],
+       [
+        "p2",
+        "admission"
+       ],
+       [
+        "p2",
+        "day -1"
+       ],
+       [
+        "p2",
+        "d -1"
+       ],
+       "p2d-1",
+       "p2ci"
+      ],
+      "date": "2026-05-14",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 dosing (Day 1)",
+      "match": [
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "period 2",
+        "dosing"
+       ],
+       [
+        "period 2",
+        "dose"
+       ],
+       [
+        "period 2",
+        "d1"
+       ],
+       [
+        "p2",
+        "day 1"
+       ],
+       [
+        "p2",
+        "dosing"
+       ],
+       [
+        "p2",
+        "dose"
+       ],
+       [
+        "p2",
+        "d1"
+       ],
+       "p2d1"
+      ],
+      "date": "2026-05-15",
+      "has": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       },
+       {
+        "name": "PK blood sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Urine drug screen",
+        "any": [
+         "drug screen"
+        ]
+       },
+       {
+        "name": "High-fat breakfast",
+        "any": [
+         "breakfast",
+         "high fat",
+         "fed"
+        ]
+       }
+      ],
+      "says": [
+       {
+        "name": "PK at 0.5, 1, 2, 4, 8, 12 h after dosing",
+        "any": [
+         [
+          "0.5 h",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30 min",
+          "8 h",
+          "12 h"
+         ],
+         [
+          "30",
+          "480",
+          "720"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 Day 2 (24-hour sample, discharge)",
+      "match": [
+       [
+        "period 2",
+        "day 2"
+       ],
+       [
+        "period 2",
+        "d2"
+       ],
+       [
+        "period 2",
+        "discharge"
+       ],
+       [
+        "p2",
+        "day 2"
+       ],
+       [
+        "p2",
+        "d2"
+       ],
+       [
+        "p2",
+        "discharge"
+       ],
+       "p2d2"
+      ],
+      "date": "2026-05-16",
+      "lacks": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       },
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Period 2 Day 3 (48-hour sample)",
+      "match": [
+       [
+        "period 2",
+        "day 3"
+       ],
+       [
+        "period 2",
+        "d3"
+       ],
+       [
+        "period 2",
+        "48"
+       ],
+       [
+        "p2",
+        "day 3"
+       ],
+       [
+        "p2",
+        "d3"
+       ],
+       [
+        "p2",
+        "48"
+       ],
+       "p2d3"
+      ],
+      "date": "2026-05-17",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "safety lab*",
+         "laboratory"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Study drug administration",
+        "any": [
+         "study drug",
+         "halvir",
+         "dosing",
+         "administration"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Follow-up call",
+      "match": [
+       [
+        "follow up"
+       ],
+       [
+        "followup"
+       ],
+       [
+        "fu"
+       ]
+      ],
+      "date": "2026-05-22",
+      "window": [
+       "2026-05-20",
+       "2026-05-24"
+      ],
+      "modality": "phone"
+     }
+    ]
+   }
+  },
+  {
+   "name": "C: Period 2 date entered only 5 days after Period 1: outside the 7 to 14 day washout",
+   "given": {
+    "today": "2026-04-20",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2026-04-20"
+     },
+     {
+      "what": [
+       [
+        "period 1",
+        "dos*"
+       ],
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "p1d1"
+       ],
+       [
+        "p1",
+        "dos*"
+       ],
+       [
+        "first dose"
+       ],
+       [
+        "period 1"
+       ]
+      ],
+      "date": "2026-05-05"
+     },
+     {
+      "what": [
+       [
+        "period 2",
+        "dos*"
+       ],
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "p2d1"
+       ],
+       [
+        "p2",
+        "dos*"
+       ],
+       [
+        "second dose"
+       ],
+       [
+        "period 2"
+       ]
+      ],
+      "date": "2026-05-10"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "sequence"
+      ],
+      "answer": [
+       "AB"
+      ]
+     },
+     {
+      "what": [
+       "female",
+       "sex",
+       "childbearing",
+       "pregnan*"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "warnings": [
+     {
+      "name": "washout shorter than 7 days",
+      "any": [
+       [
+        "7"
+       ],
+       [
+        "washout"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "D: Period 2 date not known yet: Period 2 waits for it (the protocol gives a range, not a date)",
+   "given": {
+    "today": "2026-04-20",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2026-04-20"
+     },
+     {
+      "what": [
+       [
+        "period 1",
+        "dos*"
+       ],
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "p1d1"
+       ],
+       [
+        "p1",
+        "dos*"
+       ],
+       [
+        "first dose"
+       ],
+       [
+        "period 1"
+       ]
+      ],
+      "date": "2026-05-05"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "sequence"
+      ],
+      "answer": [
+       "AB"
+      ]
+     },
+     {
+      "what": [
+       "female",
+       "sex",
+       "childbearing",
+       "pregnan*"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Period 1 dosing",
+      "match": [
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "period 1",
+        "dosing"
+       ],
+       [
+        "period 1",
+        "dose"
+       ],
+       [
+        "period 1",
+        "d1"
+       ],
+       [
+        "p1",
+        "day 1"
+       ],
+       [
+        "p1",
+        "dosing"
+       ],
+       [
+        "p1",
+        "dose"
+       ],
+       [
+        "p1",
+        "d1"
+       ],
+       "p1d1"
+      ],
+      "date": "2026-05-05"
+     },
+     {
+      "name": "Period 2 dosing (waiting for its date)",
+      "match": [
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "period 2",
+        "dosing"
+       ],
+       [
+        "period 2",
+        "dose"
+       ],
+       [
+        "period 2",
+        "d1"
+       ],
+       [
+        "p2",
+        "day 1"
+       ],
+       [
+        "p2",
+        "dosing"
+       ],
+       [
+        "p2",
+        "dose"
+       ],
+       [
+        "p2",
+        "d1"
+       ],
+       "p2d1"
+      ],
+      "date": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "E: withdrawn 3 days after Period 1 dosing: no Period 2, follow-up call 7 days after the Period 1 dose",
+   "given": {
+    "today": "2026-05-08",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2026-04-20"
+     },
+     {
+      "what": [
+       [
+        "period 1",
+        "dos*"
+       ],
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "p1d1"
+       ],
+       [
+        "p1",
+        "dos*"
+       ],
+       [
+        "first dose"
+       ],
+       [
+        "period 1"
+       ]
+      ],
+      "date": "2026-05-05"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "sequence"
+      ],
+      "answer": [
+       "AB"
+      ]
+     },
+     {
+      "what": [
+       "female",
+       "sex",
+       "childbearing",
+       "pregnan*"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       [
+        "period 1",
+        "day 1"
+       ],
+       [
+        "period 1",
+        "dosing"
+       ],
+       [
+        "period 1",
+        "dose"
+       ],
+       [
+        "period 1",
+        "d1"
+       ],
+       [
+        "p1",
+        "day 1"
+       ],
+       [
+        "p1",
+        "dosing"
+       ],
+       [
+        "p1",
+        "dose"
+       ],
+       [
+        "p1",
+        "d1"
+       ],
+       "p1d1"
+      ],
+      "date": "2026-05-05"
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "withdraw*"
+       ],
+       [
+        "discontinu*"
+       ],
+       [
+        "early termination"
+       ]
+      ],
+      "date": "2026-05-08"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Follow-up call (7 days after the Period 1 dose)",
+      "match": [
+       [
+        "follow up"
+       ],
+       [
+        "followup"
+       ],
+       [
+        "fu"
+       ]
+      ],
+      "date": "2026-05-12",
+      "window": [
+       "2026-05-10",
+       "2026-05-14"
+      ],
+      "modality": "phone"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Period 2 check-in",
+      "match": [
+       [
+        "period 2",
+        "check in"
+       ],
+       [
+        "period 2",
+        "admission"
+       ],
+       [
+        "period 2",
+        "day -1"
+       ],
+       [
+        "period 2",
+        "d -1"
+       ],
+       [
+        "p2",
+        "check in"
+       ],
+       [
+        "p2",
+        "admission"
+       ],
+       [
+        "p2",
+        "day -1"
+       ],
+       [
+        "p2",
+        "d -1"
+       ],
+       "p2d-1",
+       "p2ci"
+      ]
+     },
+     {
+      "name": "Period 2 dosing",
+      "match": [
+       [
+        "period 2",
+        "day 1"
+       ],
+       [
+        "period 2",
+        "dosing"
+       ],
+       [
+        "period 2",
+        "dose"
+       ],
+       [
+        "period 2",
+        "d1"
+       ],
+       [
+        "p2",
+        "day 1"
+       ],
+       [
+        "p2",
+        "dosing"
+       ],
+       [
+        "p2",
+        "dose"
+       ],
+       [
+        "p2",
+        "d1"
+       ],
+       "p2d1"
+      ]
+     },
+     {
+      "name": "Period 2 Day 3",
+      "match": [
+       [
+        "period 2",
+        "day 3"
+       ],
+       [
+        "period 2",
+        "d3"
+       ],
+       [
+        "period 2",
+        "48"
+       ],
+       [
+        "p2",
+        "day 3"
+       ],
+       [
+        "p2",
+        "d3"
+       ],
+       [
+        "p2",
+        "48"
+       ],
+       "p2d3"
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

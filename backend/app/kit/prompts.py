@@ -127,6 +127,62 @@ SCHEMA = _extend(_KIT_SCHEMA, [
      'from the trigger date on: grade 3 AE logged = {"dose": "drug_x", "step": -1} */}],'),
 ])
 
+# Fields added on 10 November 2026 after the bench showed where conditional detail was lost: a window
+# the protocol does not state, time points and instructions with conditions, a date with a stated day
+# and an allowed deviation, rules that change what is done at a visit, and open points.
+SCHEMA = _extend(SCHEMA, [
+    ('"visits": [visit] /* anchor ignored: offset_days counts from the event date; include_if may use the event\'s questions */,',
+     '"visits": [visit] /* offset_days counts from the event date (anchor ignored), unless the visit has "count_from": anchorId: '
+     'it then counts from that date ("EOS visit 4 weeks after the last dose when early termination is logged" = count_from the '
+     'last-dose anchor, offset_days 28). include_if may use the event\'s questions as {"event_question": id, "in": [value]} */,'),
+    ('"anchor": anchorId, "offset_days": number, "window_before": number, "window_after": number,',
+     '"anchor": anchorId, "offset_days": number, "window_before": number|null, "window_after": number|null '
+     '/* null for both when the protocol states no window for this visit; 0 only when it says the exact day */,'),
+    ('"procedures": [procedure]}] /* intra-day samples relative to dose time; pre-dose = offset_min 0 with window_before_min */,',
+     '"procedures": [procedure], "if": [condition] /* [] = everyone; a time point only some participants have '
+     '("PK sub-study only") carries the condition here, never in its label or the sample\'s name */}] '
+     '/* intra-day samples relative to dose time; pre-dose = offset_min 0 with window_before_min */,'),
+    ('    "min_gap": null | {"days": number, "after": visitId|null}',
+     '    "instructions": [{"text": string /* max 160 characters, plain words */, "if": [condition] /* [] = everyone */, '
+     '"kind": "prep"|"order"|"timing"|"dose"|"other", "source": string|null}] /* what staff or the participant must do at '
+     'this visit that does not change dates: "Give the tablet 30 minutes after the start of a high-fat breakfast" with '
+     'if sequence = BA; "Questionnaires before any other assessment"; "PK sample within 2 hours before dosing". One '
+     'instruction per case, each with its own "if": never one text that lists several cases */,\n'
+     '    "min_gap": null | {"days": number, "after": visitId|null}'),
+    ('on Day 1 = {"relative_to": "screening", "min_days": 1, "max_days": 28} */,',
+     'on Day 1 = {"relative_to": "screening", "min_days": 1, "max_days": 28} */,\n'
+     '     "offset_stated": boolean /* true when the protocol gives this date its own day and the range is only how far it '
+     'may deviate ("second vaccination on Day 28; it may be given up to 7 days later" = offset_days 28, range 28 to 35, '
+     'offset_stated true): visits counted from it then keep planned dates. false when the protocol gives only a range '
+     '("screening within 28 days before Day 1", "washout of 7 to 14 days") */,\n'
+     '     "last_with": [procedure name] /* "last_visit" only, optional: count only the occurrences at which one of these '
+     'assessments is still done (the injection), when visits go on without dosing after treatment stops */,\n'
+     '     "stop_is_last_dose": boolean /* "last_visit" only: true when the drug is taken daily between visits, so the '
+     'date an early stop is logged is the last dose */,'),
+    ('from the trigger date on: grade 3 AE logged = {"dose": "drug_x", "step": -1} */}],',
+     'from the trigger date on: grade 3 AE logged = {"dose": "drug_x", "step": -1} */,\n'
+     '     "stop_procedures": [{"visits": [visitId] | "all", "names": [procedure name exactly as listed at those visits]}] '
+     '/* assessments no longer done at visits that still happen, from the trigger date on: "after study drug is '
+     'discontinued the remaining visits are attended without injections" = {"visits": "all", "names": ["Study drug '
+     'injection"]}; "efficacy assessments stop after Week 12" */,\n'
+     '     "add_procedures": [{"visits": [visitId] | "all", "procedures": [procedure]}] /* assessments added at those visits '
+     'from the trigger date on */,\n'
+     '     "quote": string /* ONE passage of at most 300 characters copied character for character from the protocol that '
+     'states this rule */, "page": number /* its [[Page n]] */}],'),
+    ('"repeat.count"|"repeat.every_days"|"repeat.chain"|"repeat.open_ended"|"repeat.until_anchor", "value": any}]}]}],',
+     '"repeat.count"|"repeat.every_days"|"repeat.chain"|"repeat.open_ended"|"repeat.until_anchor"|"anchor"|"follows"|'
+     '"include_if"|"procedures"|"modality", "value": any} | {"target": "rule", "id": ruleId, "field": "stop_visits"|'
+     '"keeps_visits"|"stop_all"|"same_day"|"stop_procedures"|"add_procedures", "value": any} | {"target": "event", "id": '
+     'eventId, "field": "ends_schedule"|"keeps_visits", "value": any}]}]}],'),
+    ('  "notes": [string]\n}',
+     '  "notes": [string],\n'
+     '  "open_points": [{"id": string, "kind": "cannot_represent"|"approximated"|"ambiguous"|"conflict"|"not_stated", '
+     '"text": string /* max 200 characters, plain words: what the reviewer must check */, "quote": string /* ONE passage of '
+     'at most 300 characters copied character for character from the protocol */, "page": number /* its [[Page n]] */, '
+     '"affects": [visitId|anchorId|eventId|ruleId], "used": string /* max 160 characters: what the model does about it '
+     'meanwhile ("30 days used for each month", "the table is followed") */}]\n}'),
+])
+
 # A visit check's limit on entered values (used in "limits" and in dose_changes "if").
 LIMIT_SCHEMA = (
     'and limit = {"measure": measureId, "op": "<"|"<="|">"|">=", "value": number} /* ANC >= 1.0 */ '
@@ -163,10 +219,11 @@ RULE_CONDITIONS = (
     'A rule may also have "if": [condition] (all must hold); it then acts only in the case they describe. '
     'A condition is one of: {"question": questionId, "in": [value]} (a participant, site or decision answer); '
     '{"event_question": questionId, "in": [value]} (an answer given when the triggering event is logged: add '
-    'that question, e.g. the grade, to the event); {"timing": {"anchor": anchorId} or {"visit": visitId, "n": '
-    'occurrence|null}, "min_days": number|null, "max_days": number|null} (days from that date to the trigger '
-    'date, inclusive: before Cycle 3 = {"visit": "c3", "max_days": -1}, on or after = {"visit": "c3", '
-    '"min_days": 0}); {"occurrence": n} (only the n-th time the event is logged).')
+    'that question, e.g. the grade, to the event); {"timing": {"anchor": anchorId, "min_days": number|null, "max_days": number|null}} or {"timing": {"visit": '
+    'visitId, "n": occurrence|null, "min_days": number|null, "max_days": number|null}} (days from that date to the '
+    'trigger date, inclusive; min_days and max_days go INSIDE "timing": before Cycle 3 = {"timing": {"visit": "c3", '
+    '"max_days": -1}}, on or after = {"timing": {"visit": "c3", "min_days": 0}}); {"occurrence": n} (only the n-th '
+    'time the event is logged).')
 
 # Added after the kit's rules; ``_prompt_text`` itself stays identical to the kit.
 TABLE_RULES = (
@@ -217,7 +274,30 @@ TABLE_RULES = (
     "max_wait_days and on_timeout \"stop\" when the protocol says what happens if it does not recover. When the recheck starts "
     "with a finding, put that visit on the event that records it.\n"
     "- Samples a number of hours after a dose that fall on later days (24 h, 48 h post-dose) stay timepoints of the dose visit "
-    "(offset_min 1440, 2880); the app dates them. Never list them again on the later day's visit.")
+    "(offset_min 1440, 2880); the app dates them. Never list them again on the later day's visit.\n"
+    "- A condition is never written inside a name, a label, prep, \"condition\" or a note when it can be an \"if\": an "
+    "assessment only some participants have gets \"if\"; a time point only some have gets the time point's \"if\"; what to do "
+    "that differs by arm, sequence, cohort or sex is one \"instructions\" entry per case, each with its \"if\". Add the "
+    "participant question a condition needs (sex, age group, sub-study consent) when there is none.\n"
+    "- A date the protocol gives its own day plus a tolerance (\"Day 28, may be given up to 7 days later\") keeps that "
+    "offset, gets the range and offset_stated true. Use {\"visit\": ..., \"status\": \"done\"} only when the protocol makes "
+    "something depend on the earlier visit having taken place; a visit that simply comes after another uses \"follows\" "
+    "or its anchor and stays on the plan.\n"
+    "- When treatment can stop while visits continue (\"patients who discontinue study drug continue to attend the "
+    "scheduled visits\"), write the rule's stop_procedures for the dosing assessment, and give the last-dose anchor "
+    "last_with naming that assessment (or model each dose as its own visit that follows the assessment visit and stop "
+    "those). Never put the continuing visits in stop_visits.\n"
+    "- A choice or result that the model asks as a decision question (responder at Week 16, entering an extension) is "
+    "not also an event.\n"
+    "- open_points: everything about WHEN a visit happens, WHETHER it happens or WHAT is done at it that this model does "
+    "not carry exactly as the protocol says. One entry each, with the protocol's own words and page: a rule this shape "
+    "cannot hold (calendar months, business days, a weekday rule, a count of events, a consequence of missed visits) = "
+    "\"cannot_represent\"; a rule written only approximately = \"approximated\" with what was used; wording that can be read "
+    "two ways = \"ambiguous\" (when a review_question with patches can settle it, ask that instead); the table and the "
+    "text, or two sections, saying different things = \"conflict\" with what the model follows; something a schedule needs "
+    "that the protocol does not state (a visit window, the length of a month, how many repeats) = \"not_stated\". Never "
+    "leave such a point only in notes, and never fill it with a plausible value without an open point. notes are for "
+    "background that needs no check.")
 
 
 def _with_note(note: str) -> str:
@@ -293,7 +373,9 @@ def build_review_prompt(st: dict[str, Any], table_text: str, img_pages: list[int
     for v in st["visits"]:
         item = {k: v.get(k) for k in (
             "id", "code", "name", "anchor", "follows", "offset_days", "window_before",
-            "window_after", "repeat", "procedures", "timepoints", "condition")}
+            "window_after", "repeat", "procedures", "timepoints", "condition", "instructions")}
+        if v.get("window_stated") is False:
+            item["window_before"] = item["window_after"] = None  # the protocol states no window
         base = days.get(v.get("anchor") or "")
         if base is not None and not v.get("follows"):
             # Where the visit really falls, so a "Week 8" visit is not moved by another 8 weeks.
@@ -310,6 +392,10 @@ def build_review_prompt(st: dict[str, Any], table_text: str, img_pages: list[int
         "trust the images over the text when they disagree)" if img_pages else "")
     anchors = ", ".join(a["id"] for a in st["anchors"])
     events = ", ".join(e["id"] for e in st.get("events", [])) or "none"
+    # Visits that events add are not columns of the table, but the check must know they exist.
+    event_visits = [{"event": e["id"], "id": v["id"], "code": v.get("code"), "name": v.get("name"),
+                     "offset_days": v.get("offset_days"), "window_after": v.get("window_after")}
+                    for e in st.get("events", []) for v in e.get("visits", [])]
     rules = [
         {k: r.get(k) for k in ("id", "label", "when", "if", "stop_visits", "stop_all", "blocks", "allowed")}
         for r in st.get("rules", [])
@@ -322,7 +408,11 @@ def build_review_prompt(st: dict[str, Any], table_text: str, img_pages: list[int
         '1. "procedures" must list every row marked for that visit\'s column and nothing the column leaves blank. '
         "A footnote that limits a row to some participants or sites becomes "
         '{"name": ..., "if": [{"question": id, "in": [value]}]} using these questions: '
-        f"{_js(questions)}.\n"
+        f"{_js(questions)}. When the footnote needs a participant fact none of them asks (sex, age group, a prior test "
+        'result), add it to questions_add as {"id", "label", "text", "scope": "participant", "kind": "boolean"|"choice"|'
+        '"number", "options": [{"value", "label"}], "help"} and use it. What staff must do that differs between '
+        'participants goes in the visit\'s "instructions": [{"text", "if": [condition], "kind": "prep"|"order"|"timing"|'
+        '"dose"|"other"}], one per case.\n'
         "2. For a repeating visit, an assessment marked only for some occurrences must be in repeat.overrides "
         '{"n": [values], "add": [...], "remove": [], "note": null}, not in procedures.\n'
         "3. Check offset_days, windows and, where a sampling table exists, the timepoints "
@@ -348,11 +438,18 @@ def build_review_prompt(st: dict[str, Any], table_text: str, img_pages: list[int
         '{"corrections": [{"id": visitId, "procedures": [...], "overrides": [...], "timepoints": [...], '
         '"until_anchor": anchorId, "anchor": anchorId, "follows": visitId|null, "offset_days": number, '
         '"window_before": number, "window_after": number, "repeat_count": number, "every_days": number, '
-        '"condition": string|null, "reason": string (one short sentence citing the table)} '
+        '"condition": string|null, "instructions": [...], "reason": string (one short sentence citing the table)} '
         '/* include only changed fields; offset_days counts from the anchor (or followed visit) in the same '
-        'correction, so give "anchor" too whenever the offset is measured from a different anchor */], '
-        '"rules_add": [rule], "notes": [string]}\n'
-        "Only these fields can be changed. Anything else that looks wrong goes in notes, not in a correction.\n"
+        'correction, so give "anchor" too whenever the offset is measured from a different anchor; window_before and '
+        'window_after null when the table states no window for that visit */], '
+        '"questions_add": [question], "rules_add": [rule], "open_points": [{"kind": "conflict"|"ambiguous"|'
+        '"cannot_represent"|"approximated"|"not_stated", "text": string, "quote": string /* copied character for character '
+        'from the table page, at most 300 characters */, "page": number, "affects": [visitId], "used": string}], '
+        '"notes": [string]}\n'
+        "Only these fields can be changed. Anything else that is wrong or that the table and the model disagree on and "
+        "you cannot correct (a visit the model lacks, a rule these fields cannot express, the table contradicting what "
+        "the model took from the text) goes in open_points with the table's words and page, not in notes. Visits that "
+        f"events add (not table columns, do not report them as missing): {_js(event_visits)}.\n"
         'Use "corrections": [] and "rules_add": [] when everything matches.\n\n'
         f"MODEL VISITS:\n{_js(compact)}\n\n"
         f"{_with_note(symbol_note)}SCHEDULE TABLE TEXT:\n{table_text}"

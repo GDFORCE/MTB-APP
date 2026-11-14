@@ -1,0 +1,1864 @@
+{
+ "protocol": {
+  "title": "ARX-3301 LUMEN-2: double-blind part, early escape and open-label extension (two-page tick-mark table)",
+  "number": "ARX-3301-302",
+  "sponsor": null,
+  "phase": null,
+  "indication": null,
+  "version": null,
+  "design": "Constructed fixture."
+ },
+ "arms": [],
+ "anchors": [
+  {
+   "id": "screening",
+   "label": "Screening",
+   "kind": "start",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "baseline",
+   "label": "Baseline (Day 1)",
+   "kind": "ask",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": true,
+   "day_zero": false,
+   "set_by_visit": "w0",
+   "question": "Baseline date?",
+   "optional": true,
+   "estimates": [
+    {
+     "when": [],
+     "relative_to": "screening",
+     "offset_days": 28
+    }
+   ],
+   "range": {
+    "relative_to": "screening",
+    "min_days": 1,
+    "max_days": 35
+   },
+   "note": null
+  },
+  {
+   "id": "last_dose",
+   "label": "Last dose of study drug",
+   "kind": "last_visit",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null,
+   "last_of": [
+    "dose0",
+    "dose2",
+    "dose4",
+    "dose8",
+    "dose12",
+    "dose16",
+    "dose20"
+   ]
+  }
+ ],
+ "questions": [
+  {
+   "id": "wocbp",
+   "label": "Childbearing potential",
+   "text": "Woman of childbearing potential?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "recent_cxr",
+   "label": "Recent chest X-ray",
+   "text": "Chest X-ray from the last 3 months available?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "responder_w16",
+   "label": "Week 16 responder",
+   "text": "At least 20% improvement in joint counts at Week 16?",
+   "scope": "decision",
+   "ask_at": {
+    "visit": "w16",
+    "n": null
+   },
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "enter_ole",
+   "label": "Enters OLE",
+   "text": "Does the patient enter the open-label extension?",
+   "scope": "decision",
+   "ask_at": {
+    "visit": "w24",
+    "n": null
+   },
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "scr",
+   "code": "SCR",
+   "name": "Screening",
+   "phase": "Screening",
+   "modality": "site",
+   "anchor": "screening",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Informed consent",
+     "if": []
+    },
+    {
+     "name": "Inclusion / exclusion criteria",
+     "if": []
+    },
+    {
+     "name": "Medical history, demographics",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Chest X-ray",
+     "if": [
+      {
+       "question": "recent_cxr",
+       "in": [
+        "no"
+       ]
+      }
+     ],
+     "reuse_within_days": 90
+    },
+    {
+     "name": "Tuberculosis test (IGRA)",
+     "if": []
+    },
+    {
+     "name": "Hepatitis B, hepatitis C and HIV serology",
+     "if": []
+    },
+    {
+     "name": "Serum pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w0",
+   "code": "W0",
+   "name": "Baseline (Week 0)",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Inclusion / exclusion criteria",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Fasting lipid panel",
+     "if": []
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "PASI and body surface area",
+     "if": []
+    },
+    {
+     "name": "Enthesitis and dactylitis assessment",
+     "if": []
+    },
+    {
+     "name": "SF-36, FACIT-Fatigue",
+     "if": []
+    },
+    {
+     "name": "Radiographs of hands and feet",
+     "if": []
+    },
+    {
+     "name": "PK and anti-drug antibody sample",
+     "if": []
+    },
+    {
+     "name": "Randomisation",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "prep": {
+    "fasting_hours": 8,
+    "notes": []
+   },
+   "min_gap": null,
+   "check": null
+  },
+  {
+   "id": "dose0",
+   "code": "W0-INJ",
+   "name": "Week 0 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w0",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "dose2",
+   "code": "W2-INJ",
+   "name": "Week 2 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w2",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "dose4",
+   "code": "W4-INJ",
+   "name": "Week 4 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w4",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "dose8",
+   "code": "W8-INJ",
+   "name": "Week 8 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w8",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "dose12",
+   "code": "W12-INJ",
+   "name": "Week 12 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w12",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "dose16",
+   "code": "W16-INJ",
+   "name": "Week 16 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w16",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "dose20",
+   "code": "W20-INJ",
+   "name": "Week 20 study drug injection",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "w20",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w2",
+   "code": "W2",
+   "name": "Week 2",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 14,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w4",
+   "code": "W4",
+   "name": "Week 4",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 28,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "PASI and body surface area",
+     "if": []
+    },
+    {
+     "name": "Enthesitis and dactylitis assessment",
+     "if": []
+    },
+    {
+     "name": "PK and anti-drug antibody sample",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w8",
+   "code": "W8",
+   "name": "Week 8",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 56,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w12",
+   "code": "W12",
+   "name": "Week 12",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 84,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Fasting lipid panel",
+     "if": []
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "PASI and body surface area",
+     "if": []
+    },
+    {
+     "name": "Enthesitis and dactylitis assessment",
+     "if": []
+    },
+    {
+     "name": "SF-36, FACIT-Fatigue",
+     "if": []
+    },
+    {
+     "name": "PK and anti-drug antibody sample",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "prep": {
+    "fasting_hours": 8,
+    "notes": []
+   },
+   "min_gap": null,
+   "check": null
+  },
+  {
+   "id": "w16",
+   "code": "W16",
+   "name": "Week 16",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 112,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "PASI and body surface area",
+     "if": []
+    },
+    {
+     "name": "Enthesitis and dactylitis assessment",
+     "if": []
+    },
+    {
+     "name": "Responder assessment for early escape",
+     "if": []
+    },
+    {
+     "name": "Radiographs of hands and feet",
+     "if": [
+      {
+       "question": "responder_w16",
+       "in": [
+        "no"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w18",
+   "code": "W18",
+   "name": "Week 18 early-escape safety visit",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 126,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "responder_w16",
+     "in": [
+      "no"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w20",
+   "code": "W20",
+   "name": "Week 20",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 140,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w24",
+   "code": "W24",
+   "name": "Week 24",
+   "phase": "Part 1",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 168,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Fasting lipid panel",
+     "if": []
+    },
+    {
+     "name": "hs-CRP",
+     "if": []
+    },
+    {
+     "name": "PASI and body surface area",
+     "if": []
+    },
+    {
+     "name": "Enthesitis and dactylitis assessment",
+     "if": []
+    },
+    {
+     "name": "SF-36, FACIT-Fatigue",
+     "if": []
+    },
+    {
+     "name": "Radiographs of hands and feet",
+     "if": []
+    },
+    {
+     "name": "PK and anti-drug antibody sample",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "prep": {
+    "fasting_hours": 8,
+    "notes": []
+   },
+   "min_gap": null,
+   "check": null
+  },
+  {
+   "id": "w28",
+   "code": "W28",
+   "name": "Week 28 (OLE)",
+   "phase": "Open-label extension",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 196,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "enter_ole",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Study drug injection at site",
+     "if": []
+    },
+    {
+     "name": "Dispense study drug for home use",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w36",
+   "code": "W36",
+   "name": "Week 36 (OLE)",
+   "phase": "Open-label extension",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 252,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "enter_ole",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Dispense study drug for home use",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w48",
+   "code": "W48",
+   "name": "Week 48 (OLE)",
+   "phase": "Open-label extension",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 336,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "enter_ole",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Tuberculosis test (IGRA)",
+     "if": []
+    },
+    {
+     "name": "PK and anti-drug antibody sample",
+     "if": []
+    },
+    {
+     "name": "Dispense study drug for home use",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w60",
+   "code": "W60",
+   "name": "Week 60 (OLE)",
+   "phase": "Open-label extension",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 420,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "enter_ole",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Dispense study drug for home use",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "w72",
+   "code": "W72",
+   "name": "Week 72 (OLE)",
+   "phase": "Open-label extension",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 504,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "enter_ole",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Tender and swollen joint counts (68/66)",
+     "if": []
+    },
+    {
+     "name": "HAQ-DI, patient global, pain VAS",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Radiographs of hands and feet",
+     "if": []
+    },
+    {
+     "name": "PK and anti-drug antibody sample",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "sfu_ole",
+   "code": "SFU",
+   "name": "Safety follow-up (Week 76)",
+   "phase": "Follow-up",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 532,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "enter_ole",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "sfu",
+   "code": "SFU",
+   "name": "Safety follow-up (8 weeks after the last dose)",
+   "phase": "Follow-up",
+   "modality": "site",
+   "anchor": "last_dose",
+   "offset_days": 56,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "any": [
+      {
+       "question": "enter_ole",
+       "in": [
+        "no"
+       ]
+      },
+      {
+       "event": "stop_drug",
+       "happened": true
+      }
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Haematology, chemistry",
+     "if": []
+    },
+    {
+     "name": "Adverse events, concomitant medication",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  }
+ ],
+ "events": [
+  {
+   "id": "stop_drug",
+   "label": "Permanent discontinuation of study drug",
+   "repeatable": false,
+   "ends_schedule": false,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": [
+    {
+     "id": "et",
+     "code": "ET",
+     "name": "Early termination visit",
+     "phase": "Part 1",
+     "modality": "site",
+     "anchor": "screening",
+     "offset_days": 0,
+     "window_before": 0,
+     "window_after": 14,
+     "follows": null,
+     "follows_occurrence": null,
+     "duration_days": null,
+     "include_if": [],
+     "repeat": null,
+     "procedures": [
+      {
+       "name": "Physical examination",
+       "if": []
+      },
+      {
+       "name": "Body weight",
+       "if": []
+      },
+      {
+       "name": "12-lead ECG",
+       "if": []
+      },
+      {
+       "name": "Urine pregnancy test",
+       "if": [
+        {
+         "question": "wocbp",
+         "in": [
+          "yes"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Fasting lipid panel",
+       "if": []
+      },
+      {
+       "name": "hs-CRP",
+       "if": []
+      },
+      {
+       "name": "PASI and body surface area",
+       "if": []
+      },
+      {
+       "name": "Enthesitis and dactylitis assessment",
+       "if": []
+      },
+      {
+       "name": "SF-36, FACIT-Fatigue",
+       "if": []
+      },
+      {
+       "name": "Radiographs of hands and feet",
+       "if": []
+      },
+      {
+       "name": "PK and anti-drug antibody sample",
+       "if": []
+      },
+      {
+       "name": "Vital signs",
+       "if": []
+      },
+      {
+       "name": "Haematology, chemistry",
+       "if": []
+      },
+      {
+       "name": "Tender and swollen joint counts (68/66)",
+       "if": []
+      },
+      {
+       "name": "HAQ-DI, patient global, pain VAS",
+       "if": []
+      },
+      {
+       "name": "Adverse events, concomitant medication",
+       "if": []
+      }
+     ],
+     "timepoints": [],
+     "condition": null,
+     "source": null,
+     "min_gap": null,
+     "prep": null,
+     "check": null
+    }
+   ]
+  },
+  {
+   "id": "withdraw",
+   "label": "Withdrawal of consent",
+   "repeatable": false,
+   "ends_schedule": true,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": []
+  },
+  {
+   "id": "alt_3x",
+   "label": "ALT or AST above 3 x ULN",
+   "repeatable": true,
+   "ends_schedule": false,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": [
+    {
+     "id": "lft1",
+     "code": "LFT",
+     "name": "Repeat liver function tests",
+     "phase": "Safety",
+     "modality": "site",
+     "anchor": "screening",
+     "offset_days": 2,
+     "window_before": 0,
+     "window_after": 1,
+     "follows": null,
+     "follows_occurrence": null,
+     "duration_days": null,
+     "include_if": [],
+     "repeat": null,
+     "procedures": [
+      {
+       "name": "Liver function tests",
+       "if": []
+      }
+     ],
+     "timepoints": [],
+     "condition": null,
+     "source": null,
+     "min_gap": null,
+     "prep": null,
+     "check": null
+    },
+    {
+     "id": "lftw",
+     "code": "LFT-W",
+     "name": "Weekly liver function tests",
+     "phase": "Safety",
+     "modality": "site",
+     "anchor": "screening",
+     "offset_days": 9,
+     "window_before": 0,
+     "window_after": 1,
+     "follows": null,
+     "follows_occurrence": null,
+     "duration_days": null,
+     "include_if": [],
+     "repeat": {
+      "every_days": 7,
+      "count": null,
+      "count_question": null,
+      "start_n": 1,
+      "label_pattern": "Weekly liver function tests {n}",
+      "code_pattern": "LFT-W{n}",
+      "chain": true,
+      "open_ended": false,
+      "until_anchor": null,
+      "overrides": [],
+      "until_check": true,
+      "stages": [],
+      "max_days": null,
+      "max_delay_days": null,
+      "delay_effect": null
+     },
+     "procedures": [
+      {
+       "name": "Liver function tests",
+       "if": []
+      }
+     ],
+     "timepoints": [],
+     "condition": null,
+     "source": null,
+     "check": {
+      "id": "lft_ok",
+      "text": "ALT and AST both below 2 x ULN?",
+      "help": null,
+      "recheck_days": null,
+      "max_wait_days": null,
+      "on_timeout": "warn",
+      "stop_visits": [],
+      "source": "Section 7.4",
+      "measures": [],
+      "limits": [],
+      "dose_changes": []
+     },
+     "min_gap": null,
+     "prep": null
+    }
+   ]
+  }
+ ],
+ "rules": [
+  {
+   "id": "stop_drug_rule",
+   "label": "Study drug discontinued",
+   "when": {
+    "event": "stop_drug"
+   },
+   "stop_visits": [
+    "dose0",
+    "dose2",
+    "dose4",
+    "dose8",
+    "dose12",
+    "dose16",
+    "dose20",
+    "w28",
+    "w36",
+    "w48",
+    "w60",
+    "w72",
+    "sfu_ole"
+   ],
+   "stop_all": false,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further injections; Part 1 visits continue; no OLE; safety follow-up 8 weeks after the last dose.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "pause": null
+  },
+  {
+   "id": "withdraw_rule",
+   "label": "Consent withdrawn",
+   "when": {
+    "event": "withdraw"
+   },
+   "stop_visits": [],
+   "stop_all": true,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further visits.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "pause": null
+  }
+ ],
+ "review_questions": [],
+ "notes": []
+}

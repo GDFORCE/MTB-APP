@@ -1,0 +1,1096 @@
+{
+ "fixture": "syn03-vaccine-prose",
+ "constructed": true,
+ "cases": [
+  {
+   "name": "A: Group A, can become pregnant, both vaccinations on time",
+   "given": {
+    "today": "2026-03-02",
+    "dates": [
+     {
+      "what": [
+       "day 0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1",
+       "enrol*",
+       "screening"
+      ],
+      "date": "2026-03-02",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "group",
+       "cohort",
+       "booster"
+      ],
+      "answer": [
+       "group A",
+       "A"
+      ]
+     },
+     {
+      "what": [
+       "pregnan*",
+       "childbearing"
+      ],
+      "answer": true
+     },
+     {
+      "what": [
+       "second vaccination",
+       "vaccination 2",
+       "dose 2",
+       "second dose"
+      ],
+      "answer": true,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Day 0",
+      "match": [
+       "day 0",
+       "d0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1"
+      ],
+      "date": "2026-03-02",
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       },
+       {
+        "name": "Diary card",
+        "any": [
+         "diary"
+        ]
+       },
+       {
+        "name": "Urine pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Day 7 telephone contact",
+      "match": [
+       "day 7",
+       "d7"
+      ],
+      "date": "2026-03-09",
+      "window": [
+       "2026-03-08",
+       "2026-03-10"
+      ],
+      "modality": "phone",
+      "lacks": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Day 28",
+      "match": [
+       "day 28",
+       "d28",
+       "vaccination 2",
+       "second vaccination",
+       "dose 2"
+      ],
+      "date": "2026-03-30",
+      "window": [
+       "2026-03-30",
+       "2026-04-06"
+      ],
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Telephone contact 7 days after vaccination 2",
+      "match": [
+       [
+        "7 days after",
+        "second"
+       ],
+       [
+        "7 days after",
+        "vaccination 2"
+       ],
+       [
+        "7 days after",
+        "dose 2"
+       ],
+       [
+        "day 35"
+       ],
+       [
+        "d35"
+       ],
+       [
+        "v2 7"
+       ],
+       [
+        "dose 2 7"
+       ]
+      ],
+      "date": "2026-04-06",
+      "window": [
+       "2026-04-05",
+       "2026-04-07"
+      ],
+      "modality": "phone"
+     },
+     {
+      "name": "Clinic visit 28 days after vaccination 2",
+      "match": [
+       [
+        "28 days after",
+        "second"
+       ],
+       [
+        "28 days after",
+        "vaccination 2"
+       ],
+       [
+        "28 days after",
+        "dose 2"
+       ],
+       [
+        "day 56"
+       ],
+       [
+        "d56"
+       ]
+      ],
+      "date": "2026-04-27",
+      "window": [
+       "2026-04-24",
+       "2026-04-30"
+      ],
+      "modality": "site",
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Visit 180 days after vaccination 2 (final for Group A)",
+      "match": [
+       [
+        "180 days after"
+       ],
+       [
+        "day 208"
+       ],
+       [
+        "d208"
+       ],
+       [
+        "6 month*"
+       ],
+       [
+        "month 6"
+       ],
+       [
+        "booster vaccination"
+       ],
+       [
+        "final"
+       ]
+      ],
+      "date": "2026-09-26",
+      "window": [
+       "2026-09-12",
+       "2026-10-10"
+      ],
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       },
+       {
+        "name": "Urine pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     }
+    ],
+    "absent": [
+     {
+      "name": "Booster contacts (Group B only)",
+      "match": [
+       [
+        "7 days after",
+        "booster"
+       ],
+       [
+        "booster",
+        "7"
+       ],
+       [
+        "booster",
+        "telephone"
+       ],
+       [
+        "booster",
+        "phone"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "B: Group A, vaccination 2 given on Day 33: later contacts count from that date",
+   "given": {
+    "today": "2026-04-04",
+    "dates": [
+     {
+      "what": [
+       "day 0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1",
+       "enrol*",
+       "screening"
+      ],
+      "date": "2026-03-02",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "group",
+       "cohort",
+       "booster"
+      ],
+      "answer": [
+       "group A",
+       "A"
+      ]
+     },
+     {
+      "what": [
+       "pregnan*",
+       "childbearing"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "second vaccination",
+       "vaccination 2",
+       "dose 2",
+       "second dose"
+      ],
+      "answer": true,
+      "optional": true
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "day 0",
+       "d0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "visit": [
+       "day 28",
+       "d28",
+       "vaccination 2",
+       "second vaccination",
+       "dose 2"
+      ],
+      "date": "2026-04-04",
+      "all": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Telephone contact 7 days after vaccination 2",
+      "match": [
+       [
+        "7 days after",
+        "second"
+       ],
+       [
+        "7 days after",
+        "vaccination 2"
+       ],
+       [
+        "7 days after",
+        "dose 2"
+       ],
+       [
+        "day 35"
+       ],
+       [
+        "d35"
+       ],
+       [
+        "v2 7"
+       ],
+       [
+        "dose 2 7"
+       ]
+      ],
+      "date": "2026-04-11",
+      "window": [
+       "2026-04-10",
+       "2026-04-12"
+      ],
+      "modality": "phone"
+     },
+     {
+      "name": "Clinic visit 28 days after vaccination 2",
+      "match": [
+       [
+        "28 days after",
+        "second"
+       ],
+       [
+        "28 days after",
+        "vaccination 2"
+       ],
+       [
+        "28 days after",
+        "dose 2"
+       ],
+       [
+        "day 56"
+       ],
+       [
+        "d56"
+       ]
+      ],
+      "date": "2026-05-02",
+      "window": [
+       "2026-04-29",
+       "2026-05-05"
+      ],
+      "modality": "site",
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Visit 180 days after vaccination 2 (final for Group A)",
+      "match": [
+       [
+        "180 days after"
+       ],
+       [
+        "day 208"
+       ],
+       [
+        "d208"
+       ],
+       [
+        "6 month*"
+       ],
+       [
+        "month 6"
+       ],
+       [
+        "booster vaccination"
+       ],
+       [
+        "final"
+       ]
+      ],
+      "date": "2026-10-01",
+      "window": [
+       "2026-09-17",
+       "2026-10-15"
+      ],
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       },
+       {
+        "name": "Urine pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "C: Group B on time: booster at the 180-day visit, then 7 and 28 days after it",
+   "given": {
+    "today": "2026-03-02",
+    "dates": [
+     {
+      "what": [
+       "day 0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1",
+       "enrol*",
+       "screening"
+      ],
+      "date": "2026-03-02",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "group",
+       "cohort",
+       "booster"
+      ],
+      "answer": [
+       "group B",
+       "B"
+      ]
+     },
+     {
+      "what": [
+       "pregnan*",
+       "childbearing"
+      ],
+      "answer": true
+     },
+     {
+      "what": [
+       "second vaccination",
+       "vaccination 2",
+       "dose 2",
+       "second dose"
+      ],
+      "answer": true,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Day 0",
+      "match": [
+       "day 0",
+       "d0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1"
+      ],
+      "date": "2026-03-02",
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       },
+       {
+        "name": "Diary card",
+        "any": [
+         "diary"
+        ]
+       },
+       {
+        "name": "Urine pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Day 7 telephone contact",
+      "match": [
+       "day 7",
+       "d7"
+      ],
+      "date": "2026-03-09",
+      "window": [
+       "2026-03-08",
+       "2026-03-10"
+      ],
+      "modality": "phone",
+      "lacks": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Day 28",
+      "match": [
+       "day 28",
+       "d28",
+       "vaccination 2",
+       "second vaccination",
+       "dose 2"
+      ],
+      "date": "2026-03-30",
+      "window": [
+       "2026-03-30",
+       "2026-04-06"
+      ],
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Telephone contact 7 days after vaccination 2",
+      "match": [
+       [
+        "7 days after",
+        "second"
+       ],
+       [
+        "7 days after",
+        "vaccination 2"
+       ],
+       [
+        "7 days after",
+        "dose 2"
+       ],
+       [
+        "day 35"
+       ],
+       [
+        "d35"
+       ],
+       [
+        "v2 7"
+       ],
+       [
+        "dose 2 7"
+       ]
+      ],
+      "date": "2026-04-06",
+      "window": [
+       "2026-04-05",
+       "2026-04-07"
+      ],
+      "modality": "phone"
+     },
+     {
+      "name": "Clinic visit 28 days after vaccination 2",
+      "match": [
+       [
+        "28 days after",
+        "second"
+       ],
+       [
+        "28 days after",
+        "vaccination 2"
+       ],
+       [
+        "28 days after",
+        "dose 2"
+       ],
+       [
+        "day 56"
+       ],
+       [
+        "d56"
+       ]
+      ],
+      "date": "2026-04-27",
+      "window": [
+       "2026-04-24",
+       "2026-04-30"
+      ],
+      "modality": "site",
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Visit 180 days after vaccination 2 with booster (Group B)",
+      "match": [
+       [
+        "180 days after"
+       ],
+       [
+        "day 208"
+       ],
+       [
+        "d208"
+       ],
+       [
+        "6 month*"
+       ],
+       [
+        "month 6"
+       ],
+       [
+        "booster vaccination"
+       ],
+       [
+        "final"
+       ]
+      ],
+      "date": "2026-09-26",
+      "window": [
+       "2026-09-12",
+       "2026-10-10"
+      ],
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       },
+       {
+        "name": "Urine pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Telephone contact 7 days after the booster",
+      "match": [
+       [
+        "7 days after",
+        "booster"
+       ],
+       [
+        "booster",
+        "7"
+       ],
+       [
+        "booster",
+        "telephone"
+       ],
+       [
+        "booster",
+        "phone"
+       ]
+      ],
+      "date": "2026-10-03",
+      "window": [
+       "2026-10-02",
+       "2026-10-04"
+      ],
+      "modality": "phone"
+     },
+     {
+      "name": "Final visit 28 days after the booster",
+      "match": [
+       [
+        "28 days after",
+        "booster"
+       ],
+       [
+        "booster",
+        "28"
+       ],
+       [
+        "final"
+       ]
+      ],
+      "date": "2026-10-24",
+      "window": [
+       "2026-10-21",
+       "2026-10-27"
+      ],
+      "has": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "D: Group A, vaccination 2 not given: safety visits on Day 56 and Day 208 from Day 0, no post-dose contacts",
+   "given": {
+    "today": "2026-03-30",
+    "dates": [
+     {
+      "what": [
+       "day 0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1",
+       "enrol*",
+       "screening"
+      ],
+      "date": "2026-03-02",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "group",
+       "cohort",
+       "booster"
+      ],
+      "answer": [
+       "group A",
+       "A"
+      ]
+     },
+     {
+      "what": [
+       "pregnan*",
+       "childbearing"
+      ],
+      "answer": true
+     },
+     {
+      "what": [
+       "second vaccination",
+       "vaccination 2",
+       "dose 2",
+       "second dose"
+      ],
+      "answer": false,
+      "optional": false
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "day 0",
+       "d0",
+       "vaccination 1",
+       "first vaccination",
+       "dose 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "visit": [
+       "day 28",
+       "d28",
+       "vaccination 2",
+       "second vaccination",
+       "dose 2"
+      ],
+      "date": "2026-04-01",
+      "all": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Day 56 safety visit (counted from Day 0)",
+      "match": [
+       [
+        "day 56"
+       ],
+       [
+        "d56"
+       ],
+       [
+        "safety"
+       ]
+      ],
+      "date": "2026-04-27",
+      "window": [
+       "2026-04-24",
+       "2026-04-30"
+      ],
+      "modality": "site",
+      "lacks": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Day 208 safety visit (counted from Day 0)",
+      "match": [
+       [
+        "day 208"
+       ],
+       [
+        "d208"
+       ],
+       [
+        "safety"
+       ]
+      ],
+      "date": "2026-09-26",
+      "window": [
+       "2026-09-12",
+       "2026-10-10"
+      ],
+      "lacks": [
+       {
+        "name": "Immunogenicity blood sample",
+        "any": [
+         "immunogenicity",
+         "blood sample",
+         "serolog*"
+        ]
+       },
+       {
+        "name": "Vaccination",
+        "any": [
+         "vaccin*"
+        ]
+       }
+      ]
+     }
+    ],
+    "absent": [
+     {
+      "name": "Telephone contact 7 days after a vaccination that was not given",
+      "match": [
+       [
+        "7 days after",
+        "second"
+       ],
+       [
+        "7 days after",
+        "vaccination 2"
+       ],
+       [
+        "7 days after",
+        "dose 2"
+       ],
+       [
+        "day 35"
+       ],
+       [
+        "d35"
+       ],
+       [
+        "v2 7"
+       ],
+       [
+        "dose 2 7"
+       ]
+      ],
+      "after": "2026-03-30"
+     },
+     {
+      "name": "Visit 28 days after vaccination 2 (date counted from the Day 28 visit)",
+      "match": [
+       [
+        "28 days after",
+        "second"
+       ],
+       [
+        "28 days after",
+        "vaccination 2"
+       ],
+       [
+        "28 days after",
+        "dose 2"
+       ],
+       [
+        "day 56"
+       ],
+       [
+        "d56"
+       ]
+      ],
+      "on": "2026-04-29"
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -334,7 +334,11 @@ function VisitSheet({ row, saving, error, onClose, onSave, onCheck, onRemoveChec
   const window = row.windowStart && row.windowEnd && row.windowStart !== row.windowEnd ? ` · window ${short(row.windowStart)} – ${short(row.windowEnd)}` : "";
   return <FlowSheet visible title={`${row.code} · ${row.name}`} onClose={onClose}>
     {!!(plan + window) && <Text style={f.hint}>{plan + window}</Text>}
+    {row.windowStated === false && <Text style={f.hint}>The protocol states no window for this visit.</Text>}
     {row.notes.map((note) => <Text key={note} style={[f.hint, { color: G.amberText }]}>{note}</Text>)}
+    {(row.instructions || []).map((x) => <Text key={x.text} style={[f.hint, { color: G.ink }]}>
+      • {x.text}{x.conditional && x.condition ? ` (only if ${x.condition})` : ""}
+    </Text>)}
     {check && <View style={s.check}>
       <Text style={f.label}>Before this visit: {check.text}</Text>
       {!!check.limits.length && <Text style={f.hint}>{check.until ? "Comes back until" : "Goes ahead if"} {check.limits.join(" and ")}.</Text>}

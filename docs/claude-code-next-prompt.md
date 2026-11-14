@@ -1,7 +1,20 @@
 # Current continuation prompt
 
-Updated 28 October 2026. **Current next action: add schedule atoms to the kit system** without changing
-current behaviour. Preserve the current uncommitted work on `kit/protocol-rules`.
+Updated 10 November 2026. **Current next action: any protocol in, correct patient schedule out** (goal, approach and
+problem stated; the solution is left to the session). Preserve the current uncommitted work on `kit/protocol-rules`.
+
+```text
+Read AGENTS.md and docs/kit-schedule-fidelity-prompt-2026-11-10.md, then carry out the prompt in that
+file from the actual working tree. Check git status yourself; do not commit unless asked.
+```
+
+- [Kit schedule fidelity prompt](kit-schedule-fidelity-prompt-2026-11-10.md)
+- [Kit schema element inventory](kit-schema-element-inventory.md)
+
+## Previous launcher (28 October 2026, superseded as the next action; preserved)
+
+Updated 28 October 2026. Next action then was to add schedule atoms to the kit system without changing
+current behaviour.
 
 ```text
 Read AGENTS.md and docs/claude-code-kit-schedule-atoms-implementation-2026-10-28.md, then carry out the
@@ -9,7 +22,6 @@ prompt in that file from the actual uncommitted tree. Check git status yourself;
 ```
 
 - [Kit schedule atoms implementation prompt](claude-code-kit-schedule-atoms-implementation-2026-10-28.md)
-- [Kit schema element inventory](kit-schema-element-inventory.md)
 
 ## Previous launcher (19 October 2026, superseded as the next action; preserved)
 

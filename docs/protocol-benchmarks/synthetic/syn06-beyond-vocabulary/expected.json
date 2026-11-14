@@ -1,0 +1,627 @@
+{
+ "fixture": "syn06-beyond-vocabulary",
+ "constructed": true,
+ "cases": [
+  {
+   "name": "A: lives 80 km away; nothing missed",
+   "given": {
+    "today": "2026-01-31",
+    "dates": [
+     {
+      "what": [
+       "day 1",
+       "first infusion",
+       "infusion 1",
+       "start",
+       "screening",
+       "baseline"
+      ],
+      "date": "2026-01-31",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "50 km",
+       "distance",
+       "residence",
+       "far",
+       "home nurs*",
+       "km"
+      ],
+      "answer": true,
+      "optional": true
+     },
+     {
+      "what": [
+       "50 km",
+       "distance",
+       "residence",
+       "far",
+       "home nurs*",
+       "km"
+      ],
+      "answer": [
+       "more than 50",
+       ">50",
+       "over 50",
+       "far"
+      ],
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Day 1 infusion",
+      "match": [
+       "day 1",
+       "d1",
+       "infusion 1",
+       "first infusion"
+      ],
+      "date": "2026-01-31",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Month 1 infusion (same day of the calendar month)",
+      "match": [
+       "month 1",
+       "m1",
+       "infusion 2",
+       "mo 1"
+      ],
+      "date": "2026-02-28",
+      "window": [
+       "2026-02-23",
+       "2026-03-05"
+      ],
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Month 2 infusion (same day of the calendar month)",
+      "match": [
+       "month 2",
+       "m2",
+       "infusion 3",
+       "mo 2"
+      ],
+      "date": "2026-03-31",
+      "window": [
+       "2026-03-26",
+       "2026-04-05"
+      ],
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Month 3 infusion (same day of the calendar month)",
+      "match": [
+       "month 3",
+       "m3",
+       "infusion 4",
+       "mo 3"
+      ],
+      "date": "2026-04-30",
+      "window": [
+       "2026-04-25",
+       "2026-05-05"
+      ],
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Month 4 infusion (same day of the calendar month)",
+      "match": [
+       "month 4",
+       "m4",
+       "infusion 5",
+       "mo 4"
+      ],
+      "date": "2026-05-31",
+      "window": [
+       "2026-05-26",
+       "2026-06-05"
+      ],
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Month 5 infusion (same day of the calendar month)",
+      "match": [
+       "month 5",
+       "m5",
+       "infusion 6",
+       "mo 5"
+      ],
+      "date": "2026-06-30",
+      "window": [
+       "2026-06-25",
+       "2026-07-05"
+      ],
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Month 6 infusion (same day of the calendar month)",
+      "match": [
+       "month 6",
+       "m6",
+       "infusion 7",
+       "mo 6"
+      ],
+      "date": "2026-07-31",
+      "window": [
+       "2026-07-26",
+       "2026-08-05"
+      ],
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Home nursing visit 3 days after the Day 1 infusion",
+      "match": [
+       [
+        "home"
+       ],
+       [
+        "nurs*"
+       ]
+      ],
+      "date": "2026-02-03",
+      "window": [
+       "2026-02-02",
+       "2026-02-04"
+      ],
+      "modality": "home"
+     },
+     {
+      "name": "Home nursing visit 3 days after the Month 1 infusion",
+      "match": [
+       [
+        "home"
+       ],
+       [
+        "nurs*"
+       ]
+      ],
+      "date": "2026-03-03",
+      "window": [
+       "2026-03-02",
+       "2026-03-04"
+      ],
+      "modality": "home"
+     },
+     {
+      "name": "Telephone report of results within 3 business days after Day 1 (Sat 31 Jan: by Wed 4 Feb)",
+      "match": [
+       [
+        "laboratory results"
+       ],
+       [
+        "lab results"
+       ],
+       [
+        "result*",
+        "telephone"
+       ],
+       [
+        "result*",
+        "call"
+       ],
+       [
+        "report*",
+        "result*"
+       ]
+      ],
+      "date_in": [
+       "2026-02-02",
+       "2026-02-04"
+      ]
+     },
+     {
+      "name": "Final visit (first Monday on or after Day 210)",
+      "match": [
+       "final",
+       "end of study",
+       "eos"
+      ],
+      "date": "2026-08-31",
+      "has": [
+       {
+        "name": "Safety laboratory tests",
+        "any": [
+         "laborator*",
+         "hematolog*",
+         "biochem*"
+        ]
+       },
+       {
+        "name": "Electrocardiogram",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "KMT-22 infusion",
+        "any": [
+         "infusion",
+         "kmt"
+        ]
+       }
+      ]
+     }
+    ],
+    "flags": [
+     {
+      "name": "8.2 calendar months on the same day of the month (not a fixed number of days)",
+      "any": [
+       [
+        "calendar month*"
+       ],
+       [
+        "same day of the month"
+       ],
+       [
+        "last day of"
+       ],
+       [
+        "month*",
+        "30 days"
+       ]
+      ]
+     },
+     {
+      "name": "8.4 three business days",
+      "any": [
+       [
+        "business day*"
+       ],
+       [
+        "working day*"
+       ],
+       [
+        "holiday*"
+       ]
+      ]
+     },
+     {
+      "name": "8.5 laboratory tests of a missed visit are added to the next visit",
+      "any": [
+       [
+        "missed",
+        "next"
+       ],
+       [
+        "missed",
+        "laborator*"
+       ],
+       [
+        "missed",
+        "additional*"
+       ]
+      ]
+     },
+     {
+      "name": "8.6 two consecutive missed infusion visits: withdrawn from treatment",
+      "any": [
+       [
+        "two consecutive",
+        "missed"
+       ],
+       [
+        "consecutive",
+        "missed"
+       ],
+       [
+        "2 consecutive"
+       ]
+      ]
+     },
+     {
+      "name": "8.7 final visit on the first Monday on or after Day 210",
+      "any": [
+       [
+        "monday"
+       ],
+       [
+        "weekday"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "B: lives near the site: no home nursing visits",
+   "given": {
+    "today": "2026-01-31",
+    "dates": [
+     {
+      "what": [
+       "day 1",
+       "first infusion",
+       "infusion 1",
+       "start",
+       "screening",
+       "baseline"
+      ],
+      "date": "2026-01-31",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "50 km",
+       "distance",
+       "residence",
+       "far",
+       "home nurs*",
+       "km"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "50 km",
+       "distance",
+       "residence",
+       "far",
+       "home nurs*",
+       "km"
+      ],
+      "answer": [
+       "50 km or less",
+       "within 50",
+       "<=50",
+       "near"
+      ],
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Day 1 infusion",
+      "match": [
+       "day 1",
+       "d1",
+       "infusion 1",
+       "first infusion"
+      ],
+      "date": "2026-01-31"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Home nursing visit",
+      "match": [
+       [
+        "home"
+       ],
+       [
+        "nurs*"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "C: fever on two consecutive days reported on 10 Mar: unscheduled visit within 24 hours",
+   "given": {
+    "today": "2026-03-10",
+    "dates": [
+     {
+      "what": [
+       "day 1",
+       "first infusion",
+       "infusion 1",
+       "start",
+       "screening",
+       "baseline"
+      ],
+      "date": "2026-01-31",
+      "all": true
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "50 km",
+       "distance",
+       "residence",
+       "far",
+       "home nurs*",
+       "km"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "50 km",
+       "distance",
+       "residence",
+       "far",
+       "home nurs*",
+       "km"
+      ],
+      "answer": [
+       "50 km or less",
+       "within 50",
+       "<=50",
+       "near"
+      ],
+      "optional": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "fever"
+       ],
+       [
+        "temperature"
+       ],
+       [
+        "unscheduled"
+       ]
+      ],
+      "date": "2026-03-10"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Unscheduled visit for fever",
+      "match": [
+       [
+        "fever"
+       ],
+       [
+        "unscheduled"
+       ]
+      ],
+      "date_in": [
+       "2026-03-10",
+       "2026-03-11"
+      ],
+      "has": [
+       {
+        "name": "Blood cultures",
+        "any": [
+         "culture*"
+        ]
+       },
+       {
+        "name": "Hematology",
+        "any": [
+         "hematolog*",
+         "haematolog*"
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

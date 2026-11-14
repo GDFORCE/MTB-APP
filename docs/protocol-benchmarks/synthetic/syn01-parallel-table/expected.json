@@ -1,0 +1,1834 @@
+{
+ "fixture": "syn01-parallel-table",
+ "constructed": true,
+ "cases": [
+  {
+   "name": "A: man under 65, not in the PK sub-study, on time",
+   "given": {
+    "today": "2026-03-02",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent",
+       "visit 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "what": [
+       "day 1",
+       "randomi*",
+       "first dose",
+       "baseline",
+       "visit 2"
+      ],
+      "date": "2026-03-16"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": 54,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": [
+       "under 65",
+       "<65",
+       "younger",
+       "below 65"
+      ],
+      "optional": true
+     },
+     {
+      "what": [
+       "pk",
+       "pharmacokinetic*",
+       "sub study",
+       "substudy"
+      ],
+      "answer": false
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Screening",
+      "match": [
+       "screening",
+       "scr",
+       "v1",
+       "visit 1"
+      ],
+      "date": "2026-03-02",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Day 1",
+      "match": [
+       "day 1",
+       "d1",
+       "v2",
+       "visit 2",
+       "baseline",
+       "randomi*",
+       "week 0"
+      ],
+      "date": "2026-03-16",
+      "window": null,
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Randomisation",
+        "any": [
+         "randomi*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 2",
+      "match": [
+       "week 2",
+       "w2",
+       "v3",
+       "visit 3",
+       "day 15"
+      ],
+      "date": "2026-03-30",
+      "window": [
+       "2026-03-28",
+       "2026-04-01"
+      ],
+      "modality": "phone",
+      "has": [
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Orthostatic vital signs",
+        "any": [
+         "orthostatic"
+        ]
+       },
+       {
+        "name": "Serum creatinine",
+        "any": [
+         "creatinine"
+        ]
+       },
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 4",
+      "match": [
+       "week 4",
+       "w4",
+       "v4",
+       "visit 4",
+       "day 29"
+      ],
+      "date": "2026-04-13",
+      "window": [
+       "2026-04-10",
+       "2026-04-16"
+      ],
+      "modality": "site",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "v5",
+       "visit 5",
+       "day 57"
+      ],
+      "date": "2026-05-11",
+      "window": [
+       "2026-05-08",
+       "2026-05-14"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "v6",
+       "visit 6",
+       "day 85"
+      ],
+      "date": "2026-06-08",
+      "window": [
+       "2026-06-05",
+       "2026-06-11"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Safety follow-up contact (30 days after the last dose, +7)",
+      "match": [
+       "follow up",
+       "followup",
+       "fu",
+       "v7",
+       "visit 7",
+       "safety contact",
+       "safety call"
+      ],
+      "date": "2026-07-08",
+      "window": [
+       "2026-07-08",
+       "2026-07-15"
+      ],
+      "modality": "phone",
+      "has": [
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     }
+    ],
+    "no_other_visits": true,
+    "allow_extra": [
+     "dose",
+     "dosing"
+    ],
+    "flags": []
+   }
+  },
+  {
+   "name": "B: woman of childbearing potential aged 70, in the PK sub-study",
+   "given": {
+    "today": "2026-03-02",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent",
+       "visit 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "what": [
+       "day 1",
+       "randomi*",
+       "first dose",
+       "baseline",
+       "visit 2"
+      ],
+      "date": "2026-03-16"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": 70,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": true,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": [
+       "65 or older",
+       ">=65",
+       "65+",
+       "older"
+      ],
+      "optional": true
+     },
+     {
+      "what": [
+       "pk",
+       "pharmacokinetic*",
+       "sub study",
+       "substudy"
+      ],
+      "answer": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Screening",
+      "match": [
+       "screening",
+       "scr",
+       "v1",
+       "visit 1"
+      ],
+      "date": "2026-03-02",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       },
+       {
+        "name": "Serum pregnancy test",
+        "any": [
+         [
+          "serum",
+          "pregnancy"
+         ]
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Day 1",
+      "match": [
+       "day 1",
+       "d1",
+       "v2",
+       "visit 2",
+       "baseline",
+       "randomi*",
+       "week 0"
+      ],
+      "date": "2026-03-16",
+      "window": null,
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Randomisation",
+        "any": [
+         "randomi*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       }
+      ],
+      "says": [
+       {
+        "name": "PK at pre-dose and 1, 2, 4 h post-dose",
+        "any": [
+         [
+          "1 h",
+          "2 h",
+          "4 h"
+         ],
+         [
+          "60",
+          "120",
+          "240"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 2",
+      "match": [
+       "week 2",
+       "w2",
+       "v3",
+       "visit 3",
+       "day 15"
+      ],
+      "date": "2026-03-30",
+      "window": [
+       "2026-03-28",
+       "2026-04-01"
+      ],
+      "modality": "site",
+      "has": [
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       },
+       {
+        "name": "Orthostatic vital signs",
+        "any": [
+         "orthostatic"
+        ]
+       },
+       {
+        "name": "Serum creatinine",
+        "any": [
+         "creatinine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 4",
+      "match": [
+       "week 4",
+       "w4",
+       "v4",
+       "visit 4",
+       "day 29"
+      ],
+      "date": "2026-04-13",
+      "window": [
+       "2026-04-10",
+       "2026-04-16"
+      ],
+      "modality": "site",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "v5",
+       "visit 5",
+       "day 57"
+      ],
+      "date": "2026-05-11",
+      "window": [
+       "2026-05-08",
+       "2026-05-14"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "v6",
+       "visit 6",
+       "day 85"
+      ],
+      "date": "2026-06-08",
+      "window": [
+       "2026-06-05",
+       "2026-06-11"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Safety follow-up contact (30 days after the last dose, +7)",
+      "match": [
+       "follow up",
+       "followup",
+       "fu",
+       "v7",
+       "visit 7",
+       "safety contact",
+       "safety call"
+      ],
+      "date": "2026-07-08",
+      "window": [
+       "2026-07-08",
+       "2026-07-15"
+      ],
+      "modality": "phone",
+      "has": [
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     }
+    ],
+    "no_other_visits": true,
+    "allow_extra": [
+     "dose",
+     "dosing"
+    ]
+   }
+  },
+  {
+   "name": "C: Week 4 done late (Day 36, outside its window); later visits stay on the Day 1 grid",
+   "given": {
+    "today": "2026-04-21",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent",
+       "visit 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "what": [
+       "day 1",
+       "randomi*",
+       "first dose",
+       "baseline",
+       "visit 2"
+      ],
+      "date": "2026-03-16"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": 54,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": [
+       "under 65",
+       "<65",
+       "younger",
+       "below 65"
+      ],
+      "optional": true
+     },
+     {
+      "what": [
+       "pk",
+       "pharmacokinetic*",
+       "sub study",
+       "substudy"
+      ],
+      "answer": false
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "day 1",
+       "d1",
+       "v2",
+       "visit 2",
+       "baseline",
+       "randomi*",
+       "week 0"
+      ],
+      "date": "2026-03-16",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 4",
+       "w4",
+       "v4",
+       "visit 4",
+       "day 29"
+      ],
+      "date": "2026-04-20",
+      "all": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "v5",
+       "visit 5",
+       "day 57"
+      ],
+      "date": "2026-05-11",
+      "window": [
+       "2026-05-08",
+       "2026-05-14"
+      ]
+     },
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "v6",
+       "visit 6",
+       "day 85"
+      ],
+      "date": "2026-06-08",
+      "window": [
+       "2026-06-05",
+       "2026-06-11"
+      ]
+     },
+     {
+      "name": "Safety follow-up contact",
+      "match": [
+       "follow up",
+       "followup",
+       "fu",
+       "v7",
+       "visit 7",
+       "safety contact",
+       "safety call"
+      ],
+      "date": "2026-07-08",
+      "window": [
+       "2026-07-08",
+       "2026-07-15"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "D: study drug stopped for good, last dose Day 41 (25 Apr): ET visit within 7 days, follow-up 30 days after",
+   "given": {
+    "today": "2026-04-25",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent",
+       "visit 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "what": [
+       "day 1",
+       "randomi*",
+       "first dose",
+       "baseline",
+       "visit 2"
+      ],
+      "date": "2026-03-16"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": 54,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": [
+       "under 65",
+       "<65",
+       "younger",
+       "below 65"
+      ],
+      "optional": true
+     },
+     {
+      "what": [
+       "pk",
+       "pharmacokinetic*",
+       "sub study",
+       "substudy"
+      ],
+      "answer": false
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "day 1",
+       "d1",
+       "v2",
+       "visit 2",
+       "baseline",
+       "randomi*",
+       "week 0"
+      ],
+      "date": "2026-03-16",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 2",
+       "w2",
+       "v3",
+       "visit 3",
+       "day 15"
+      ],
+      "date": "2026-03-30",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 4",
+       "w4",
+       "v4",
+       "visit 4",
+       "day 29"
+      ],
+      "date": "2026-04-13",
+      "all": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "discontinu*",
+        "study drug"
+       ],
+       [
+        "discontinu*",
+        "treatment"
+       ],
+       [
+        "early termination"
+       ],
+       [
+        "stop*",
+        "study drug"
+       ],
+       [
+        "treatment",
+        "discontinu*"
+       ],
+       [
+        "study drug",
+        "discontinu*"
+       ]
+      ],
+      "date": "2026-04-25"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Early Termination visit (within 7 days after the last dose, Week 12 assessments)",
+      "match": [
+       "early termination",
+       "et",
+       "early discontinuation"
+      ],
+      "window": [
+       "2026-04-25",
+       "2026-05-02"
+      ],
+      "date_in": [
+       "2026-04-25",
+       "2026-05-02"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg",
+         "electrocardiogra*"
+        ]
+       },
+       {
+        "name": "Haematology and chemistry",
+        "any": [
+         "haematolog*",
+         "hematolog*",
+         "chemistry"
+        ]
+       },
+       {
+        "name": "HbA1c",
+        "any": [
+         "hba1c",
+         "glycated"
+        ]
+       },
+       {
+        "name": "Physical examination",
+        "any": [
+         "physical exam*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       },
+       {
+        "name": "Adverse events",
+        "any": [
+         "adverse event*",
+         "ae",
+         "aes"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "PK sampling",
+        "any": [
+         "pk",
+         "pharmacokinetic*"
+        ]
+       },
+       {
+        "name": "Dispense study drug",
+        "any": [
+         "dispens*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Safety follow-up contact (30 days after the last dose)",
+      "match": [
+       "follow up",
+       "followup",
+       "fu",
+       "v7",
+       "visit 7",
+       "safety contact",
+       "safety call"
+      ],
+      "date": "2026-05-25",
+      "window": [
+       "2026-05-25",
+       "2026-06-01"
+      ],
+      "modality": "phone"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Week 8 (no treatment visits after discontinuation)",
+      "match": [
+       "week 8",
+       "w8",
+       "v5",
+       "visit 5",
+       "day 57"
+      ],
+      "after": "2026-04-25"
+     },
+     {
+      "name": "Week 12 (replaced by the ET visit)",
+      "match": [
+       "week 12",
+       "w12",
+       "v6",
+       "visit 6",
+       "day 85"
+      ],
+      "after": "2026-04-25"
+     }
+    ]
+   }
+  },
+  {
+   "name": "E: consent withdrawn on Day 36: nothing afterwards, no ET visit, no follow-up contact",
+   "given": {
+    "today": "2026-04-20",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent",
+       "visit 1"
+      ],
+      "date": "2026-03-02"
+     },
+     {
+      "what": [
+       "day 1",
+       "randomi*",
+       "first dose",
+       "baseline",
+       "visit 2"
+      ],
+      "date": "2026-03-16"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": 54,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "age",
+       "65"
+      ],
+      "answer": [
+       "under 65",
+       "<65",
+       "younger",
+       "below 65"
+      ],
+      "optional": true
+     },
+     {
+      "what": [
+       "pk",
+       "pharmacokinetic*",
+       "sub study",
+       "substudy"
+      ],
+      "answer": false
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "day 1",
+       "d1",
+       "v2",
+       "visit 2",
+       "baseline",
+       "randomi*",
+       "week 0"
+      ],
+      "date": "2026-03-16",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 2",
+       "w2",
+       "v3",
+       "visit 3",
+       "day 15"
+      ],
+      "date": "2026-03-30",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 4",
+       "w4",
+       "v4",
+       "visit 4",
+       "day 29"
+      ],
+      "date": "2026-04-13",
+      "all": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "withdraw*",
+        "consent"
+       ],
+       [
+        "consent",
+        "withdraw*"
+       ]
+      ],
+      "date": "2026-04-20"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Week 4 (already done)",
+      "match": [
+       "week 4",
+       "w4",
+       "v4",
+       "visit 4",
+       "day 29"
+      ],
+      "date": "2026-04-13"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "v5",
+       "visit 5",
+       "day 57"
+      ],
+      "after": "2026-04-20"
+     },
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "v6",
+       "visit 6",
+       "day 85"
+      ],
+      "after": "2026-04-20"
+     },
+     {
+      "name": "Safety follow-up contact",
+      "match": [
+       "follow up",
+       "followup",
+       "fu",
+       "v7",
+       "visit 7",
+       "safety contact",
+       "safety call"
+      ],
+      "after": "2026-04-20"
+     },
+     {
+      "name": "Early Termination visit",
+      "match": [
+       "early termination",
+       "et",
+       "early discontinuation"
+      ],
+      "after": "2026-03-16"
+     }
+    ]
+   }
+  }
+ ]
+}

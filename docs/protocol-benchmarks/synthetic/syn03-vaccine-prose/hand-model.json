@@ -1,0 +1,637 @@
+{
+ "protocol": {
+  "title": "RSV-PV-07: two-dose vaccine study, Day 0 numbering, schedule in prose only",
+  "number": "RSV-PV-07",
+  "sponsor": null,
+  "phase": null,
+  "indication": null,
+  "version": null,
+  "design": "Constructed fixture."
+ },
+ "arms": [],
+ "anchors": [
+  {
+   "id": "day0",
+   "label": "Day 0 (first vaccination)",
+   "kind": "start",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": true,
+   "day_zero": true,
+   "set_by_visit": "d0",
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "dose2",
+   "label": "Second vaccination",
+   "kind": "relative",
+   "relative_to": "day0",
+   "offset_days": 28,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": "d28",
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "booster",
+   "label": "Booster vaccination",
+   "kind": "relative",
+   "relative_to": "dose2",
+   "offset_days": 180,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": "p180",
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  }
+ ],
+ "questions": [
+  {
+   "id": "group",
+   "label": "Group",
+   "text": "Which group?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "choice",
+   "options": [
+    {
+     "value": "A",
+     "label": "Group A"
+    },
+    {
+     "value": "B",
+     "label": "Group B (booster)"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "can_be_pregnant",
+   "label": "Can become pregnant",
+   "text": "Can the participant become pregnant?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "dose2_given",
+   "label": "Second vaccination",
+   "text": "Was the second vaccination given?",
+   "scope": "decision",
+   "ask_at": {
+    "visit": "d28",
+    "n": null
+   },
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "d0",
+   "code": "D0",
+   "name": "Day 0: first vaccination",
+   "phase": "Vaccination",
+   "modality": "site",
+   "anchor": "day0",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Eligibility",
+     "if": []
+    },
+    {
+     "name": "Immunogenicity blood sample",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "can_be_pregnant",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Vaccination 1",
+     "if": []
+    },
+    {
+     "name": "30-minute observation",
+     "if": []
+    },
+    {
+     "name": "Diary card issued",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "d7",
+   "code": "D7",
+   "name": "Day 7 telephone contact",
+   "phase": "Vaccination",
+   "modality": "phone",
+   "anchor": "day0",
+   "offset_days": 7,
+   "window_before": 1,
+   "window_after": 1,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Diary card review",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "d28",
+   "code": "D28",
+   "name": "Day 28: second vaccination",
+   "phase": "Vaccination",
+   "modality": "site",
+   "anchor": "day0",
+   "offset_days": 28,
+   "window_before": 0,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Immunogenicity blood sample",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "can_be_pregnant",
+       "in": [
+        "yes"
+       ]
+      },
+      {
+       "question": "dose2_given",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Vaccination 2",
+     "if": [
+      {
+       "question": "dose2_given",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "30-minute observation",
+     "if": [
+      {
+       "question": "dose2_given",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Diary card issued",
+     "if": [
+      {
+       "question": "dose2_given",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p7",
+   "code": "V2+7",
+   "name": "Telephone contact 7 days after vaccination 2",
+   "phase": "Follow-up",
+   "modality": "phone",
+   "anchor": "dose2",
+   "offset_days": 7,
+   "window_before": 1,
+   "window_after": 1,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Diary card review",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p28",
+   "code": "V2+28",
+   "name": "Clinic visit 28 days after vaccination 2",
+   "phase": "Follow-up",
+   "modality": "site",
+   "anchor": "dose2",
+   "offset_days": 28,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Immunogenicity blood sample",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p180",
+   "code": "V2+180",
+   "name": "Visit 180 days after vaccination 2",
+   "phase": "Follow-up",
+   "modality": "site",
+   "anchor": "dose2",
+   "offset_days": 180,
+   "window_before": 14,
+   "window_after": 14,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Immunogenicity blood sample",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "can_be_pregnant",
+       "in": [
+        "yes"
+       ]
+      },
+      {
+       "question": "group",
+       "in": [
+        "B"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Booster vaccination",
+     "if": [
+      {
+       "question": "group",
+       "in": [
+        "B"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "30-minute observation",
+     "if": [
+      {
+       "question": "group",
+       "in": [
+        "B"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Diary card issued",
+     "if": [
+      {
+       "question": "group",
+       "in": [
+        "B"
+       ]
+      }
+     ]
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "b7",
+   "code": "B+7",
+   "name": "Telephone contact 7 days after the booster",
+   "phase": "Booster",
+   "modality": "phone",
+   "anchor": "booster",
+   "offset_days": 7,
+   "window_before": 1,
+   "window_after": 1,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "yes"
+     ]
+    },
+    {
+     "question": "group",
+     "in": [
+      "B"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Diary card review",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "b28",
+   "code": "B+28",
+   "name": "Final visit 28 days after the booster",
+   "phase": "Booster",
+   "modality": "site",
+   "anchor": "booster",
+   "offset_days": 28,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "yes"
+     ]
+    },
+    {
+     "question": "group",
+     "in": [
+      "B"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Immunogenicity blood sample",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "s56",
+   "code": "D56",
+   "name": "Day 56 safety visit",
+   "phase": "Safety follow-up",
+   "modality": "site",
+   "anchor": "day0",
+   "offset_days": 56,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "no"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Safety review",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "s208",
+   "code": "D208",
+   "name": "Day 208 safety visit",
+   "phase": "Safety follow-up",
+   "modality": "site",
+   "anchor": "day0",
+   "offset_days": 208,
+   "window_before": 14,
+   "window_after": 14,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "dose2_given",
+     "in": [
+      "no"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Safety review",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  }
+ ],
+ "events": [
+  {
+   "id": "withdraw",
+   "label": "Withdrawal of consent",
+   "repeatable": false,
+   "ends_schedule": true,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": []
+  }
+ ],
+ "rules": [],
+ "review_questions": [],
+ "notes": []
+}

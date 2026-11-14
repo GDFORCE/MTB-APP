@@ -1,0 +1,795 @@
+{
+ "protocol": {
+  "title": "NVX-204-201: 12-week parallel-group study (ruled table, merged header, footnotes)",
+  "number": "NVX-204-201",
+  "sponsor": null,
+  "phase": null,
+  "indication": null,
+  "version": null,
+  "design": "Constructed fixture."
+ },
+ "arms": [],
+ "anchors": [
+  {
+   "id": "screening",
+   "label": "Screening",
+   "kind": "start",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "day1",
+   "label": "Day 1 (randomisation, first dose)",
+   "kind": "ask",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": true,
+   "day_zero": false,
+   "set_by_visit": "v2",
+   "question": "Date of Day 1?",
+   "optional": true,
+   "estimates": [
+    {
+     "when": [],
+     "relative_to": "screening",
+     "offset_days": 14
+    }
+   ],
+   "range": {
+    "relative_to": "screening",
+    "min_days": 1,
+    "max_days": 28
+   },
+   "note": null
+  },
+  {
+   "id": "last_dose",
+   "label": "Last dose of study drug",
+   "kind": "last_visit",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null,
+   "last_of": [
+    "v6"
+   ],
+   "stop_is_last_dose": true
+  }
+ ],
+ "questions": [
+  {
+   "id": "wocbp",
+   "label": "Childbearing potential",
+   "text": "Woman of childbearing potential?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "age",
+   "label": "Age",
+   "text": "Age at screening (years)?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "number",
+   "options": [],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "pk",
+   "label": "PK sub-study",
+   "text": "In the PK sub-study?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "v1",
+   "code": "V1",
+   "name": "Screening",
+   "phase": "Screening",
+   "modality": "site",
+   "anchor": "screening",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Informed consent",
+     "if": []
+    },
+    {
+     "name": "Eligibility criteria",
+     "if": []
+    },
+    {
+     "name": "Demographics and medical history",
+     "if": []
+    },
+    {
+     "name": "Full physical examination",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Haematology and clinical chemistry",
+     "if": []
+    },
+    {
+     "name": "HbA1c",
+     "if": []
+    },
+    {
+     "name": "Serum pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v2",
+   "code": "V2",
+   "name": "Day 1",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Eligibility criteria",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Haematology and clinical chemistry",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Randomisation",
+     "if": []
+    },
+    {
+     "name": "Dispense study drug",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [
+    {
+     "label": "Pre-dose",
+     "offset_min": 0,
+     "window_before_min": 60,
+     "window_after_min": 0,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": [
+        {
+         "question": "pk",
+         "in": [
+          "yes"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "label": "1 h post-dose",
+     "offset_min": 60,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": [
+        {
+         "question": "pk",
+         "in": [
+          "yes"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "label": "2 h post-dose",
+     "offset_min": 120,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": [
+        {
+         "question": "pk",
+         "in": [
+          "yes"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "label": "4 h post-dose",
+     "offset_min": 240,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": [
+        {
+         "question": "pk",
+         "in": [
+          "yes"
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v3p",
+   "code": "V3",
+   "name": "Week 2 telephone contact",
+   "phase": "Treatment",
+   "modality": "phone",
+   "anchor": "day1",
+   "offset_days": 14,
+   "window_before": 2,
+   "window_after": 2,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "age",
+     "op": "<",
+     "value": 65
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v3s",
+   "code": "V3",
+   "name": "Week 2 site visit",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 14,
+   "window_before": 2,
+   "window_after": 2,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "age",
+     "op": ">=",
+     "value": 65
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Orthostatic vital signs",
+     "if": []
+    },
+    {
+     "name": "Serum creatinine",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v4",
+   "code": "V4",
+   "name": "Week 4",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 28,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Haematology and clinical chemistry",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Dispense study drug",
+     "if": []
+    },
+    {
+     "name": "Study drug accountability",
+     "if": []
+    },
+    {
+     "name": "PK blood sample (pre-dose)",
+     "if": [
+      {
+       "question": "pk",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v5",
+   "code": "V5",
+   "name": "Week 8",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 56,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Dispense study drug",
+     "if": []
+    },
+    {
+     "name": "Study drug accountability",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v6",
+   "code": "V6",
+   "name": "Week 12 / End of treatment",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 84,
+   "window_before": 3,
+   "window_after": 3,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Brief physical examination",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Haematology and clinical chemistry",
+     "if": []
+    },
+    {
+     "name": "HbA1c",
+     "if": []
+    },
+    {
+     "name": "Urine pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Study drug accountability",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "v7",
+   "code": "V7",
+   "name": "Safety follow-up contact",
+   "phase": "Follow-up",
+   "modality": "phone",
+   "anchor": "last_dose",
+   "offset_days": 30,
+   "window_before": 0,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Adverse events",
+     "if": []
+    },
+    {
+     "name": "Concomitant medications",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  }
+ ],
+ "events": [
+  {
+   "id": "stop_drug",
+   "label": "Permanent discontinuation of study drug",
+   "repeatable": false,
+   "ends_schedule": true,
+   "sets_anchor": null,
+   "keeps_visits": [
+    "v7"
+   ],
+   "note": null,
+   "questions": [],
+   "visits": [
+    {
+     "id": "et",
+     "code": "ET",
+     "name": "Early Termination visit",
+     "phase": "Treatment",
+     "modality": "site",
+     "anchor": "screening",
+     "offset_days": 0,
+     "window_before": 0,
+     "window_after": 7,
+     "follows": null,
+     "follows_occurrence": null,
+     "duration_days": null,
+     "include_if": [],
+     "repeat": null,
+     "procedures": [
+      {
+       "name": "Brief physical examination",
+       "if": []
+      },
+      {
+       "name": "Vital signs",
+       "if": []
+      },
+      {
+       "name": "12-lead ECG",
+       "if": []
+      },
+      {
+       "name": "Haematology and clinical chemistry",
+       "if": []
+      },
+      {
+       "name": "HbA1c",
+       "if": []
+      },
+      {
+       "name": "Urine pregnancy test",
+       "if": [
+        {
+         "question": "wocbp",
+         "in": [
+          "yes"
+         ]
+        }
+       ]
+      },
+      {
+       "name": "Study drug accountability",
+       "if": []
+      },
+      {
+       "name": "Adverse events",
+       "if": []
+      },
+      {
+       "name": "Concomitant medications",
+       "if": []
+      }
+     ],
+     "timepoints": [],
+     "condition": null,
+     "source": null,
+     "min_gap": null,
+     "prep": null,
+     "check": null
+    }
+   ]
+  },
+  {
+   "id": "withdraw",
+   "label": "Withdrawal of consent",
+   "repeatable": false,
+   "ends_schedule": true,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": []
+  }
+ ],
+ "rules": [
+  {
+   "id": "stop_drug_rule",
+   "label": "Study drug discontinued",
+   "when": {
+    "event": "stop_drug"
+   },
+   "stop_visits": [],
+   "stop_all": true,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further treatment visits; ET visit within 7 days; follow-up 30 days after the last dose.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "keeps_visits": [
+    "v7"
+   ],
+   "pause": null
+  },
+  {
+   "id": "withdraw_rule",
+   "label": "Consent withdrawn",
+   "when": {
+    "event": "withdraw"
+   },
+   "stop_visits": [],
+   "stop_all": true,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further visits or contacts.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "pause": null
+  }
+ ],
+ "review_questions": [],
+ "notes": []
+}

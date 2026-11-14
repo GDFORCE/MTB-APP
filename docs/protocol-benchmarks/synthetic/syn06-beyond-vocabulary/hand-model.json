@@ -1,0 +1,347 @@
+{
+ "protocol": {
+  "title": "KMT-22: calendar months, business days, weekday and missed-visit rules",
+  "number": "KMT-22-03",
+  "sponsor": null,
+  "phase": null,
+  "indication": null,
+  "version": null,
+  "design": "Constructed fixture."
+ },
+ "arms": [],
+ "anchors": [
+  {
+   "id": "day1",
+   "label": "Day 1 (first infusion)",
+   "kind": "start",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": true,
+   "day_zero": false,
+   "set_by_visit": "inf1",
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  }
+ ],
+ "questions": [
+  {
+   "id": "far",
+   "label": "More than 50 km",
+   "text": "Does the participant live more than 50 km from the site?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "inf1",
+   "code": "D1",
+   "name": "Day 1 infusion",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests (hematology, biochemistry)",
+     "if": []
+    },
+    {
+     "name": "MG-ADL score",
+     "if": []
+    },
+    {
+     "name": "KMT-22 infusion",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "infm",
+   "code": "M1",
+   "name": "Month 1 infusion",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 30,
+   "window_before": 5,
+   "window_after": 5,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": {
+    "every_days": 30,
+    "count": 6,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "Month {n} infusion",
+    "code_pattern": "M{n}",
+    "chain": false,
+    "open_ended": false,
+    "until_anchor": null,
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests (hematology, biochemistry)",
+     "if": []
+    },
+    {
+     "name": "MG-ADL score",
+     "if": []
+    },
+    {
+     "name": "KMT-22 infusion",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "home1",
+   "code": "HN",
+   "name": "Home nursing visit",
+   "phase": "Treatment",
+   "modality": "home",
+   "anchor": "day1",
+   "offset_days": 3,
+   "window_before": 1,
+   "window_after": 1,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "far",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Infusion site check",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "homem",
+   "code": "HN-M",
+   "name": "Home nursing visit",
+   "phase": "Treatment",
+   "modality": "home",
+   "anchor": "day1",
+   "offset_days": 3,
+   "window_before": 1,
+   "window_after": 1,
+   "follows": "infm",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [
+    {
+     "question": "far",
+     "in": [
+      "yes"
+     ]
+    }
+   ],
+   "repeat": {
+    "every_days": 30,
+    "count": 6,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "Home nursing visit after Month {n}",
+    "code_pattern": "HN-M{n}",
+    "chain": false,
+    "open_ended": false,
+    "until_anchor": null,
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Infusion site check",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "final",
+   "code": "FIN",
+   "name": "Final visit",
+   "phase": "Follow-up",
+   "modality": "site",
+   "anchor": "day1",
+   "offset_days": 209,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Body weight",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests (hematology, biochemistry)",
+     "if": []
+    },
+    {
+     "name": "MG-ADL score",
+     "if": []
+    },
+    {
+     "name": "Electrocardiogram",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  }
+ ],
+ "events": [
+  {
+   "id": "fever",
+   "label": "Fever of 38.5 C or more on two consecutive days",
+   "repeatable": true,
+   "ends_schedule": false,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": [
+    {
+     "id": "fever_visit",
+     "code": "UNS",
+     "name": "Unscheduled visit for fever",
+     "phase": "Unscheduled",
+     "modality": "site",
+     "anchor": "day1",
+     "offset_days": 0,
+     "window_before": 0,
+     "window_after": 1,
+     "follows": null,
+     "follows_occurrence": null,
+     "duration_days": null,
+     "include_if": [],
+     "repeat": null,
+     "procedures": [
+      {
+       "name": "Vital signs",
+       "if": []
+      },
+      {
+       "name": "Hematology",
+       "if": []
+      },
+      {
+       "name": "Blood cultures",
+       "if": []
+      }
+     ],
+     "timepoints": [],
+     "condition": null,
+     "source": null,
+     "min_gap": null,
+     "prep": null,
+     "check": null
+    }
+   ]
+  }
+ ],
+ "rules": [],
+ "review_questions": [],
+ "notes": [
+  "Hand-written model: calendar months are written as 30 days, the results call (3 business days) has no visit, the final visit is on Day 210 rather than the following Monday, and the missed-visit rules (8.5, 8.6) are not represented."
+ ]
+}

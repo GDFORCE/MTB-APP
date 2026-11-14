@@ -70,7 +70,11 @@ export function condOne(c, ans, facts) {
     const st = c.any.map((x) => condOne(x, ans, facts));
     return st.includes("yes") ? "yes" : st.includes("unknown") ? "unknown" : st.length ? "no" : "yes";
   }
-  if (c.not) { const st = condOne(c.not, ans, facts); return st === "yes" ? "no" : st === "no" ? "yes" : "unknown"; }
+  if (c.not) {
+    // "Not after the event" can only be decided per occurrence, at its date.
+    if (facts === "ignore" && hasFacts([c.not])) return "yes";
+    const st = condOne(c.not, ans, facts); return st === "yes" ? "no" : st === "no" ? "yes" : "unknown";
+  }
   if (c.event != null || c.visit != null) {
     if (facts === "ignore") return "yes";
     if (!facts) return "unknown";
@@ -134,6 +138,24 @@ export function visitProcs(v, num, ans, facts) {
   }
   return { procs: procs.map((p) => ({ ...p, st: condState(p.if, ans, facts) })).filter((p) => p.st !== "no"), occNote };
 }
+// Intra-day time points that apply: a time point may have its own conditions ("if"), and so may
+// each sample in it ("PK sub-study only"). One whose samples all fall away is not shown.
+export function visitTimepoints(v, ans, facts) {
+  const out = [];
+  for (const tp of arr(v.timepoints)) {
+    if (condState(tp.if, ans, facts) === "no") continue;
+    const all = arr(tp.procedures), kept = all.filter((p) => condState(p?.if, ans, facts) !== "no");
+    if (all.length && !kept.length) continue;
+    out.push(kept.length === all.length ? tp : { ...tp, procedures: kept });
+  }
+  return out;
+}
+// What to do at a visit that the protocol makes depend on something (fed or fasted by sequence,
+// the order of assessments for one cohort): text for people, shown only where its conditions hold.
+export function visitInstructions(v, ans, facts) {
+  return arr(v.instructions).map((x) => ({ ...x, st: condState(x.if, ans, facts) })).filter((x) => x.st !== "no");
+}
+const procKey = (name) => String(name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 const OP_TEXT = { "<": "<", "<=": "≤", ">": ">", ">=": "≥" };
 const compare = (op, x, y) => (op === "<" ? x < y : op === "<=" ? x <= y : op === ">" ? x > y : x >= y);
 /** A check limit in words: "ANC ≥ 1.0 × 10^9/L", "Creatinine ≤ 1.5 × baseline", "worst Neuropathy grade ≥ 3". */
@@ -258,7 +280,10 @@ export function computeSchedule(model, site, part) {
   }
   const evSorted = logged.slice().sort((a, b) => a.date.localeCompare(b.date));
   const today = part.today ? parseD(part.today) : todayUTC();
-  for (const e of evSorted) { const d = model.events.find((x) => x.id === e.type); if (d?.sets_anchor && A[d.sets_anchor] == null) { A[d.sets_anchor] = parseD(e.date); how[d.sets_anchor] = "entered"; } }
+  // An event may set a date outright ("log the discontinuation on the day of the last dose"):
+  // that date stands, also for a "last of these visits" date that would otherwise be worked out.
+  const eventSet = new Set();
+  for (const e of evSorted) { const d = model.events.find((x) => x.id === e.type); if (d?.sets_anchor && A[d.sets_anchor] == null) { A[d.sets_anchor] = parseD(e.date); how[d.sets_anchor] = "entered"; eventSet.add(d.sets_anchor); } }
   const propagate = (X, H, withEstimates) => {
     for (let i = 0; i < 25; i++) {
       let ch = false;
@@ -440,6 +465,27 @@ export function computeSchedule(model, site, part) {
   // Rules that end everything (withdrawal, death) would tag every visit, so only targeted stops show.
   const stopsIf = (vid, anchor) => rules.filter((x) => x.T == null && !x.r.stop_all && hits(x, vid, anchor)).map((x) => x.r.label);
   const stopped = [];
+  // Rules that change what is done at visits that still happen: from the rule's date on, some
+  // assessments stop ("no injections after discontinuation") or are added.
+  const procRules = rules.filter((x) => x.T != null && (arr(x.r.stop_procedures).length || arr(x.r.add_procedures).length));
+  const covers = (item, vid) => item?.visits === "all" || arr(item?.visits).includes(vid);
+  const ruleProcs = (vid, t, procs) => {
+    if (!procRules.length || t == null) return procs;
+    let out = procs;
+    for (const x of procRules) {
+      if (!after(x, t)) continue;
+      for (const item of arr(x.r.stop_procedures)) {
+        if (!covers(item, vid)) continue;
+        const names = arr(item.names).map(procKey);
+        out = out.filter((p) => !names.includes(procKey(p.name)));
+      }
+      for (const item of arr(x.r.add_procedures)) {
+        if (!covers(item, vid)) continue;
+        for (const p of arr(item.procedures)) if (!out.some((q) => procKey(q.name) === procKey(p.name))) out = [...out, { ...p, st: "yes", addedBy: x.r.label }];
+      }
+    }
+    return out;
+  };
 
   const day1 = model.anchors.find((a) => a.is_day1);
   const studyDay = (t) => {
@@ -486,17 +532,27 @@ export function computeSchedule(model, site, part) {
   // "The last of these visits" (last dose): the latest one still on the schedule, recorded or
   // planned. Unknown while one of them has no date yet; after an early stop it is the last one given.
   const lastSet = new Set();
+  const lastBasis = {};
   const setLast = (a) => {
     lastSet.add(a.id);
-    let t = null, tE = null, any = false, unknown = false;
+    if (eventSet.has(a.id)) { propagate(A, how, false); propagate(E, null, true); return; }
+    let t = null, tE = null, any = false, unknown = false, from = null, cut = false;
+    // "last_with": only occurrences at which one of these assessments is still done count (the
+    // injection, at visits that go on without dosing after treatment stops).
+    const withNames = arr(a.last_with).map(procKey);
     for (const vid of arr(a.last_of)) for (const o of occ[vid] || []) {
-      if (o.cancelled || o.check?.state === "skipped") continue;
+      if (o.cancelled || o.check?.state === "skipped") { if (o.cancelled) cut = true; continue; }
+      if (withNames.length && !arr(o.procs).some((p) => withNames.includes(procKey(p.name)))) { cut = true; continue; }
       any = true;
       const d = o.actual ?? o.t, e = d ?? o.tE;
-      if (d == null) unknown = true; else if (t == null || d > t) t = d;
+      if (d == null) unknown = true; else if (t == null || d > t) { t = d; from = o; }
       if (e != null && (tE == null || e > tE)) tE = e;
     }
-    if (any && !unknown && t != null) { A[a.id] = t; how[a.id] = "derived"; }
+    if (any && !unknown && t != null) {
+      A[a.id] = t; how[a.id] = "derived";
+      // After an early stop the date rests on a visit that may not be recorded: say so on what counts from it.
+      if (cut && from && from.actual == null) lastBasis[a.id] = { code: from.code, t };
+    }
     if (any && tE != null) E[a.id] = tE;
     // Drug taken daily between visits: a logged early stop (a rule ending the schedule) is the
     // last dose, not the last visit before it.
@@ -529,8 +585,11 @@ export function computeSchedule(model, site, part) {
       count = Math.max(1, Math.min(Math.round(count), 200));
     }
     const startN = Number.isFinite(+r?.start_n) ? +r.start_n : 1;
-    const fo = v.follows ? (occ[v.follows] || []).filter((x) => !x.cancelled) : null;
+    const foAll = v.follows ? occ[v.follows] || [] : null;
+    const fo = foAll ? foAll.filter((x) => !x.cancelled) : null;
     const lastMode = v.follows_occurrence === "last";
+    // A repeat that follows a repeat (Day 8 of each cycle) goes occurrence by occurrence.
+    const foRep = !!(v.follows && byV[v.follows]?.repeat && v.repeat);
     if (fo && !fo.length) {
       // Every occurrence it follows was cancelled: by a rule (this visit goes with it) or by an ending event.
       const prev = occ[v.follows] || [], why = prev.find((x) => x.stoppedBy);
@@ -550,8 +609,15 @@ export function computeSchedule(model, site, part) {
     for (let n = 0; n < count; n++) {
       const numN = startN + n, key = `${v.id}#${numN}`;
       let t = null, tE = null, rel = "";
-      if (fo && (lastMode ? n === 0 : fo.length > 1 || n === 0)) {
-        const b = lastMode ? fo[fo.length - 1] : fo[n]; if (!b) break;
+      if (fo && (lastMode ? n === 0 : foRep || fo.length > 1 || n === 0)) {
+        let b = lastMode ? fo[fo.length - 1] : fo[n];
+        if (!lastMode && foRep) {
+          b = foAll[n];
+          if (!b) break;
+          // The occurrence it follows no longer happens (stopped, skipped): neither does this one.
+          if (b.cancelled && !actuals[key]) { list.push({ key, code: v.code, t: null, tE: null, actual: null, cancelled: true }); continue; }
+        }
+        if (!b) break;
         const bt = b.actual ?? b.t;
         t = bt != null ? addD(bt, v.offset_days) : null;
         tE = (bt ?? b.tE) != null ? addD(bt ?? b.tE, v.offset_days) : null;
@@ -681,7 +747,8 @@ export function computeSchedule(model, site, part) {
         const from = ends.length ? Math.min(...ends) : null;
         if (from != null && t < from) { asap = { was: t, from }; t = from; if (tE != null && tE < from) tE = from; }
       }
-      const { procs, occNote } = visitProcs(v, numN, occAns, occFacts);
+      const base = visitProcs(v, numN, occAns, occFacts), occNote = base.occNote;
+      const procs = ruleProcs(v.id, actual ?? t ?? tE, base.procs);
       // A recorded date later than planned by more than the protocol allows (cycle delays).
       if (actual != null && t != null && r?.max_delay_days != null && Math.round((actual - t) / DAY) > num(r.max_delay_days)) {
         warnings.push({ rule: `delay:${key}`, kind: "window", text: `${code} was ${days(Math.round((actual - t) / DAY))} later than planned; the protocol allows up to ${days(num(r.max_delay_days))}.${r.delay_effect ? ` ${r.delay_effect}` : ""}` });
@@ -703,6 +770,8 @@ export function computeSchedule(model, site, part) {
         untilPending: !!untilId && until == null, openEnded: !!r?.open_ended && n === count - 1, untilLabel: untilId ? byA[untilId]?.label : null,
         stopsIf: actual == null ? stopsIf(v.id, v.anchor) : [],
         check, tPlan: check ? check.tPlan : undefined, doseHits, doses: [], asap,
+        tps: visitTimepoints(v, occAns, occFacts), instructions: visitInstructions(v, occAns, occFacts),
+        basis: lr && lastBasis[lr.id] && actual == null ? lastBasis[lr.id] : null,
       };
       list.push(row); finish(row);
       if (check?.until && check.state === "met") break;
@@ -752,7 +821,8 @@ export function computeSchedule(model, site, part) {
         const by = actual ? null : rules.find((x) => x.T != null && after(x, t)
           && (x.r.stop_all ? x.r.when?.event !== d.id && ed <= x.T && !keptBy(x, v.id) : arr(x.r.stop_visits).includes(v.id)));
         if (by) { stopped.push({ rule: by.r, at: by.T, key, code: v.code, t }); continue; }
-        const { procs, occNote } = visitProcs(v, numN, eAns, factsAt(t));
+        const base = visitProcs(v, numN, eAns, factsAt(t)), occNote = base.occNote;
+        const procs = ruleProcs(v.id, actual ?? t, base.procs);
         let check = null;
         if (uck) {
           const entries = checkEntries(uck, key);
@@ -770,6 +840,7 @@ export function computeSchedule(model, site, part) {
           rel: `${d.label}${sOff(Math.round((t - ed) / DAY))}`, countUnknown: evCountUnknown && n === count - 1,
           lo: addD(t, -v.window_before), hi: addD(t, v.window_after), how: actual != null ? "done" : "derived",
           fromEvent: `${d.label} · ${fmtS(ed)}`, doses: [], stopsIf: actual == null ? stopsIf(v.id, null) : [], check,
+          tps: visitTimepoints(v, eAns, factsAt(t)), instructions: visitInstructions(v, eAns, factsAt(t)),
         };
         finish(row);
         lastCode = row.code;

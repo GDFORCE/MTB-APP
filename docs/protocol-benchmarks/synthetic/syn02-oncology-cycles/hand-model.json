@@ -1,0 +1,735 @@
+{
+ "protocol": {
+  "title": "CCG-0412: 21-day chemotherapy cycles with lab-gated dosing and dose levels",
+  "number": "CCG-0412",
+  "sponsor": null,
+  "phase": null,
+  "indication": null,
+  "version": null,
+  "design": "Constructed fixture."
+ },
+ "arms": [],
+ "anchors": [
+  {
+   "id": "baseline",
+   "label": "Baseline",
+   "kind": "start",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "c1d1",
+   "label": "Cycle 1 Day 1",
+   "kind": "ask",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": true,
+   "day_zero": false,
+   "set_by_visit": "d1",
+   "question": "Date of Cycle 1 Day 1?",
+   "optional": true,
+   "estimates": [
+    {
+     "when": [],
+     "relative_to": "baseline",
+     "offset_days": 14
+    }
+   ],
+   "range": {
+    "relative_to": "baseline",
+    "min_days": 0,
+    "max_days": 21
+   },
+   "note": null
+  },
+  {
+   "id": "progression",
+   "label": "Disease progression",
+   "kind": "ask",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": "Date of progression?",
+   "optional": true,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "last_dose",
+   "label": "Last dose of zetarabine",
+   "kind": "last_visit",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null,
+   "last_of": [
+    "d1",
+    "d8"
+   ]
+  },
+  {
+   "id": "eot_date",
+   "label": "End of treatment visit",
+   "kind": "relative",
+   "relative_to": "last_dose",
+   "offset_days": 30,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": "eot",
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  }
+ ],
+ "questions": [
+  {
+   "id": "wocbp",
+   "label": "Childbearing potential",
+   "text": "Woman of childbearing potential?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "base",
+   "code": "BL",
+   "name": "Baseline",
+   "phase": "Baseline",
+   "modality": "site",
+   "anchor": "baseline",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "History and physical examination",
+     "if": []
+    },
+    {
+     "name": "ECOG performance status",
+     "if": []
+    },
+    {
+     "name": "CBC with differential",
+     "if": []
+    },
+    {
+     "name": "Serum chemistry",
+     "if": []
+    },
+    {
+     "name": "Serum pregnancy test",
+     "if": [
+      {
+       "question": "wocbp",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "CT chest / abdomen / pelvis",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "d1",
+   "code": "C1D1",
+   "name": "Cycle 1 Day 1",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "c1d1",
+   "offset_days": 0,
+   "window_before": 2,
+   "window_after": 2,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": {
+    "every_days": 21,
+    "count": 6,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "Cycle {n} Day 1",
+    "code_pattern": "C{n}D1",
+    "chain": true,
+    "open_ended": false,
+    "until_anchor": null,
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "History and physical examination",
+     "if": []
+    },
+    {
+     "name": "ECOG performance status",
+     "if": []
+    },
+    {
+     "name": "CBC with differential",
+     "if": []
+    },
+    {
+     "name": "Serum chemistry",
+     "if": []
+    },
+    {
+     "name": "Zetarabine",
+     "if": []
+    },
+    {
+     "name": "Adverse event assessment",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "check": {
+    "id": "d1_counts",
+    "text": "ANC >= 1.5 and platelets >= 100 (x 10^9/L)?",
+    "help": null,
+    "recheck_days": 7,
+    "max_wait_days": 21,
+    "on_timeout": "stop",
+    "stop_visits": [
+     "d8",
+     "d15"
+    ],
+    "source": "Section 6.2",
+    "measures": [
+     "anc",
+     "plt"
+    ],
+    "limits": [
+     {
+      "measure": "anc",
+      "op": ">=",
+      "value": 1.5,
+      "of": "latest"
+     },
+     {
+      "measure": "plt",
+      "op": ">=",
+      "value": 100,
+      "of": "latest"
+     }
+    ],
+    "dose_changes": [
+     {
+      "dose": "zeta",
+      "step": -1,
+      "to": null,
+      "stop": false,
+      "if": [
+       {
+        "held_days": {
+         "op": ">",
+         "value": 7
+        }
+       }
+      ],
+      "occurrence": null,
+      "and_later": false,
+      "note": "cycle delayed more than 7 days"
+     }
+    ]
+   },
+   "min_gap": null,
+   "prep": null
+  },
+  {
+   "id": "d8",
+   "code": "C1D8",
+   "name": "Cycle 1 Day 8",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "c1d1",
+   "offset_days": 7,
+   "window_before": 1,
+   "window_after": 1,
+   "follows": "d1",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": {
+    "every_days": 21,
+    "count": 6,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "Cycle {n} Day 8",
+    "code_pattern": "C{n}D8",
+    "chain": false,
+    "open_ended": false,
+    "until_anchor": null,
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "CBC with differential",
+     "if": []
+    },
+    {
+     "name": "Zetarabine",
+     "if": []
+    },
+    {
+     "name": "Adverse event assessment",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "check": {
+    "id": "d8_counts",
+    "text": "ANC >= 1.0 and platelets >= 75 (x 10^9/L)?",
+    "help": null,
+    "recheck_days": null,
+    "max_wait_days": null,
+    "on_timeout": "warn",
+    "stop_visits": [],
+    "source": "Section 6.3",
+    "measures": [
+     "anc",
+     "plt"
+    ],
+    "limits": [],
+    "dose_changes": [],
+    "actions": [
+     {
+      "do": "give",
+      "if": [
+       {
+        "measure": "anc",
+        "op": ">=",
+        "value": 1,
+        "of": "latest"
+       },
+       {
+        "measure": "plt",
+        "op": ">=",
+        "value": 75,
+        "of": "latest"
+       }
+      ],
+      "note": null
+     },
+     {
+      "do": "reduce",
+      "if": [
+       {
+        "measure": "anc",
+        "op": ">=",
+        "value": 0.5,
+        "of": "latest"
+       },
+       {
+        "measure": "plt",
+        "op": ">=",
+        "value": 50,
+        "of": "latest"
+       }
+      ],
+      "note": null,
+      "percent": 75,
+      "dose": "zeta"
+     },
+     {
+      "do": "skip",
+      "if": [
+       {
+        "any": [
+         {
+          "measure": "anc",
+          "op": "<",
+          "value": 0.5,
+          "of": "latest"
+         },
+         {
+          "measure": "plt",
+          "op": "<",
+          "value": 50,
+          "of": "latest"
+         }
+        ]
+       }
+      ],
+      "note": "Omitted, not made up"
+     }
+    ]
+   },
+   "min_gap": null,
+   "prep": null
+  },
+  {
+   "id": "d15",
+   "code": "C1D15",
+   "name": "Cycle 1 Day 15",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "c1d1",
+   "offset_days": 14,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "d1",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "CBC with differential",
+     "if": []
+    },
+    {
+     "name": "Adverse event assessment",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "ct",
+   "code": "CT",
+   "name": "CT tumour assessment",
+   "phase": "Treatment",
+   "modality": "site",
+   "anchor": "c1d1",
+   "offset_days": 42,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": {
+    "every_days": 42,
+    "count": null,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "CT week {n}",
+    "code_pattern": "CT{n}",
+    "chain": false,
+    "open_ended": true,
+    "until_anchor": "progression",
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "CT chest / abdomen / pelvis",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "eot",
+   "code": "EOT",
+   "name": "End of treatment visit",
+   "phase": "Follow-up",
+   "modality": "site",
+   "anchor": "last_dose",
+   "offset_days": 30,
+   "window_before": 7,
+   "window_after": 7,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "History and physical examination",
+     "if": []
+    },
+    {
+     "name": "ECOG performance status",
+     "if": []
+    },
+    {
+     "name": "CBC with differential",
+     "if": []
+    },
+    {
+     "name": "Serum chemistry",
+     "if": []
+    },
+    {
+     "name": "Adverse event assessment",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "asap_if_past": true,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "sfu",
+   "code": "SFU",
+   "name": "Survival follow-up",
+   "phase": "Follow-up",
+   "modality": "phone",
+   "anchor": "eot_date",
+   "offset_days": 84,
+   "window_before": 14,
+   "window_after": 14,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": {
+    "every_days": 84,
+    "count": null,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "Survival follow-up {n}",
+    "code_pattern": "SFU{n}",
+    "chain": false,
+    "open_ended": true,
+    "until_anchor": null,
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "Survival status",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  }
+ ],
+ "events": [
+  {
+   "id": "progression",
+   "label": "Disease progression",
+   "repeatable": false,
+   "ends_schedule": false,
+   "sets_anchor": "progression",
+   "note": null,
+   "questions": [],
+   "visits": []
+  },
+  {
+   "id": "febrile_neutropenia",
+   "label": "Febrile neutropenia",
+   "repeatable": true,
+   "ends_schedule": false,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": []
+  },
+  {
+   "id": "death",
+   "label": "Death",
+   "repeatable": false,
+   "ends_schedule": true,
+   "sets_anchor": null,
+   "note": null,
+   "questions": [],
+   "visits": []
+  }
+ ],
+ "rules": [
+  {
+   "id": "pd_stops_treatment",
+   "label": "Progression: treatment stops",
+   "when": {
+    "event": "progression"
+   },
+   "stop_visits": [
+    "d1",
+    "d8",
+    "d15"
+   ],
+   "stop_all": false,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further zetarabine; end of treatment visit and survival follow-up continue.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "pause": null
+  },
+  {
+   "id": "fn_reduces",
+   "label": "Febrile neutropenia: one dose level lower",
+   "when": {
+    "event": "febrile_neutropenia"
+   },
+   "stop_visits": [],
+   "stop_all": false,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "Zetarabine one dose level lower for all later doses.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "pause": null,
+   "dose_changes": [
+    {
+     "dose": "zeta",
+     "step": -1,
+     "to": null,
+     "stop": false
+    }
+   ]
+  },
+  {
+   "id": "death_ends",
+   "label": "Death",
+   "when": {
+    "event": "death"
+   },
+   "stop_visits": [],
+   "stop_all": true,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further visits.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "pause": null
+  }
+ ],
+ "review_questions": [],
+ "notes": [],
+ "measures": [
+  {
+   "id": "anc",
+   "label": "ANC",
+   "unit": "x 10^9/L",
+   "kind": "value",
+   "worse": "lower",
+   "baseline": null
+  },
+  {
+   "id": "plt",
+   "label": "Platelets",
+   "unit": "x 10^9/L",
+   "kind": "value",
+   "worse": "lower",
+   "baseline": null
+  }
+ ],
+ "doses": [
+  {
+   "id": "zeta",
+   "label": "Zetarabine",
+   "levels": [
+    {
+     "id": "0",
+     "label": "1000 mg/m2"
+    },
+    {
+     "id": "-1",
+     "label": "800 mg/m2"
+    },
+    {
+     "id": "-2",
+     "label": "600 mg/m2"
+    }
+   ],
+   "start": "0",
+   "visits": [
+    "d1",
+    "d8"
+   ],
+   "below_lowest": "stop",
+   "stop_visits": [
+    "d15"
+   ],
+   "source": "Section 6.1"
+  }
+ ]
+}

@@ -1,0 +1,2333 @@
+{
+ "fixture": "syn05-long-multipart",
+ "constructed": true,
+ "cases": [
+  {
+   "name": "A: responder at Week 16, enters the OLE (woman of childbearing potential)",
+   "given": {
+    "today": "2025-12-15",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2025-12-15"
+     },
+     {
+      "what": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "randomi*"
+      ],
+      "date": "2026-01-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp"
+      ],
+      "answer": true
+     },
+     {
+      "what": [
+       "chest x ray",
+       "x ray"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "respon*",
+       "improvement"
+      ],
+      "unless": [
+       "escape",
+       "non respon*",
+       "nonrespon*",
+       "less than 20"
+      ],
+      "answer": true,
+      "optional": true
+     },
+     {
+      "what": [
+       "escape",
+       "non respon*",
+       "nonrespon*",
+       "less than 20"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "ole",
+       "open label",
+       "extension"
+      ],
+      "answer": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Screening",
+      "match": [
+       "screening",
+       "scr"
+      ],
+      "date": "2025-12-15",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       },
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Serum pregnancy test",
+        "any": [
+         [
+          "serum",
+          "pregnancy"
+         ]
+        ]
+       },
+       {
+        "name": "Chest X-ray",
+        "any": [
+         "chest x ray",
+         "chest"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Baseline",
+      "match": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "w0"
+      ],
+      "date": "2026-01-12",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       },
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 2",
+      "match": [
+       "week 2",
+       "w2",
+       "wk 2",
+       "wk2"
+      ],
+      "date": "2026-01-26",
+      "window": [
+       "2026-01-23",
+       "2026-01-29"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 4",
+      "match": [
+       "week 4",
+       "w4",
+       "wk 4",
+       "wk4"
+      ],
+      "date": "2026-02-09",
+      "window": [
+       "2026-02-06",
+       "2026-02-12"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "wk 8",
+       "wk8"
+      ],
+      "date": "2026-03-09",
+      "window": [
+       "2026-03-04",
+       "2026-03-14"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "wk 12",
+       "wk12"
+      ],
+      "date": "2026-04-06",
+      "window": [
+       "2026-04-01",
+       "2026-04-11"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 16",
+      "match": [
+       "week 16",
+       "w16",
+       "wk 16",
+       "wk16"
+      ],
+      "date": "2026-05-04",
+      "window": [
+       "2026-04-29",
+       "2026-05-09"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 20",
+      "match": [
+       "week 20",
+       "w20",
+       "wk 20",
+       "wk20"
+      ],
+      "date": "2026-06-01",
+      "window": [
+       "2026-05-27",
+       "2026-06-06"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 24",
+      "match": [
+       "week 24",
+       "w24",
+       "wk 24",
+       "wk24"
+      ],
+      "date": "2026-06-29",
+      "window": [
+       "2026-06-24",
+       "2026-07-04"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 28 (OLE)",
+      "match": [
+       "week 28",
+       "w28",
+       "wk 28",
+       "wk28"
+      ],
+      "date": "2026-07-27",
+      "window": [
+       "2026-07-22",
+       "2026-08-01"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 36 (OLE)",
+      "match": [
+       "week 36",
+       "w36",
+       "wk 36",
+       "wk36"
+      ],
+      "date": "2026-09-21",
+      "window": [
+       "2026-09-14",
+       "2026-09-28"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 48 (OLE)",
+      "match": [
+       "week 48",
+       "w48",
+       "wk 48",
+       "wk48"
+      ],
+      "date": "2026-12-14",
+      "window": [
+       "2026-12-07",
+       "2026-12-21"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 60 (OLE)",
+      "match": [
+       "week 60",
+       "w60",
+       "wk 60",
+       "wk60"
+      ],
+      "date": "2027-03-08",
+      "window": [
+       "2027-03-01",
+       "2027-03-15"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 72 (OLE)",
+      "match": [
+       "week 72",
+       "w72",
+       "wk 72",
+       "wk72"
+      ],
+      "date": "2027-05-31",
+      "window": [
+       "2027-05-24",
+       "2027-06-07"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Safety follow-up at Week 76 (8 weeks after the last dose at Week 68)",
+      "match": [
+       [
+        "safety follow up"
+       ],
+       [
+        "safety followup"
+       ],
+       [
+        "sfu"
+       ],
+       [
+        "follow up"
+       ]
+      ],
+      "date": "2027-06-28",
+      "window": [
+       "2027-06-21",
+       "2027-07-05"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     }
+    ],
+    "absent": [
+     {
+      "name": "Week 18 early-escape visit (responder)",
+      "match": [
+       "week 18",
+       "w18",
+       "wk 18",
+       "wk18"
+      ]
+     }
+    ],
+    "flags": [
+     {
+      "name": "ECG: Table 1 marks Screening, Week 12 and Week 24; Section 7.2 says Screening, Week 24 and Week 72",
+      "any": [
+       [
+        "ecg",
+        "week 12"
+       ],
+       [
+        "ecg",
+        "week 72"
+       ],
+       [
+        "ecg",
+        "table",
+        "section"
+       ],
+       [
+        "ecg",
+        "conflict*"
+       ],
+       [
+        "ecg",
+        "differ*"
+       ],
+       [
+        "ecg",
+        "disagree*"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "B: non-responder at Week 16: early escape (radiographs at Week 16, extra visit at Week 18)",
+   "given": {
+    "today": "2025-12-15",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2025-12-15"
+     },
+     {
+      "what": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "randomi*"
+      ],
+      "date": "2026-01-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "chest x ray",
+       "x ray"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "respon*",
+       "improvement"
+      ],
+      "unless": [
+       "escape",
+       "non respon*",
+       "nonrespon*",
+       "less than 20"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "escape",
+       "non respon*",
+       "nonrespon*",
+       "less than 20"
+      ],
+      "answer": true,
+      "optional": true
+     },
+     {
+      "what": [
+       "ole",
+       "open label",
+       "extension"
+      ],
+      "answer": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Baseline",
+      "match": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "w0"
+      ],
+      "date": "2026-01-12",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       },
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 2",
+      "match": [
+       "week 2",
+       "w2",
+       "wk 2",
+       "wk2"
+      ],
+      "date": "2026-01-26",
+      "window": [
+       "2026-01-23",
+       "2026-01-29"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       },
+       {
+        "name": "Pregnancy test",
+        "any": [
+         "pregnancy"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 4",
+      "match": [
+       "week 4",
+       "w4",
+       "wk 4",
+       "wk4"
+      ],
+      "date": "2026-02-09",
+      "window": [
+       "2026-02-06",
+       "2026-02-12"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "wk 8",
+       "wk8"
+      ],
+      "date": "2026-03-09",
+      "window": [
+       "2026-03-04",
+       "2026-03-14"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "wk 12",
+       "wk12"
+      ],
+      "date": "2026-04-06",
+      "window": [
+       "2026-04-01",
+       "2026-04-11"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 16",
+      "match": [
+       "week 16",
+       "w16",
+       "wk 16",
+       "wk16"
+      ],
+      "date": "2026-05-04",
+      "window": [
+       "2026-04-29",
+       "2026-05-09"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 20",
+      "match": [
+       "week 20",
+       "w20",
+       "wk 20",
+       "wk20"
+      ],
+      "date": "2026-06-01",
+      "window": [
+       "2026-05-27",
+       "2026-06-06"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 24",
+      "match": [
+       "week 24",
+       "w24",
+       "wk 24",
+       "wk24"
+      ],
+      "date": "2026-06-29",
+      "window": [
+       "2026-06-24",
+       "2026-07-04"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Fasting lipid panel",
+        "any": [
+         "lipid*"
+        ]
+       },
+       {
+        "name": "PK / ADA sample",
+        "any": [
+         "pk",
+         "anti drug",
+         "ada"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Tuberculosis test",
+        "any": [
+         "tuberculosis",
+         "igra",
+         "tb"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 18 early-escape safety visit",
+      "match": [
+       "week 18",
+       "w18",
+       "wk 18",
+       "wk18"
+      ],
+      "date": "2026-05-18",
+      "window": [
+       "2026-05-15",
+       "2026-05-21"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       },
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "C: completes Part 1, does not enter the OLE: safety follow-up 8 weeks after the Week 20 dose",
+   "given": {
+    "today": "2025-12-15",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2025-12-15"
+     },
+     {
+      "what": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "randomi*"
+      ],
+      "date": "2026-01-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "chest x ray",
+       "x ray"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "respon*",
+       "improvement"
+      ],
+      "unless": [
+       "escape",
+       "non respon*",
+       "nonrespon*",
+       "less than 20"
+      ],
+      "answer": true,
+      "optional": true
+     },
+     {
+      "what": [
+       "escape",
+       "non respon*",
+       "nonrespon*",
+       "less than 20"
+      ],
+      "answer": false,
+      "optional": true
+     },
+     {
+      "what": [
+       "ole",
+       "open label",
+       "extension"
+      ],
+      "answer": false
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Week 24",
+      "match": [
+       "week 24",
+       "w24",
+       "wk 24",
+       "wk24"
+      ],
+      "date": "2026-06-29"
+     },
+     {
+      "name": "Safety follow-up (8 weeks after the last dose at Week 20)",
+      "match": [
+       [
+        "safety follow up"
+       ],
+       [
+        "safety followup"
+       ],
+       [
+        "sfu"
+       ],
+       [
+        "follow up"
+       ]
+      ],
+      "date": "2026-07-27",
+      "window": [
+       "2026-07-20",
+       "2026-08-03"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     }
+    ],
+    "absent": [
+     {
+      "name": "OLE Week 36",
+      "match": [
+       "week 36",
+       "w36",
+       "wk 36",
+       "wk36"
+      ]
+     },
+     {
+      "name": "OLE Week 72",
+      "match": [
+       "week 72",
+       "w72",
+       "wk 72",
+       "wk72"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "D: study drug stopped for good on 23 Feb (last injection Week 4): ET visit, Part 1 visits continue without injections, no OLE",
+   "given": {
+    "today": "2026-02-23",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2025-12-15"
+     },
+     {
+      "what": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "randomi*"
+      ],
+      "date": "2026-01-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "chest x ray",
+       "x ray"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "w0"
+      ],
+      "date": "2026-01-12",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 2",
+       "w2",
+       "wk 2",
+       "wk2"
+      ],
+      "date": "2026-01-26",
+      "all": true
+     },
+     {
+      "visit": [
+       "week 4",
+       "w4",
+       "wk 4",
+       "wk4"
+      ],
+      "date": "2026-02-09",
+      "all": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "discontinu*",
+        "study drug"
+       ],
+       [
+        "study drug",
+        "discontinu*"
+       ],
+       [
+        "discontinu*",
+        "treatment"
+       ],
+       [
+        "treatment",
+        "discontinu*"
+       ]
+      ],
+      "date": "2026-02-23"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Early termination visit (within 14 days of the decision)",
+      "match": [
+       [
+        "early termination"
+       ],
+       [
+        "et"
+       ]
+      ],
+      "date_in": [
+       "2026-02-23",
+       "2026-03-09"
+      ],
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "12-lead ECG",
+        "any": [
+         "ecg"
+        ]
+       },
+       {
+        "name": "Radiographs of hands and feet",
+        "any": [
+         "radiograph*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 8 (still attended, no injection)",
+      "match": [
+       "week 8",
+       "w8",
+       "wk 8",
+       "wk8"
+      ],
+      "date": "2026-03-09",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       },
+       {
+        "name": "Joint counts",
+        "any": [
+         "joint count*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 16 (still attended, no injection)",
+      "match": [
+       "week 16",
+       "w16",
+       "wk 16",
+       "wk16"
+      ],
+      "date": "2026-05-04",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Study drug injection",
+        "any": [
+         "injection",
+         "study drug administ*",
+         "arelixumab"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Week 24 (still attended)",
+      "match": [
+       "week 24",
+       "w24",
+       "wk 24",
+       "wk24"
+      ],
+      "date": "2026-06-29",
+      "has": [
+       {
+        "name": "Vital signs",
+        "any": [
+         "vital*"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Safety follow-up 8 weeks after the last dose (Week 4 + 8 weeks)",
+      "match": [
+       [
+        "safety follow up"
+       ],
+       [
+        "safety followup"
+       ],
+       [
+        "sfu"
+       ],
+       [
+        "follow up"
+       ]
+      ],
+      "date": "2026-04-06",
+      "window": [
+       "2026-03-30",
+       "2026-04-13"
+      ]
+     }
+    ],
+    "absent": [
+     {
+      "name": "OLE Week 28",
+      "match": [
+       "week 28",
+       "w28",
+       "wk 28",
+       "wk28"
+      ]
+     },
+     {
+      "name": "OLE Week 48",
+      "match": [
+       "week 48",
+       "w48",
+       "wk 48",
+       "wk48"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "E: consent withdrawn at Week 10: nothing afterwards",
+   "given": {
+    "today": "2026-03-23",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2025-12-15"
+     },
+     {
+      "what": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "randomi*"
+      ],
+      "date": "2026-01-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "chest x ray",
+       "x ray"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "withdraw*"
+       ]
+      ],
+      "date": "2026-03-23"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Week 8",
+      "match": [
+       "week 8",
+       "w8",
+       "wk 8",
+       "wk8"
+      ],
+      "date": "2026-03-09"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Week 12",
+      "match": [
+       "week 12",
+       "w12",
+       "wk 12",
+       "wk12"
+      ],
+      "after": "2026-03-23"
+     },
+     {
+      "name": "Week 24",
+      "match": [
+       "week 24",
+       "w24",
+       "wk 24",
+       "wk24"
+      ],
+      "after": "2026-03-23"
+     },
+     {
+      "name": "Safety follow-up",
+      "match": [
+       [
+        "safety follow up"
+       ],
+       [
+        "safety followup"
+       ],
+       [
+        "sfu"
+       ],
+       [
+        "follow up"
+       ]
+      ],
+      "after": "2026-03-23"
+     },
+     {
+      "name": "Early termination visit",
+      "match": [
+       [
+        "early termination"
+       ],
+       [
+        "et"
+       ]
+      ],
+      "after": "2026-03-23"
+     }
+    ]
+   }
+  },
+  {
+   "name": "F: ALT above 3 x ULN known on 20 Mar: liver tests within 48 to 72 hours, then weekly until below 2 x ULN",
+   "given": {
+    "today": "2026-03-20",
+    "dates": [
+     {
+      "what": [
+       "screening",
+       "consent"
+      ],
+      "date": "2025-12-15"
+     },
+     {
+      "what": [
+       "baseline",
+       "day 1",
+       "week 0",
+       "randomi*"
+      ],
+      "date": "2026-01-12"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp"
+      ],
+      "answer": false
+     },
+     {
+      "what": [
+       "chest x ray",
+       "x ray"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "alt"
+       ],
+       [
+        "liver"
+       ],
+       [
+        "hepatic"
+       ],
+       [
+        "transaminase*"
+       ],
+       [
+        "aminotransferase*"
+       ]
+      ],
+      "date": "2026-03-20"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Repeat liver function tests within 48 to 72 hours",
+      "match": [
+       [
+        "liver"
+       ],
+       [
+        "lft"
+       ],
+       [
+        "hepatic"
+       ],
+       [
+        "alt"
+       ]
+      ],
+      "date_in": [
+       "2026-03-22",
+       "2026-03-23"
+      ],
+      "has": [
+       {
+        "name": "Liver function tests",
+        "any": [
+         "liver",
+         "lft",
+         "alt",
+         "hepatic"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Weekly repeat liver function tests",
+      "match": [
+       [
+        "liver"
+       ],
+       [
+        "lft"
+       ],
+       [
+        "hepatic"
+       ],
+       [
+        "alt"
+       ]
+      ],
+      "date_in": [
+       "2026-03-29",
+       "2026-03-30"
+      ]
+     }
+    ],
+    "visits_note": "weekly repeats count from the first repeat test"
+   }
+  }
+ ]
+}

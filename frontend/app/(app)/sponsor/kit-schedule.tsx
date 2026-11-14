@@ -5,6 +5,8 @@ import { downloadProtocolFile, getKitModel, type SavedKitModel } from "@/src/fea
 import { FlowButton, FlowScreen, flowStyles as f } from "@/src/features/kit/FlowScreen";
 import { ProtocolTimeline, useProtocolTimeline } from "@/src/features/kit/ProtocolTimeline";
 import { FOCUS as G } from "@/src/features/kit/focus";
+import { OpenPointsList } from "@/src/features/kit/OpenPointsList";
+import { openPointViews } from "@/src/features/kit/openPoints";
 
 // The reviewed visit schedule saved for a trial by the protocol upload in Add Trial.
 export default function KitScheduleScreen() {
@@ -43,5 +45,9 @@ export default function KitScheduleScreen() {
       }}>{downloading ? "Downloading…" : `Download the protocol (${saved.file_name || "PDF"})`}{saved.version ? ` · model version ${saved.version}` : ""}</Text>}
     {!!fileError && <Text style={f.error}>{fileError}</Text>}
     {timeline && <ProtocolTimeline data={timeline} />}
+    {!!saved && !!openPointViews(saved.model).length && <>
+      <Text style={[f.label, { marginTop: 24 }]}>To check against the protocol</Text>
+      <OpenPointsList points={openPointViews(saved.model)} />
+    </>}
   </FlowScreen>;
 }

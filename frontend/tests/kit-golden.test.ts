@@ -31,7 +31,8 @@ const UPDATE = process.env.UPDATE_GOLDEN === "1";
 // A later step that changes an existing field's value for an old model is a regression.
 const ADDED_SCHEDULE_KEYS: string[] = [];
 // "check": a visit's yes/no check per occurrence (null on every old model), added 29 Oct 2026.
-const ADDED_ROW_KEYS: string[] = ["check", "doses", "time", "timeKind", "kind"];
+// "windowStated", "instructions": window-not-stated flag and conditional instructions, added 10 Nov 2026.
+const ADDED_ROW_KEYS: string[] = ["check", "doses", "time", "timeKind", "kind", "windowStated", "instructions"];
 
 /** JSON copy of a computed schedule without the fields added after step 0. */
 function goldenView(schedule: unknown) {

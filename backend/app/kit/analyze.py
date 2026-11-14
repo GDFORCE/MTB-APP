@@ -9,14 +9,16 @@ Oversized protocols are summarized section by section before model building.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .events import run_event_check
+from .events import page_words, run_event_check, verify_quote
+from .ledger import cleanup_points, unused_fields
 from .llm import AnalysisError
-from .normalize import arr, build_template_model, default_review_answers, normalize
+from .normalize import add_open_point, arr, build_template_model, default_review_answers, norm_q, normalize
 from .pdf_input import cross_check_material, hidden_pages_note
 from .prompts import build_prompt, build_review_prompt
 from .summarize import analyze_from_summaries
@@ -53,6 +55,7 @@ def _snapshot(v: dict[str, Any]) -> dict[str, Any]:
         "repeat_count": r.get("count"), "every_days": r.get("every_days"), "until_anchor": r.get("until_anchor"),
         "procedures": _names(v.get("procedures")), "timepoints": json.dumps(v.get("timepoints"), sort_keys=True, default=str),
         "overrides": json.dumps(r.get("overrides"), sort_keys=True, default=str), "condition": v.get("condition"),
+        "instructions": json.dumps(v.get("instructions"), sort_keys=True, default=str),
     }
 
 
@@ -67,11 +70,52 @@ def _changes(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
             added = [n for n in new if n not in old]
             removed = [n for n in old if n not in new]
             out.append("procedures " + " ".join([*(f"+{n}" for n in added), *(f"−{n}" for n in removed)]))
-        elif key in ("timepoints", "overrides", "condition"):
+        elif key in ("timepoints", "overrides", "condition", "instructions"):
             out.append(f"{key} updated")
         else:
             out.append(f"{key} {old} → {new}")
     return out
+
+
+def clean(st: dict[str, Any], raw: bool = False) -> dict[str, Any]:
+    """``normalize`` with its losses kept: whatever clean-up removes or changes, and (for the model as
+    the AI returned it) any field the app has no use for, becomes an open point for the reviewer."""
+    before = copy.deepcopy(st)
+    try:
+        model = normalize(st)
+    except ValueError as error:
+        raise AnalysisError("bad_model", "The protocol model was missing visits.") from error
+    for point in [*(unused_fields(before) if raw else []), *cleanup_points(before, model)]:
+        add_open_point(model, point)
+    return model
+
+
+def check_quotes(model: dict[str, Any], page_texts: list[str] | None) -> None:
+    """Look every quoted protocol passage up in the PDF text: an open point's quote gets ``found``;
+    a rule whose quote is not in the PDF gets an open point, since its wording cannot be confirmed."""
+    pages = page_words(page_texts or [])
+    if not pages:
+        return
+    for point in arr(model.get("open_points")):
+        if point.get("quote") and "found" not in point:
+            hit = verify_quote(point.get("page"), point["quote"], pages)
+            point["found"] = bool(hit["found"])
+            if hit.get("found_on") is not None:
+                point["found_on"] = hit["found_on"]
+    for r in arr(model.get("rules")):
+        if not r.get("quote") or "quote_found" in r:
+            continue
+        hit = verify_quote(r.get("page"), r["quote"], pages)
+        r["quote_found"] = bool(hit["found"])
+        if hit.get("found_on") is not None:
+            r["page"] = hit["found_on"]
+        if not hit["found"]:
+            add_open_point(model, {
+                "id": f"quote_{r['id']}", "kind": "unverified", "stage": "check", "affects": [r["id"]],
+                "text": f"The passage quoted for rule “{r['label']}” was not found in the PDF text, so the rule's "
+                        "wording cannot be confirmed. Check it against the protocol.",
+                "quote": r["quote"], "page": r.get("page"), "found": False,
+                "used": "The rule is applied as written."})
 
 
 def apply_corrections(st: dict[str, Any], res: Any) -> int:
@@ -83,11 +127,21 @@ def apply_corrections(st: dict[str, Any], res: Any) -> int:
     anchor_ids = {a["id"] for a in st["anchors"]}
     log: list[str] = []
     unapplied: list[str] = []
+    failed: list[str] = []
+    # Participant facts a table footnote needs that the model did not ask yet.
+    known_q = {q["id"] for q in st["questions"]}
+    for q in arr((res or {}).get("questions_add") if isinstance(res, dict) else None):
+        q = norm_q(q, "participant")
+        if q and q["id"] not in known_q:
+            st["questions"].append(q)
+            known_q.add(q["id"])
+            log.append(f"Question added: {q['label']}")
     for c in arr((res or {}).get("corrections") if isinstance(res, dict) else None):
         v = by_id.get(str((c or {}).get("id"))) if isinstance(c, dict) else None
         if not v:
             if isinstance(c, dict) and c.get("id"):
                 unapplied.append(f"{c['id']} (no such visit): {c.get('reason') or 'correction'}")
+                failed.append(unapplied[-1])
             continue
         reason = c.get("reason") or "corrected against the schedule table"
         before = _snapshot(v)
@@ -128,16 +182,25 @@ def apply_corrections(st: dict[str, Any], res: Any) -> int:
                 repeat["every_days"] = every
         if "condition" in c:
             v["condition"] = str(c["condition"]) if c["condition"] else None
+        if isinstance(c.get("instructions"), list):
+            v["instructions"] = c["instructions"]
         changes = _changes(before, _snapshot(v))
         if changes:
             log.append(f"{v['code']}: {reason} ({'; '.join(changes)})")
         if problems:
             unapplied.append(f"{v['code']}: timing left unchanged ({', '.join(problems)}): {reason}")
+            failed.append(unapplied[-1])
         elif not changes:
             unapplied.append(f"{v['code']}: {reason}")
     if unapplied:
         st["notes"].append("The cross-check suggested these but they were not applied; review them against "
                            "the protocol: " + " | ".join(unapplied))
+    for text in failed:
+        add_open_point(st, {"kind": "conflict", "stage": "tables", "text": f"The table check suggested a change it "
+                            f"could not apply: {text}", "used": "The model is unchanged here."})
+    for p in arr((res or {}).get("open_points") if isinstance(res, dict) else None):
+        if isinstance(p, dict):
+            add_open_point(st, {**p, "stage": "tables", "id": ""})
     rule_ids = {r.get("id") for r in arr(st.get("rules")) if isinstance(r, dict)}
     for r in arr((res or {}).get("rules_add") if isinstance(res, dict) else None):
         if isinstance(r, dict) and r.get("id") and r["id"] not in rule_ids:
@@ -172,6 +235,7 @@ def _counts(model: dict[str, Any], table_pages: list[int]) -> dict[str, Any]:
         + sum(1 for a in model["anchors"] if a["kind"] == "ask"),
         "decisions": sum(1 for q in model["questions"] if q["scope"] == "decision"),
         "events": len(model["events"]),
+        "openPoints": len(model.get("open_points") or []),
         "tablePages": table_pages,
     }
 
@@ -214,10 +278,7 @@ def analyze_protocol(
         warnings.append(
             "The complete protocol exceeded the model input limit. Analysis used scheduling summaries "
             "from every extracted section, with the original schedule tables retained for cross-checking.")
-    try:
-        model = normalize(raw)
-    except ValueError as error:
-        raise AnalysisError("bad_model", "The protocol model was missing visits.") from error
+    model = clean(raw, raw=True)
     if warnings:
         model["notes"].extend(warnings)
     # Rows of a borderless table whose reading still disagrees with the page are asked about
@@ -234,7 +295,9 @@ def analyze_protocol(
         res = client.json(build_review_prompt(model, material["text"], img_pages, legend_note),
                           images=[*images, *legend_images])
         n = apply_corrections(model, res)
-        model = normalize(model)
+        corrected = model.get("review")
+        model = clean(model)
+        model["review"] = corrected
         on_stage("verify", "done", f"{n} correction{'s' if n != 1 else ''} applied" if n else "all visits match")
     except AnalysisError as error:
         if error.code in ("no_credits", "auth", "no_api_key"):
@@ -249,7 +312,7 @@ def analyze_protocol(
     try:
         run_event_check(prepared, model, client, on_stage=on_stage, symbol_note=legend_note,
                         images=legend_images)
-        model = normalize(model)
+        model = clean(model)
     except AnalysisError as error:
         if error.code in ("no_credits", "auth", "no_api_key"):
             raise
@@ -260,13 +323,14 @@ def analyze_protocol(
         warnings.append(f"Events check skipped: {error}")
         on_stage("events", "done", "skipped")
 
+    check_quotes(model, prepared.get("pageTexts"))
     answers = default_review_answers(model)
     counts = _counts(model, material["pages"])
     on_stage("check", "done", counts)
     return {
         "baseModel": model, "model": build_template_model(model, answers), "reviewAnswers": answers,
         "corrections": model.get("review"), "eventCheck": model.get("event_check"), "counts": counts,
-        "warnings": warnings,
+        "openPoints": model.get("open_points") or [], "warnings": warnings,
     }
 
 

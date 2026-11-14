@@ -1,5 +1,17 @@
 # Saved Claude Code prompts
 
+## ClinicalTrials.gov design-space study - 14 November 2026 (research prompt, changes no code)
+
+- **Current for this study:** [Map every study design and protocol structure on ClinicalTrials.gov](ctgov-study-design-space-prompt-2026-11-14.md): counts every design combination across the whole registry (exact), estimates the design features that only appear in free text, reads uploaded protocols under fixed coverage rules (at least 150, every design several times, until 30 in a row add nothing new) and saves every scheduling rule per protocol, then reports the building blocks and their combinations, ranks what the kit model cannot handle, and proposes a test set. Revised the same day for full coverage: long run, resumable from a progress file. Runs in Claude Code or on claude.ai with a ClinicalTrials.gov connector. It runs alongside the 10 November implementation prompt below and does not replace it; the [launcher](claude-code-next-prompt.md) is unchanged.
+
+## Kit schedule fidelity - 10 November 2026
+
+- **Current:** [Make the kit schedule faithful to any protocol](kit-schedule-fidelity-prompt-2026-11-10.md): self-contained prompt for a fresh session (Fable 5.2 recommended). States the goal (any protocol in, correct schedule out), our approach, the problem and the output needed, and leaves the solution to the session. [Launcher](claude-code-next-prompt.md) updated.
+
+## Kit representation gap - 6 November 2026
+
+- **Superseded by the 10 November prompt above (kept; its three steps are included there):** [Where protocol meaning is lost before the schedule](kit-representation-gap-prompt-2026-11-06.md).
+
 ## Current Claude Code task - 28 October 2026
 
 - [Kit schedule atoms implementation prompt](claude-code-kit-schedule-atoms-implementation-2026-10-28.md): add tracks, measures and recorded results, derived events, wait-until gates, calendar units, earliest-of/counters, doses and study-level events to the kit system as optional fields, behind a frozen-results test, without changing current behaviour. [Launcher](claude-code-next-prompt.md) updated.

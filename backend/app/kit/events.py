@@ -19,7 +19,7 @@ import unicodedata
 from typing import Any, Callable
 
 from .llm import AnalysisError
-from .normalize import _s, arr
+from .normalize import _s, add_open_point, arr
 from .prompts import RULE_CONDITIONS, SCHEMA, describe_anchors
 from .summarize import MIN_CHUNK_CHARS, split_sections
 
@@ -127,14 +127,21 @@ def build_events_prompt(st: dict[str, Any], text: str, symbol_note: str = "", pa
         "Use only visit, anchor, question and rule ids that exist in the model or that you add here. A new date "
         "the protocol counts from (delivery date, end of treatment) goes in top-level anchors_add with kind "
         '"ask". Write only what the protocol states: never invent a visit, test, window or count; when the '
-        "protocol is unclear, keep to what is certain and put the unclear point in top-level notes.\n\n"
+        "protocol is unclear, contradicts itself, or says something these shapes cannot hold, keep to what is "
+        "certain and put the point in top-level open_points with the protocol's words and page (not in notes). "
+        "A choice or result the model already asks as a question (scope \"decision\": responder status, entering an "
+        "extension) is not an event: do not add an event or a rule for it. When treatment stops but visits "
+        "continue, use the rule's stop_procedures for the dosing assessment instead of stop_visits.\n\n"
         "Reply with ONLY one JSON object:\n"
         '{"events": [{"id": string, "label": string, "checklist": checklistId|null, "status": '
         '"changes"|"no_schedule_change"|"not_in_protocol", "summary": string, "evidence": [{"page": number, '
         '"quote": string}], "repeatable": boolean, "ends_schedule": boolean, "keeps_visits": [visitId], "sets_anchor": anchorId|null, '
         '"questions": [eventQuestion], "visits": [visit], "remove_visits": [{"id": visitId, "reason": string}], '
         '"rules": [rule], "remove_rules": [{"id": ruleId, "reason": string}], "add_tests": [...], '
-        '"remove_tests": [...], "site_actions": [string]}], "anchors_add": [anchor], "notes": [string]}\n\n'
+        '"remove_tests": [...], "site_actions": [string]}], "anchors_add": [anchor], "open_points": [{"kind": '
+        '"cannot_represent"|"approximated"|"ambiguous"|"conflict"|"not_stated", "text": string, "quote": string /* copied '
+        'character for character, at most 300 characters */, "page": number, "affects": [id], "used": string}], '
+        '"notes": [string]}\n\n'
         "SHAPES (reference for visit, eventQuestion, rule, anchor and condition only; do not return a whole "
         f"model):\n{SCHEMA}\n\n"
         f"MODEL ANCHORS:\n{describe_anchors(st)}\n\n"
@@ -192,11 +199,12 @@ def _merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     findings are combined, and an event is "changes" if any part found a change."""
     rank = {"not_in_protocol": 0, "no_schedule_change": 1, "changes": 2}
     merged: dict[str, dict[str, Any]] = {}
-    out: dict[str, Any] = {"events": [], "anchors_add": [], "notes": []}
+    out: dict[str, Any] = {"events": [], "anchors_add": [], "notes": [], "open_points": []}
     for rep in reports:
         if not isinstance(rep, dict):
             continue
         out["anchors_add"].extend(arr(rep.get("anchors_add")))
+        out["open_points"].extend(arr(rep.get("open_points")))
         out["notes"].extend(arr(rep.get("notes")))
         for e in arr(rep.get("events")):
             if not isinstance(e, dict) or not _s(e.get("id")):
@@ -481,6 +489,9 @@ def apply_event_check(st: dict[str, Any], res: Any, page_texts: list[str] | None
         notes.append("The quoted protocol passages could not be checked against the PDF text (no text layer).")
     for n in arr(res.get("notes")):
         notes.append(_s(n))
+    for p in arr(res.get("open_points")):
+        if isinstance(p, dict):
+            add_open_point(st, {**p, "stage": "events", "id": ""})
     for n in notes:
         if n and n not in st["notes"]:
             st["notes"].append(n)

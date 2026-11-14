@@ -25,6 +25,10 @@ export type KitVisitDefinition = {
   window_before: number; window_after: number; follows: string | null; procedures: KitProcedure[];
   condition: string | null; source?: string | null; repeat: Record<string, any> | null; include_if: unknown[];
   duration_days: number | null; timepoints: unknown[];
+  /** false: the protocol states no window for this visit (dates are computed with 0; shown as "not stated"). */
+  window_stated?: boolean;
+  /** What to do at this visit that depends on a condition; shown only where its conditions hold. */
+  instructions?: { text: string; if: unknown[]; kind?: "prep" | "order" | "timing" | "dose" | "other"; source?: string }[];
   /** Check in at least `hours` before the dose at `visit` (same occurrence number): "check in at least 12 h before dosing". */
   arrive_before?: { visit: string; hours: number } | null;
   /** At least `days` after the previous occurrence, or after the latest `after` visit. */
@@ -108,6 +112,25 @@ export type KitRule = {
   keeps_visits?: string[];
   /** Dose level changes for doses after the rule's date (a grade 3 adverse event: one level lower). */
   dose_changes?: KitDoseChange[];
+  /** Assessments no longer done, or added, at visits that still happen from the rule's date on. */
+  stop_procedures?: { visits: string[] | "all"; names: string[] }[];
+  add_procedures?: { visits: string[] | "all"; procedures: KitProcedure[] }[];
+  /** The protocol's own words for the rule and their page; quote_found false = not found in the PDF text. */
+  quote?: string; page?: number; quote_found?: boolean;
+};
+/**
+ * Something the reviewer must check against the protocol because the model cannot be trusted on it
+ * as it stands: the vocabulary cannot hold it or only approximates it, the protocol leaves it open
+ * or contradicts itself, clean-up removed or changed it, or a quoted passage is not in the PDF.
+ */
+export type KitOpenPoint = {
+  id: string; kind: "cannot_represent" | "approximated" | "ambiguous" | "conflict" | "not_stated" | "cleanup" | "unverified";
+  text: string; why: string; used: string; quote: string; page: number | null; affects: string[];
+  stage: "model" | "tables" | "events" | "cleanup" | "check";
+  /** Whether the quote was found in the PDF text (absent: not looked up), and on which page. */
+  found?: boolean; found_on?: number;
+  /** Ticked by the reviewer in Add Trial. */
+  checked?: boolean;
 };
 /** An answer condition: one of some values, a comparison (age >= 65), or "or" / "not" over others. */
 export type KitCondition =
@@ -133,6 +156,10 @@ export type KitModel = {
     last_of?: string[];
     /** "last_visit" with daily dosing between visits: a logged early stop (a rule ending the schedule) is the last dose. */
     stop_is_last_dose?: boolean;
+    /** "last_visit": only occurrences at which one of these assessments is still done count. */
+    last_with?: string[];
+    /** The protocol gives this date its own day; `range` is only the allowed deviation (it stays a counted date). */
+    offset_stated?: boolean;
     relative_to?: string | null; offset_days?: number | null; is_day1?: boolean; set_by_visit?: string | null;
     estimates?: { when?: unknown[]; relative_to: string; offset_days: number }[];
     /** Where the protocol allows this date, in days after another date ("within 28 days before Day 1"). */
@@ -146,6 +173,8 @@ export type KitModel = {
   review_questions: KitReviewQuestion[];
   notes: string[];
   review?: string[] | null;
+  /** Points to check against the protocol; absent when there are none (and on models saved before 10 Nov 2026). */
+  open_points?: KitOpenPoint[];
 };
 export type KitDetails = {
   protocol_number: string; title: string; phase: string; indications: string[]; sponsor: string;
@@ -163,6 +192,8 @@ export type KitAnalysis = {
   /** The events check (backend app/kit/events.py): what logging each event changes, with the
    * protocol passages; `ran` false when it could not run. Also kept on the model as `event_check`. */
   eventCheck?: KitEventCheck | null;
+  /** The base model's open points (also on the model). */
+  openPoints?: KitOpenPoint[];
   /** The analysis job, so saving can store the protocol file it read. */
   jobId?: string;
   counts: { review: number; participant: number; decisions: number; events: number; tablePages: number[] };
@@ -189,6 +220,10 @@ export type KitVisitRow = {
   modality: string; status: "done" | "waiting" | "scheduled" | "skipped"; date: string | null; planned: string | null;
   actual: string | null; relative: string | null; movesOthers: boolean;
   rule: string; windowStart: string | null; windowEnd: string | null; windowDays: [number, number];
+  /** false: the protocol states no window for this visit. */
+  windowStated?: boolean;
+  /** Conditional what-to-do text that applies to this participant at this occurrence. */
+  instructions?: { text: string; kind: string | null; conditional: boolean; condition: string | null; source: string | null }[];
   studyDay: number | null; endDay: string | null; weekend: boolean; nearestWeekday: string | null;
   dependsOnDecision: boolean; fromEvent: string | null; openEnded: boolean; until: string | null;
   procedures: {

@@ -1,0 +1,1965 @@
+{
+ "fixture": "syn02-oncology-cycles",
+ "constructed": true,
+ "cases": [
+  {
+   "name": "A: six cycles on time",
+   "given": {
+    "today": "2026-01-20",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Baseline",
+      "match": [
+       "baseline",
+       "screening"
+      ],
+      "date": "2026-01-20",
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       },
+       {
+        "name": "CT",
+        "any": [
+         [
+          "ct"
+         ],
+         [
+          "imaging"
+         ],
+         [
+          "tumour assessment"
+         ],
+         [
+          "tumor assessment"
+         ],
+         [
+          "scan"
+         ]
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 1 Day 1",
+      "match": [
+       "cycle 1 day 1",
+       "c1d1",
+       "c1 d1",
+       [
+        "cycle 1",
+        "day 1"
+       ]
+      ],
+      "date": "2026-02-03",
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Cycle 1 Day 8",
+      "match": [
+       "cycle 1 day 8",
+       "c1d8",
+       "c1 d8",
+       [
+        "cycle 1",
+        "day 8"
+       ]
+      ],
+      "date": "2026-02-10",
+      "window": [
+       "2026-02-09",
+       "2026-02-11"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 2 Day 1",
+      "match": [
+       "cycle 2 day 1",
+       "c2d1",
+       "c2 d1",
+       [
+        "cycle 2",
+        "day 1"
+       ]
+      ],
+      "date": "2026-02-24",
+      "window": [
+       "2026-02-22",
+       "2026-02-26"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Cycle 2 Day 8",
+      "match": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-03",
+      "window": [
+       "2026-03-02",
+       "2026-03-04"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 3 Day 1",
+      "match": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-17",
+      "window": [
+       "2026-03-15",
+       "2026-03-19"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Cycle 3 Day 8",
+      "match": [
+       "cycle 3 day 8",
+       "c3d8",
+       "c3 d8",
+       [
+        "cycle 3",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-24",
+      "window": [
+       "2026-03-23",
+       "2026-03-25"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 4 Day 1",
+      "match": [
+       "cycle 4 day 1",
+       "c4d1",
+       "c4 d1",
+       [
+        "cycle 4",
+        "day 1"
+       ]
+      ],
+      "date": "2026-04-07",
+      "window": [
+       "2026-04-05",
+       "2026-04-09"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Cycle 4 Day 8",
+      "match": [
+       "cycle 4 day 8",
+       "c4d8",
+       "c4 d8",
+       [
+        "cycle 4",
+        "day 8"
+       ]
+      ],
+      "date": "2026-04-14",
+      "window": [
+       "2026-04-13",
+       "2026-04-15"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 5 Day 1",
+      "match": [
+       "cycle 5 day 1",
+       "c5d1",
+       "c5 d1",
+       [
+        "cycle 5",
+        "day 1"
+       ]
+      ],
+      "date": "2026-04-28",
+      "window": [
+       "2026-04-26",
+       "2026-04-30"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Cycle 5 Day 8",
+      "match": [
+       "cycle 5 day 8",
+       "c5d8",
+       "c5 d8",
+       [
+        "cycle 5",
+        "day 8"
+       ]
+      ],
+      "date": "2026-05-05",
+      "window": [
+       "2026-05-04",
+       "2026-05-06"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 6 Day 1",
+      "match": [
+       "cycle 6 day 1",
+       "c6d1",
+       "c6 d1",
+       [
+        "cycle 6",
+        "day 1"
+       ]
+      ],
+      "date": "2026-05-19",
+      "window": [
+       "2026-05-17",
+       "2026-05-21"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": []
+     },
+     {
+      "name": "Cycle 6 Day 8",
+      "match": [
+       "cycle 6 day 8",
+       "c6d8",
+       "c6 d8",
+       [
+        "cycle 6",
+        "day 8"
+       ]
+      ],
+      "date": "2026-05-26",
+      "window": [
+       "2026-05-25",
+       "2026-05-27"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 1 Day 15 (Cycle 1 only)",
+      "match": [
+       "cycle 1 day 15",
+       "c1d15",
+       "c1 d15",
+       [
+        "cycle 1",
+        "day 15"
+       ]
+      ],
+      "date": "2026-02-17",
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "CT week 6",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-03-17",
+      "window": [
+       "2026-03-10",
+       "2026-03-24"
+      ]
+     },
+     {
+      "name": "CT week 12",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-04-28",
+      "window": [
+       "2026-04-21",
+       "2026-05-05"
+      ]
+     },
+     {
+      "name": "CT week 18",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-06-09",
+      "window": [
+       "2026-06-02",
+       "2026-06-16"
+      ]
+     },
+     {
+      "name": "CT week 24",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-07-21",
+      "window": [
+       "2026-07-14",
+       "2026-07-28"
+      ]
+     },
+     {
+      "name": "End of treatment (30 days after the last dose)",
+      "match": [
+       [
+        "end of treatment"
+       ],
+       [
+        "eot"
+       ]
+      ],
+      "date": "2026-06-25",
+      "window": [
+       "2026-06-18",
+       "2026-07-02"
+      ],
+      "has": [
+       {
+        "name": "CBC",
+        "any": [
+         "cbc",
+         "blood count"
+        ]
+       },
+       {
+        "name": "Serum chemistry",
+        "any": [
+         "chemistry"
+        ]
+       },
+       {
+        "name": "History and physical examination",
+        "any": [
+         "physical exam*",
+         "history"
+        ]
+       }
+      ],
+      "lacks": [
+       {
+        "name": "Zetarabine",
+        "any": [
+         "zetarabine"
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Survival follow-up 1 (12 weeks after EOT)",
+      "match": [
+       [
+        "survival"
+       ],
+       [
+        "follow up"
+       ],
+       [
+        "followup"
+       ]
+      ],
+      "date": "2026-09-17",
+      "window": [
+       "2026-09-03",
+       "2026-10-01"
+      ],
+      "modality": "phone"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Cycle 7 (maximum 6 cycles)",
+      "match": [
+       "cycle 7 day 1",
+       "c7d1",
+       "c7 d1",
+       [
+        "cycle 7",
+        "day 1"
+       ]
+      ]
+     },
+     {
+      "name": "Cycle 2 Day 15 (Cycle 1 only)",
+      "match": [
+       "cycle 2 day 15",
+       "c2d15",
+       "c2 d15",
+       [
+        "cycle 2",
+        "day 15"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "B: Cycle 3 Day 1 held one week for ANC 1.1 (not more than 7 days: no dose reduction); CT stays on the calendar",
+   "given": {
+    "today": "2026-03-24",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "checks": [
+     {
+      "visit": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "n": 3,
+      "entries": [
+       {
+        "date": "2026-03-17",
+        "values": {
+         "anc": 1.1,
+         "platelet*": 150
+        },
+        "answer": "no"
+       },
+       {
+        "date": "2026-03-24",
+        "values": {
+         "anc": 1.8,
+         "platelet*": 150
+        },
+        "answer": "yes"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Cycle 3 Day 1 (given a week late)",
+      "match": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-24"
+     },
+     {
+      "name": "Cycle 3 Day 8",
+      "match": [
+       "cycle 3 day 8",
+       "c3d8",
+       "c3 d8",
+       [
+        "cycle 3",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-31"
+     },
+     {
+      "name": "Cycle 4 Day 1",
+      "match": [
+       "cycle 4 day 1",
+       "c4d1",
+       "c4 d1",
+       [
+        "cycle 4",
+        "day 1"
+       ]
+      ],
+      "date": "2026-04-14"
+     },
+     {
+      "name": "Cycle 5 Day 1",
+      "match": [
+       "cycle 5 day 1",
+       "c5d1",
+       "c5 d1",
+       [
+        "cycle 5",
+        "day 1"
+       ]
+      ],
+      "date": "2026-05-05"
+     },
+     {
+      "name": "Cycle 6 Day 1",
+      "match": [
+       "cycle 6 day 1",
+       "c6d1",
+       "c6 d1",
+       [
+        "cycle 6",
+        "day 1"
+       ]
+      ],
+      "date": "2026-05-26"
+     },
+     {
+      "name": "Cycle 6 Day 8",
+      "match": [
+       "cycle 6 day 8",
+       "c6d8",
+       "c6 d8",
+       [
+        "cycle 6",
+        "day 8"
+       ]
+      ],
+      "date": "2026-06-02"
+     },
+     {
+      "name": "CT week 6 (calendar, not moved)",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-03-17"
+     },
+     {
+      "name": "CT week 12",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-04-28"
+     },
+     {
+      "name": "CT week 18",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-06-09"
+     },
+     {
+      "name": "End of treatment",
+      "match": [
+       [
+        "end of treatment"
+       ],
+       [
+        "eot"
+       ]
+      ],
+      "date": "2026-07-02"
+     }
+    ],
+    "absent": [
+     {
+      "name": "a dose reduction after a delay of exactly 7 days",
+      "match": [
+       [
+        "800"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "C: Cycle 2 Day 8 omitted (ANC 0.4): not made up, Cycle 3 keeps its date",
+   "given": {
+    "today": "2026-03-03",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "checks": [
+     {
+      "visit": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ],
+      "n": 2,
+      "entries": [
+       {
+        "date": "2026-03-03",
+        "values": {
+         "anc": 0.4,
+         "platelet*": 120
+        },
+        "answer": "skip"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Cycle 2 Day 8 (omitted)",
+      "match": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-03",
+      "status": "skipped"
+     },
+     {
+      "name": "Cycle 3 Day 1 (date unchanged)",
+      "match": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-17"
+     },
+     {
+      "name": "Cycle 3 Day 8",
+      "match": [
+       "cycle 3 day 8",
+       "c3d8",
+       "c3 d8",
+       [
+        "cycle 3",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-24"
+     }
+    ]
+   }
+  },
+  {
+   "name": "D: Cycle 2 delayed 14 days (more than 7): one dose level lower (800 mg/m2) from Cycle 2 on",
+   "given": {
+    "today": "2026-03-10",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "checks": [
+     {
+      "visit": [
+       "cycle 2 day 1",
+       "c2d1",
+       "c2 d1",
+       [
+        "cycle 2",
+        "day 1"
+       ]
+      ],
+      "n": 2,
+      "entries": [
+       {
+        "date": "2026-02-24",
+        "values": {
+         "anc": 0.9,
+         "platelet*": 160
+        },
+        "answer": "no"
+       },
+       {
+        "date": "2026-03-03",
+        "values": {
+         "anc": 1.2,
+         "platelet*": 160
+        },
+        "answer": "no"
+       },
+       {
+        "date": "2026-03-10",
+        "values": {
+         "anc": 1.6,
+         "platelet*": 160
+        },
+        "answer": "yes"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Cycle 1 Day 8 (still the starting dose)",
+      "match": [
+       "cycle 1 day 8",
+       "c1d8",
+       "c1 d8",
+       [
+        "cycle 1",
+        "day 8"
+       ]
+      ],
+      "date": "2026-02-10",
+      "says": [
+       {
+        "name": "1000 mg/m2",
+        "any": [
+         [
+          "1000"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 2 Day 1 (two weeks late, reduced)",
+      "match": [
+       "cycle 2 day 1",
+       "c2d1",
+       "c2 d1",
+       [
+        "cycle 2",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-10",
+      "says": [
+       {
+        "name": "800 mg/m2 after a delay of more than 7 days",
+        "any": [
+         [
+          "800"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 2 Day 8",
+      "match": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-17",
+      "says": [
+       {
+        "name": "800 mg/m2",
+        "any": [
+         [
+          "800"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 3 Day 1",
+      "match": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-31",
+      "says": [
+       {
+        "name": "800 mg/m2 (no re-escalation)",
+        "any": [
+         [
+          "800"
+         ]
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "E: counts not recovered within 21 days of the planned Cycle 2 Day 1: treatment discontinued",
+   "given": {
+    "today": "2026-03-20",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "cycle 1 day 1",
+       "c1d1",
+       "c1 d1",
+       [
+        "cycle 1",
+        "day 1"
+       ]
+      ],
+      "date": "2026-02-03"
+     },
+     {
+      "visit": [
+       "cycle 1 day 8",
+       "c1d8",
+       "c1 d8",
+       [
+        "cycle 1",
+        "day 8"
+       ]
+      ],
+      "date": "2026-02-10"
+     }
+    ],
+    "checks": [
+     {
+      "visit": [
+       "cycle 2 day 1",
+       "c2d1",
+       "c2 d1",
+       [
+        "cycle 2",
+        "day 1"
+       ]
+      ],
+      "n": 2,
+      "entries": [
+       {
+        "date": "2026-02-24",
+        "values": {
+         "anc": 0.8,
+         "platelet*": 90
+        },
+        "answer": "no"
+       },
+       {
+        "date": "2026-03-03",
+        "values": {
+         "anc": 0.8,
+         "platelet*": 90
+        },
+        "answer": "no"
+       },
+       {
+        "date": "2026-03-10",
+        "values": {
+         "anc": 0.8,
+         "platelet*": 90
+        },
+        "answer": "no"
+       },
+       {
+        "date": "2026-03-17",
+        "values": {
+         "anc": 0.8,
+         "platelet*": 90
+        },
+        "answer": "no"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "End of treatment (30 days after the last dose given, C1D8; as soon as possible once treatment has stopped)",
+      "match": [
+       [
+        "end of treatment"
+       ],
+       [
+        "eot"
+       ]
+      ],
+      "date_in": [
+       "2026-03-12",
+       "2026-03-24"
+      ]
+     },
+     {
+      "name": "CT week 6 (imaging continues until progression)",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "date": "2026-03-17"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Cycle 2 Day 8",
+      "match": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ]
+     },
+     {
+      "name": "Cycle 3 Day 1",
+      "match": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ]
+     },
+     {
+      "name": "Cycle 6 Day 1",
+      "match": [
+       "cycle 6 day 1",
+       "c6d1",
+       "c6 d1",
+       [
+        "cycle 6",
+        "day 1"
+       ]
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "F: progression found two days after Cycle 5 Day 1: no more treatment or imaging; EOT and survival follow-up",
+   "given": {
+    "today": "2026-04-30",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "actuals": [
+     {
+      "visit": [
+       "cycle 1 day 1",
+       "c1d1",
+       "c1 d1",
+       [
+        "cycle 1",
+        "day 1"
+       ]
+      ],
+      "date": "2026-02-03"
+     },
+     {
+      "visit": [
+       "cycle 1 day 8",
+       "c1d8",
+       "c1 d8",
+       [
+        "cycle 1",
+        "day 8"
+       ]
+      ],
+      "date": "2026-02-10"
+     },
+     {
+      "visit": [
+       "cycle 2 day 1",
+       "c2d1",
+       "c2 d1",
+       [
+        "cycle 2",
+        "day 1"
+       ]
+      ],
+      "date": "2026-02-24"
+     },
+     {
+      "visit": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-03"
+     },
+     {
+      "visit": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-17"
+     },
+     {
+      "visit": [
+       "cycle 3 day 8",
+       "c3d8",
+       "c3 d8",
+       [
+        "cycle 3",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-24"
+     },
+     {
+      "visit": [
+       "cycle 4 day 1",
+       "c4d1",
+       "c4 d1",
+       [
+        "cycle 4",
+        "day 1"
+       ]
+      ],
+      "date": "2026-04-07"
+     },
+     {
+      "visit": [
+       "cycle 4 day 8",
+       "c4d8",
+       "c4 d8",
+       [
+        "cycle 4",
+        "day 8"
+       ]
+      ],
+      "date": "2026-04-14"
+     },
+     {
+      "visit": [
+       "cycle 5 day 1",
+       "c5d1",
+       "c5 d1",
+       [
+        "cycle 5",
+        "day 1"
+       ]
+      ],
+      "date": "2026-04-28"
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "progress*"
+       ]
+      ],
+      "date": "2026-04-30"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "End of treatment (30 days after Cycle 5 Day 1, the last dose)",
+      "match": [
+       [
+        "end of treatment"
+       ],
+       [
+        "eot"
+       ]
+      ],
+      "date": "2026-05-28",
+      "window": [
+       "2026-05-21",
+       "2026-06-04"
+      ]
+     },
+     {
+      "name": "Survival follow-up 1",
+      "match": [
+       [
+        "survival"
+       ],
+       [
+        "follow up"
+       ],
+       [
+        "followup"
+       ]
+      ],
+      "date": "2026-08-20",
+      "modality": "phone"
+     }
+    ],
+    "absent": [
+     {
+      "name": "Cycle 5 Day 8",
+      "match": [
+       "cycle 5 day 8",
+       "c5d8",
+       "c5 d8",
+       [
+        "cycle 5",
+        "day 8"
+       ]
+      ],
+      "after": "2026-04-30"
+     },
+     {
+      "name": "Cycle 6 Day 1",
+      "match": [
+       "cycle 6 day 1",
+       "c6d1",
+       "c6 d1",
+       [
+        "cycle 6",
+        "day 1"
+       ]
+      ]
+     },
+     {
+      "name": "CT after progression",
+      "match": [
+       [
+        "ct"
+       ],
+       [
+        "imaging"
+       ],
+       [
+        "tumour assessment"
+       ],
+       [
+        "tumor assessment"
+       ],
+       [
+        "scan"
+       ]
+      ],
+      "after": "2026-04-30"
+     }
+    ]
+   }
+  },
+  {
+   "name": "G: febrile neutropenia during Cycle 2: 800 mg/m2 for all later doses",
+   "given": {
+    "today": "2026-03-07",
+    "dates": [
+     {
+      "what": [
+       "baseline",
+       "screening",
+       "registration"
+      ],
+      "date": "2026-01-20"
+     },
+     {
+      "what": [
+       "c1d1",
+       "cycle 1 day 1",
+       "day 1",
+       "first dose",
+       "treatment start",
+       "start of treatment"
+      ],
+      "date": "2026-02-03"
+     }
+    ],
+    "facts": [
+     {
+      "what": [
+       "childbearing",
+       "wocbp",
+       "sex",
+       "female"
+      ],
+      "answer": false,
+      "optional": true
+     }
+    ],
+    "events": [
+     {
+      "what": [
+       [
+        "febrile neutropenia"
+       ]
+      ],
+      "date": "2026-03-07"
+     }
+    ]
+   },
+   "expect": {
+    "visits": [
+     {
+      "name": "Cycle 2 Day 8 (before the episode: starting dose)",
+      "match": [
+       "cycle 2 day 8",
+       "c2d8",
+       "c2 d8",
+       [
+        "cycle 2",
+        "day 8"
+       ]
+      ],
+      "date": "2026-03-03",
+      "says": [
+       {
+        "name": "1000 mg/m2",
+        "any": [
+         [
+          "1000"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 3 Day 1 (reduced)",
+      "match": [
+       "cycle 3 day 1",
+       "c3d1",
+       "c3 d1",
+       [
+        "cycle 3",
+        "day 1"
+       ]
+      ],
+      "date": "2026-03-17",
+      "says": [
+       {
+        "name": "800 mg/m2 after febrile neutropenia",
+        "any": [
+         [
+          "800"
+         ]
+        ]
+       }
+      ]
+     },
+     {
+      "name": "Cycle 6 Day 8 (still reduced)",
+      "match": [
+       "cycle 6 day 8",
+       "c6d8",
+       "c6 d8",
+       [
+        "cycle 6",
+        "day 8"
+       ]
+      ],
+      "date": "2026-05-26",
+      "says": [
+       {
+        "name": "800 mg/m2",
+        "any": [
+         [
+          "800"
+         ]
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

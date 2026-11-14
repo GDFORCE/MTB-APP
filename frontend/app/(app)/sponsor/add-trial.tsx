@@ -13,6 +13,8 @@ import type { KitAnalysis, KitModel } from "@/src/features/kit";
 import { FOCUS as G } from "@/src/features/kit/focus";
 import { FlowButton, FlowScreen, FlowSheet, flowStyles as f } from "@/src/features/kit/FlowScreen";
 import { ProtocolTimeline, useProtocolTimeline } from "@/src/features/kit/ProtocolTimeline";
+import { OpenPointsList } from "@/src/features/kit/OpenPointsList";
+import { openPointViews, withCheckedPoints } from "@/src/features/kit/openPoints";
 import type { TimelineSection } from "@/src/features/kit/sections";
 import { fonts } from "@/src/theme/tokens";
 
@@ -149,6 +151,8 @@ export default function AddTrial() {
   const [renameText, setRenameText] = useState("");
   const [showEdit, setShowEdit] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [showPoints, setShowPoints] = useState(false);
+  const [checkedPoints, setCheckedPoints] = useState<Record<string, boolean>>({});
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [createdTrialId, setCreatedTrialId] = useState<string | null>(null);
@@ -162,6 +166,9 @@ export default function AddTrial() {
     return current ? withPhases(current, renames) : null;
   }, [kit, kitConfirmed, renames]);
   const timeline = useProtocolTimeline(model, kitConfirmed?.siteAnswers);
+  // What must be checked against the protocol before the schedule can be relied on.
+  const points = useMemo(() => openPointViews(model, checkedPoints), [model, checkedPoints]);
+  const pointsLeft = points.filter((p) => !p.checked).length;
   const questionCount = kit ? kit.model.review_questions.length + kit.model.questions.filter((q) => q.scope === "study").length : 0;
 
   const changeProtocolId = (value: string) => {
@@ -278,7 +285,7 @@ export default function AddTrial() {
       if (kit && kitConfirmed) {
         try {
           await saveKitModel(trialId, {
-            baseModel: withPhases(kit.baseModel, renames), reviewAnswers: kitConfirmed.reviewAnswers,
+            baseModel: withCheckedPoints(withPhases(kit.baseModel, renames), checkedPoints), reviewAnswers: kitConfirmed.reviewAnswers,
             siteAnswers: kitConfirmed.siteAnswers, fileName: uploadName,
             fileSha256: kit.fileSha256 ?? null, warnings: kit.warnings, corrections: kit.corrections,
             analysisJobId: kit.jobId || undefined,
@@ -404,6 +411,15 @@ export default function AddTrial() {
             <Text style={s.linkText}>Review</Text>
           </Pressable>}
         </View>
+        {!!points.length && <Pressable testID="open-points-row" accessibilityRole="button" onPress={() => setShowPoints(true)} style={s.pointsRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.pointsTitle}>
+              {pointsLeft ? `${pointsLeft} point${pointsLeft === 1 ? "" : "s"} to check against the protocol` : `All ${points.length} points checked`}
+            </Text>
+            <Text style={s.pointsSub}>Where the protocol is unclear, or says something this schedule does not fully carry.</Text>
+          </View>
+          <Text style={s.linkText}>{pointsLeft ? "Check" : "Open"}</Text>
+        </Pressable>}
         <ProtocolTimeline data={timeline} onRename={(section) => { setRenaming(section); setRenameText(section.label); }} />
         {(!!model?.notes.length || !!kit.warnings.length) && <Pressable accessibilityRole="button" onPress={() => setShowNotes(true)} style={s.notesRow}>
           <Text style={s.notesText}>{(model?.notes.length || 0) + kit.warnings.length} notes from the protocol</Text>
@@ -539,6 +555,11 @@ export default function AddTrial() {
       }} />
     </FlowSheet>
 
+    <FlowSheet visible={showPoints} title="Check against the protocol" onClose={() => setShowPoints(false)}>
+      <Text style={f.hint}>Each point shows the protocol's own words and page where there are any. The schedule is saved as it is; nothing here is decided for you.</Text>
+      <OpenPointsList points={points} onToggle={(id: string, checked: boolean) => setCheckedPoints((current) => ({ ...current, [id]: checked }))} />
+    </FlowSheet>
+
     <FlowSheet visible={showNotes} title="Notes from the protocol" onClose={() => setShowNotes(false)}>
       {kit?.warnings.map((w) => <Text key={w} style={[f.hint, { color: G.amberText }]}>{w}</Text>)}
       {model?.notes.map((note) => <Text key={note} style={[f.hint, { color: G.ink, fontSize: 14, lineHeight: 20 }]}>• {note}</Text>)}
@@ -592,6 +613,9 @@ const s = StyleSheet.create({
   checkText: { flexShrink: 1, color: G.ink, fontFamily: fonts.medium, fontSize: 13 },
   linkText: { color: G.accent, fontFamily: fonts.semibold, fontSize: 14 },
   notesRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14 },
+  pointsRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 14, padding: 14, borderRadius: 12, backgroundColor: G.amberBg, borderWidth: 1, borderColor: G.amberLine },
+  pointsTitle: { color: G.amberInk, fontFamily: fonts.semibold, fontSize: 14 },
+  pointsSub: { color: G.amberText, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, marginTop: 2 },
   notesText: { color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
   savedCard: { marginTop: 28, borderWidth: 1, borderColor: G.line, borderRadius: 14, paddingHorizontal: 16 },
   savedRow: { flexDirection: "row", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: G.softLine },

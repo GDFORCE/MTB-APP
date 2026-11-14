@@ -1,0 +1,891 @@
+{
+ "protocol": {
+  "title": "BE-117: two-period crossover with washout range (table without ruled lines)",
+  "number": "BE-117",
+  "sponsor": null,
+  "phase": null,
+  "indication": null,
+  "version": null,
+  "design": "Constructed fixture."
+ },
+ "arms": [],
+ "anchors": [
+  {
+   "id": "screening",
+   "label": "Screening",
+   "kind": "start",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null
+  },
+  {
+   "id": "p1d1",
+   "label": "Period 1 dosing (Day 1)",
+   "kind": "ask",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": true,
+   "day_zero": false,
+   "set_by_visit": "p1_dose",
+   "question": "Date of Period 1 dosing?",
+   "optional": true,
+   "estimates": [
+    {
+     "when": [],
+     "relative_to": "screening",
+     "offset_days": 14
+    }
+   ],
+   "range": {
+    "relative_to": "screening",
+    "min_days": 2,
+    "max_days": 21
+   },
+   "note": null
+  },
+  {
+   "id": "p2d1",
+   "label": "Period 2 dosing (Day 1)",
+   "kind": "ask",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": "p2_dose",
+   "question": "Date of Period 2 dosing?",
+   "optional": true,
+   "estimates": [
+    {
+     "when": [],
+     "relative_to": "p1d1",
+     "offset_days": 7
+    }
+   ],
+   "range": {
+    "relative_to": "p1d1",
+    "min_days": 7,
+    "max_days": 14
+   },
+   "note": null
+  },
+  {
+   "id": "last_dose",
+   "label": "Last dose of study drug",
+   "kind": "last_visit",
+   "relative_to": null,
+   "offset_days": 0,
+   "is_day1": false,
+   "day_zero": false,
+   "set_by_visit": null,
+   "question": null,
+   "optional": false,
+   "estimates": [],
+   "range": null,
+   "note": null,
+   "last_of": [
+    "p1_dose",
+    "p2_dose"
+   ]
+  }
+ ],
+ "questions": [
+  {
+   "id": "sequence",
+   "label": "Sequence",
+   "text": "Which treatment sequence?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "choice",
+   "options": [
+    {
+     "value": "AB",
+     "label": "AB"
+    },
+    {
+     "value": "BA",
+     "label": "BA"
+    }
+   ],
+   "help": "",
+   "default": null
+  },
+  {
+   "id": "female",
+   "label": "Female",
+   "text": "Is the subject female?",
+   "scope": "participant",
+   "ask_at": null,
+   "kind": "boolean",
+   "options": [
+    {
+     "value": "yes",
+     "label": "Yes"
+    },
+    {
+     "value": "no",
+     "label": "No"
+    }
+   ],
+   "help": "",
+   "default": null
+  }
+ ],
+ "visits": [
+  {
+   "id": "scr",
+   "code": "SCR",
+   "name": "Screening",
+   "phase": "Screening",
+   "modality": "site",
+   "anchor": "screening",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Informed consent",
+     "if": []
+    },
+    {
+     "name": "Medical history",
+     "if": []
+    },
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests",
+     "if": []
+    },
+    {
+     "name": "Urine drug screen, alcohol test",
+     "if": []
+    },
+    {
+     "name": "Pregnancy test",
+     "if": [
+      {
+       "question": "female",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p1_in",
+   "code": "P1D-1",
+   "name": "Period 1 check-in (Day -1)",
+   "phase": "Period 1",
+   "modality": "site",
+   "anchor": "p1d1",
+   "offset_days": -1,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": 3,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests",
+     "if": []
+    },
+    {
+     "name": "Urine drug screen, alcohol test",
+     "if": []
+    },
+    {
+     "name": "Pregnancy test",
+     "if": [
+      {
+       "question": "female",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Randomisation",
+     "if": []
+    },
+    {
+     "name": "Admission to unit",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "arrive_before": {
+    "visit": "p1_dose",
+    "hours": 10
+   },
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p1_dose",
+   "code": "P1D1",
+   "name": "Period 1 dosing (Day 1)",
+   "phase": "Period 1",
+   "modality": "site",
+   "anchor": "p1d1",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "High-fat breakfast 30 minutes before dosing",
+     "if": [
+      {
+       "question": "sequence",
+       "in": [
+        "BA"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Study drug administration",
+     "if": []
+    },
+    {
+     "name": "PK blood sampling",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [
+    {
+     "label": "Pre-dose",
+     "offset_min": 0,
+     "window_before_min": 60,
+     "window_after_min": 0,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "0.5 h",
+     "offset_min": 30,
+     "window_before_min": 2,
+     "window_after_min": 2,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "1 h",
+     "offset_min": 60,
+     "window_before_min": 2,
+     "window_after_min": 2,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "2 h",
+     "offset_min": 120,
+     "window_before_min": 2,
+     "window_after_min": 2,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "4 h",
+     "offset_min": 240,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "8 h",
+     "offset_min": 480,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "12 h",
+     "offset_min": 720,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "24 h",
+     "offset_min": 1440,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "48 h",
+     "offset_min": 2880,
+     "window_before_min": 120,
+     "window_after_min": 120,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    }
+   ],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p1_d2",
+   "code": "P1D2",
+   "name": "Period 1 Day 2: 24-hour sample and discharge",
+   "phase": "Period 1",
+   "modality": "site",
+   "anchor": "p1d1",
+   "offset_days": 1,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "PK blood sampling (24 h)",
+     "if": []
+    },
+    {
+     "name": "Discharge from unit",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p1_d3",
+   "code": "P1D3",
+   "name": "Period 1 Day 3: 48-hour sample",
+   "phase": "Period 1",
+   "modality": "site",
+   "anchor": "p1d1",
+   "offset_days": 2,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "PK blood sampling (48 h)",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p2_in",
+   "code": "P2D-1",
+   "name": "Period 2 check-in (Day -1)",
+   "phase": "Period 2",
+   "modality": "site",
+   "anchor": "p2d1",
+   "offset_days": -1,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": 3,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Physical examination",
+     "if": []
+    },
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests",
+     "if": []
+    },
+    {
+     "name": "Urine drug screen, alcohol test",
+     "if": []
+    },
+    {
+     "name": "Pregnancy test",
+     "if": [
+      {
+       "question": "female",
+       "in": [
+        "yes"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Admission to unit",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "arrive_before": {
+    "visit": "p2_dose",
+    "hours": 10
+   },
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p2_dose",
+   "code": "P2D1",
+   "name": "Period 2 dosing (Day 1)",
+   "phase": "Period 2",
+   "modality": "site",
+   "anchor": "p2d1",
+   "offset_days": 0,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "12-lead ECG",
+     "if": []
+    },
+    {
+     "name": "High-fat breakfast 30 minutes before dosing",
+     "if": [
+      {
+       "question": "sequence",
+       "in": [
+        "AB"
+       ]
+      }
+     ]
+    },
+    {
+     "name": "Study drug administration",
+     "if": []
+    },
+    {
+     "name": "PK blood sampling",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [
+    {
+     "label": "Pre-dose",
+     "offset_min": 0,
+     "window_before_min": 60,
+     "window_after_min": 0,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "0.5 h",
+     "offset_min": 30,
+     "window_before_min": 2,
+     "window_after_min": 2,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "1 h",
+     "offset_min": 60,
+     "window_before_min": 2,
+     "window_after_min": 2,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "2 h",
+     "offset_min": 120,
+     "window_before_min": 2,
+     "window_after_min": 2,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "4 h",
+     "offset_min": 240,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "8 h",
+     "offset_min": 480,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "12 h",
+     "offset_min": 720,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "24 h",
+     "offset_min": 1440,
+     "window_before_min": 10,
+     "window_after_min": 10,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    },
+    {
+     "label": "48 h",
+     "offset_min": 2880,
+     "window_before_min": 120,
+     "window_after_min": 120,
+     "procedures": [
+      {
+       "name": "PK blood sample",
+       "if": []
+      }
+     ]
+    }
+   ],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p2_d2",
+   "code": "P2D2",
+   "name": "Period 2 Day 2: 24-hour sample and discharge",
+   "phase": "Period 2",
+   "modality": "site",
+   "anchor": "p2d1",
+   "offset_days": 1,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "PK blood sampling (24 h)",
+     "if": []
+    },
+    {
+     "name": "Discharge from unit",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "p2_d3",
+   "code": "P2D3",
+   "name": "Period 2 Day 3: 48-hour sample",
+   "phase": "Period 2",
+   "modality": "site",
+   "anchor": "p2d1",
+   "offset_days": 2,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Vital signs",
+     "if": []
+    },
+    {
+     "name": "PK blood sampling (48 h)",
+     "if": []
+    },
+    {
+     "name": "Safety laboratory tests",
+     "if": []
+    },
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "fu",
+   "code": "FU",
+   "name": "Follow-up call",
+   "phase": "Follow-up",
+   "modality": "phone",
+   "anchor": "last_dose",
+   "offset_days": 7,
+   "window_before": 2,
+   "window_after": 2,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Adverse events",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  }
+ ],
+ "events": [
+  {
+   "id": "withdraw",
+   "label": "Withdrawal from the study",
+   "repeatable": false,
+   "ends_schedule": true,
+   "sets_anchor": null,
+   "keeps_visits": [
+    "fu"
+   ],
+   "note": null,
+   "questions": [],
+   "visits": []
+  }
+ ],
+ "rules": [
+  {
+   "id": "withdraw_rule",
+   "label": "Subject withdrawn",
+   "when": {
+    "event": "withdraw"
+   },
+   "stop_visits": [],
+   "stop_all": true,
+   "same_day": "keep",
+   "starts": null,
+   "blocks": [],
+   "allowed": null,
+   "effect": "No further period visits; follow-up call 7 days after the last dose.",
+   "source": null,
+   "if": [],
+   "set_answers": null,
+   "keeps_visits": [
+    "fu"
+   ],
+   "pause": null
+  }
+ ],
+ "review_questions": [],
+ "notes": []
+}

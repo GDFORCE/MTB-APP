@@ -13,7 +13,9 @@ function visitDetail(record: KitPatientRecord, row: KitVisitRow) {
   return {
     phase: row.phase, visit_type: MODALITY[row.modality] || null,
     // "Fasting 8 h before · Hold metformin", then the protocol's notes for this visit.
-    preparation: [prep, ...row.notes.filter((n) => n !== prep)].filter(Boolean) as string[],
+    preparation: [prep, ...row.notes.filter((n) => n !== prep),
+      // What the participant must do before or at the visit, where it applies to them.
+      ...(row.instructions || []).filter((x) => x.kind === "prep" && !x.conditional).map((x) => x.text)].filter(Boolean) as string[],
     procedures: row.procedures.map((p) => ({
       label: p.name,
       description: [p.need === "if_indicated" ? "Only if your study doctor decides it is needed" : p.need === "optional" ? "Optional" : null,

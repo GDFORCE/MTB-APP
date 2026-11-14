@@ -223,7 +223,21 @@ def norm_visit(v: Any, i: int, prefix: str) -> dict[str, Any] | None:
                 "window_before_min": abs(num(tp.get("window_before_min"))),
                 "window_after_min": abs(num(tp.get("window_after_min"))),
                 "procedures": _procs(tp.get("procedures")),
+                # A time point only some participants have ("PK sub-study only").
+                **({"if": norm_conds(tp["if"])} if arr(tp.get("if")) else {}),
             })
+    # What to do at the visit that depends on a condition: text for people, with its conditions.
+    instructions = []
+    for x in arr(v.get("instructions")):
+        text = _s(x.get("text")).strip() if isinstance(x, dict) else _s(x).strip() if isinstance(x, str) else ""
+        if not text:
+            continue
+        item: dict[str, Any] = {"text": text, "if": norm_conds(x.get("if")) if isinstance(x, dict) else []}
+        if isinstance(x, dict) and x.get("kind") in INSTRUCTION_KINDS:
+            item["kind"] = x["kind"]
+        if isinstance(x, dict) and x.get("source"):
+            item["source"] = _s(x["source"])
+        instructions.append(item)
     duration = (abs(num(v["duration_days"])) or None) if v.get("duration_days") else None
     gap = v.get("min_gap") if isinstance(v.get("min_gap"), dict) else None
     gap_days = _opt_num(gap.get("days")) if gap else None
@@ -247,6 +261,17 @@ def norm_visit(v: Any, i: int, prefix: str) -> dict[str, Any] | None:
         if (fasting and fasting > 0) or prep_notes else None,
         "check": norm_check(v.get("check"), vid),
     }
+    if instructions:
+        out["instructions"] = instructions
+    else:
+        out.pop("instructions", None)
+    # The protocol states no window for this visit: written as null for both sides (or already
+    # flagged). It is kept as "not stated", never as "no leeway"; dates are computed with 0.
+    if v.get("window_stated") is False or ("window_before" in v and "window_after" in v
+                                           and v["window_before"] is None and v["window_after"] is None):
+        out["window_stated"] = False
+    else:
+        out.pop("window_stated", None)
     if r is not None and r.get("until_check") and not out["check"]:
         r.pop("until_check")  # nothing to be met
     # "4 weeks after the last dose, or as soon as possible if that has passed when the patient leaves".
@@ -281,6 +306,7 @@ def norm_check(c: Any, visit_id: str) -> dict[str, Any] | None:
 
 
 CHECK_ACTIONS = ("give", "reduce", "skip", "hold")
+INSTRUCTION_KINDS = ("prep", "order", "timing", "dose", "other")
 
 
 def norm_action(a: Any, measures: dict[str, dict[str, Any]], doses: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
@@ -514,7 +540,9 @@ def norm_rule_if(conds: Any, trigger: dict[str, Any], q_ids: set[str], events: l
             t = c["timing"] if isinstance(c.get("timing"), dict) else {}
             target = ({"anchor": _s(t["anchor"])} if _s(t.get("anchor")) in a_ids
                       else {"visit": _s(t["visit"])} if _s(t.get("visit")) in v_ids else None)
-            lo, hi = _opt_num(t.get("min_days")), _opt_num(t.get("max_days"))
+            # {"timing": {...}, "max_days": -1} means the same as {"timing": {..., "max_days": -1}}.
+            lo = _opt_num(t.get("min_days") if "min_days" in t else c.get("min_days"))
+            hi = _opt_num(t.get("max_days") if "max_days" in t else c.get("max_days"))
             if target is None or (lo is None and hi is None):
                 return None
             n = _opt_num(t.get("n"))
@@ -536,7 +564,8 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
                q_ids: set[str] | None = None, notes: list[str] | None = None,
                questions: list[dict[str, Any]] | None = None,
                doses: list[dict[str, Any]] | None = None,
-               stop_ids: set[str] | None = None) -> list[dict[str, Any]]:
+               stop_ids: set[str] | None = None,
+               left_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """What happens to the schedule if something happens. A rule whose trigger is unknown is dropped;
     references to unknown visits, anchors or rules are removed rather than guessed."""
     e_ids = {e["id"] for e in events}
@@ -550,6 +579,9 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
         elif _s(when.get("event")) in e_ids:
             trigger = {"event": _s(when["event"])}
         else:
+            if left_out is not None:
+                left_out.append({"rule": r, "why": "it is triggered by a date or event the model does not have"
+                                 + (f" ({_s(when.get('anchor') or when.get('event'))})" if when else "")})
             continue
         allowed = r.get("allowed") if isinstance(r.get("allowed"), dict) else None
         if allowed is not None:
@@ -565,6 +597,9 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
                 allowed = None
         conditions = norm_rule_if(r.get("if"), trigger, q_ids or set(), events, a_ids, v_ids)
         if conditions is None:
+            if left_out is not None:
+                left_out.append({"rule": r, "why": "one of its conditions could not be read or refers to something "
+                                                   "the model does not have"})
             if notes is not None:
                 notes.append(f"Rule \"{_s(r.get('label')) or _s(r.get('id'))}\" was left out: one of its conditions "
                              "refers to something the model does not have. Check this rule against the protocol.")
@@ -590,6 +625,26 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
             elif notes is not None:
                 notes.append(f"A dose change on rule \"{_s(r.get('label')) or _s(r.get('id'))}\" was left out: "
                              "it names an unknown dose or level.")
+        # Assessments that stop, or are added, at visits that still happen from the rule's date on.
+        known = stop_ids or v_ids
+
+        def targets(item: Any) -> Any:
+            if not isinstance(item, dict):
+                return None
+            if item.get("visits") in ("all", ["all"]):
+                return "all"
+            ids = [_s(x) for x in dict.fromkeys(arr(item.get("visits"))) if _s(x) in known]
+            return ids or None
+
+        stop_procedures, add_procedures = [], []
+        for item in arr(r.get("stop_procedures")):
+            names = [_s(x).strip() for x in arr(item.get("names") if isinstance(item, dict) else None) if _s(x).strip()]
+            if targets(item) and names:
+                stop_procedures.append({"visits": targets(item), "names": names})
+        for item in arr(r.get("add_procedures")):
+            procs = _procs(item.get("procedures") if isinstance(item, dict) else None)
+            if targets(item) and procs:
+                add_procedures.append({"visits": targets(item), "procedures": procs})
         pause = r.get("pause") if isinstance(r.get("pause"), dict) else None
         if pause is not None:
             visits = [_s(x) for x in dict.fromkeys(arr(pause.get("visits"))) if _s(x) in v_ids]
@@ -611,6 +666,11 @@ def norm_rules(items: Any, a_ids: set[str], events: list[dict[str, Any]], v_ids:
                                                     if _s(x) in (stop_ids or v_ids)]) and r.get("stop_all") else {}),
             "pause": pause,
             **({"dose_changes": dose_changes} if dose_changes else {}),
+            **({"stop_procedures": stop_procedures} if stop_procedures else {}),
+            **({"add_procedures": add_procedures} if add_procedures else {}),
+            # The protocol's own words for it, with the page (checked against the PDF text in analyze).
+            **({"quote": _s(r["quote"]).strip()[:400]} if _s(r.get("quote")).strip() else {}),
+            **({"page": int(_opt_num(r["page"]))} if _opt_num(r.get("page")) is not None else {}),  # type: ignore[arg-type]
         })
     r_ids = {r["id"] for r in rules}
     for r in rules:
@@ -687,18 +747,27 @@ def normalize(st: Any) -> dict[str, Any]:
                 a["stop_is_last_dose"] = True
             else:
                 a.pop("stop_is_last_dose", None)
+            # Only occurrences at which one of these assessments is still done count (the injection).
+            with_names = [_s(x).strip() for x in arr(a.get("last_with")) if _s(x).strip()]
+            if with_names:
+                a["last_with"] = with_names
+            else:
+                a.pop("last_with", None)
             if not a["last_of"]:
                 a["kind"], a["optional"] = "ask", True
                 st["notes"].append(f"“{a['label']}” is entered by the site: the visits it is the last of are not in the model.")
         else:
             a.pop("last_of", None)
             a.pop("stop_is_last_dose", None)
+            a.pop("last_with", None)
     for q in st["questions"]:
         if q["scope"] == "decision":
             at = q.get("ask_at") or {}
             if not (at.get("visit") and at["visit"] in v_ids) and not (at.get("anchor") and at["anchor"] in a_ids):
                 q["scope"] = "participant"
     events = []
+    raw_event_visits = {_s(v.get("id")) for e in arr(st.get("events")) if isinstance(e, dict)
+                        for v in arr(e.get("visits")) if isinstance(v, dict) and v.get("id")}
     for e in arr(st.get("events")):
         if isinstance(e, dict) and e.get("id"):
             ev = {
@@ -707,7 +776,7 @@ def normalize(st: Any) -> dict[str, Any]:
                 "sets_anchor": e["sets_anchor"] if e.get("sets_anchor") in a_ids else None,
                 # Scheduled visits that still happen when this event ends the schedule (safety follow-up).
                 **({"keeps_visits": kept} if (kept := [_s(x) for x in dict.fromkeys(arr(e.get("keeps_visits")))
-                                                       if _s(x) in v_ids]) else {}),
+                                                       if _s(x) in v_ids or _s(x) in raw_event_visits]) else {}),
                 "note": _s(e["note"]) if e.get("note") else None,
                 "questions": [q for q in (norm_q(q, "event") for q in arr(e.get("questions"))) if q],
                 "visits": [v for v in (norm_visit(v, i, f"{e['id']}_v") for i, v in enumerate(arr(e.get("visits")))) if v],
@@ -723,9 +792,14 @@ def normalize(st: Any) -> dict[str, Any]:
     st["events"] = events
     st["measures"] = norm_measures(st.get("measures"))
     st["doses"] = norm_doses(st.get("doses"), v_ids, st["notes"])
+    left_out: list[dict[str, Any]] = []
     st["rules"] = norm_rules(st.get("rules"), a_ids, events, v_ids,
                              q_ids={q["id"] for q in st["questions"]}, notes=st["notes"], questions=st["questions"],
-                             doses=st["doses"], stop_ids=v_ids | {v["id"] for e in events for v in e["visits"]})
+                             doses=st["doses"], stop_ids=v_ids | {v["id"] for e in events for v in e["visits"]},
+                             left_out=left_out)
+    st["open_points"] = norm_open_points(st.get("open_points"))
+    for item in left_out:
+        add_open_point(st, rule_left_out_point(item["rule"], item["why"]))
     for v in st["visits"] + [v for e in events for v in e["visits"]]:
         v["include_if"] = norm_conds(v["include_if"])
         if v.get("min_gap") and v["min_gap"]["after"] and v["min_gap"]["after"] not in v_ids:
@@ -740,7 +814,15 @@ def normalize(st: Any) -> dict[str, Any]:
         else:
             v.pop("arrive_before", None)
     for e in events:
+        own = {q["id"] for q in e["questions"]}
         for v in e["visits"]:
+            # "EOS 4 weeks after the last dose when early termination is logged": counted from that
+            # date instead of the event's.
+            if _s(v.get("count_from")) in a_ids:
+                v["count_from"] = _s(v["count_from"])
+            else:
+                v.pop("count_from", None)
+            v["include_if"] = [_event_cond(c, own) for c in v["include_if"]]
             if v.get("check") and not (v["repeat"] or {}).get("until_check"):
                 # The engine asks checks on scheduled visits, and on event visits that repeat until they are met.
                 st["notes"].append(f"Check “{v['check']['text']}” on {e['label']} visit {v['code']} is not asked "
@@ -776,7 +858,20 @@ def normalize(st: Any) -> dict[str, Any]:
     _dates_with_ranges(st)
     if not st["visits"]:
         raise ValueError("no visits")
+    # Only models with something to check carry open points.
+    if not st.get("open_points"):
+        st.pop("open_points", None)
     return st
+
+
+def _event_cond(c: Any, own: set[str]) -> Any:
+    """An event visit's condition on an answer given with the event ({"event_question", "in"}),
+    cleaned like any other answer condition. Left as written when it is not one."""
+    if isinstance(c, dict) and _s(c.get("event_question")) in own and "question" not in c:
+        values = _in_values(c)
+        if values:
+            return {"event_question": _s(c["event_question"]), "in": values}
+    return c
 
 
 def _note_unknown_questions(st: dict[str, Any], events: list[dict[str, Any]]) -> None:
@@ -790,7 +885,9 @@ def _note_unknown_questions(st: dict[str, Any], events: list[dict[str, Any]]) ->
         conds = [c for c in v["include_if"] if isinstance(c, dict)]
         conds += [c for p in v["procedures"] for c in p["if"] if isinstance(c, dict)]
         for c in conds:
-            for q in cond_questions(c) if norm_cond(c) else [_s(c.get("question")) or "?"]:
+            if _s(c.get("event_question")) in known and "question" not in c:
+                continue  # an answer given when the event is logged (event visits)
+            for q in cond_questions(c) if norm_cond(c) else [_s(c.get("question") or c.get("event_question")) or "?"]:
                 if q not in known:
                     missing.setdefault(q, []).append(v.get("code") or v["id"])
             for kind, ref in cond_facts(c) if norm_cond(c) else []:
@@ -823,7 +920,14 @@ def _prune_review(st: dict[str, Any]) -> None:
         patches = [[p for p in arr(o["patches"]) if isinstance(p, dict)] for o in options]
         keys = {_patch_key(p) for ps in patches for p in ps}
         if len(options) > 1 and all(sorted(map(str, ps)) == sorted(map(str, patches[0])) for ps in patches):
-            st["notes"].append(f"Review question “{rq['text']}” was dropped: every answer gives the same schedule.")
+            # The answers change nothing the app can apply, but the protocol is still unclear
+            # here: the reviewer is told, with what the model assumes meanwhile.
+            chosen = next((o["label"] for o in options if o["value"] == rq.get("recommended")), options[0]["label"])
+            add_open_point(st, {
+                "id": f"rq_{rq['id']}", "kind": "ambiguous", "text": rq["text"],
+                "why": rq.get("why") or "", "used": f"The schedule follows “{chosen}”. Other reading"
+                + ("s" if len(options) > 2 else "") + ": " + "; ".join(o["label"] for o in options if o["label"] != chosen) + ".",
+                "stage": "model"})
             continue
         if keys and all(k[0] == "anchor" and k[2] == "offset_days" and k[1] in by_anchor
                         and by_anchor[k[1]].get("relative_to") in by_anchor and by_anchor[k[1]]["kind"] != "start"
@@ -849,6 +953,11 @@ def _dates_with_ranges(st: dict[str, Any]) -> None:
     typical gap: a counted one with a range becomes an entered date, its gap kept only as the
     planned timing for ordering visits."""
     for a in st["anchors"]:
+        if a.get("offset_stated") is True and a["kind"] == "relative" and a.get("relative_to"):
+            # The protocol gives the day itself ("Day 28, up to 7 days later"): it stays a counted
+            # date, so visits after it keep planned dates; the range is checked once it is recorded.
+            continue
+        a.pop("offset_stated", None)
         if a.get("range") and a["kind"] == "relative":
             a["kind"] = "ask"
             if a.get("relative_to") and not a["estimates"]:
@@ -858,16 +967,21 @@ def _dates_with_ranges(st: dict[str, Any]) -> None:
 
 PATCH_FIELDS = {
     "visit": ["offset_days", "window_before", "window_after", "duration_days", "repeat.count",
-              "repeat.every_days", "repeat.chain", "repeat.open_ended", "repeat.until_anchor"],
+              "repeat.every_days", "repeat.chain", "repeat.open_ended", "repeat.until_anchor",
+              # Added 10 Nov 2026 so a reading that changes who has a visit or what is done can be chosen.
+              "anchor", "follows", "include_if", "procedures", "modality"],
     "anchor": ["offset_days", "relative_to"],
+    "rule": ["stop_visits", "keeps_visits", "stop_all", "same_day", "stop_procedures", "add_procedures"],
+    "event": ["ends_schedule", "keeps_visits"],
 }
+PATCH_POOLS = {"visit": "visits", "anchor": "anchors", "rule": "rules", "event": "events"}
 
 
 def apply_patches(model: dict[str, Any], patches: Any) -> dict[str, Any]:
     for p in arr(patches):
         if not isinstance(p, dict) or p.get("field") not in PATCH_FIELDS.get(p.get("target"), []):
             continue
-        pool = model["visits"] if p["target"] == "visit" else model["anchors"]
+        pool = arr(model.get(PATCH_POOLS[p["target"]]))
         obj = next((x for x in pool if x["id"] == _s(p.get("id"))), None)
         if obj is None:
             continue
@@ -898,3 +1012,71 @@ def default_review_answers(model: dict[str, Any]) -> dict[str, str]:
         rec = rq.get("recommended")
         out[rq["id"]] = rec if rec is not None and any(o["value"] == rec for o in rq["options"]) else rq["options"][0]["value"]
     return out
+
+
+# ── open points ──────────────────────────────────────────────────────────
+# Things the reviewer must check against the protocol because the model cannot be trusted on them
+# as it stands: something the vocabulary cannot hold or only approximates, something the protocol
+# leaves open or contradicts itself on, something clean-up removed or changed, a protocol passage
+# that could not be found in the PDF. Each carries the protocol's words and page where there are
+# any, the visits it concerns, and what the schedule does meanwhile. They are saved with the model.
+POINT_KINDS = ("cannot_represent", "approximated", "ambiguous", "conflict", "not_stated", "cleanup", "unverified")
+POINT_STAGES = ("model", "tables", "events", "cleanup", "check")
+
+
+def norm_open_point(p: Any) -> dict[str, Any] | None:
+    if not isinstance(p, dict):
+        return None
+    text = _s(p.get("text")).strip()
+    if not text:
+        return None
+    page = _opt_num(p.get("page"))
+    out: dict[str, Any] = {
+        "id": _s(p.get("id")).strip(), "kind": p.get("kind") if p.get("kind") in POINT_KINDS else "cannot_represent",
+        "text": text[:400], "why": _s(p.get("why")).strip()[:400], "used": _s(p.get("used")).strip()[:400],
+        "quote": _s(p.get("quote")).strip()[:400], "page": int(page) if page is not None and page >= 1 else None,
+        "affects": [_s(x) for x in dict.fromkeys(arr(p.get("affects"))) if _s(x)],
+        "stage": p.get("stage") if p.get("stage") in POINT_STAGES else "model",
+    }
+    if p.get("checked") is True:
+        out["checked"] = True  # ticked by the reviewer
+    if isinstance(p.get("found"), bool):
+        out["found"] = p["found"]
+        if _opt_num(p.get("found_on")) is not None:
+            out["found_on"] = int(_opt_num(p["found_on"]))  # type: ignore[arg-type]
+    return out
+
+
+def norm_open_points(items: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for p in arr(items):
+        point = norm_open_point(p)
+        if point is None or any(x["text"] == point["text"] and x["quote"] == point["quote"] for x in out):
+            continue
+        taken = {x["id"] for x in out}
+        if not point["id"] or point["id"] in taken:
+            n = len(out) + 1
+            while f"op{n}" in taken:
+                n += 1
+            point["id"] = f"op{n}"
+        out.append(point)
+    return out
+
+
+def add_open_point(st: dict[str, Any], point: dict[str, Any]) -> None:
+    """Add one open point unless the same one is already there."""
+    st["open_points"] = norm_open_points([*arr(st.get("open_points")), point])
+
+
+def rule_left_out_point(r: dict[str, Any], why: str) -> dict[str, Any]:
+    """A rule the AI wrote that clean-up could not use, kept in its own words for the reviewer."""
+    label = _s(r.get("label")).strip() or _s(r.get("id")) or "A rule"
+    effect = _s(r.get("effect")).strip()
+    trigger = r.get("when") if isinstance(r.get("when"), dict) else {}
+    affects = [_s(x) for x in arr(r.get("stop_visits"))] + [_s(x) for x in (trigger.get("event"), trigger.get("anchor")) if x]
+    return {
+        "id": f"rule_{_s(r.get('id')) or label}"[:60], "kind": "cleanup", "stage": "cleanup",
+        "text": f"Rule “{label}” is not applied: {why}." + (f" It said: {effect}" if effect else ""),
+        "why": _s(r.get("source")).strip(), "quote": _s(r.get("quote")).strip(), "page": r.get("page"),
+        "used": "Nothing changes on the schedule when this happens until the rule is corrected.", "affects": affects,
+    }

@@ -1,5 +1,6 @@
 // The protocol schedule as timeline sections: one section per run of visits with the same phase.
 // Pure and import-free (type imports only) so it runs under node --test.
+import { openPointsByVisit } from "./openPoints";
 import type { KitDecisionRow, KitModel, KitRule, KitSchedule, KitVisitRow } from "./index";
 import { ruleIfText } from "./describe";
 
@@ -64,6 +65,7 @@ export function protocolTimeline(
   model: KitModel, schedule: KitSchedule, startIso: string, conditionOf: (visitId: string) => string | null,
 ) {
   const defs = new Map(model.visits.map((v) => [v.id, v]));
+  const toCheck = openPointsByVisit(model);
   const drafts: Draft[] = [];
   let phase = "Visit";
   for (const row of schedule.rows as (KitVisitRow | KitDecisionRow)[]) {
@@ -89,7 +91,9 @@ export function protocolTimeline(
     for (const label of row.stopsIf || []) tags.push({ text: `Stops if ${label}`, tone: "red" });
     if (def?.duration_days) tags.push({ text: `Lasts ${def.duration_days} days`, tone: "green" });
     if (row.timepoints.length) tags.push({ text: `${row.timepoints.length} time points`, tone: "green" });
-    const meta = [MODALITY[row.modality] || "Visit", days == null ? row.relative : null, windowText(row.windowDays),
+    if (toCheck[row.visitId]) tags.push({ text: `${toCheck[row.visitId]} to check`, tone: "amber" });
+    const meta = [MODALITY[row.modality] || "Visit", days == null ? row.relative : null,
+      row.windowStated === false ? "window not stated" : windowText(row.windowDays),
       row.procedures.length ? `${row.procedures.length} assessment${row.procedures.length === 1 ? "" : "s"}` : null]
       .filter(Boolean).join(" · ");
     const when = days == null ? "Waits" : relLabel(days, row.studyDay);

@@ -233,12 +233,20 @@ export function serializeSchedule(model, calc, part = {}) {
         checkNote(r),
         reduceNote(r),
         r.asap ? `Planned ${fmtS(r.asap.was)}, which had passed when participation ended (${fmtS(r.asap.from)}): due as soon as possible.` : null,
+        r.basis ? `Counted from ${r.basis.code} on its planned date (${fmtS(r.basis.t)}), which is not recorded as done. Record its date to confirm this one.` : null,
         ...doseNotes(r),
         ...timeNotes(r),
       ].filter(Boolean),
       // A time staff record for this visit: the check-in time, or the dose time (PK clock times).
       time: part.doseTimes?.[r.key] ?? null,
       timeKind: r.arrive ? "checkin" : r.doseFrom || r.v.timepoints.length ? "dose" : null,
+      // false: the protocol states no window for this visit (shown as "not stated", never as "no leeway").
+      windowStated: r.v.window_stated !== false,
+      // Conditional what-to-do text that applies to this participant here.
+      instructions: arr(r.instructions).map((x) => ({
+        text: String(x.text ?? ""), kind: x.kind || null, conditional: x.st === "unknown",
+        condition: arr(x.if).length ? condText(model, x.if) : null, source: x.source || null,
+      })),
       check: r.check ? {
         id: r.check.def.id, text: r.check.def.text, help: r.check.def.help || null, state: r.check.state,
         answers: r.check.given.map((x) => ({
@@ -266,7 +274,7 @@ export function serializeSchedule(model, calc, part = {}) {
         reduced: x.idx != null && x.startIdx != null && x.idx > x.startIdx,
         levels: x.levels.map((l) => ({ id: l.id, label: l.label })),
       })),
-      timepoints: r.v.timepoints.length ? dayPlan(r.v, part.doseTimes?.[r.key], r.actual ?? r.t) : [],
+      timepoints: arr(r.tps ?? r.v.timepoints).length ? dayPlan({ ...r.v, timepoints: r.tps ?? r.v.timepoints }, part.doseTimes?.[r.key], r.actual ?? r.t) : [],
       movesOthers: recordingMovesOthers(model, r.v),
       source: r.v.source || null,
       stopsIf: r.stopsIf || [],
