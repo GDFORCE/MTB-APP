@@ -1,0 +1,172 @@
+{
+  "protocol": {
+    "title": "Development of new geographic atrophy in neovascular (wet) AMD: ranibizumab vs aflibercept (RIVAL)",
+    "number": "CRFB002AAU17",
+    "registry_id": "NCT02130024",
+    "sponsor": "Novartis",
+    "phase": "IV",
+    "indication": "Neovascular (wet) age-related macular degeneration",
+    "version": "Version No.02 (Amendment 2)",
+    "date": "2015-01-19",
+    "design": "Randomised 1:1 aflibercept 2.0 mg vs ranibizumab 0.5 mg; three monthly injections, then inject and extend by disease activity to Month 24"
+  },
+  "arms": [
+    {"id": "afl", "name": "Aflibercept 2.0 mg", "description": "Arm 1, intravitreal, same visit schedule"},
+    {"id": "rani", "name": "Ranibizumab 0.5 mg", "description": "Arm 2, intravitreal, same visit schedule"}
+  ],
+  "anchors": [
+    {"id": "baseline", "label": "Baseline (Day 0, Visit 2)", "kind": "start", "is_day1": true, "day_zero": true,
+     "source": "Table 6-1, page 32"},
+    {"id": "screening", "label": "Screening (Visit 1)", "kind": "ask", "relative_to": "baseline", "offset_days": -14,
+     "range": {"relative_to": "baseline", "min_days": -14, "max_days": 0},
+     "question": "On what date was the Screening visit (up to 2 weeks before Baseline)?", "source": "Section 5.5.4.1, page 26"},
+    {"id": "last_injection", "label": "Week 103 (last possible study injection)", "kind": "relative", "relative_to": "baseline",
+     "offset_days": 721, "source": "Section 5.5.4.1, page 27"},
+    {"id": "last_study_visit", "label": "Last study visit", "kind": "last_visit", "last_of": ["inj", "m12", "vegf_w5", "vegf_w9"],
+     "source": "Section 3.1, page 19"}
+  ],
+  "questions": [
+    {"id": "wocbp", "label": "Woman of child-bearing potential", "text": "Is the participant a woman of child-bearing potential?",
+     "kind": "boolean", "scope": "participant", "source": "Section 6.5.7, page 36"}
+  ],
+  "visits": [
+    {"id": "scr", "code": "V1", "name": "Screening", "phase": "Screening", "anchor": "screening", "offset_days": 0,
+     "window_before": null, "window_after": null, "source": "Table 6-1, page 32",
+     "procedures": [
+       {"name": "Informed consent"}, {"name": "Assign patient number"}, {"name": "Review of inclusion/exclusion criteria"},
+       {"name": "Demography"}, {"name": "Medical history"}, {"name": "Prior/concomitant medication"},
+       {"name": "Pregnancy test (serum)", "if": [{"question": "wocbp", "in": ["yes"]}]}, {"name": "Vital signs"},
+       {"name": "BCVA with refraction (both eyes)"}, {"name": "Ophthalmic examination (both eyes)"}, {"name": "OCT (both eyes)"},
+       {"name": "Autofluorescence (both eyes)"}, {"name": "Colour fundus photography (both eyes)"},
+       {"name": "Fluorescein angiography (both eyes)"}, {"name": "Adverse events"}, {"name": "IWRS entry"}]},
+    {"id": "inj", "code": "TV", "name": "Treatment visit", "phase": "Treatment", "anchor": "baseline", "offset_days": 0,
+     "window_before": 7, "window_after": 7, "source": "Section 5.5.4.1 and Table 6-1, pages 26-27 and 32",
+     "min_gap": {"days": 28, "after": null},
+     "procedures": [
+       {"name": "Review of withdrawal criteria"}, {"name": "Prior/concomitant medication"}, {"name": "BCVA (logMAR)"},
+       {"name": "Ophthalmic examination incl. tonometry"}, {"name": "OCT"}, {"name": "Disease activity assessment"},
+       {"name": "Intravitreal injection (study eye)"}, {"name": "Adverse events"}],
+     "repeat": {
+       "every_days": 28, "count": null, "chain": false, "until_anchor": "last_injection",
+       "code_pattern": "TV{n}", "label_pattern": "Treatment visit {n}",
+       "overrides": [
+         {"n": [1], "add": [{"name": "Review of inclusion/exclusion criteria"}, {"name": "Randomisation"}, {"name": "Vital signs"},
+                            {"name": "Plasma VEGF"}, {"name": "Nerve fibre analysis"}, {"name": "Intraocular inflammation"},
+                            {"name": "Autofluorescence (both eyes)"}, {"name": "Colour fundus photography (both eyes)"},
+                            {"name": "Fluorescein angiography (both eyes)"}, {"name": "IWRS entry"}],
+          "remove": [], "note": "Baseline (Visit 2, Day 0): first injection"},
+         {"n": [2], "add": [{"name": "Autofluorescence (both eyes)"}], "remove": [], "note": "Visit 3 (Week 4): second injection"},
+         {"n": [3], "add": [{"name": "Autofluorescence (both eyes)"}, {"name": "Fluorescein angiography (both eyes)"},
+                            {"name": "BCVA with refraction"}], "remove": [],
+          "note": "Visit 4 (Week 8): third injection; the first interval decision"}],
+       "adaptive": {
+         "decide_from_n": 3, "basis": "actual", "start_days": 28, "min_days": 28, "max_days": 84,
+         "finding": {"id": "activity_signs",
+                     "label": "Signs of disease activity (VA loss of 5+ letters, new retinal haemorrhage, IRF/SRF on OCT)",
+                     "kind": "count", "roles": ["pi"]},
+         "active_if": {"op": ">=", "value": 1},
+         "steps": [
+           {"if": {"op": "=", "value": 0}, "add_days": 14, "label": "No sign: extend by 2 weeks"},
+           {"if": {"op": "=", "value": 1}, "add_days": -14, "label": "One sign: reduce by 2 weeks"},
+           {"if": {"op": ">=", "value": 2}, "set_days": 28, "label": "Two or more signs: back to 4-weekly"}],
+         "breakpoint": {"after_extensions": 3, "cap_offset_days": -14, "count_activity_at": "extended_intervals"},
+         "recommendation": {"id": "crc_weeks", "label": "Central reading centre recommended interval", "unit_days": 7, "roles": ["pi", "crc"]},
+         "precedence": "recommendation_if_given",
+         "source": "Section 5.5.4.1, page 27; Section 5.4, page 25",
+         "quote": "However, on the fourth extension, or any extension thereafter, the maximum interval will be 2 weeks less than the maximum interval at which disease activity previously occurred in any of the three previous extensions",
+         "page": 27
+       }},
+     "combine_with": [{"visit": "m12", "date": "fixed"}]},
+    {"id": "vegf_w5", "code": "V3+7d", "name": "Visit 3 + 7 days (Week 5)", "phase": "Treatment", "anchor": "baseline",
+     "offset_days": 35, "window_before": 3, "window_after": 3, "source": "Table 6-1, page 32; Section 6.6.1, page 37",
+     "procedures": [{"name": "Plasma VEGF"}, {"name": "Adverse events"}]},
+    {"id": "vegf_w9", "code": "V4+7d", "name": "Visit 4 + 7 days (Week 9)", "phase": "Treatment", "anchor": "baseline",
+     "offset_days": 63, "window_before": 3, "window_after": 3, "source": "Table 6-1, page 32; Section 6.6.1, page 37",
+     "procedures": [{"name": "Plasma VEGF"}, {"name": "Intraocular inflammation"}, {"name": "Adverse events"}]},
+    {"id": "m12", "code": "M12", "name": "Month 12 (Week 52)", "phase": "Treatment", "anchor": "baseline", "offset_days": 364,
+     "window_before": 6, "window_after": 6, "source": "Table 6-1, page 32; Amendment 2, page 8",
+     "condition": "Injection given here only if one is due within this visit's window",
+     "procedures": [
+       {"name": "Review of withdrawal criteria"}, {"name": "Prior/concomitant medication"}, {"name": "BCVA with refraction (both eyes)"},
+       {"name": "Ophthalmic examination (both eyes)"}, {"name": "OCT (both eyes)"}, {"name": "Autofluorescence (both eyes)"},
+       {"name": "Colour fundus photography (both eyes)"}, {"name": "Fluorescein angiography (both eyes)"},
+       {"name": "Nerve fibre analysis"}, {"name": "Adverse events"}]},
+    {"id": "m24", "code": "M24", "name": "Month 24 / end of study (Week 104)", "phase": "End of study", "anchor": "baseline",
+     "offset_days": 728, "window_before": 6, "window_after": 6, "source": "Table 6-1, page 32; Section 5.5.4.1, page 27",
+     "procedures": [
+       {"name": "Prior/concomitant medication"}, {"name": "Pregnancy test (serum or urine)", "if": [{"question": "wocbp", "in": ["yes"]}]},
+       {"name": "Vital signs"}, {"name": "BCVA with refraction (both eyes)"}, {"name": "Ophthalmic examination (both eyes)"},
+       {"name": "OCT (both eyes)"}, {"name": "Autofluorescence (both eyes)"}, {"name": "Colour fundus photography (both eyes)"},
+       {"name": "Fluorescein angiography (both eyes)"}, {"name": "Nerve fibre analysis"}, {"name": "Adverse events"}, {"name": "IWRS entry"}]}
+  ],
+  "events": [
+    {"id": "withdrawal", "label": "Premature withdrawal from the study", "repeatable": false, "ends_schedule": true,
+     "note": "Study treatment must be discontinued.", "questions": [],
+     "visits": [
+       {"id": "ed", "code": "ED", "name": "Early Discontinuation evaluation", "phase": "End of study", "count_from": "last_study_visit",
+        "offset_days": 30, "window_before": 7, "window_after": 7, "source": "Section 3.1, page 19",
+        "procedures": [
+          {"name": "Prior/concomitant medication"}, {"name": "Pregnancy test (serum or urine)", "if": [{"question": "wocbp", "in": ["yes"]}]},
+          {"name": "Vital signs"}, {"name": "BCVA with refraction (both eyes)"}, {"name": "Ophthalmic examination (both eyes)"},
+          {"name": "OCT (both eyes)"}, {"name": "Autofluorescence (both eyes)"}, {"name": "Colour fundus photography (both eyes)"},
+          {"name": "Fluorescein angiography (both eyes)"}, {"name": "Nerve fibre analysis"}, {"name": "Adverse events"}, {"name": "IWRS entry"}]}]}
+  ],
+  "rules": [],
+  "phases": [
+    {"id": "on_study", "label": "On study", "starts": {"anchor": "baseline"}, "ends": [{"visit": "m24"}, {"event": "withdrawal"}]}
+  ],
+  "study_events": [
+    {"id": "study_terminated", "label": "Novartis terminated the study early", "confirm_roles": ["sponsor"], "fields": [],
+     "actions": [
+       {"id": "early_disc", "label": "Early Discontinuation visit as soon as possible", "audience": {"phase": "on_study"},
+        "supersede_visits": ["inj", "m12", "m24", "vegf_w5", "vegf_w9"],
+        "add_visit": {"id": "ed_term", "code": "ED", "name": "Early Discontinuation visit (study terminated)", "phase": "End of study",
+                      "date": "site_booking", "window_before": 0, "window_after": 0, "source": "Section 5.5.11, page 30",
+                      "procedures": [
+                        {"name": "Prior/concomitant medication"}, {"name": "Pregnancy test (serum or urine)", "if": [{"question": "wocbp", "in": ["yes"]}]},
+                        {"name": "Vital signs"}, {"name": "BCVA with refraction (both eyes)"}, {"name": "Ophthalmic examination (both eyes)"},
+                        {"name": "OCT (both eyes)"}, {"name": "Autofluorescence (both eyes)"}, {"name": "Colour fundus photography (both eyes)"},
+                        {"name": "Fluorescein angiography (both eyes)"}, {"name": "Nerve fibre analysis"}, {"name": "Adverse events"},
+                        {"name": "IWRS entry"}]},
+        "effect": "Seen as soon as possible for the Early Discontinuation assessments; no further study visits."}],
+     "source": "Section 5.5.11, page 30",
+     "quote": "The study can be terminated at any time for any reason by Novartis. Should this be necessary, the patient should be seen as soon as possible and undergo assessments as described in Table 6-1 for an Early Discontinuation Visit.",
+     "page": 30}
+  ],
+  "review_questions": [],
+  "open_points": [
+    {"id": "loading_windows", "kind": "approximated", "affects": ["inj"], "page": 31,
+     "text": "Visits 3 and 4 (Weeks 4 and 8) allow only 3 days either side (Table 6-1); the model gives every treatment visit the 7-day window of the variable visits.",
+     "quote": "it is essential that the treatment period be strictly adhered to during the period of the first three consecutive doses",
+     "used": "+/-7 days for all treatment visits; staff keep Visits 3 and 4 within +/-3 days."},
+    {"id": "breakpoint_reading", "kind": "ambiguous", "affects": ["inj"], "page": 27,
+     "text": "'In any of the three previous extensions' is read as: only activity found at the end of an interval that an extension reached counts toward the break point; activity during the 4-weekly loading phase does not.",
+     "quote": "However, on the fourth extension, or any extension thereafter, the maximum interval will be 2 weeks less than the maximum interval at which disease activity previously occurred in any of the three previous extensions",
+     "used": "Break point from intervals reached by an extension; recorded once and kept for the rest of the study."},
+    {"id": "crc_recommendation", "kind": "ambiguous", "affects": ["inj"], "page": 25,
+     "text": "The reading centre's recommendation 'of when this next visit should occur' is recorded as an interval in weeks. The investigator's calculated interval books the visit until it arrives; then the recommendation replaces it.",
+     "quote": "The investigator should adjust the visit schedule in line with the central reading centre recommendation.",
+     "used": "precedence recommendation_if_given"},
+    {"id": "interval_basis", "kind": "approximated", "affects": ["inj"], "page": 26,
+     "text": "The next treatment visit is counted from the previous visit's recorded date; the injection itself may be given up to 7 days after the visit.",
+     "quote": "should be administered in the study eye on the day of the study visit or, if this is not possible, within 7 days after the occurrence of the study visit",
+     "used": "Interval counted from the recorded visit date."},
+    {"id": "m12_combined", "kind": "ambiguous", "affects": ["inj", "m12"], "page": 32,
+     "text": "An injection due within the Month 12 window is given at the Month 12 visit on its target date; otherwise Month 12 is attended without an injection.",
+     "quote": "If patient is not due for another injection within the visit window of the Month 12 the patient should attend a visit and have all procedures except ranibizumab or aflibercept injection.",
+     "used": "combine_with Month 12, on the Month 12 target date."},
+    {"id": "vegf_visits", "kind": "approximated", "affects": ["vegf_w5", "vegf_w9"], "page": 37,
+     "text": "The plasma VEGF visits are 7 days after the Week 4 and Week 8 injections; the model dates them from Baseline (Weeks 5 and 9, Table 6-1), not from the recorded injection dates.",
+     "quote": "Blood for plasma VEGF is being collected at Baseline and again at 7 days after the injection at Week 4 (Visit 3) and 7 days after the injection at Week 8 (Visit 4).",
+     "used": "Day 35 and Day 63, +/-3 days."},
+    {"id": "dose_withheld", "kind": "approximated", "affects": ["inj"], "page": 28,
+     "text": "A withheld injection (IOP of 30 mm Hg or more, or an untreated retinal tear) is not modelled: the visit is recorded without the injection and its finding still sets the next interval.",
+     "quote": "Ranibizumab or aflibercept treatment should be withheld and treatment should not be resumed earlier than the next scheduled treatment in the event of",
+     "used": "No automatic change; staff note the withheld dose."}
+  ],
+  "notes": [
+    "Injections due at Week 104 are given after the study (page 27): treatment visits stop at Week 103.",
+    "The shortest interval between doses is 28 days (page 31)."
+  ],
+  "schedule_table_pages": [32]
+}

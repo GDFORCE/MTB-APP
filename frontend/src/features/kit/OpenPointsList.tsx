@@ -23,7 +23,7 @@ export function OpenPointsList({ points, onToggle }: { points: OpenPointView[]; 
       {!!p.why && <Text style={s.meta}>{p.why}</Text>}
       {!!p.used && <Text style={s.meta}>For now: {p.used}</Text>}
       {!!p.affects.length && <Text style={s.meta}>Concerns: {p.affects.join(", ")}</Text>}
-      {onToggle && <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: p.checked }}
+      {onToggle && p.tickable && <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: p.checked }}
         onPress={() => onToggle(p.id, !p.checked)} style={s.tick} hitSlop={6}>
         <View style={[s.box, p.checked && s.boxOn]}>{p.checked && <Check size={13} color="#FFFFFF" strokeWidth={3} />}</View>
         <Text style={s.tickText}>{p.checked ? "Checked against the protocol" : "Mark as checked against the protocol"}</Text>

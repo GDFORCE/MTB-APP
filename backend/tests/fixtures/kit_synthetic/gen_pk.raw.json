@@ -1,0 +1,241 @@
+{
+ "protocol": {
+  "number": "SYN-GEN-PK",
+  "title": "Synthetic PK sampling after given doses",
+  "version": "1"
+ },
+ "anchors": [
+  {
+   "id": "day1",
+   "label": "Day 1 (first injection)",
+   "kind": "start",
+   "is_day1": true
+  }
+ ],
+ "questions": [],
+ "visits": [
+  {
+   "id": "inj",
+   "code": "INJ",
+   "name": "Injection",
+   "phase": "Treatment",
+   "anchor": "day1",
+   "offset_days": 0,
+   "window_before": 3,
+   "window_after": 3,
+   "procedures": [
+    {
+     "name": "Study drug injection"
+    }
+   ],
+   "repeat": {
+    "every_days": 28,
+    "count": 6,
+    "code_pattern": "INJ {n}",
+    "label_pattern": "Injection {n}"
+   }
+  },
+  {
+   "id": "pk",
+   "code": "PK",
+   "name": "PK sample",
+   "phase": "Treatment",
+   "anchor": "day1",
+   "offset_days": 7,
+   "window_before": 1,
+   "window_after": 1,
+   "procedures": [
+    {
+     "name": "PK blood sample"
+    }
+   ]
+  },
+  {
+   "id": "eos",
+   "code": "EOS",
+   "name": "End of study",
+   "phase": "Follow-up",
+   "anchor": "day1",
+   "offset_days": 168,
+   "window_before": 7,
+   "window_after": 7,
+   "procedures": [
+    {
+     "name": "Final assessments"
+    }
+   ]
+  }
+ ],
+ "events": [],
+ "rules": [],
+ "review_questions": [],
+ "notes": [],
+ "pattern_rules": [
+  {
+   "id": "pk_after_given",
+   "pattern": "SAMPLE_AFTER_GIVEN_DOSE",
+   "label": "PK sample 7 days after each injection that was given",
+   "visits": [
+    "pk"
+   ],
+   "params": {},
+   "quote": "A pharmacokinetic blood sample is taken 7 days (±1 day) after each injection that is given",
+   "page": 1,
+   "program": {
+    "map": {
+     "filter": {
+      "fact": "visit",
+      "id": "inj"
+     },
+     "as": "o",
+     "where": {
+      "op": "and",
+      "args": [
+       {
+        "op": "!=",
+        "args": [
+         {
+          "var": "o.given"
+         },
+         false
+        ]
+       },
+       {
+        "op": "!=",
+        "args": [
+         {
+          "var": "o.status"
+         },
+         {
+          "str": "cancelled"
+         }
+        ]
+       }
+      ]
+     }
+    },
+    "as": "o",
+    "do": {
+     "record": {
+      "n": {
+       "var": "o.n"
+      },
+      "date": {
+       "op": "if",
+       "args": [
+        {
+         "var": "o.given"
+        },
+        {
+         "op": "add_days",
+         "args": [
+          {
+           "var": "o.actual"
+          },
+          7
+         ]
+        },
+        null
+       ]
+      },
+      "pending": {
+       "op": "if",
+       "args": [
+        {
+         "var": "o.given"
+        },
+        null,
+        {
+         "op": "text",
+         "args": [
+          {
+           "str": "7 days after injection "
+          },
+          {
+           "var": "o.n"
+          },
+          {
+           "str": ", once given"
+          }
+         ]
+        }
+       ]
+      },
+      "window_before": 1,
+      "window_after": 1
+     }
+    }
+   },
+   "output": {
+    "kind": "occurrences"
+   },
+   "inputs": [
+    {
+     "fact": "visit",
+     "id": "inj"
+    }
+   ],
+   "tests": [
+    {
+     "name": "a sample 7 days after each given injection; later ones wait",
+     "facts": {
+      "visits": {
+       "inj": [
+        {
+         "n": 1,
+         "planned": "2026-01-05",
+         "actual": "2026-01-06",
+         "given": true
+        },
+        {
+         "n": 2,
+         "planned": "2026-02-02",
+         "actual": null,
+         "given": null
+        }
+       ]
+      }
+     },
+     "expect": [
+      {
+       "n": 1,
+       "date": "2026-01-13",
+       "pending": null,
+       "window_before": 1,
+       "window_after": 1
+      },
+      {
+       "n": 2,
+       "date": null,
+       "pending": "7 days after injection 2, once given",
+       "window_before": 1,
+       "window_after": 1
+      }
+     ]
+    },
+    {
+     "name": "no sample after a withheld injection",
+     "facts": {
+      "visits": {
+       "inj": [
+        {
+         "n": 1,
+         "planned": "2026-01-05",
+         "actual": "2026-01-05",
+         "given": false
+        }
+       ]
+      }
+     },
+     "expect": []
+    }
+   ]
+  }
+ ],
+ "_fixture": {
+  "status": "SYNTHETIC",
+  "assumptions": [
+   "The analysis of the SYN-GEN-PK text (test_kit_generated_calc.TEXT) as the extraction prompt asks for it, including the generated calculation for the PK sample rule, which no handler covers."
+  ]
+ }
+}

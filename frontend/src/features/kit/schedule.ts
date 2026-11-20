@@ -55,6 +55,9 @@
 // The code below is copied verbatim from the working app.
 
 import { DAY, parseD, addD, dow, fmtS, arr, num, sOff, todayUTC, toMin } from "./utils";
+import { activePatternRules, applyPatternRules, generatedInputs, generatedOccurrenceRules } from "./patterns";
+import { calcOutputProblem, evaluateCalc } from "./calc";
+import { decide, decisionText, newAdaptiveState } from "./adaptive";
 
 export function makeAns(site, answers) { return (q) => { const a = answers?.[q]; return a === undefined || a === null || a === "" ? site?.[q] : a; }; }
 // One condition: {question, in} (answer is one of), {question, op, value} (number or text
@@ -179,6 +182,8 @@ export function computeSchedule(model, site, part) {
   part = part || {};
   const answers = part.answers || {}, actuals = part.actuals || {}, logged = arr(part.events).filter((e) => e && e.date);
   const checks = part.checks || {};
+  // Doses recorded as not given at a visit that took place ("withheld: IOP 32 mm Hg"), by occurrence.
+  const withheld = part.withheld || {};
   const measures = Object.fromEntries(arr(model.measures).map((m) => [m.id, m]));
   const baselines = part.baselines || {}, doseLevels = part.doseLevels || {};
   // Every value entered at any check, for "worst so far".
@@ -270,12 +275,16 @@ export function computeSchedule(model, site, part) {
   const byV = Object.fromEntries(model.visits.map((v) => [v.id, v]));
   const firstKey = (vid) => `${vid}#${Number.isFinite(+byV[vid]?.repeat?.start_n) ? +byV[vid].repeat.start_n : 1}`;
   // 1. anchors
-  const A = {}, how = {};
+  const A = {}, how = {}, confirmed = {};
   if (part.startAnchor && part.startDate) { A[part.startAnchor] = parseD(part.startDate); how[part.startAnchor] = "entered"; }
   for (const a of model.anchors) {
     // A date the site entered (randomisation, surgery, ...) wins over one counted from another date:
     // the real gap between screening and Day 1 differs from patient to patient.
-    if (a.kind !== "start" && a.kind !== "last_visit" && answers["@" + a.id]) { A[a.id] = parseD(answers["@" + a.id]); how[a.id] = "entered"; }
+    const entered = (a.scope === "study" ? site : answers)?.["@" + a.id];
+    if (a.kind !== "start" && a.kind !== "last_visit" && entered) {
+      if (a.date_basis === "confirmed" && a.range) confirmed[a.id] = parseD(entered);
+      else { A[a.id] = parseD(entered); how[a.id] = "entered"; }
+    }
     if (a.set_by_visit && actuals[firstKey(a.set_by_visit)]) { A[a.id] = parseD(actuals[firstKey(a.set_by_visit)]); how[a.id] = "done"; }
   }
   const evSorted = logged.slice().sort((a, b) => a.date.localeCompare(b.date));
@@ -284,10 +293,15 @@ export function computeSchedule(model, site, part) {
   // that date stands, also for a "last of these visits" date that would otherwise be worked out.
   const eventSet = new Set();
   for (const e of evSorted) { const d = model.events.find((x) => x.id === e.type); if (d?.sets_anchor && A[d.sets_anchor] == null) { A[d.sets_anchor] = parseD(e.date); how[d.sets_anchor] = "entered"; eventSet.add(d.sets_anchor); } }
+  const inRange = (g, offset) => (g.min_days == null || offset >= g.min_days) && (g.max_days == null || offset <= g.max_days);
   const propagate = (X, H, withEstimates) => {
     for (let i = 0; i < 25; i++) {
       let ch = false;
       for (const a of model.anchors) {
+        if (X[a.id] == null && confirmed[a.id] != null && X[a.range?.relative_to] != null &&
+          inRange(a.range, Math.round((confirmed[a.id] - X[a.range.relative_to]) / DAY))) {
+          X[a.id] = confirmed[a.id]; if (H) H[a.id] = "entered"; ch = true;
+        }
         if (a.kind !== "ask" && a.relative_to && byA[a.relative_to]) {
           const p = a.relative_to, off = a.offset_days || 0;
           if (X[a.id] == null && X[p] != null) { X[a.id] = addD(X[p], off); if (H) H[a.id] = "derived"; ch = true; }
@@ -314,6 +328,9 @@ export function computeSchedule(model, site, part) {
   // per participant and checked against that range; it is never fixed to one typical gap.
   for (const a of model.anchors) {
     const g = a.range;
+    if (g?.relative_to && confirmed[a.id] != null && A[g.relative_to] != null && A[a.id] == null) {
+      warnings.push({ rule: `range:${a.id}`, kind: "order", text: `${a.label} must be ${rangeText(g.min_days, g.max_days)} after ${relOf(g.relative_to, 0)}.` });
+    }
     if (!g?.relative_to || A[a.id] == null || A[g.relative_to] == null || how[a.id] === "derived") continue;
     const d = Math.round((A[a.id] - A[g.relative_to]) / DAY);
     if ((g.min_days != null && d < g.min_days) || (g.max_days != null && d > g.max_days))
@@ -424,6 +441,25 @@ export function computeSchedule(model, site, part) {
     r: { id: c.id, label: c.label, effect: c.effect, when: {}, if: [], stop_visits: c.visits, stop_all: false, same_day: c.sameDay || "keep", blocks: [] },
     T: c.T, bad: null, keeps: null,
   });
+  // Study-wide events confirmed by the study team and applied to this participant by the server
+  // (participant.studyEffects): the visits an action supersedes no longer happen unless already
+  // done, whatever their planned date; its added visit is listed in section 3c.
+  const studyEffects = [];
+  for (const e of arr(part.studyEffects)) {
+    if (!e || !e.event || !["applied", "review"].includes(e.state)) continue;
+    const def = arr(model.study_events).find((d) => d.id === e.event);
+    const action = def && arr(def.actions).find((a) => a.id === e.action);
+    if (!action) {
+      warnings.push({ rule: `study:${e.event}`, kind: "info", text: `${e.label || e.event}: this workflow version has no matching action, so it does not change this calendar.` });
+      continue;
+    }
+    studyEffects.push({ e, def, action });
+    if (e.state === "applied" && arr(action.supersede_visits).length) rules.push({
+      r: { id: `study:${e.event}`, label: def.label, effect: action.effect || action.label, when: {}, if: [], stop_visits: arr(action.supersede_visits),
+        stop_all: false, same_day: "cancel", blocks: [], anyDate: true },
+      T: parseD(e.effective), bad: null, keeps: null,
+    });
+  }
   // Rules that change an answer from their date on (crossover to another arm): visits and
   // procedures on or after that date use the new answer.
   const switches = rules.filter((x) => x.T != null && x.r.set_answers && Object.keys(x.r.set_answers).length).sort((a, b) => a.T - b.T);
@@ -439,6 +475,25 @@ export function computeSchedule(model, site, part) {
   // date is not known, visits after the pause wait for it.
   // What has happened, as of a date (null = as of now): for conditions on events and visits.
   const occ = {};
+  // What a generated calculation may read (calc.ts): each visit dated so far with its occurrences,
+  // whether the dose was given, the protocol dates, answers, logged events and today.
+  const isoT = (t) => (t == null ? null : new Date(t).toISOString().slice(0, 10));
+  const buildFacts = () => ({
+    visits: Object.fromEntries(Object.entries(occ).map(([vid, list]) => [vid, arr(list).map((o) => {
+      const n = +String(o.key).slice(String(o.key).lastIndexOf("#") + 1);
+      const skipped = o.check?.state === "skipped";
+      return {
+        n, key: o.key, planned: isoT(o.t ?? null), actual: isoT(o.actual ?? null),
+        given: withheld[o.key] || skipped ? false : o.actual != null ? true : null,
+        status: o.cancelled ? "cancelled" : o.actual != null ? "done" : o.t != null ? "planned" : "waiting",
+        window_start: isoT(o.lo ?? null), window_end: isoT(o.hi ?? null),
+      };
+    })])),
+    anchors: Object.fromEntries(model.anchors.map((a) => [a.id, isoT(A[a.id] ?? null)])),
+    answers: Object.fromEntries([...model.questions.map((q) => [q.id, ans(q.id) ?? null])]),
+    events: Object.fromEntries(model.events.map((d) => [d.id, evSorted.filter((e) => e.type === d.id).map((e) => e.date)])),
+    today: isoT(today),
+  });
   const factsAt = (at) => ({
     eventBy: (id, before) => evSorted.some((e) => e.type === id && (at == null || parseD(e.date) <= at) && (before == null || parseD(e.date) < before)),
     dateOf: (ref) => (ref?.anchor ? A[ref.anchor] ?? null : ref?.visit ? plannedVisit(ref.visit, ref.n ?? null) : null),
@@ -459,7 +514,8 @@ export function computeSchedule(model, site, part) {
   const keptBy = (x, vid) => arr(x.r.keeps_visits).includes(vid)
     || arr(model.events.find((d) => d.id === x.r.when?.event)?.keeps_visits).includes(vid);
   const hits = (x, vid, anchor) => (x.r.stop_all ? !x.keeps.has(anchor) && !keptBy(x, vid) : arr(x.r.stop_visits).includes(vid));
-  const after = (x, t) => (x.r.same_day === "cancel" ? t >= x.T : t > x.T);
+  // A superseding study event removes every pending occurrence, whatever its planned date.
+  const after = (x, t) => (x.r.anyDate ? true : x.r.same_day === "cancel" ? t >= x.T : t > x.T);
   // A visit still waiting for a date when its rule has happened will not happen either.
   const stopBy = (vid, anchor, t) => rules.find((x) => x.T != null && hits(x, vid, anchor) && (t == null || after(x, t))) || null;
   // Rules that end everything (withdrawal, death) would tag every visit, so only targeted stops show.
@@ -521,11 +577,26 @@ export function computeSchedule(model, site, part) {
     });
   };
 
+  // Pattern rules (patterns.ts): named rules the fields cannot hold, each calculated by its own
+  // handler. Applied per occurrence once the engine has its date; blocked ones are never applied.
+  const byPattern = activePatternRules(model);
+  // Generated calculations that produce a visit's occurrences, and the visits each one reads.
+  const genOcc = generatedOccurrenceRules(model);
+  // A visit whose occurrences a generated calculation should produce, while that calculation is not
+  // usable (blocked, or not validated): never dated from its nominal fields.
+  const genWaiting = new Map(arr(model.pattern_rules).filter((r) => r.program != null && r.output?.kind === "occurrences"
+    && arr(r.visits).length === 1 && !genOcc[r.visits[0]]).map((r) => [r.visits[0], r]));
+  const genDeps = {};
+  for (const r of arr(model.pattern_rules)) for (const vid of arr(r.visits)) genDeps[vid] = [...arr(genDeps[vid]), ...generatedInputs(r)];
+  const patternNoted = new Set();
+
   // 2. scheduled visits (followed visits first)
   // A visit counted from "the last of" other visits comes after them.
   const done = new Set(), order = [];
   const ready = (v) => (!v.follows || done.has(v.follows))
-    && (!lastRoot(v.anchor) || arr(lastRoot(v.anchor).last_of).every((x) => done.has(x) || !byV[x]));
+    && (!lastRoot(v.anchor) || arr(lastRoot(v.anchor).last_of).every((x) => done.has(x) || !byV[x]))
+    && arr(v.combine_with).every((c) => done.has(c.visit) || !byV[c.visit])
+    && arr(genDeps[v.id]).every((x) => x === v.id || done.has(x) || !byV[x]);
   for (let pass = 0; pass < 20 && order.length < model.visits.length; pass++)
     for (const v of model.visits) if (!done.has(v.id) && ready(v)) { done.add(v.id); order.push(v); }
   for (const v of model.visits) if (!done.has(v.id)) { done.add(v.id); order.push(v); }
@@ -563,6 +634,50 @@ export function computeSchedule(model, site, part) {
     propagate(A, how, false); propagate(E, null, true);
   };
   for (const v of order) {
+    // A visit whose occurrences a generated calculation produces: exactly the occurrences it returns,
+    // keyed by their n, then the usual stops, ending events and assessments.
+    if (genWaiting.has(v.id)) {
+      const r = genWaiting.get(v.id);
+      warnings.push({ rule: `pattern:${r.id}`, kind: "info", text: `${v.code}: not dated until the calculation for “${r.label}” is usable${r.blocked ? ` (${r.blocked})` : ""}.` });
+      skipped.push(v); occ[v.id] = [];
+      continue;
+    }
+    const gen = genOcc[v.id];
+    if (gen) {
+      const list = [];
+      let out = null;
+      try {
+        out = evaluateCalc(gen.program, buildFacts(), null);
+        const problem = calcOutputProblem("occurrences", out);
+        if (problem) throw new Error(problem);
+      } catch (error) {
+        warnings.push({ rule: `pattern:${gen.id}`, kind: "info", text: `${gen.label}: the generated calculation gave no usable result (${error?.message || error}), so ${v.code} is not dated.` });
+        out = [];
+      }
+      for (const item of out.slice().sort((a, b) => a.n - b.n)) {
+        const key = `${v.id}#${item.n}`;
+        const actual = actuals[key] ? parseD(actuals[key]) : null;
+        let t = item.date ? parseD(item.date) : null;
+        const code = `${v.code}·${item.n}`, name = `${v.name} ${item.n}`;
+        const by = actual == null ? stopBy(v.id, v.anchor, t) : null;
+        if (by) { stopped.push({ rule: by.r, at: by.T, key, code, t }); list.push({ key, code, t, tE: t, actual, cancelled: true, stoppedBy: by.r, stoppedAt: by.T }); continue; }
+        if (endAt != null && actual == null && !endKeepsVisits.has(v.id) && (t == null || t > endAt)) { cancelled++; list.push({ key, code, t, tE: t, actual, cancelled: true }); continue; }
+        const wb = item.window_before ?? v.window_before, wa = item.window_after ?? v.window_after;
+        const base = visitProcs(v, item.n, ans, factsAt(actual ?? t)), at = actual ?? t;
+        const row = {
+          type: "visit", key, v, code, name, t, tE: t, actual, rel: t == null ? String(item.pending || gen.label) : gen.label,
+          cond: condState(v.include_if, ans, "ignore"), procs: ruleProcs(v.id, at, base.procs), occNote: base.occNote, first: list.length === 0,
+          lo: t != null ? addD(t, -wb) : null, hi: t != null ? addD(t, wa) : null,
+          how: actual != null ? "done" : t != null ? "derived" : "pending", stopsIf: actual == null ? stopsIf(v.id, v.anchor) : [],
+          check: null, doses: [], combined: [], adaptive: null, tps: visitTimepoints(v, ans, factsAt(at)),
+          instructions: visitInstructions(v, ans, factsAt(at)), generated: { rule: gen.id, label: gen.label, note: item.note || null },
+          patterns: [{ id: gen.id, pattern: gen.pattern, label: gen.label }],
+        };
+        list.push(row); finish(row);
+      }
+      occ[v.id] = list;
+      continue;
+    }
     const lr = lastRoot(v.anchor);
     if (lr && !lastSet.has(lr.id)) setLast(lr);
     // Conditions on what happened are checked per occurrence, at its date.
@@ -606,9 +721,17 @@ export function computeSchedule(model, site, part) {
     let untilFirst = null, untilMetAt = null;
     // A repeat-until visit with no stated count: the next ones are shown until it is met.
     if (r?.until_check && v.check) countUnknown = false;
+    // History-based intervals (adaptive.ts): from decide_from_n on, each interval comes from the
+    // finding confirmed at the previous occurrence. A blocked operation never dates anything.
+    const adCfg = r?.adaptive || null, ad = adCfg && !adCfg.blocked ? adCfg : null;
+    const adSt = ad ? newAdaptiveState(ad) : null;
+    if (adCfg) countUnknown = false;
     for (let n = 0; n < count; n++) {
       const numN = startN + n, key = `${v.id}#${numN}`;
       let t = null, tE = null, rel = "";
+      let adaptive = null;
+      // What this occurrence is counted from, for pattern rules.
+      let pKind = "anchor", pFrom = null, pFromE = null, pLabel = "";
       if (fo && (lastMode ? n === 0 : foRep || fo.length > 1 || n === 0)) {
         let b = lastMode ? fo[fo.length - 1] : fo[n];
         if (!lastMode && foRep) {
@@ -622,26 +745,68 @@ export function computeSchedule(model, site, part) {
         t = bt != null ? addD(bt, v.offset_days) : null;
         tE = (bt ?? b.tE) != null ? addD(bt ?? b.tE, v.offset_days) : null;
         rel = `${b.code}${sOff(v.offset_days)}`;
+        pKind = "follows"; pFrom = bt; pFromE = bt ?? b.tE ?? null; pLabel = b.code;
       } else if (n === 0) {
         t = A[v.anchor] != null ? addD(A[v.anchor], v.offset_days) : null;
         tE = E[v.anchor] != null ? addD(E[v.anchor], v.offset_days) : null;
         rel = relOf(v.anchor, v.offset_days);
+        pKind = "anchor"; pFrom = A[v.anchor] ?? null; pFromE = E[v.anchor] ?? null; pLabel = byA[v.anchor]?.label || v.anchor;
+      } else if (adCfg && numN - 1 >= num(adCfg.decide_from_n, startN)) {
+        const prev = list[list.length - 1] || null;
+        if (!prev || prev.cancelled) break;
+        const dec = ad ? decide(ad, adSt, part, prev.key, prev.code)
+          : { needs: [], notes: [], interval: null, problem: `The interval rule is not approved for use: ${adCfg.blocked}` };
+        const base = ad?.basis === "target" ? (prev.tGrid ?? prev.tPlan ?? prev.t) : prev.actual;
+        const baseE = prev.actual ?? prev.t ?? prev.tE;
+        if (dec.interval != null && base == null)
+          dec.needs.push({ input: "date", label: `${prev.code} visit date`, kind: "date", roles: ["pi", "crc"], at: prev.key });
+        const gap = dec.interval ?? adSt?.C ?? num(r.every_days);
+        if (dec.interval != null && base != null) {
+          t = addD(base, dec.interval); tE = t;
+          rel = `${prev.code} ${ad.basis === "target" ? "target" : "actual"}${sOff(dec.interval)}`;
+        } else {
+          tE = baseE != null ? addD(baseE, gap) : null;
+          rel = `After ${prev.code}: ${dec.needs.length ? `waiting for ${dec.needs.map((x) => x.label.toLowerCase()).join(" and ")}` : dec.problem}`;
+        }
+        adaptive = { dec, text: ad ? decisionText(ad, dec) : dec.problem, from: prev.key, basis: ad?.basis || null, pending: t == null };
+        pKind = "repeat"; pFrom = base; pFromE = baseE; pLabel = prev.code;
       } else {
         const prev = list[list.length - 1] || null;
         if (!prev) break;
-        // A fixed grid counts from planned dates, so a held or delayed occurrence doesn't move it.
-        const pb = r.chain ? (prev.actual ?? prev.t) : (prev.tPlan ?? prev.t);
-        const pbE = r.chain ? (prev.actual ?? prev.t ?? prev.tE) : (prev.tPlan ?? prev.t ?? prev.tE);
+        // A fixed grid counts from planned dates, so a held or delayed occurrence doesn't move it
+        // (nor does a pattern rule that moved it: tGrid is the date before that).
+        const pb = r.chain ? (prev.actual ?? prev.t) : (prev.tGrid ?? prev.tPlan ?? prev.t);
+        const pbE = r.chain ? (prev.actual ?? prev.t ?? prev.tE) : (prev.tGridE ?? prev.tPlan ?? prev.t ?? prev.tE);
+        pKind = "repeat"; pFrom = pb; pFromE = pbE; pLabel = prev.code;
         const start = list[0].actual ?? list[0].t ?? list[0].tE;
         const every = everyAt(r, start != null && pbE != null ? Math.round((pbE - start) / DAY) : 0);
         t = pb != null ? addD(pb, every) : null;
         tE = pbE != null ? addD(pbE, every) : null;
         rel = r.chain || fo ? `${prev.code}${sOff(every)}` : relOf(v.anchor, v.offset_days + n * every);
       }
+      let pattern = null, tGrid, tGridE;
+      if (byPattern[v.id]) {
+        const ctx = { n, kind: pKind, chain: !!r?.chain, fromLabel: pLabel, anchorLabel: byA[v.anchor]?.label || v.anchor,
+          occurrence: numN, facts: buildFacts };
+        pattern = applyPatternRules(byPattern[v.id], { ...ctx, base: pFrom, anchor: A[v.anchor] ?? null, date: t });
+        const est = applyPatternRules(byPattern[v.id], { ...ctx, base: pFromE, anchor: E[v.anchor] ?? null, date: tE });
+        tGrid = t; tGridE = tE;
+        t = pattern.date;
+        // Without a date (the protocol leaves the day open) the estimate only orders it.
+        tE = est.date ?? tE;
+        if (pattern.rel) rel = pattern.pending && t == null ? `${pattern.rel}: no date yet` : pattern.rel;
+        if (pattern.pending && t == null) warnings.push({ rule: `pattern:${key}`, kind: "info", text: `${v.code}: ${pattern.pending}` });
+        for (const x of pattern.notes) {
+          if (patternNoted.has(x.rule.id)) continue;
+          patternNoted.add(x.rule.id);
+          warnings.push({ rule: `pattern:${x.rule.id}`, kind: "info", text: `${x.rule.label}: ${x.text}` });
+        }
+      }
       const actual = actuals[key] ? parseD(actuals[key]) : null;
       const code = r?.code_pattern ? String(r.code_pattern).replaceAll("{n}", numN) : r ? `${v.code}·${numN}` : v.code;
       const name = r?.label_pattern ? String(r.label_pattern).replaceAll("{n}", numN) : r ? `${v.name} ${numN}` : v.name;
-      if (n > 0 && until != null && actual == null && (t ?? tE) != null && (t ?? tE) > until) { cutN++; continue; }
+      // An adaptive occurrence past the end date ends the series (each depends on the one before).
+      if (n > 0 && until != null && actual == null && (t ?? tE) != null && (t ?? tE) > until) { cutN++; if (adaptive) break; continue; }
       // A time limit ("treatment for up to 2 years") counts from the first occurrence.
       const first = list[0] ? list[0].actual ?? list[0].t ?? list[0].tE : null;
       if (n > 0 && r?.max_days != null && actual == null && first != null && (t ?? tE) != null && (t ?? tE) > addD(first, num(r.max_days))) break;
@@ -748,7 +913,24 @@ export function computeSchedule(model, site, part) {
         if (from != null && t < from) { asap = { was: t, from }; t = from; if (tE != null && tE < from) tE = from; }
       }
       const base = visitProcs(v, numN, occAns, occFacts), occNote = base.occNote;
-      const procs = ruleProcs(v.id, actual ?? t ?? tE, base.procs);
+      let procs = ruleProcs(v.id, actual ?? t ?? tE, base.procs);
+      // A visit the workflow combines with a fixed one ("an injection due inside the Month 12 window
+      // is given at the Month 12 visit"): one row with both sets of assessments, under this key. The
+      // fixed occurrence keeps its own target and window and is not listed again. Both must be still
+      // to come, or both recorded on the same day; otherwise they stay two visits.
+      const combined = [];
+      let combLo = null, combHi = null;
+      for (const c of arr(v.combine_with)) {
+        const at = actual ?? t;
+        if (at == null) continue;
+        const o = (occ[c.visit] || []).find((x) => !x.cancelled && !x.absorbedBy && x.lo != null && x.hi != null
+          && ((x.actual == null && actual == null && at >= x.lo && at <= x.hi) || (x.actual != null && actual != null && x.actual === actual)));
+        if (!o) continue;
+        o.absorbedBy = key;
+        if (c.date === "fixed" && actual == null) { t = o.t; tE = o.t; rel = `${o.code} target (combined)`; combLo = o.lo; combHi = o.hi; }
+        for (const p of arr(o.procs)) if (!procs.some((q) => procKey(q.name) === procKey(p.name))) procs = [...procs, p];
+        combined.push({ key: o.key, code: o.code, name: o.name, planned: o.t, lo: o.lo, hi: o.hi, date: c.date });
+      }
       // A recorded date later than planned by more than the protocol allows (cycle delays).
       if (actual != null && t != null && r?.max_delay_days != null && Math.round((actual - t) / DAY) > num(r.max_delay_days)) {
         warnings.push({ rule: `delay:${key}`, kind: "window", text: `${code} was ${days(Math.round((actual - t) / DAY))} later than planned; the protocol allows up to ${days(num(r.max_delay_days))}.${r.delay_effect ? ` ${r.delay_effect}` : ""}` });
@@ -764,7 +946,10 @@ export function computeSchedule(model, site, part) {
       const row = {
         type: "visit", key, v, code, name, t, tE, actual, rel, cond: cs === "later" ? "yes" : cs, procs, occNote, first: n === 0,
         countUnknown: countUnknown && n === count - 1,
-        lo: t != null ? addD(t, -v.window_before) : null, hi: t != null ? addD(t, v.window_after) : null,
+        lo: combLo ?? (t != null ? addD(t, -(pattern?.windowBefore ?? v.window_before)) : null),
+        hi: combHi ?? (t != null ? addD(t, pattern?.windowAfter ?? v.window_after) : null),
+        adaptive, combined, needs: adaptive?.pending ? adaptive.dec.needs : [],
+        tGrid, tGridE, patterns: pattern ? pattern.used.map((x) => ({ id: x.id, pattern: x.pattern, label: x.label })) : [],
         how: actual != null ? "done" : t != null ? (how[v.anchor] === "entered" && !fo && n === 0 ? "entered" : "derived") : "pending",
         pausedBy: pausedBy ? pausedBy.x.r.label : null,
         untilPending: !!untilId && until == null, openEnded: !!r?.open_ended && n === count - 1, untilLabel: untilId ? byA[untilId]?.label : null,
@@ -775,6 +960,13 @@ export function computeSchedule(model, site, part) {
       };
       list.push(row); finish(row);
       if (check?.until && check.state === "met") break;
+      if (adaptive?.pending) {
+        // Nothing after an undated occurrence can be dated. A recorded one whose interval is unknown
+        // keeps the series going, but every later interval waits for what is missing.
+        if (actual == null) break;
+        if (adSt && !adSt.broken) adSt.broken = adaptive.dec.needs.length ? adaptive.dec.needs
+          : [{ input: "review", label: adaptive.dec.problem || "Review this interval", kind: "review", roles: ["pi"], at: adaptive.from }];
+      }
     }
     if (r?.until_check && v.check) untilTimeout(v, untilFirst, untilMetAt, list[list.length - 1]?.code || v.code);
     occ[v.id] = list;
@@ -848,6 +1040,32 @@ export function computeSchedule(model, site, part) {
       }
       if (uck) untilTimeout(v, untilFirst, untilMetAt, lastCode);
     }
+  }
+
+  // 3c. visits a study-wide event added for this participant (an early closeout): dated only by the
+  //     site's booking of the next available date; until then the row waits and asks for it.
+  for (const { e, def, action } of studyEffects) {
+    const vd = action.add_visit;
+    if (!vd) continue;
+    // The server names the key ("se.<confirmation id>.<visit id>#1"), so a recorded date matches it.
+    const key = e.taskKey || `se.${e.event}.${vd.id}#1`;
+    const actual = actuals[key] ? parseD(actuals[key]) : null;
+    const booked = e.booked || part.bookings?.[key] || null;
+    const t = booked ? parseD(booked) : null;
+    const eff = parseD(e.effective);
+    const facts = factsAt(actual ?? t ?? eff);
+    const row = {
+      type: "visit", key, v: vd, code: vd.code, name: vd.name, t, tE: t ?? eff, actual, cond: "yes",
+      procs: visitProcs(vd, 1, ans, facts).procs, occNote: null, first: true,
+      rel: t == null ? `${def.label}: the site books the next available date` : `${def.label}: booked by the site`,
+      lo: t != null ? addD(t, -num(vd.window_before)) : null, hi: t != null ? addD(t, num(vd.window_after)) : null,
+      how: actual != null ? "done" : t != null ? "entered" : "pending", fromEvent: `${def.label} · ${fmtS(eff)}`,
+      doses: [], stopsIf: [], check: null, tps: [], instructions: [], combined: [], adaptive: null,
+      studyEffect: { id: e.id, event: e.event, action: action.id, label: def.label, state: e.state, effective: e.effective, booked },
+      needs: actual == null && t == null && e.state === "applied"
+        ? [{ input: "booking", label: "Next available date", kind: "date", roles: ["pi", "crc"], at: key }] : [],
+    };
+    finish(row);
   }
 
   // 3a. "check in at least 12 hours before dosing": staff record the check-in time on the check-in
@@ -986,6 +1204,9 @@ export function computeSchedule(model, site, part) {
   if (fresh.length && (part._checkPass || 0) < 3) {
     return computeSchedule(model, site, { ...part, _checkStops: [...checkStops.filter((c) => !fresh.some((x) => x.id === c.id)), ...fresh], _checkPass: (part._checkPass || 0) + 1 });
   }
+
+  // Occurrences combined into another visit are listed once, on that visit.
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].absorbedBy) rows.splice(i, 1);
 
   const sortT = (r) => r.actual ?? r.t ?? r.tE ?? Infinity;
   rows.forEach((r, i) => (r._i = i));

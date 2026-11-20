@@ -118,7 +118,8 @@ def _walk(a: Any, b: Any, path: str, out: list[dict[str, Any]]) -> None:
 # Differences that are type or default clean-up, not a loss of meaning.
 _IGNORED_ENDS = (".follows_occurrence", ".optional", ".and_later", ".id", ".scope")
 _IGNORED_PARTS = (".check.actions[", "review_questions[", "open_points", "schedule_table_pages", "event_check")
-_IGNORED_HEADS = ("notes", "review", "protocol", "arms")
+# pattern_rules: clean-up keeps every one (app/kit/patterns.py) and shows its own status.
+_IGNORED_HEADS = ("notes", "review", "protocol", "arms", "pattern_rules")
 
 
 def _ignored(change: dict[str, Any]) -> bool:
@@ -190,17 +191,19 @@ def cleanup_points(before: Any, after: dict[str, Any]) -> list[dict[str, Any]]:
 # reviewer is told instead of it being stored and ignored.
 KNOWN_KEYS: dict[str, set[str]] = {
     "model": {"protocol", "arms", "anchors", "questions", "visits", "events", "rules", "measures", "doses", "review_questions",
-              "notes", "open_points", "schedule_table_pages", "review", "event_check"},
+              "notes", "open_points", "schedule_table_pages", "review", "event_check", "pattern_rules",
+              "phases", "study_events"},
     "anchor": {"id", "label", "kind", "relative_to", "offset_days", "is_day1", "day_zero", "set_by_visit", "question", "optional",
-               "estimates", "note", "range", "last_of", "stop_is_last_dose", "last_with", "offset_stated"},
-    "question": {"id", "label", "text", "scope", "ask_at", "kind", "options", "help", "default"},
+               "estimates", "note", "range", "last_of", "stop_is_last_dose", "last_with", "offset_stated", "source", "page", "quote", "scope", "date_basis"},
+    "question": {"id", "label", "text", "scope", "ask_at", "kind", "options", "help", "default", "answer_roles", "source", "page", "quote"},
     "visit": {"id", "code", "name", "phase", "modality", "anchor", "offset_days", "window_before", "window_after", "follows",
               "follows_occurrence", "duration_days", "include_if", "repeat", "procedures", "timepoints", "condition", "source",
-              "min_gap", "prep", "asap_if_past", "arrive_before", "check", "instructions", "window_stated", "count_from"},
+              "min_gap", "prep", "asap_if_past", "arrive_before", "check", "instructions", "window_stated", "count_from", "page", "quote",
+              "combine_with"},
     "repeat": {"every_days", "count", "count_question", "start_n", "label_pattern", "code_pattern", "chain", "open_ended",
-               "until_anchor", "overrides", "stages", "max_days", "max_delay_days", "delay_effect", "until_check"},
+               "until_anchor", "overrides", "stages", "max_days", "max_delay_days", "delay_effect", "until_check", "adaptive"},
     "event": {"id", "label", "repeatable", "questions", "visits", "ends_schedule", "keeps_visits", "sets_anchor", "note",
-              "site_actions", "check"},
+              "site_actions", "check", "record_roles"},
     "rule": {"id", "label", "when", "if", "stop_visits", "stop_all", "same_day", "starts", "blocks", "allowed", "effect", "source",
              "set_answers", "pause", "keeps_visits", "dose_changes", "stop_procedures", "add_procedures", "quote", "page"},
 }

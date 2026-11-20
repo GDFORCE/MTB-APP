@@ -15,6 +15,8 @@ import { FlowButton, FlowScreen, FlowSheet, flowStyles as f } from "@/src/featur
 import { ProtocolTimeline, useProtocolTimeline } from "@/src/features/kit/ProtocolTimeline";
 import { OpenPointsList } from "@/src/features/kit/OpenPointsList";
 import { openPointViews, withCheckedPoints } from "@/src/features/kit/openPoints";
+import { blockedPatternRules } from "@/src/features/kit/patterns";
+import { WorkflowReview, useWorkflowPreview } from "@/src/features/kit/WorkflowReview";
 import type { TimelineSection } from "@/src/features/kit/sections";
 import { fonts } from "@/src/theme/tokens";
 
@@ -153,6 +155,9 @@ export default function AddTrial() {
   const [showNotes, setShowNotes] = useState(false);
   const [showPoints, setShowPoints] = useState(false);
   const [checkedPoints, setCheckedPoints] = useState<Record<string, boolean>>({});
+  const [blockEdits, setBlockEdits] = useState<Record<string, Record<string, unknown>>>({});
+  const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  const [workflowApproved, setWorkflowApproved] = useState(false);
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [createdTrialId, setCreatedTrialId] = useState<string | null>(null);
@@ -161,14 +166,25 @@ export default function AddTrial() {
   const update = (patch: Partial<Details>) => setDetails((current) => ({ ...current, ...patch }));
   const go = (next: Step) => { setErr(""); setStep(next); scrollRef.current?.scrollTo({ y: 0, animated: false }); };
 
-  const model = useMemo(() => {
+  const basePreview = useMemo(() => {
     const current = kitConfirmed?.model ?? kit?.model;
     return current ? withPhases(current, renames) : null;
   }, [kit, kitConfirmed, renames]);
+  const workflowInput = useMemo(() => kit && kitConfirmed ? {
+    baseModel: withCheckedPoints(withPhases(kit.baseModel, renames), checkedPoints),
+    reviewAnswers: kitConfirmed.reviewAnswers, siteAnswers: kitConfirmed.siteAnswers, fileName: uploadName,
+    fileSha256: kit.fileSha256 ?? null, warnings: kit.warnings, corrections: kit.corrections,
+    analysisJobId: kit.jobId || undefined, expectedVersion: 0, blockEdits, resolutions,
+  } : null, [kit, kitConfirmed, renames, checkedPoints, uploadName, blockEdits, resolutions]);
+  const workflowResult = useWorkflowPreview(step === "schedule" ? workflowInput : null);
+  const review = workflowResult?.preview;
+  const model = review?.model || basePreview;
   const timeline = useProtocolTimeline(model, kitConfirmed?.siteAnswers);
   // What must be checked against the protocol before the schedule can be relied on.
   const points = useMemo(() => openPointViews(model, checkedPoints), [model, checkedPoints]);
   const pointsLeft = points.filter((p) => !p.checked).length;
+  // Protocol rules nothing calculates yet: the trial can be saved, but nobody enrolled.
+  const blockedCount = blockedPatternRules(model).length;
   const questionCount = kit ? kit.model.review_questions.length + kit.model.questions.filter((q) => q.scope === "study").length : 0;
 
   const changeProtocolId = (value: string) => {
@@ -178,6 +194,8 @@ export default function AddTrial() {
     setKit(null);
     setKitConfirmed(null);
     setRenames({});
+    setBlockEdits({});
+    setResolutions({});
     setErr("");
   };
 
@@ -216,6 +234,8 @@ export default function AddTrial() {
     setKit(null);
     setKitConfirmed(null);
     setRenames({});
+    setBlockEdits({});
+    setResolutions({});
     setKitStages([]);
     setUploadName(picked.name || "protocol.pdf");
     go("analysing");
@@ -258,9 +278,10 @@ export default function AddTrial() {
     !details.title.trim() ? "Title" : "", !details.phase ? "Phase" : "", !indications.length ? "Indication" : "",
   ].filter(Boolean);
 
-  const save = async () => {
+  const save = async (approve = false) => {
     if (missingRequired.length) { go("details"); setErr(`Add: ${missingRequired.join(", ")}.`); return; }
-    if (kit && !kitConfirmed) { setShowKitQuestions(true); return; }
+    if (kit && !workflowInput) { setShowKitQuestions(true); return; }
+    if (approve && (!workflowResult?.current || !review || review.problems.length)) return;
     setSaving(true);
     setErr("");
     try {
@@ -282,14 +303,12 @@ export default function AddTrial() {
       });
       const trialId = response.data.id;
       setCreatedTrialId(trialId);
-      if (kit && kitConfirmed) {
+      if (workflowInput) {
         try {
           await saveKitModel(trialId, {
-            baseModel: withCheckedPoints(withPhases(kit.baseModel, renames), checkedPoints), reviewAnswers: kitConfirmed.reviewAnswers,
-            siteAnswers: kitConfirmed.siteAnswers, fileName: uploadName,
-            fileSha256: kit.fileSha256 ?? null, warnings: kit.warnings, corrections: kit.corrections,
-            analysisJobId: kit.jobId || undefined,
+            ...workflowInput, workflowAction: approve ? "approve" : "draft", workflowDigest: review?.digest,
           });
+          setWorkflowApproved(approve);
         } catch (saveError: any) {
           const detail = saveError?.response?.data?.detail;
           setErr(`The trial was created, but its visit schedule could not be saved: ${
@@ -391,12 +410,19 @@ export default function AddTrial() {
     </FlowScreen>}
 
     {step === "schedule" && <FlowScreen title="Add trial" step={5} steps={5} onBack={() => go("details")} scrollRef={scrollRef}
-      eyebrow="Visit schedule" heading={timeline ? timeline.title : "No visit schedule yet"}
-      sub={timeline ? `Check the schedule, then save. Each patient's dates count from their own ${timeline.startLabel}.`
+      eyebrow="Visit workflow" heading={timeline ? "Review the protocol workflow" : "No visit schedule yet"}
+      sub={timeline ? `Review the blocks and sample calendar before approval.`
         : "Upload the protocol PDF to build the visit schedule, or save the trial without one."}
       footer={<>
         {!!err && <Text style={f.error}>{err}</Text>}
-        <FlowButton testID="add-trial-submit" label="Save trial" loading={saving} onPress={save} />
+        {!!workflowResult?.error && <Text style={f.error}>{workflowResult.error}</Text>}
+        {!!workflowResult?.error && !!Object.keys(blockEdits).length &&
+          <FlowButton label="Reset block edits" variant="secondary" onPress={() => setBlockEdits({})} />}
+        {kit ? <>
+          <FlowButton testID="add-trial-submit" label="Approve workflow and save trial" loading={saving}
+            disabled={!workflowResult?.current || !review || !!review.problems.length} onPress={() => save(true)} />
+          <FlowButton label="Save workflow draft" variant="secondary" disabled={saving || !workflowInput} onPress={() => save()} />
+        </> : <FlowButton testID="add-trial-submit" label="Save trial" loading={saving} onPress={() => save()} />}
       </>}>
       {timeline && kit ? <>
         <View style={s.checks}>
@@ -411,6 +437,13 @@ export default function AddTrial() {
             <Text style={s.linkText}>Review</Text>
           </Pressable>}
         </View>
+        {!!blockedCount && <Pressable testID="blockers-row" accessibilityRole="button" onPress={() => setShowPoints(true)} style={[s.pointsRow, s.blockRow]}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.blockTitle}>{blockedCount} protocol rule{blockedCount === 1 ? "" : "s"} the app cannot calculate yet</Text>
+            <Text style={s.blockSub}>Save a draft to continue review. Approval requires a supported operation for each rule.</Text>
+          </View>
+          <Text style={s.linkText}>See</Text>
+        </Pressable>}
         {!!points.length && <Pressable testID="open-points-row" accessibilityRole="button" onPress={() => setShowPoints(true)} style={s.pointsRow}>
           <View style={{ flex: 1 }}>
             <Text style={s.pointsTitle}>
@@ -420,7 +453,10 @@ export default function AddTrial() {
           </View>
           <Text style={s.linkText}>{pointsLeft ? "Check" : "Open"}</Text>
         </Pressable>}
-        <ProtocolTimeline data={timeline} onRename={(section) => { setRenaming(section); setRenameText(section.label); }} />
+        {review ? <WorkflowReview workflow={review.workflow} model={review.model} site={workflowInput!.siteAnswers}
+          onEdit={(id, op) => setBlockEdits((prior) => ({ ...prior, [id]: op }))}
+          onResolve={(id, value) => setResolutions((prior) => ({ ...prior, [id]: value }))} resolutions={resolutions} />
+          : <ProtocolTimeline data={timeline} onRename={(section) => { setRenaming(section); setRenameText(section.label); }} />}
         {(!!model?.notes.length || !!kit.warnings.length) && <Pressable accessibilityRole="button" onPress={() => setShowNotes(true)} style={s.notesRow}>
           <Text style={s.notesText}>{(model?.notes.length || 0) + kit.warnings.length} notes from the protocol</Text>
           <Text style={s.linkText}>Read</Text>
@@ -431,11 +467,11 @@ export default function AddTrial() {
     </FlowScreen>}
 
     {step === "saved" && <FlowScreen title="Add trial" eyebrow="Saved"
-      heading={timeline ? `${trialName} is ready for patients` : `${trialName} is saved`}
-      sub={timeline ? `${timeline.title}. Each patient gets their own dates when they are added.`
-        : "It has no visit schedule yet."}
+      heading={workflowApproved ? `${trialName} is ready for patients` : `${trialName} is saved`}
+      sub={workflowApproved ? "Each patient gets their own dates when they are added."
+        : timeline ? "The workflow draft is ready for further review." : "It has no visit schedule yet."}
       footer={<>
-        {(user?.role === "pi" || user?.role === "crc") && !!timeline
+        {(user?.role === "pi" || user?.role === "crc") && workflowApproved
           ? <FlowButton label="Add first patient" onPress={() => createdTrialId && router.replace({
               pathname: "/(app)/clinical/add-patient", params: { trialId: createdTrialId } })} />
           : <FlowButton label="Open trial" onPress={openTrial} />}
@@ -616,6 +652,9 @@ const s = StyleSheet.create({
   pointsRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 14, padding: 14, borderRadius: 12, backgroundColor: G.amberBg, borderWidth: 1, borderColor: G.amberLine },
   pointsTitle: { color: G.amberInk, fontFamily: fonts.semibold, fontSize: 14 },
   pointsSub: { color: G.amberText, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  blockRow: { backgroundColor: G.redBg, borderColor: G.redBg },
+  blockTitle: { color: G.redInk, fontFamily: fonts.semibold, fontSize: 14 },
+  blockSub: { color: G.redInk, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17, marginTop: 2 },
   notesText: { color: G.ink, fontFamily: fonts.medium, fontSize: 14 },
   savedCard: { marginTop: 28, borderWidth: 1, borderColor: G.line, borderRadius: 14, paddingHorizontal: 16 },
   savedRow: { flexDirection: "row", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: G.softLine },

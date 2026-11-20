@@ -22,7 +22,7 @@ import { useRouter, type Href } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Menu, RefreshCcw, Users, FlaskConical, CheckCircle2, AlertTriangle, BellRing,
-  Building2, ScrollText, ShieldAlert, KeyRound, ChevronRight, Clock, type LucideIcon,
+  Building2, ScrollText, ShieldAlert, KeyRound, ChevronRight, Clock, FileWarning, type LucideIcon,
 } from "lucide-react-native";
 import { useAuth } from "@/src/auth/AuthContext";
 import { api } from "@/src/api/client";
@@ -177,6 +177,7 @@ export default function AdminDashboard() {
   const quick: { label: string; icon: LucideIcon; href: string }[] = [
     { label: "Organizations", icon: Building2, href: "/(app)/admin/organizations" },
     { label: "Audit Logs", icon: ScrollText, href: "/(app)/admin/audit-logs" },
+    { label: "Protocol Rules", icon: FileWarning, href: "/(app)/admin/protocol-rules" },
     { label: "System Alerts", icon: ShieldAlert, href: "/(app)/admin/alerts" },
     { label: "Emergency", icon: KeyRound, href: "/(app)/admin/emergency-access" },
   ];

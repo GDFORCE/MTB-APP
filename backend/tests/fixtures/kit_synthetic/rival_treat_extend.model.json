@@ -1,0 +1,249 @@
+{
+ "anchors": [
+  {
+   "day_zero": false,
+   "estimates": [],
+   "id": "baseline",
+   "is_day1": true,
+   "kind": "start",
+   "label": "Baseline (first injection)",
+   "offset_days": 0,
+   "optional": false,
+   "range": null
+  },
+  {
+   "day_zero": false,
+   "estimates": [],
+   "id": "month24",
+   "is_day1": false,
+   "kind": "relative",
+   "label": "Month 24",
+   "offset_days": 728,
+   "optional": false,
+   "range": null,
+   "relative_to": "baseline"
+  }
+ ],
+ "arms": [],
+ "events": [],
+ "notes": [
+  "Synthetic fixture: see _fixture.assumptions."
+ ],
+ "protocol": {
+  "date": "2026-11-20",
+  "number": "SYN-RIVAL-TE",
+  "title": "Synthetic treat-and-extend schedule modelled on NCT02130024",
+  "version": "synthetic 1"
+ },
+ "questions": [],
+ "review_questions": [],
+ "rules": [],
+ "visits": [
+  {
+   "anchor": "baseline",
+   "check": null,
+   "code": "INJ",
+   "combine_with": [
+    {
+     "date": "adaptive",
+     "visit": "m12"
+    },
+    {
+     "date": "adaptive",
+     "visit": "m24"
+    }
+   ],
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "inj",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Injection visit",
+   "offset_days": 0,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "BCVA"
+    },
+    {
+     "if": [],
+     "name": "OCT"
+    },
+    {
+     "if": [],
+     "name": "Disease activity assessment"
+    },
+    {
+     "if": [],
+     "name": "Intravitreal injection"
+    }
+   ],
+   "repeat": {
+    "adaptive": {
+     "active_if": {
+      "op": ">=",
+      "value": 1
+     },
+     "basis": "actual",
+     "breakpoint": {
+      "after_extensions": 3,
+      "cap_offset_days": -14,
+      "count_activity_at": "any_interval"
+     },
+     "decide_from_n": 3,
+     "finding": {
+      "id": "activity_signs",
+      "kind": "count",
+      "label": "Signs of disease activity",
+      "roles": [
+       "pi"
+      ]
+     },
+     "max_days": 84,
+     "min_days": 28,
+     "precedence": "calculated",
+     "quote": "If none of the signs were present, the subsequent injection interval was extended by 2-week increments up until a maximum of 12-weekly intervals was reached.",
+     "recommendation": {
+      "id": "crc_weeks",
+      "kind": "number",
+      "label": "Reading centre recommended interval",
+      "roles": [
+       "pi",
+       "crc"
+      ],
+      "unit_days": 7
+     },
+     "source": "Synthetic fixture, assumptions A1-A3 and A6",
+     "start_days": 28,
+     "steps": [
+      {
+       "add_days": 14,
+       "if": {
+        "op": "=",
+        "value": 0
+       },
+       "label": "No activity: extend by 2 weeks"
+      },
+      {
+       "add_days": -14,
+       "if": {
+        "op": "=",
+        "value": 1
+       },
+       "label": "One sign: shorten by 2 weeks"
+      },
+      {
+       "if": {
+        "op": ">=",
+        "value": 2
+       },
+       "label": "Two or more signs: back to 4 weeks",
+       "set_days": 28
+      }
+     ]
+    },
+    "chain": false,
+    "code_pattern": "INJ {n}",
+    "count": null,
+    "delay_effect": null,
+    "every_days": 28,
+    "label_pattern": "Injection {n}",
+    "max_days": null,
+    "max_delay_days": null,
+    "open_ended": false,
+    "overrides": [],
+    "stages": [],
+    "until_anchor": "month24"
+   },
+   "source": "Synthetic fixture, assumption A4",
+   "timepoints": [],
+   "window_after": 7,
+   "window_before": 7
+  },
+  {
+   "anchor": "baseline",
+   "check": null,
+   "code": "M12",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "m12",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Month 12 assessment",
+   "offset_days": 364,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "BCVA"
+    },
+    {
+     "if": [],
+     "name": "OCT"
+    },
+    {
+     "if": [],
+     "name": "Multimodal imaging for the reading centre"
+    },
+    {
+     "if": [],
+     "name": "Month 12 questionnaire"
+    }
+   ],
+   "repeat": null,
+   "source": "Synthetic fixture, assumption A4",
+   "timepoints": [],
+   "window_after": 14,
+   "window_before": 14
+  },
+  {
+   "anchor": "baseline",
+   "check": null,
+   "code": "M24",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "m24",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Month 24 assessment",
+   "offset_days": 728,
+   "phase": "End of study",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "BCVA"
+    },
+    {
+     "if": [],
+     "name": "OCT"
+    },
+    {
+     "if": [],
+     "name": "Multimodal imaging for the reading centre"
+    },
+    {
+     "if": [],
+     "name": "End of study assessment"
+    }
+   ],
+   "repeat": null,
+   "source": "Synthetic fixture, assumption A4",
+   "timepoints": [],
+   "window_after": 14,
+   "window_before": 14
+  }
+ ]
+}

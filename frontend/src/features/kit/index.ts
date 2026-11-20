@@ -1,6 +1,8 @@
 // Typed entry points for the Protocol Visit Scheduler kit engine. The engine files
 // beside this one are a mechanical port of the kit and are intentionally untyped.
 import { computeSchedule } from "./schedule";
+import type { KitBlocker, KitPatternRule } from "./patterns";
+export type { KitBlocker, KitPatternRule } from "./patterns";
 import { serializeSchedule, condText, timingText, phaseGroup, valText, ruleIfText } from "./describe";
 
 export { condText, timingText, phaseGroup, valText, ruleIfText };
@@ -38,6 +40,53 @@ export type KitVisitDefinition = {
   check?: KitVisitCheck | null;
   /** Kept after participation ends but its date had passed by then: due that day ("or as soon as possible"). */
   asap_if_past?: boolean;
+  /** Done at another (fixed) visit when an occurrence falls inside its window: listed once, with both sets of assessments. */
+  combine_with?: { visit: string; date: "adaptive" | "fixed" }[];
+};
+/** One input confirmed at an occurrence (a finding, a recommendation, the investigator's choice). */
+export type KitObservation = { value: string | number; at?: string; by?: string; id?: string; source?: string };
+/**
+ * History-based intervals on a repeat (adaptive.ts): from occurrence `decide_from_n` on, the next
+ * interval follows from the finding confirmed at the previous one, its history and the limits.
+ */
+export type KitAdaptiveInterval = {
+  decide_from_n: number; basis: "actual" | "target"; start_days: number; min_days: number; max_days: number;
+  finding: { id: string; label: string; kind: "count" | "boolean" | "number"; roles: string[] };
+  active_if: { op: string; value: number } | { in: string[] } | null;
+  steps: { if: { op: string; value: number } | { in: string[] }; last?: "extended" | "not_extended"; add_days?: number; set_days?: number; keep?: boolean; label?: string }[];
+  breakpoint: { after_extensions: number; cap_offset_days: number; count_activity_at: "extended_intervals" | "any_interval" } | null;
+  recommendation: { id: string; label: string; unit_days: number; roles: string[] } | null;
+  precedence: "calculated" | "recommendation" | "recommendation_if_given" | "shorter" | "longer" | "review" | null;
+  /** Why the operation cannot run yet; a blocked operation never dates anything. */
+  blocked?: string;
+  source?: string | null; quote?: string; page?: number | null;
+};
+/** A participant phase read from recorded facts: started by a date, a recorded visit or a logged event. */
+export type KitPhase = {
+  id: string; label: string;
+  starts: { anchor: string } | { visit: string } | { event: string };
+  ends: ({ visit: string } | { event: string } | { anchor: string })[];
+};
+/** A study-wide event confirmed once by the study team and applied to matching participants by the server. */
+export type KitStudyEvent = {
+  id: string; label: string; confirm_roles: string[];
+  fields: { id: string; label: string; kind: "subject" | "text" | "date" }[];
+  actions: {
+    id: string; label: string; audience: { phase: string } | { field: string };
+    supersede_visits: string[]; add_visit: KitVisitDefinition | null; effect: string | null;
+  }[];
+  review_phases?: string[];
+  blocked?: string;
+  source?: string | null; quote?: string; page?: number | null;
+};
+/** What the server applied to this participant for one confirmed study event. */
+export type KitStudyEffect = {
+  id: string; event: string; action: string; label?: string; effective: string;
+  /** Only "applied" and "review" (a corrected event left a booked visit to review) reach a calendar. */
+  state: "applied" | "review" | "withdrawn" | "already_completed" | "ended" | "excluded" | "unresolved" | "to_review" | "unmatched";
+  booked?: string | null;
+  /** The added visit's key, "se.<confirmation id>.<visit id>#1", as the server stores it. */
+  taskKey?: string | null;
 };
 /**
  * "No" holds the occurrence until a "Yes" (re-checked every `recheck_days`); no "Yes" within
@@ -149,7 +198,7 @@ export type KitRuleCondition =
   | { occurrence: number };
 export type KitModel = {
   protocol: { title?: string; number?: string | null; sponsor?: string | null; phase?: string | null;
-    indication?: string | null; version?: string | null; design?: string };
+    indication?: string | null; version?: string | null; date?: string | null; design?: string };
   arms: { id: string; name: string; description: string }[];
   anchors: { id: string; label: string; kind: "start" | "relative" | "ask" | "last_visit"; question?: string | null; optional?: boolean;
     /** "last_visit": the date of the last of these visits still on the schedule (last dose given). */
@@ -160,7 +209,8 @@ export type KitModel = {
     last_with?: string[];
     /** The protocol gives this date its own day; `range` is only the allowed deviation (it stays a counted date). */
     offset_stated?: boolean;
-    relative_to?: string | null; offset_days?: number | null; is_day1?: boolean; set_by_visit?: string | null;
+    relative_to?: string | null; offset_days?: number | null; is_day1?: boolean; set_by_visit?: string | null; scope?: "study";
+    date_basis?: "confirmed";
     estimates?: { when?: unknown[]; relative_to: string; offset_days: number }[];
     /** Where the protocol allows this date, in days after another date ("within 28 days before Day 1"). */
     range?: { relative_to: string; min_days: number | null; max_days: number | null } | null }[];
@@ -175,10 +225,16 @@ export type KitModel = {
   review?: string[] | null;
   /** Points to check against the protocol; absent when there are none (and on models saved before 10 Nov 2026). */
   open_points?: KitOpenPoint[];
+  /** Rules no field can hold, by the name of their shape (patterns.ts); `blocked` ones block enrolment. */
+  pattern_rules?: KitPatternRule[];
+  /** Participant phases, read from recorded facts (who is "in extension" when a study event happens). */
+  phases?: KitPhase[];
+  /** Study-wide events the study team confirms (the final participant completed Visit 6). */
+  study_events?: KitStudyEvent[];
 };
 export type KitDetails = {
   protocol_number: string; title: string; phase: string; indications: string[]; sponsor: string;
-  version: string; design: string;
+  version: string; date?: string; design: string;
 };
 export type KitEventEvidence = { page: number | null; quote: string; found: boolean | null; found_on?: number };
 export type KitEventCheckItem = {
@@ -194,6 +250,8 @@ export type KitAnalysis = {
   eventCheck?: KitEventCheck | null;
   /** The base model's open points (also on the model). */
   openPoints?: KitOpenPoint[];
+  /** Pattern rules the app cannot calculate yet (the trial cannot enrol until they are handled). */
+  blockers?: KitBlocker[];
   /** The analysis job, so saving can store the protocol file it read. */
   jobId?: string;
   counts: { review: number; participant: number; decisions: number; events: number; tablePages: number[] };
@@ -203,6 +261,7 @@ export type KitParticipant = {
   startAnchor: string; startDate: string; answers: Record<string, string>;
   events?: { key: string; type: string; date: string; answers: Record<string, string> }[];
   actuals?: Record<string, string>; doseTimes?: Record<string, string>;
+  bookings?: Record<string, string>;
   /** Answers to visit checks, per occurrence ("c1d1#3"), in date order. */
   checks?: Record<string, KitCheckAnswer[]>;
   /** Baseline values per measure, for limits relative to baseline. */
@@ -211,7 +270,15 @@ export type KitParticipant = {
   doseLevels?: Record<string, Record<string, string>>;
   /** "Today" for missed-visit conditions; defaults to the device's date. */
   today?: string;
+  /** Inputs confirmed at an occurrence: findings, recommendations, the investigator's interval choice. */
+  observations?: Record<string, Record<string, KitObservation>>;
+  /** Doses not given at a visit that took place, with the reason, by occurrence ("inj#4": "IOP 32 mm Hg"). */
+  withheld?: Record<string, string>;
+  /** Server-owned: confirmed study-wide events applied to this participant (never sent back). */
+  studyEffects?: KitStudyEffect[];
 };
+/** What a row still needs before it can be dated (a finding, a recommendation, a booking). */
+export type KitNeed = { input: string; label: string; kind: string; roles: string[]; at: string; options?: number[] };
 /** `date`: the day a time point falls on when it is not the visit's day ("24 h post-dose"). */
 export type KitTimepoint = { label: string; at: string; window: string; procedures: string[]; date?: string };
 export type KitVisitRow = {
@@ -219,6 +286,27 @@ export type KitVisitRow = {
   /** "skipped": not given and not made up (the check's dosing table, or staff). */
   modality: string; status: "done" | "waiting" | "scheduled" | "skipped"; date: string | null; planned: string | null;
   actual: string | null; relative: string | null; movesOthers: boolean;
+  booked?: string | null;
+  /** The booking against the window ("no_window" when the protocol states none); null when not booked. */
+  bookingStatus?: "in_window" | "outside_window" | "no_window" | null;
+  /** The recorded date fell outside the window. */
+  deviation?: "outside_window" | null;
+  /** Inputs this row waits for before it can be dated. */
+  needs?: KitNeed[];
+  /** How a history-based interval was worked out for this occurrence (or what it waits for). */
+  adaptive?: {
+    from: string; basis: "actual" | "target" | null; pending: boolean; text: string | null; currentDays: number | null;
+    intervalDays: number | null; calculatedDays: number | null; recommendedDays: number | null; finding: unknown;
+    capDays: number | null; limitedBy: "min" | "max" | null; problem: string | null;
+  } | null;
+  /** Fixed visits done at this one (each keeps its own target and window). */
+  combined?: { key: string; code: string; name: string; planned: string | null; windowStart: string | null; windowEnd: string | null }[];
+  /** Dated by a calculation the analysis generated (pattern rule with a program). */
+  generated?: { rule: string; label: string; note: string | null } | null;
+  /** The dose was not given at this visit, and why. */
+  withheld?: string | null;
+  /** Added by a confirmed study-wide event. */
+  studyEffect?: { id: string; event: string; action: string; label: string; state: string; effective: string; booked: string | null } | null;
   rule: string; windowStart: string | null; windowEnd: string | null; windowDays: [number, number];
   /** false: the protocol states no window for this visit. */
   windowStated?: boolean;
@@ -314,8 +402,11 @@ export function isoParts(iso: string) {
   };
 }
 
-export const isIsoDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
-  && !Number.isNaN(Date.parse(value + "T00:00:00Z"));
+export const isIsoDate = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
+  const date = new Date(value + "T00:00:00Z");
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
 
 export function todayIso(): string {
   const now = new Date();

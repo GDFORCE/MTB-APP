@@ -44,7 +44,7 @@ function kitRow(row: PatientRow, saved: SavedKitModel | undefined, participant: 
     const seq = next ? schedule.rows.filter((r) => r.type === "visit").indexOf(next) + 1 : 0;
     return {
       ...row, status: kitStatus(schedule, today),
-      next_visit: next ? { id: next.key, name: `${next.code} · ${next.name}`, seq, scheduled_date: next.date || "", status: "scheduled" } : null,
+      next_visit: next ? { id: next.key, name: `${next.code} · ${next.name}`, seq, scheduled_date: next.booked || next.date || "", status: "scheduled" } : null,
     };
   } catch {
     return row;

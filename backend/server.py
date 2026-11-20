@@ -495,6 +495,7 @@ class PatientInvitationIn(PatientIn):
     # The patient's record on the trial's reviewed (kit) schedule: start date
     # and answers. Required when the trial has one; see kit_routes.py.
     kit: Optional[Dict[str, Any]] = None
+    kit_model_version: Optional[int] = None
 
 def patient_initials(value: Optional[str], full_name: str) -> str:
     """Normalize staff-entered initials, falling back to the first two name parts."""
@@ -3426,6 +3427,12 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
         {'trial_id': trial_id},
         {'_id': 0, 'visits': 0},
     ).sort('version', -1).to_list(500)
+    calendar_records = [p['kit'] for p in patients if isinstance(p.get('kit'), dict)]
+    calendar_counts = {
+        'participants': len(calendar_records),
+        'completed_visits': sum(len(p.get('actuals') or {}) for p in calendar_records),
+        'open_bookings': sum(len(set(p.get('bookings') or {}) - set(p.get('actuals') or {})) for p in calendar_records),
+    }
 
     return serialize({
         **trial,
@@ -3436,6 +3443,7 @@ async def _sponsor_trial_detail_payload(trial: dict, user: dict) -> dict:
         'created_by_name': creator.get('full_name') or '',
         'created_by_role': creator.get('role') or '',
         'recruitment': recruitment,
+        'workflow_calendar_counts': calendar_counts,
         'sites': sites,
         'subjects': subjects,
         'team': team,
@@ -3469,6 +3477,7 @@ async def trial_recruitment(trial_id: str, user=Depends(current_user)):
     return {
         'trial_id': trial_id,
         'recruitment': payload['recruitment'],
+        'workflow_calendar_counts': payload['workflow_calendar_counts'],
         'sites': [{
             'id': site.get('id'),
             'name': site.get('name'),
@@ -6755,6 +6764,10 @@ async def list_patients(user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'
             status, next_visit = _derive_patient_status(by_patient.get(p['id'], []), start_today)
             p['status'] = status
             p['next_visit'] = next_visit
+            if user['role'] in ('sponsor', 'cro'):
+                for field in tuple(p):
+                    if field == 'kit' or field.startswith('kit_'):
+                        p.pop(field)
     return patients
 
 
@@ -6954,11 +6967,20 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
             'This trial is not linked to an approved canonical schedule. '
             'Link it before inviting patients.',
         )
-    kit_model = await db.trial_kit_models.find_one(
-        {'trial_id': body.trial_id}, {'_id': 0, 'model': 1, 'version': 1})
+    from kit_routes import _model_doc, check_workflow_input_roles, clean_participant
+    kit_model = await _model_doc(body.trial_id, None)
     if kit_model:
-        from kit_routes import clean_participant
-        kit_participant = clean_participant(kit_model['model'], body.kit)
+        from app.kit.patterns import blockers as kit_blockers, enrol_problem as kit_enrol_problem
+        workflow = bool(kit_model.get('workflow'))
+        if workflow and body.kit_model_version != kit_model.get('version'):
+            raise HTTPException(409, 'The approved workflow has changed. Reopen enrollment.')
+        blocked = kit_enrol_problem(kit_blockers(kit_model['model']))
+        if blocked:
+            # A protocol rule the app cannot calculate yet: enrolling would give a wrong schedule.
+            raise HTTPException(409, blocked)
+        kit_participant = clean_participant(kit_model['model'], body.kit, workflow=workflow)
+        if workflow:
+            check_workflow_input_roles(kit_model['model'], {}, kit_participant, user['role'])
     elif body.kit:
         raise HTTPException(409, 'This trial has no reviewed protocol schedule')
     elif trial.get('uctsm_trial_id'):
@@ -7045,6 +7067,7 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
         patient_data['baseline_date'] = kit_participant['startDate']
     else:
         patient_data.pop('kit', None)
+        patient_data.pop('kit_model_version', None)
     token = new_invite_code()
     invitation = {
         'id': str(uuid.uuid4()), 'token': token,
@@ -7089,6 +7112,8 @@ async def invite_patient_for_enrollment(body: PatientInvitationIn, user=Depends(
 async def get_patient(patient_id: str, user=Depends(require_roles('sponsor', 'cro', 'pi', 'crc'))):
     """Patient detail: the patient record + its trial + its visit instances."""
     p = await _require_patient(user, patient_id)
+    if user['role'] in ('sponsor', 'cro'):
+        p = {key: value for key, value in p.items() if key != 'kit' and not key.startswith('kit_')}
     trial = await db.trials.find_one({'id': p.get('trial_id')}, {'_id': 0})
     raw_instances = _order_visit_instances(
         await db.visit_instances.find({'patient_id': patient_id}, {'_id': 0}).to_list(500))
@@ -11457,6 +11482,7 @@ app.include_router(org_routes.router)
 app.include_router(org_routes.trial_access_router)
 app.include_router(remote_audit_routes.router)
 app.include_router(kit_routes.router)
+app.include_router(kit_routes.admin_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 from app.observability.install import install as install_observability  # noqa: E402
 

@@ -105,6 +105,7 @@ type VisitTemplate = {
 
 type RecruitmentPayload = {
   recruitment: RecruitmentFunnel;
+  workflow_calendar_counts?: { participants: number; completed_visits: number; open_bookings: number };
   sites: {
     id: string;
     name: string;
@@ -189,7 +190,7 @@ function kitCurrentVisit(saved: SavedKitModel, participant: NonNullable<SponsorT
     if (!next) return null;
     return {
       visit_number: schedule.rows.filter((row) => row.type === "visit").indexOf(next) + 1,
-      name: `${next.code} · ${next.name}`, visit_type: next.phase, scheduled_date: next.date || undefined,
+      name: `${next.code} · ${next.name}`, visit_type: next.phase, scheduled_date: next.booked || next.date || undefined,
     };
   } catch {
     return null;
@@ -230,6 +231,7 @@ export default function TrialSummary() {
   const [versions, setVersions] = useState<Version[]>([]);
   const [canonicalSchedules, setCanonicalSchedules] = useState<CanonicalScheduleRow[]>([]);
   const [kitSaved, setKitSaved] = useState<SavedKitModel | null>(null);
+  const [kitHistory, setKitHistory] = useState<Record<number, SavedKitModel>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -301,9 +303,16 @@ export default function TrialSummary() {
       // The reviewed schedule saved by the Add Trial protocol upload lives in its own
       // store, separate from the canonical engine; 404 just means none was saved.
       try {
-        setKitSaved(await getKitModel(id));
+        const current = await getKitModel(id);
+        setKitSaved(current);
+        const versions = new Set<number>((Array.isArray(subjectsRes.data) ? subjectsRes.data : [])
+          .filter((subject: SponsorTrialSubject) => subject.kit && subject.kit_model_version && subject.kit_model_version !== (current.version || 1))
+          .map((subject: SponsorTrialSubject) => subject.kit_model_version!));
+        const history = await Promise.allSettled([...versions].map(async (version) => [version, await getKitModel(id, version)] as const));
+        setKitHistory(Object.fromEntries(history.flatMap((result) => result.status === "fulfilled" ? [result.value] : [])));
       } catch {
         setKitSaved(null);
+        setKitHistory({});
       }
     } catch (e: any) {
       setError(e?.response?.data?.detail || "Couldn't load this trial summary.");
@@ -675,7 +684,9 @@ export default function TrialSummary() {
             ) : undefined}
           >
             {subjects.length ? subjects.map((subject) => {
-              const visit = subject.kit && kitSaved ? kitCurrentVisit(kitSaved, subject.kit) : subject.current_visit;
+              const version = subject.kit_model_version;
+              const model = !version || version === (kitSaved?.version || 1) ? kitSaved : kitHistory[version];
+              const visit = subject.kit && model ? kitCurrentVisit(model, subject.kit) : subject.current_visit;
               const subjectStatus = subject.current_visit?.status === "overdue"
                 ? "overdue"
                 : subject.status;
@@ -684,7 +695,7 @@ export default function TrialSummary() {
                   key={subject.id}
                   testID={`subject-${subject.id}`}
                   onPress={() => openSubject(subject)}
-                  disabled={!subject.uctsm_patient_id && !subject.kit_schedule}
+                  disabled={!subject.uctsm_patient_id && !(subject.kit_schedule && subject.kit)}
                   style={s.subjectCard}
                 >
                   <View style={s.between}>
@@ -770,7 +781,10 @@ export default function TrialSummary() {
               </Pressable>
             )}
           >
-            {kitSaved && (
+            {!!recruitment?.workflow_calendar_counts?.participants && <Text style={s.versionMeta}>
+              {recruitment.workflow_calendar_counts.completed_visits} recorded visits · {recruitment.workflow_calendar_counts.open_bookings} open bookings
+            </Text>}
+            {(kitSaved || ["sponsor", "cro", "pi"].includes(user?.role || "")) && (
               <Pressable
                 testID="kit-schedule-summary"
                 onPress={() => router.push({
@@ -781,9 +795,11 @@ export default function TrialSummary() {
               >
                 <View style={s.versionBadge}><CalendarDays size={14} color={colors.primary} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.versionTitle}>Reviewed protocol schedule</Text>
+                  <Text style={s.versionTitle}>{kitSaved?.workflow ? `Approved workflow version ${kitSaved.version}`
+                    : kitSaved ? "Reviewed protocol schedule" : "Protocol workflow"}</Text>
                   <Text style={s.versionMeta}>
-                    {kitSaved.model.visits.length} visit types{kitSaved.file_name ? ` · ${kitSaved.file_name}` : ""}
+                    {kitSaved ? `${kitSaved.model.visits.length} visit types${kitSaved.file_name ? ` · ${kitSaved.file_name}` : ""}`
+                      : "Upload a protocol or continue a draft"}
                   </Text>
                 </View>
                 <ChevronRight size={15} color={colors.mutedFg} />

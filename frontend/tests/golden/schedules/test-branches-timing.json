@@ -930,6 +930,7 @@
             "actual": "2026-03-16",
             "relative": null,
             "rule": "Day 1 + 56 d",
+            "deviation": "outside_window",
             "windowStart": "2026-03-02",
             "windowEnd": "2026-03-02",
             "windowDays": [

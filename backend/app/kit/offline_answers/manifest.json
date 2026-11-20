@@ -1,0 +1,22 @@
+{
+ "protocols": [
+  {
+   "name": "NCT02130024",
+   "sha256": "829eb19a4b2ab6e4f2b436ed7fb38c705da8dd454d83391173f8b8521a5274cc",
+   "file": "NCT02130024__Prot_000.pdf (CRFB002AAU17 Version No.02, 19 Jan 2015, 51 pages)",
+   "model": "nct02130024.model.json",
+   "crosscheck": null,
+   "events": null,
+   "how": "Written by the coding assistant from the PDF text (pages 8, 19, 24-37) in the shape the model prompt asks for; no model provider was called. Its interpretations are listed as open points."
+  },
+  {
+   "name": "SYN-GEN-PK",
+   "sha256": "6db8d41e2e444157f1bd6d8a4d55cc519b5e4cff6fee8e7e6a8aafa58a20ac30",
+   "file": "docs/protocol-benchmarks/synthetic/syn07-generated-calculation/protocol.txt",
+   "model": "syn07_generated_calculation.model.json",
+   "crosscheck": null,
+   "events": null,
+   "how": "The analysis an extraction following the prompt returns for this synthetic text, including the generated calculation (tests/test_kit_generated_calc.gen_model)."
+  }
+ ]
+}

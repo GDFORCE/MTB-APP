@@ -38,7 +38,7 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
   today: string; conditionOf: (visitId: string) => string | null;
 }) {
   const defs = new Map(model.visits.map((v) => [v.id, v]));
-  const askAnchors = new Set(model.anchors.filter((a) => a.kind === "ask").map((a) => a.id));
+  const askAnchors = new Set(model.anchors.filter((a) => a.kind === "ask" && a.scope !== "study").map((a) => a.id));
   const visitsOf = (s: KitSchedule) => s.rows.filter((r): r is KitVisitRow => r.type === "visit");
   const planned = new Map(visitsOf(baseline).map((r) => [r.key, r.date]));
   const currentVisits = visitsOf(current);
@@ -72,7 +72,7 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
     } else if (row.status === "waiting" || !row.date) {
       dot = "wait";
       meta = row.relative || "Waits for a date";
-      tags.push({ text: "Waiting", tone: "amber" });
+      tags.push({ text: "Pending input", tone: "amber" });
     } else {
       const isOverdue = (row.windowEnd || row.date) < today;
       if (isOverdue) overdue += 1;
@@ -82,6 +82,12 @@ export function patientTimeline({ model, participant, current, withoutEvents, ba
       if (was && was !== row.date) { moved += 1; tags.push({ text: `Moved · was ${short(was)}`, tone: "amber" }); }
     }
     if (how) meta = `${how} · ${meta}`;
+    if (row.booked) tags.push({ text: `Booked ${short(row.booked)}`, tone: "green" });
+    if (row.windowStated !== false && row.windowStart && row.windowEnd) {
+      for (const [label, date] of [["Booking", row.booked], ["Actual date", row.actual]]) {
+        if (date && (date < row.windowStart || date > row.windowEnd)) tags.push({ text: `${label} outside window`, tone: "amber" });
+      }
+    }
     if (row.fromEvent) { added += 1; tags.push({ text: `Added by ${row.fromEvent.split(" · ")[0]}`, tone: "green" }); }
     if (row.dependsOnDecision) {
       const cond = conditionOf(row.visitId);

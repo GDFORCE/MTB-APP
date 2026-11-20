@@ -1,0 +1,1 @@
+SYN-GEN-PK synthetic protocol. Day 1 is the first injection. Injections are given every 28 days (±3 days), six in total. A pharmacokinetic blood sample is taken 7 days (±1 day) after each injection that is given; no sample is taken after a withheld injection. The end of study visit is on Day 169 (±7 days).

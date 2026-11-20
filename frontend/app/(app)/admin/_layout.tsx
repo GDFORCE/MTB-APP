@@ -16,7 +16,7 @@ import { Redirect, Slot, usePathname, useRouter, type Href } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   BarChart3, Bell, BellRing, Building2, ChevronRight, Database, FileText,
-  FlaskConical, Inbox, KeyRound, LayoutDashboard, LogOut, Mail,
+  FileWarning, FlaskConical, Inbox, KeyRound, LayoutDashboard, LogOut, Mail,
   MessageSquare, Search, Share2, ShieldAlert, ScrollText, Settings, UserCog,
   Users, X, type LucideIcon,
 } from "lucide-react-native";
@@ -50,6 +50,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { id: "master-data", label: "Master Data", icon: Database, href: "/(app)/admin/master-data" as Href, group: "Operations" },
   { id: "tickets", label: "Support Tickets", icon: Inbox, href: "/(app)/admin/tickets" as Href, group: "Operations" },
   { id: "alerts", label: "System Alerts", icon: ShieldAlert, href: "/(app)/admin/alerts" as Href, group: "Operations" },
+  { id: "protocol-rules", label: "Protocol Rules Waiting", icon: FileWarning, href: "/(app)/admin/protocol-rules" as Href, group: "Operations" },
   { id: "notification-monitoring", label: "Notifications", icon: BellRing, href: "/(app)/admin/notification-monitoring" as Href, group: "Operations" },
   { id: "audit-logs", label: "Audit Logs", icon: ScrollText, href: "/(app)/admin/audit-logs" as Href, group: "Governance" },
   { id: "terms", label: "Terms & Privacy", icon: FileText, href: "/(app)/admin/terms" as Href, group: "Governance" },

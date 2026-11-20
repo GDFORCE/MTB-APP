@@ -210,11 +210,33 @@ export function serializeSchedule(model, calc, part = {}) {
       };
     }
     const status = r.actual != null ? "done" : r.check?.state === "skipped" ? "skipped" : r.how === "pending" ? "waiting" : "scheduled";
+    // Target, booking and actual stay separate: a booking never moves the target, and either can
+    // fall outside the window (a deviation, shown, never corrected silently).
+    const booked = r.studyEffect?.booked || part.bookings?.[r.key] || null;
+    const stated = r.v.window_stated !== false && r.lo != null && r.hi != null;
+    const outside = (iso) => stated && (iso < d(r.lo) || iso > d(r.hi));
+    const ad = r.adaptive;
     return {
       type: "visit", key: r.key, visitId: r.v.id, code: r.code, name: r.name, phase: r.v.phase, phaseGroup: phaseGroup(r.v.phase),
       modality: r.v.modality, status,
       date: d(r.actual ?? r.t), planned: d(r.t), actual: d(r.actual), relative: r.t == null ? r.rel : null, rule: r.rel,
-      windowStart: d(r.lo), windowEnd: d(r.hi), windowDays: [r.v.window_before, r.v.window_after],
+      // Fields below appear only when they carry something, so earlier calendars serialize unchanged.
+      ...(booked ? { booked, bookingStatus: !stated ? "no_window" : outside(booked) ? "outside_window" : "in_window" } : {}),
+      ...(r.actual != null && outside(d(r.actual)) ? { deviation: "outside_window" } : {}),
+      ...(arr(r.needs).length ? { needs: arr(r.needs).map((x) => ({ input: x.input, label: x.label, kind: x.kind, roles: arr(x.roles), at: x.at, ...(x.options ? { options: x.options } : {}) })) } : {}),
+      ...(ad ? { adaptive: {
+        from: ad.from, basis: ad.basis, pending: !!ad.pending, text: ad.text || null,
+        currentDays: ad.dec.current ?? null, intervalDays: ad.dec.interval ?? null, calculatedDays: ad.dec.calculated ?? null,
+        recommendedDays: ad.dec.recommended ?? null, finding: ad.dec.finding ?? null, capDays: ad.dec.capApplied ?? null,
+        limitedBy: ad.dec.limitedBy ?? null, problem: ad.dec.problem ?? null, ...(ad.dec.provisional ? { provisional: true } : {}),
+      } } : {}),
+      ...(arr(r.combined).length ? { combined: arr(r.combined).map((c) => ({ key: c.key, code: c.code, name: c.name, planned: d(c.planned), windowStart: d(c.lo), windowEnd: d(c.hi) })) } : {}),
+      ...(r.studyEffect ? { studyEffect: r.studyEffect } : {}),
+      ...(r.generated ? { generated: r.generated } : {}),
+      ...(part.withheld?.[r.key] ? { withheld: part.withheld[r.key] } : {}),
+      windowStart: d(r.lo), windowEnd: d(r.hi),
+      // A pattern rule may set its own window ("within 3 business days").
+      windowDays: r.patterns?.length && r.t != null && r.lo != null ? [Math.round((r.t - r.lo) / DAY), Math.round((r.hi - r.t) / DAY)] : [r.v.window_before, r.v.window_after],
       studyDay: r.sd ?? null, endDay: d(r.endDay),
       weekend: !!r.weekend, nearestWeekday: d(r.alt),
       dependsOnDecision: r.cond === "unknown", fromEvent: r.fromEvent || null,
@@ -230,16 +252,23 @@ export function serializeSchedule(model, calc, part = {}) {
         r.first ? r.v.condition : null, r.occNote, r.first ? prepText(r.v.prep) : null,
         r.countUnknown ? "The protocol doesn't say how many times this repeats; the next ones are shown." : null,
         r.pausedBy ? `Paused: ${r.pausedBy}.` : null,
+        r.first && r.patterns?.length ? `Dated by the protocol rule${r.patterns.length > 1 ? "s" : ""} ${r.patterns.map((x) => `“${x.label}”`).join(", ")}.` : null,
         checkNote(r),
         reduceNote(r),
         r.asap ? `Planned ${fmtS(r.asap.was)}, which had passed when participation ended (${fmtS(r.asap.from)}): due as soon as possible.` : null,
         r.basis ? `Counted from ${r.basis.code} on its planned date (${fmtS(r.basis.t)}), which is not recorded as done. Record its date to confirm this one.` : null,
+        ad && !ad.pending ? `Interval: ${ad.text}.` : null,
+        ...(ad ? arr(ad.dec.notes) : []),
+        ...arr(r.combined).map((c) => `${c.code} (${c.name}) is done at this visit: its own target ${fmtS(c.planned)}, window ${fmtS(c.lo)} – ${fmtS(c.hi)}.`),
+        r.generated ? `Dated by the calculation generated for “${r.generated.label}”${r.generated.note ? `: ${r.generated.note}` : ""}.` : null,
+        part.withheld?.[r.key] ? `Treatment withheld at this visit: ${part.withheld[r.key]}.` : null,
+        r.studyEffect?.state === "review" ? `${r.studyEffect.label} was corrected and no longer applies to this participant. Review this booking before it is kept or cancelled.` : null,
         ...doseNotes(r),
         ...timeNotes(r),
       ].filter(Boolean),
       // A time staff record for this visit: the check-in time, or the dose time (PK clock times).
       time: part.doseTimes?.[r.key] ?? null,
-      timeKind: r.arrive ? "checkin" : r.doseFrom || r.v.timepoints.length ? "dose" : null,
+      timeKind: r.arrive ? "checkin" : r.doseFrom || arr(r.v.timepoints).length ? "dose" : null,
       // false: the protocol states no window for this visit (shown as "not stated", never as "no leeway").
       windowStated: r.v.window_stated !== false,
       // Conditional what-to-do text that applies to this participant here.
@@ -284,6 +313,28 @@ export function serializeSchedule(model, calc, part = {}) {
   for (const s of calc.stopped || []) {
     if (!groups.has(s.rule.id)) groups.set(s.rule.id, { rule: s.rule.id, label: s.rule.label, effect: s.rule.effect || null, date: d(s.at), visits: [] });
     groups.get(s.rule.id).visits.push({ key: s.key, code: s.code, date: d(s.t) });
+  }
+  const emitted = new Set(rows.map((r) => r.key));
+  const historicalDefinitions = Object.fromEntries(model.visits.map((v) => [v.id, v]));
+  for (const event of part.events || []) {
+    const definition = model.events.find((e) => e.id === event.type);
+    for (const visit of definition?.visits || []) historicalDefinitions[`ev.${event.key}.${visit.id}`] = visit;
+  }
+  for (const [key, actual] of Object.entries(part.actuals || {})) {
+    if (emitted.has(key) || !actual) continue;
+    const visit = historicalDefinitions[key.slice(0, key.lastIndexOf("#"))];
+    if (!visit) continue;
+    // A corrected answer can withdraw a branch. Its completed attendance is still a fact.
+    // The current branch cannot reconstruct which activities were done at that earlier visit.
+    rows.push({
+      type: "visit", key, visitId: visit.id, code: visit.code, name: visit.name, phase: visit.phase,
+      phaseGroup: phaseGroup(visit.phase), modality: visit.modality, status: "done", date: actual, planned: null,
+      actual, booked: part.bookings?.[key] ?? null, relative: null, rule: "Recorded attendance",
+      windowStart: null, windowEnd: null, windowDays: [0, 0], windowStated: false, studyDay: null,
+      endDay: null, weekend: false, nearestWeekday: null, dependsOnDecision: false, fromEvent: null,
+      openEnded: false, until: null, procedures: [], notes: ["The calendar changed after this visit was recorded."],
+      timepoints: [], source: visit.source || null, movesOthers: false, stopsIf: [],
+    });
   }
   return {
     anchors: model.anchors.map((a) => ({ id: a.id, label: a.label, kind: a.kind, date: d(calc.A[a.id]), how: calc.A[a.id] != null ? calc.how[a.id] || "derived" : "pending", setByEvent: model.events.find((e) => e.sets_anchor === a.id)?.id || null })),

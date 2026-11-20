@@ -210,6 +210,7 @@ def _routes(monkeypatch, patients=(), invitations=()):
         trial_kit_models = _Collection()
         trial_kit_model_history = _Collection()
         trials = _Collection([{"id": "t1", "title": "Trial"}])
+        kit_study_effects = _Collection()  # study-wide event effects merged into each calendar
 
     Db.patients = _Collection(patients)
     Db.invitations = _Collection(invitations)

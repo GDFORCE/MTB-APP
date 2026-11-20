@@ -57,6 +57,7 @@ export type SponsorTrialSubject = {
   // On the trial's reviewed (kit) schedule; `kit` is the record, sent to site staff only.
   kit_schedule?: boolean;
   kit?: import("@/src/features/kit").KitParticipant | null;
+  kit_model_version?: number | null;
   deidentified: true;
 };
 

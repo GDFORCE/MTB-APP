@@ -288,6 +288,77 @@
    "min_gap": null,
    "prep": null,
    "check": null
+  },
+  {
+   "id": "call1",
+   "code": "CALL",
+   "name": "Telephone report of laboratory results",
+   "phase": "Treatment",
+   "modality": "phone",
+   "anchor": "day1",
+   "offset_days": 3,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": null,
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": null,
+   "procedures": [
+    {
+     "name": "Report laboratory results",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
+  },
+  {
+   "id": "callm",
+   "code": "CALL-M",
+   "name": "Telephone report of laboratory results",
+   "phase": "Treatment",
+   "modality": "phone",
+   "anchor": "day1",
+   "offset_days": 3,
+   "window_before": 0,
+   "window_after": 0,
+   "follows": "infm",
+   "follows_occurrence": null,
+   "duration_days": null,
+   "include_if": [],
+   "repeat": {
+    "every_days": 30,
+    "count": 6,
+    "count_question": null,
+    "start_n": 1,
+    "label_pattern": "Telephone report of laboratory results after Month {n}",
+    "code_pattern": "CALL-M{n}",
+    "chain": false,
+    "open_ended": false,
+    "until_anchor": null,
+    "overrides": [],
+    "stages": [],
+    "max_days": null,
+    "max_delay_days": null,
+    "delay_effect": null
+   },
+   "procedures": [
+    {
+     "name": "Report laboratory results",
+     "if": []
+    }
+   ],
+   "timepoints": [],
+   "condition": null,
+   "source": null,
+   "min_gap": null,
+   "prep": null,
+   "check": null
   }
  ],
  "events": [
@@ -342,6 +413,88 @@
  "rules": [],
  "review_questions": [],
  "notes": [
-  "Hand-written model: calendar months are written as 30 days, the results call (3 business days) has no visit, the final visit is on Day 210 rather than the following Monday, and the missed-visit rules (8.5, 8.6) are not represented."
+  "Hand-written model: calendar months, the business-day results call and the Monday final visit are pattern rules; the missed-visit rules (8.5, 8.6) are pattern rules with no handler yet, so this model blocks enrolment."
+ ],
+ "pattern_rules": [
+  {
+   "id": "months",
+   "pattern": "CALENDAR_MONTHS",
+   "label": "Monthly infusions on the same day of the month",
+   "visits": [
+    "infm"
+   ],
+   "params": {
+    "months": 1,
+    "every_months": 1,
+    "missing_day": "last_day_of_month"
+   },
+   "quote": "If that day does not exist in a month, the infusion visit is scheduled on the last day of that month.",
+   "page": 2
+  },
+  {
+   "id": "call",
+   "pattern": "BUSINESS_DAYS",
+   "label": "Results call within 3 business days after each infusion",
+   "visits": [
+    "call1",
+    "callm"
+   ],
+   "params": {
+    "business_days": 3,
+    "within": true,
+    "excludes_holidays": true
+   },
+   "quote": "Within 3 business days after each infusion visit, the site telephones the participant",
+   "page": 2
+  },
+  {
+   "id": "monday",
+   "pattern": "WEEKDAY",
+   "label": "Final visit on the first Monday on or after Day 210",
+   "visits": [
+    "final"
+   ],
+   "params": {
+    "weekday": "monday",
+    "direction": "on_or_after"
+   },
+   "quote": "The final visit is performed on the first Monday on or after Day 210.",
+   "page": 2
+  },
+  {
+   "id": "carry",
+   "pattern": "MISSED_VISIT_TESTS_CARRIED_OVER",
+   "label": "Missed visit's laboratory tests added to the next visit",
+   "visits": [
+    "infm"
+   ],
+   "params": {
+    "tests": [
+     "Safety laboratory tests"
+    ]
+   },
+   "quote": "The safety laboratory tests of the missed visit are performed additionally at the next infusion visit",
+   "page": 2,
+   "blocked": "no_handler"
+  },
+  {
+   "id": "two_missed",
+   "pattern": "CONSECUTIVE_MISSED_VISITS_WITHDRAW",
+   "label": "Two consecutive missed infusions: withdrawn",
+   "visits": [
+    "infm",
+    "homem",
+    "callm"
+   ],
+   "params": {
+    "consecutive": 2,
+    "keeps_visits": [
+     "final"
+    ]
+   },
+   "quote": "If two consecutive infusion visits are missed, the participant is withdrawn from study treatment.",
+   "page": 2,
+   "blocked": "no_handler"
+  }
  ]
 }

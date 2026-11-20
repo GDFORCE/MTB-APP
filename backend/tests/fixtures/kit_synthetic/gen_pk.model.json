@@ -1,0 +1,351 @@
+{
+ "anchors": [
+  {
+   "day_zero": false,
+   "estimates": [],
+   "id": "day1",
+   "is_day1": true,
+   "kind": "start",
+   "label": "Day 1 (first injection)",
+   "offset_days": 0,
+   "optional": false,
+   "range": null
+  }
+ ],
+ "arms": [],
+ "events": [],
+ "notes": [],
+ "open_points": [
+  {
+   "affects": [
+    "pk"
+   ],
+   "id": "generated_pk_after_given",
+   "kind": "generated",
+   "page": 1,
+   "quote": "A pharmacokinetic blood sample is taken 7 days (±1 day) after each injection that is given",
+   "stage": "check",
+   "text": "The app wrote a new calculation for “PK sample 7 days after each injection that was given” (SAMPLE_AFTER_GIVEN_DOSE): check its logic, inputs and 2 test cases in the workflow, then confirm it.",
+   "used": "Runs only in the approved workflow version (calculation 46a3374005cc).",
+   "why": ""
+  }
+ ],
+ "pattern_rules": [
+  {
+   "generated": {
+    "calc_version": 1,
+    "reads": [
+     "visit inj"
+    ],
+    "sha256": "46a3374005cc318e0ed191dfdbf30f7f331af2bfa03f339068fa14e78b3a6c72",
+    "tests": [
+     {
+      "expected": [
+       {
+        "date": "2026-01-13",
+        "n": 1,
+        "pending": null,
+        "window_after": 1,
+        "window_before": 1
+       },
+       {
+        "date": null,
+        "n": 2,
+        "pending": "7 days after injection 2, once given",
+        "window_after": 1,
+        "window_before": 1
+       }
+      ],
+      "got": [
+       {
+        "date": "2026-01-13",
+        "n": 1,
+        "pending": null,
+        "window_after": 1,
+        "window_before": 1
+       },
+       {
+        "date": null,
+        "n": 2,
+        "pending": "7 days after injection 2, once given",
+        "window_after": 1,
+        "window_before": 1
+       }
+      ],
+      "name": "a sample 7 days after each given injection; later ones wait",
+      "passed": true,
+      "problem": null
+     },
+     {
+      "expected": [],
+      "got": [],
+      "name": "no sample after a withheld injection",
+      "passed": true,
+      "problem": null
+     }
+    ]
+   },
+   "id": "pk_after_given",
+   "inputs": [
+    {
+     "fact": "visit",
+     "id": "inj"
+    }
+   ],
+   "label": "PK sample 7 days after each injection that was given",
+   "output": {
+    "kind": "occurrences"
+   },
+   "page": 1,
+   "params": {},
+   "pattern": "SAMPLE_AFTER_GIVEN_DOSE",
+   "program": {
+    "as": "o",
+    "do": {
+     "record": {
+      "date": {
+       "args": [
+        {
+         "var": "o.given"
+        },
+        {
+         "args": [
+          {
+           "var": "o.actual"
+          },
+          7
+         ],
+         "op": "add_days"
+        },
+        null
+       ],
+       "op": "if"
+      },
+      "n": {
+       "var": "o.n"
+      },
+      "pending": {
+       "args": [
+        {
+         "var": "o.given"
+        },
+        null,
+        {
+         "args": [
+          {
+           "str": "7 days after injection "
+          },
+          {
+           "var": "o.n"
+          },
+          {
+           "str": ", once given"
+          }
+         ],
+         "op": "text"
+        }
+       ],
+       "op": "if"
+      },
+      "window_after": 1,
+      "window_before": 1
+     }
+    },
+    "map": {
+     "as": "o",
+     "filter": {
+      "fact": "visit",
+      "id": "inj"
+     },
+     "where": {
+      "args": [
+       {
+        "args": [
+         {
+          "var": "o.given"
+         },
+         false
+        ],
+        "op": "!="
+       },
+       {
+        "args": [
+         {
+          "var": "o.status"
+         },
+         {
+          "str": "cancelled"
+         }
+        ],
+        "op": "!="
+       }
+      ],
+      "op": "and"
+     }
+    }
+   },
+   "quote": "A pharmacokinetic blood sample is taken 7 days (±1 day) after each injection that is given",
+   "tests": [
+    {
+     "expect": [
+      {
+       "date": "2026-01-13",
+       "n": 1,
+       "pending": null,
+       "window_after": 1,
+       "window_before": 1
+      },
+      {
+       "date": null,
+       "n": 2,
+       "pending": "7 days after injection 2, once given",
+       "window_after": 1,
+       "window_before": 1
+      }
+     ],
+     "facts": {
+      "visits": {
+       "inj": [
+        {
+         "actual": "2026-01-06",
+         "given": true,
+         "n": 1,
+         "planned": "2026-01-05"
+        },
+        {
+         "actual": null,
+         "given": null,
+         "n": 2,
+         "planned": "2026-02-02"
+        }
+       ]
+      }
+     },
+     "name": "a sample 7 days after each given injection; later ones wait"
+    },
+    {
+     "expect": [],
+     "facts": {
+      "visits": {
+       "inj": [
+        {
+         "actual": "2026-01-05",
+         "given": false,
+         "n": 1,
+         "planned": "2026-01-05"
+        }
+       ]
+      }
+     },
+     "name": "no sample after a withheld injection"
+    }
+   ],
+   "visits": [
+    "pk"
+   ]
+  }
+ ],
+ "protocol": {
+  "number": "SYN-GEN-PK",
+  "title": "Synthetic PK sampling after given doses",
+  "version": "1"
+ },
+ "questions": [],
+ "review_questions": [],
+ "rules": [],
+ "visits": [
+  {
+   "anchor": "day1",
+   "check": null,
+   "code": "INJ",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "inj",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Injection",
+   "offset_days": 0,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Study drug injection"
+    }
+   ],
+   "repeat": {
+    "chain": false,
+    "code_pattern": "INJ {n}",
+    "count": 6,
+    "delay_effect": null,
+    "every_days": 28,
+    "label_pattern": "Injection {n}",
+    "max_days": null,
+    "max_delay_days": null,
+    "open_ended": false,
+    "overrides": [],
+    "stages": []
+   },
+   "timepoints": [],
+   "window_after": 3,
+   "window_before": 3
+  },
+  {
+   "anchor": "day1",
+   "check": null,
+   "code": "PK",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "pk",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "PK sample",
+   "offset_days": 7,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "PK blood sample"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 1,
+   "window_before": 1
+  },
+  {
+   "anchor": "day1",
+   "check": null,
+   "code": "EOS",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "eos",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "End of study",
+   "offset_days": 168,
+   "phase": "Follow-up",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Final assessments"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 7,
+   "window_before": 7
+  }
+ ]
+}

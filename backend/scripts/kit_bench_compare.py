@@ -253,6 +253,9 @@ def flag_texts(model: dict[str, Any]) -> tuple[list[str], list[str]]:
     raised = [f"{q.get('text')} {q.get('why')}" for q in model.get("review_questions") or []]
     for g in model.get("open_points") or []:
         raised.append(" ".join(str(g.get(k) or "") for k in ("text", "quote", "why")))
+    # Pattern rules are shown to the reviewer with the protocol's words (calculated or blocked).
+    for r in model.get("pattern_rules") or []:
+        raised.append(" ".join(str(r.get(k) or "") for k in ("label", "quote")))
     return raised, [str(n) for n in model.get("notes") or []]
 
 

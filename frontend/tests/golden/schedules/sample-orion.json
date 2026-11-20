@@ -5063,6 +5063,7 @@
             "actual": "2026-11-30",
             "relative": null,
             "rule": "C1D1 + 14 d",
+            "deviation": "outside_window",
             "windowStart": "2026-11-27",
             "windowEnd": "2026-11-29",
             "windowDays": [

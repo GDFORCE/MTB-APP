@@ -1,0 +1,52 @@
+{
+  "_fixture": {
+    "status": "SYNTHETIC (P16-style)",
+    "reference": "P16 Protocol Phase II Ver 1.0 (TRC160334, ulcerative colitis): page 34 visit grid, page 57-58 extension follow-up and closure. Only the timing summary in docs/protocol-schedule-schema-analysis.md and the CBS corpus case were available; participants, sites and dates are invented.",
+    "assumptions": [
+      "B-A1 Day 1 is randomization; Visits 3-6 are Weeks 2, 4, 8 and 12 (+/-2 days), Visit 7 is Week 13 (+3 days, none early) and Visit 8/EOS is Week 37 (+/-7 days), all from randomization.",
+      "B-A2 Phases are read from recorded dates: treatment from randomization until Visit 6, safety follow-up from Visit 6 until Visit 7, extension from Visit 7 until Visit 8. Withdrawal ends participation.",
+      "B-A3 When the final participant in the study completes Visit 6, participants in extension on that date are called back for one early end-of-study visit on the site's next available date, which replaces their routine Visit 8.",
+      "B-A4 The final participant completes Visit 7 and then exits: their Visit 8 (the extension end) is superseded.",
+      "B-A5 Participants between Visit 6 and Visit 7 on that date (other than the final one) are listed for review: the protocol summary does not say whether they still enter extension.",
+      "B-A6 Only sponsor or CRO study users confirm the event; site PI/CRC book the early visit for their own participants."
+    ]
+  },
+  "protocol": {"number": "SYN-P16-CLOSE", "title": "Synthetic P16-style extension closeout", "version": "synthetic 2", "date": "2026-11-20"},
+  "anchors": [{"id": "rand", "label": "Randomization (Day 1)", "kind": "start", "is_day1": true}],
+  "questions": [],
+  "visits": [
+    {"id": "v3", "code": "V3", "name": "Week 2", "phase": "Treatment", "anchor": "rand", "offset_days": 14, "window_before": 2, "window_after": 2, "procedures": [{"name": "Partial Mayo score"}]},
+    {"id": "v4", "code": "V4", "name": "Week 4", "phase": "Treatment", "anchor": "rand", "offset_days": 28, "window_before": 2, "window_after": 2, "procedures": [{"name": "Partial Mayo score"}]},
+    {"id": "v5", "code": "V5", "name": "Week 8", "phase": "Treatment", "anchor": "rand", "offset_days": 56, "window_before": 2, "window_after": 2, "procedures": [{"name": "Partial Mayo score"}]},
+    {"id": "v6", "code": "V6", "name": "Week 12 / end of treatment", "phase": "Treatment", "anchor": "rand", "offset_days": 84, "window_before": 2, "window_after": 2, "procedures": [{"name": "Full Mayo score"}, {"name": "Endoscopy"}]},
+    {"id": "v7", "code": "V7", "name": "Week 13 safety follow-up", "phase": "Follow-up", "anchor": "rand", "offset_days": 91, "window_before": 0, "window_after": 3, "procedures": [{"name": "Safety laboratory tests"}]},
+    {"id": "v8", "code": "V8", "name": "Week 37 end of study", "phase": "Extension follow-up", "anchor": "rand", "offset_days": 259, "window_before": 7, "window_after": 7, "procedures": [{"name": "Recurrence assessment"}]}
+  ],
+  "events": [{"id": "withdrawal", "label": "Withdrawal", "repeatable": false, "ends_schedule": true, "questions": [], "visits": []}],
+  "rules": [],
+  "phases": [
+    {"id": "treatment", "label": "Treatment", "starts": {"anchor": "rand"}, "ends": [{"visit": "v6"}, {"event": "withdrawal"}]},
+    {"id": "safety_follow_up", "label": "Safety follow-up", "starts": {"visit": "v6"}, "ends": [{"visit": "v7"}, {"event": "withdrawal"}]},
+    {"id": "extension", "label": "Extension follow-up", "starts": {"visit": "v7"}, "ends": [{"visit": "v8"}, {"event": "withdrawal"}]}
+  ],
+  "study_events": [{
+    "id": "final_v6", "label": "Final participant in the study completed Visit 6",
+    "confirm_roles": ["sponsor", "cro"],
+    "fields": [{"id": "final_subject", "label": "Subject ID of the final participant", "kind": "subject"}],
+    "actions": [
+      {"id": "final_participant", "label": "Final participant: Visit 7, then exit without extension",
+       "audience": {"field": "final_subject"}, "supersede_visits": ["v8"],
+       "effect": "Completes Visit 7 and exits without entering the 24-week extension."},
+      {"id": "early_close", "label": "Early closeout for participants in extension",
+       "audience": {"phase": "extension"}, "supersede_visits": ["v8"],
+       "add_visit": {"id": "early_eos", "code": "EOS-E", "name": "Early end-of-study visit", "phase": "Extension follow-up",
+                     "window_before": 0, "window_after": 0, "date": "site_booking",
+                     "procedures": [{"name": "Recurrence assessment"}, {"name": "Partial Mayo score"}]},
+       "effect": "Called back for an early end-of-study visit on the next available date; routine Visit 8 no longer happens."}
+    ],
+    "review_phases": ["safety_follow_up"],
+    "source": "P16 protocol page 58 (synthetic restatement)", "quote": "next available date", "page": 58
+  }],
+  "review_questions": [],
+  "notes": ["Synthetic fixture: see _fixture.assumptions."]
+}

@@ -56,3 +56,28 @@ and it was invisible. It is not true that schedules are wrong across the board.
 
 Engine-only run of the hand-written models (no AI) found four of the engine faults above before any
 pipeline run: that level is worth keeping as a regression test.
+
+## Entry 2: backlog recheck and generated-code proposal (14 November 2026)
+
+Checked the implementation at commit `766d933`. Found two recorded runs that Entry 1 did not document:
+`run-02-replay` and `run-03-prompts`. Re-scored the saved `run-03-prompts` models against the current
+engine and expected files, without new LLM calls: **1,162 / 1,196 scored checks passed** across BP11
+and six synthetic fixtures. There were 34 unsuccessful checks and one additional answer-mapping
+finding. Counts are not a clinical accuracy estimate: matching/display checks need adjudication, and
+the number of scored checks changes when a missing visit skips its downstream assessment checks.
+
+The **754 / 769** result from the GitHub-update verification is a separate, hand-model-only experiment;
+its 15 findings are not the full-pipeline backlog. Two of those findings reflect a missing
+`window_stated: false` declaration in the hand-written fixture, which the current engine supports.
+
+The latest saved models contain 83 open points. SYN-06 explicitly describes rules it understands but
+cannot execute exactly (calendar months, business days, weekday selection, next-visit laboratory
+carryover). Other failures involve supported actions, record inputs, source questions and benchmark
+blind spots. The crossover's breakfast instructions are present, for example, but the comparator only
+looks for assessments/timepoints when checking that expectation.
+
+Saved the evidence, prioritized backlog and a proposed experiment in
+[Protocol-generated scheduling code assessment](protocol-generated-code-assessment-2026-11-14.md).
+This evaluates the owner's idea of allowing the LLM to write protocol-specific computations. It is
+not an adopted architecture or a replacement implementation prompt. No runtime or app behavior was
+changed. Detailed local re-score reports are under `.tmp/protocol-code-assessment/`.

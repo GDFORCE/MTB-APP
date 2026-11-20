@@ -1,0 +1,334 @@
+{
+ "anchors": [
+  {
+   "day_zero": false,
+   "estimates": [],
+   "id": "rand",
+   "is_day1": true,
+   "kind": "start",
+   "label": "Randomization (Day 1)",
+   "offset_days": 0,
+   "optional": false,
+   "range": null
+  }
+ ],
+ "arms": [],
+ "events": [
+  {
+   "ends_schedule": true,
+   "id": "withdrawal",
+   "label": "Withdrawal",
+   "note": null,
+   "questions": [],
+   "repeatable": false,
+   "sets_anchor": null,
+   "visits": []
+  }
+ ],
+ "notes": [
+  "Synthetic fixture: see _fixture.assumptions."
+ ],
+ "phases": [
+  {
+   "ends": [
+    {
+     "visit": "v6"
+    },
+    {
+     "event": "withdrawal"
+    }
+   ],
+   "id": "treatment",
+   "label": "Treatment",
+   "starts": {
+    "anchor": "rand"
+   }
+  },
+  {
+   "ends": [
+    {
+     "visit": "v7"
+    },
+    {
+     "event": "withdrawal"
+    }
+   ],
+   "id": "safety_follow_up",
+   "label": "Safety follow-up",
+   "starts": {
+    "visit": "v6"
+   }
+  },
+  {
+   "ends": [
+    {
+     "visit": "v8"
+    },
+    {
+     "event": "withdrawal"
+    }
+   ],
+   "id": "extension",
+   "label": "Extension follow-up",
+   "starts": {
+    "visit": "v7"
+   }
+  }
+ ],
+ "protocol": {
+  "date": "2026-11-20",
+  "number": "SYN-P16-CLOSE",
+  "title": "Synthetic P16-style extension closeout",
+  "version": "synthetic 2"
+ },
+ "questions": [],
+ "review_questions": [],
+ "rules": [],
+ "study_events": [
+  {
+   "actions": [
+    {
+     "add_visit": null,
+     "audience": {
+      "field": "final_subject"
+     },
+     "effect": "Completes Visit 7 and exits without entering the 24-week extension.",
+     "id": "final_participant",
+     "label": "Final participant: Visit 7, then exit without extension",
+     "supersede_visits": [
+      "v8"
+     ]
+    },
+    {
+     "add_visit": {
+      "check": null,
+      "code": "EOS-E",
+      "condition": null,
+      "date": "site_booking",
+      "duration_days": null,
+      "follows": null,
+      "follows_occurrence": null,
+      "id": "early_eos",
+      "include_if": [],
+      "min_gap": null,
+      "modality": "site",
+      "name": "Early end-of-study visit",
+      "offset_days": 0,
+      "phase": "Extension follow-up",
+      "prep": null,
+      "procedures": [
+       {
+        "if": [],
+        "name": "Recurrence assessment"
+       },
+       {
+        "if": [],
+        "name": "Partial Mayo score"
+       }
+      ],
+      "repeat": null,
+      "timepoints": [],
+      "window_after": 0,
+      "window_before": 0
+     },
+     "audience": {
+      "phase": "extension"
+     },
+     "effect": "Called back for an early end-of-study visit on the next available date; routine Visit 8 no longer happens.",
+     "id": "early_close",
+     "label": "Early closeout for participants in extension",
+     "supersede_visits": [
+      "v8"
+     ]
+    }
+   ],
+   "confirm_roles": [
+    "sponsor",
+    "cro"
+   ],
+   "fields": [
+    {
+     "id": "final_subject",
+     "kind": "subject",
+     "label": "Subject ID of the final participant"
+    }
+   ],
+   "id": "final_v6",
+   "label": "Final participant in the study completed Visit 6",
+   "page": 58,
+   "quote": "next available date",
+   "review_phases": [
+    "safety_follow_up"
+   ],
+   "source": "P16 protocol page 58 (synthetic restatement)"
+  }
+ ],
+ "visits": [
+  {
+   "anchor": "rand",
+   "check": null,
+   "code": "V3",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "v3",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Week 2",
+   "offset_days": 14,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Partial Mayo score"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 2,
+   "window_before": 2
+  },
+  {
+   "anchor": "rand",
+   "check": null,
+   "code": "V4",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "v4",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Week 4",
+   "offset_days": 28,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Partial Mayo score"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 2,
+   "window_before": 2
+  },
+  {
+   "anchor": "rand",
+   "check": null,
+   "code": "V5",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "v5",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Week 8",
+   "offset_days": 56,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Partial Mayo score"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 2,
+   "window_before": 2
+  },
+  {
+   "anchor": "rand",
+   "check": null,
+   "code": "V6",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "v6",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Week 12 / end of treatment",
+   "offset_days": 84,
+   "phase": "Treatment",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Full Mayo score"
+    },
+    {
+     "if": [],
+     "name": "Endoscopy"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 2,
+   "window_before": 2
+  },
+  {
+   "anchor": "rand",
+   "check": null,
+   "code": "V7",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "v7",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Week 13 safety follow-up",
+   "offset_days": 91,
+   "phase": "Follow-up",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Safety laboratory tests"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 3,
+   "window_before": 0
+  },
+  {
+   "anchor": "rand",
+   "check": null,
+   "code": "V8",
+   "condition": null,
+   "duration_days": null,
+   "follows": null,
+   "follows_occurrence": null,
+   "id": "v8",
+   "include_if": [],
+   "min_gap": null,
+   "modality": "site",
+   "name": "Week 37 end of study",
+   "offset_days": 259,
+   "phase": "Extension follow-up",
+   "prep": null,
+   "procedures": [
+    {
+     "if": [],
+     "name": "Recurrence assessment"
+    }
+   ],
+   "repeat": null,
+   "timepoints": [],
+   "window_after": 7,
+   "window_before": 7
+  }
+ ]
+}

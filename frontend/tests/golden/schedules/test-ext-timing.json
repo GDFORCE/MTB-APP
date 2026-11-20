@@ -3504,6 +3504,7 @@
             "actual": "2026-01-07",
             "relative": null,
             "rule": "Screening",
+            "deviation": "outside_window",
             "windowStart": "2026-01-05",
             "windowEnd": "2026-01-05",
             "windowDays": [
@@ -3540,6 +3541,7 @@
             "actual": "2026-01-15",
             "relative": null,
             "rule": "DOSE·1 + 21 d",
+            "deviation": "outside_window",
             "windowStart": "2026-01-26",
             "windowEnd": "2026-01-26",
             "windowDays": [
@@ -3792,6 +3794,7 @@
             "actual": "2026-02-06",
             "relative": null,
             "rule": "CYC·1 + 21 d",
+            "deviation": "outside_window",
             "windowStart": "2026-01-26",
             "windowEnd": "2026-01-26",
             "windowDays": [

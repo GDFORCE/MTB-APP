@@ -117,16 +117,11 @@ def expected() -> dict[str, Any]:
     ]}
 
 
-# Expectations the kit vocabulary cannot meet (10 November 2026). The engine-level test expects
-# exactly these to fail for the hand-written model; when the vocabulary gains one, move it out.
-KNOWN_ENGINE_GAPS = [
-    "Month 1 infusion (same day of the calendar month)", "Month 2 infusion (same day of the calendar month)",
-    "Month 3 infusion (same day of the calendar month)", "Month 4 infusion (same day of the calendar month)",
-    "Month 5 infusion (same day of the calendar month)", "Month 6 infusion (same day of the calendar month)",
-    "Home nursing visit 3 days after the Month 1 infusion",
-    "Telephone report of results within 3 business days after Day 1 (Sat 31 Jan: by Wed 4 Feb)",
-    "Final visit (first Monday on or after Day 210)",
-]
+# Expectations the kit vocabulary could not meet on 10 November 2026: the calendar months, the
+# Month 1 home visit that follows them, the business-day call and the Monday final visit. Since
+# 18 November 2026 the hand model meets them with pattern rules (CALENDAR_MONTHS, BUSINESS_DAYS,
+# WEEKDAY; app/kit/patterns.py). The missed-visit rules (8.5, 8.6) remain blockers: no handler yet.
+KNOWN_ENGINE_GAPS: list[str] = []
 
 
 def hand_model() -> dict[str, Any]:
@@ -146,8 +141,31 @@ def hand_model() -> dict[str, Any]:
                   include_if=[far], follows="infm", repeat=repeat(30, 6, label_pattern="Home nursing visit after Month {n}", code_pattern="HN-M{n}")),
             visit("final", "FIN", "Final visit", "Follow-up", "day1", 209, procedures=[
                 "Vital signs", "Body weight", "Safety laboratory tests (hematology, biochemistry)", "MG-ADL score", "Electrocardiogram"]),
+            # 8.4: the results call, counted in business days from each infusion visit.
+            visit("call1", "CALL", "Telephone report of laboratory results", "Treatment", "day1", 3, (0, 0),
+                  ["Report laboratory results"], modality="phone"),
+            visit("callm", "CALL-M", "Telephone report of laboratory results", "Treatment", "day1", 3, (0, 0),
+                  ["Report laboratory results"], modality="phone", follows="infm",
+                  repeat=repeat(30, 6, label_pattern="Telephone report of laboratory results after Month {n}", code_pattern="CALL-M{n}")),
+        ],
+        pattern_rules=[
+            {"id": "months", "pattern": "CALENDAR_MONTHS", "label": "Monthly infusions on the same day of the month",
+             "visits": ["infm"], "params": {"months": 1, "every_months": 1, "missing_day": "last_day_of_month"},
+             "quote": "If that day does not exist in a month, the infusion visit is scheduled on the last day of that month.", "page": 2},
+            {"id": "call", "pattern": "BUSINESS_DAYS", "label": "Results call within 3 business days after each infusion",
+             "visits": ["call1", "callm"], "params": {"business_days": 3, "within": True, "excludes_holidays": True},
+             "quote": "Within 3 business days after each infusion visit, the site telephones the participant", "page": 2},
+            {"id": "monday", "pattern": "WEEKDAY", "label": "Final visit on the first Monday on or after Day 210",
+             "visits": ["final"], "params": {"weekday": "monday", "direction": "on_or_after"},
+             "quote": "The final visit is performed on the first Monday on or after Day 210.", "page": 2},
+            {"id": "carry", "pattern": "MISSED_VISIT_TESTS_CARRIED_OVER", "label": "Missed visit's laboratory tests added to the next visit",
+             "visits": ["infm"], "params": {"tests": ["Safety laboratory tests"]},
+             "quote": "The safety laboratory tests of the missed visit are performed additionally at the next infusion visit", "page": 2},
+            {"id": "two_missed", "pattern": "CONSECUTIVE_MISSED_VISITS_WITHDRAW", "label": "Two consecutive missed infusions: withdrawn",
+             "visits": ["infm", "homem", "callm"], "params": {"consecutive": 2, "keeps_visits": ["final"]},
+             "quote": "If two consecutive infusion visits are missed, the participant is withdrawn from study treatment.", "page": 2},
         ],
         events=[event("fever", "Fever of 38.5 C or more on two consecutive days", repeatable=True, visits=[
             visit("fever_visit", "UNS", "Unscheduled visit for fever", "Unscheduled", "day1", 0, (0, 1), ["Vital signs", "Hematology", "Blood cultures"])])],
-        notes=["Hand-written model: calendar months are written as 30 days, the results call (3 business days) has no visit, the final "
-               "visit is on Day 210 rather than the following Monday, and the missed-visit rules (8.5, 8.6) are not represented."])
+        notes=["Hand-written model: calendar months, the business-day results call and the Monday final visit are pattern rules; "
+               "the missed-visit rules (8.5, 8.6) are pattern rules with no handler yet, so this model blocks enrolment."])

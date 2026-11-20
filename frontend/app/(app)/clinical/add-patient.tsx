@@ -7,6 +7,7 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/auth/AuthContext";
 import { fonts } from "@/src/theme/tokens";
 import { getKitModel, type SavedKitModel } from "@/src/features/kit/api";
+import { blockedPatternRules } from "@/src/features/kit/patterns";
 import type { KitQuestion } from "@/src/features/kit";
 import { FlowButton, FlowScreen, flowStyles as f } from "@/src/features/kit/FlowScreen";
 import { FOCUS as G } from "@/src/features/kit/focus";
@@ -165,8 +166,10 @@ export default function AddPatient() {
   }, [trialId]);
 
   const startAnchor = kit?.model.anchors.find((anchor) => anchor.kind === "start");
+  // A protocol rule nothing calculates yet: enrolling would give a wrong schedule (the server refuses too).
+  const kitBlocked = kit ? blockedPatternRules(kit.model) : [];
   const kitQuestions: KitQuestion[] = kit?.model.questions.filter((q) => q.scope === "participant") || [];
-  const unanswered = kitQuestions.filter((q) => !kitAnswers[q.id]);
+  const unanswered = kitQuestions.filter((q) => !kit?.workflow && !kitAnswers[q.id]);
   const startIso = dmyToIso(startDate);
   // Dates the protocol places at or before Day 1 (run-in, randomisation) are asked here. Dates that
   // fall between later visits (surgery, ...) are added on the patient's schedule once they happen.
@@ -198,7 +201,8 @@ export default function AddPatient() {
     : needsPiSelection && !piId ? "Choose the responsible PI"
     : kitState === "loading" ? "Loading the visit schedule…"
     : kitState === "none" ? "This trial has no visit schedule yet"
-    : kitState === "error" ? "Couldn't load this trial's visit schedule" : null;
+    : kitState === "error" ? "Couldn't load this trial's visit schedule"
+    : kitBlocked ? "This trial's schedule has rules the app cannot calculate yet" : null;
   const patientNeeds = !fullName.trim() ? "Enter the full name"
     : !subjectId.trim() ? "Enter the subject number"
     : !parseDate(dob) ? "Enter the date of birth as DD/MM/YYYY"
@@ -256,6 +260,7 @@ export default function AddPatient() {
         trial_id: trialId,
         pi_id: needsPiSelection ? piId : undefined,
         kit: participant,
+        kit_model_version: kit?.version,
         subject_id: subjectId ? `SUBJ-${subjectId}` : undefined,
         dob: parsedDob ? toISO(parsedDob) : (dob || undefined),
         gender: gender || undefined,
@@ -319,6 +324,9 @@ export default function AddPatient() {
         <Text style={s.noticeText}>This trial has no visit schedule yet. Add its protocol in Add Trial first.</Text>
       </View>}
       {!!trialId && kitState === "error" && <Text style={[f.error, { marginTop: 14 }]}>Couldn&apos;t load this trial&apos;s visit schedule.</Text>}
+      {!!trialId && kitState === "ready" && !!kitBlocked.length && <View testID="kit-blocked" style={s.notice}>
+        <Text style={s.noticeText}>{`Patients can't be enrolled on this trial yet: its protocol has ${kitBlocked.length === 1 ? "a rule" : `${kitBlocked.length} rules`} the app cannot calculate (${kitBlocked.map((r) => r.label).join("; ")}). The admin has been shown ${kitBlocked.length === 1 ? "it" : "them"}.`}</Text>
+      </View>}
 
       {needsPiSelection && <View style={{ marginTop: 28, gap: 10 }}>
         <Text style={f.sectionTitle}>Responsible PI</Text>

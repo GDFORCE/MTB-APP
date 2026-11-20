@@ -17,6 +17,28 @@ export function recordVisit(p: KitParticipant, key: string, date: string | null)
   return { ...p, actuals: date ? { ...actuals, [key]: date } : without(actuals, key) };
 }
 
+/** Record (or with null, clear) an input confirmed at an occurrence: a finding, a recommendation, an
+ *  interval choice. The server stamps who confirmed it and when. */
+export function recordObservation(p: KitParticipant, key: string, input: string, value: string | number | null): KitParticipant {
+  const observations = { ...(p.observations || {}) };
+  const here = { ...(observations[key] || {}) };
+  if (value == null || value === "") delete here[input]; else here[input] = { value };
+  if (Object.keys(here).length) observations[key] = here; else delete observations[key];
+  return { ...p, observations };
+}
+
+/** Record (or with null, clear) that the dose was not given at a visit that took place, with the reason. */
+export function setWithheld(p: KitParticipant, key: string, reason: string | null): KitParticipant {
+  const withheld = { ...(p.withheld || {}) };
+  if (reason && reason.trim()) withheld[key] = reason.trim(); else delete withheld[key];
+  return { ...p, withheld };
+}
+
+export function bookVisit(p: KitParticipant, key: string, date: string | null): KitParticipant {
+  const bookings = p.bookings || {};
+  return { ...p, bookings: date ? { ...bookings, [key]: date } : without(bookings, key) };
+}
+
 /**
  * Record a visit check for one occurrence on the date it was checked: a Yes/No ("Is ANC ≥ 1.0?"),
  * the values measured (the engine works the Yes/No out from the protocol's limits), or both.
@@ -93,7 +115,7 @@ type KitAnchorDef = KitModel["anchors"][number];
 export function enterableAnchors(model: KitModel): KitAnchorDef[] {
   const byEvent = new Set(model.events.map((e) => e.sets_anchor).filter(Boolean));
   // The last of several visits (last dose) is worked out from them, never entered.
-  const list = model.anchors.filter((a) => a.kind !== "start" && a.kind !== "last_visit" && !byEvent.has(a.id));
+  const list = model.anchors.filter((a) => a.kind !== "start" && a.kind !== "last_visit" && a.scope !== "study" && !byEvent.has(a.id));
   return [...list.filter((a) => a.is_day1), ...list.filter((a) => !a.is_day1)];
 }
 

@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from ._prompt_text import RULES as _KIT_RULES, SCHEMA as _KIT_SCHEMA
+from .patterns import SCHEMA_TEXT as PATTERN_SCHEMA, prompt_text as pattern_prompt
 
 
 def _extend(text: str, pairs: list[tuple[str, str]]) -> str:
@@ -183,6 +184,48 @@ SCHEMA = _extend(SCHEMA, [
      'meanwhile ("30 days used for each month", "the table is followed") */}]\n}'),
 ])
 
+# Rules no field can hold, named by their shape (app/kit/patterns.py): calculated when a handler
+# exists for the name, otherwise kept as blockers.
+SCHEMA = _extend(SCHEMA, [('  "notes": [string],\n  "open_points"', PATTERN_SCHEMA + '\n  "notes": [string],\n  "open_points"')])
+
+# History-based intervals, combined visits, participant phases and confirmed study-wide events
+# (app/kit/adaptive.py, app/kit/study_events.py; engine frontend/src/features/kit/adaptive.ts).
+ADAPTIVE_SCHEMA = (
+    '"adaptive": null | {"decide_from_n": number /* the first occurrence whose finding sets the next interval (after loading '
+    'doses) */, "basis": "actual"|"target" /* what the next target counts from: the previous visit\'s actual date or its target */, '
+    '"start_days": number /* the interval before the first decision */, "min_days": number, "max_days": number, '
+    '"finding": {"id": string, "label": string, "kind": "count"|"boolean"|"number", "roles": ["pi"]|["pi","crc"]} /* what is '
+    'confirmed at each visit, and who may confirm it */, "active_if": {"op": "="|"!="|"<"|"<="|">"|">=", "value": number} | '
+    '{"in": [value]} | null /* when a finding counts as disease activity */, "steps": [{"if": {"op": ..., "value": number} | '
+    '{"in": [value]}, "last": "extended"|"not_extended" /* optional */, "add_days": number | "set_days": number | "keep": true, '
+    '"label": string}] /* first match wins: "no activity: extend by 2 weeks" = {"if": {"op": "=", "value": 0}, "add_days": 14} */, '
+    '"breakpoint": null | {"after_extensions": number, "cap_offset_days": number, "count_activity_at": "extended_intervals"|'
+    '"any_interval"} /* "from the 4th extension the interval may '
+    'not exceed 2 weeks less than the longest interval at which activity occurred" = {"after_extensions": 3, '
+    '"cap_offset_days": -14} */, "recommendation": null | {"id": string, "label": string, "unit_days": number, "roles": [...]} '
+    '/* an external recommendation such as a reading centre interval */, "precedence": "calculated"|"recommendation"|'
+    '"recommendation_if_given"|"shorter"|"longer"|"review"|null /* which decides the booking when the calculation and the '
+    'recommendation differ ("recommendation_if_given": the calculation books it until the recommendation arrives); null '
+    'when the protocol does not say */, "quote": string, "page": number} /* on a repeat whose interval follows the participant\'s '
+    'history ("treat and extend"); leave out any part the protocol does not state: the app blocks it for review */,')
+COMBINE_SCHEMA = (
+    '    "combine_with": [{"visit": visitId /* a non-repeating fixed visit */, "date": "adaptive"|"fixed"}] /* when an '
+    'occurrence falls inside that visit\'s window both are done at one visit ("adaptive": on this visit\'s date, "fixed": on the '
+    'fixed visit\'s target); only when the protocol says so */,')
+STUDY_SCHEMA = (
+    '  "phases": [{"id": string, "label": string, "starts": {"visit": visitId} | {"event": eventId} | {"anchor": anchorId}, '
+    '"ends": [{"visit": visitId} | {"event": eventId} | {"anchor": anchorId}]}] /* participant phases read from recorded '
+    'dates (treatment, follow-up, extension); only when a study event needs them */,\n'
+    '  "study_events": [{"id": string, "label": string, "confirm_roles": ["sponsor","cro"] /* who confirms it for the whole '
+    'study */, "fields": [{"id": string, "label": string, "kind": "subject"|"text"|"date"}], "actions": [{"id": string, '
+    '"label": string, "audience": {"phase": phaseId} | {"field": fieldId /* the participant named in that field */}, '
+    '"supersede_visits": [visitId] /* pending occurrences that no longer happen */, "add_visit": null | visit /* with "date": '
+    '"site_booking": the site books the next available date */, "effect": string}] /* first matching action applies */, '
+    '"review_phases": [phaseId] /* phases listed for review without an action */, "detect": null | string /* how the protocol '
+    'says it is detected, if it does; the app never detects it automatically */, "quote": string, "page": number}] /* events '
+    'about the whole study confirmed once by the study team ("when the last enrolled participant completes Week 12, '
+    'participants still in extension follow-up are called back for an early end-of-study visit") */,\n')
+
 # A visit check's limit on entered values (used in "limits" and in dose_changes "if").
 LIMIT_SCHEMA = (
     'and limit = {"measure": measureId, "op": "<"|"<="|">"|">=", "value": number} /* ANC >= 1.0 */ '
@@ -291,13 +334,21 @@ TABLE_RULES = (
     "not also an event.\n"
     "- open_points: everything about WHEN a visit happens, WHETHER it happens or WHAT is done at it that this model does "
     "not carry exactly as the protocol says. One entry each, with the protocol's own words and page: a rule this shape "
-    "cannot hold (calendar months, business days, a weekday rule, a count of events, a consequence of missed visits) = "
+    "cannot hold about WHEN a visit happens (calendar months, business days, a weekday rule, a count of events, a "
+    "consequence of missed visits) goes in pattern_rules (below), not here; any other rule this shape cannot hold = "
     "\"cannot_represent\"; a rule written only approximately = \"approximated\" with what was used; wording that can be read "
     "two ways = \"ambiguous\" (when a review_question with patches can settle it, ask that instead); the table and the "
     "text, or two sections, saying different things = \"conflict\" with what the model follows; something a schedule needs "
     "that the protocol does not state (a visit window, the length of a month, how many repeats) = \"not_stated\". Never "
     "leave such a point only in notes, and never fill it with a plausible value without an open point. notes are for "
     "background that needs no check.")
+
+
+SCHEMA = _extend(SCHEMA, [
+    ("check; count null unless the protocol caps it */,", "check; count null unless the protocol caps it */,\n       " + ADAPTIVE_SCHEMA),
+    ('    "asap_if_past": boolean', COMBINE_SCHEMA + "\n" + '    "asap_if_past": boolean'),
+    ('\n  "notes": [string],\n  "open_points"', "\n" + STUDY_SCHEMA + '  "notes": [string],\n  "open_points"'),
+])
 
 
 def _with_note(note: str) -> str:
@@ -312,7 +363,19 @@ def build_prompt(text: str, symbol_note: str = "") -> str:
         "visit with timing and window, which arm or condition it applies to, intra-day time points, "
         "the events that add or stop visits, the rules for what happens to the schedule if something "
         "happens, the decisions taken during the study, and the questions to ask the site.\n\n"
-        f"Reply with ONLY one JSON object, no prose, of this shape:\n{SCHEMA}\n\n{RULES}\n{TABLE_RULES}\n\n"
+        f"Reply with ONLY one JSON object, no prose, of this shape:\n{SCHEMA}\n\n{RULES}\n{TABLE_RULES}\n{pattern_prompt()}\n\n"
+        "Include the stated protocol issue date in protocol.date and any stated registry identifier in protocol.registry_id. For each generated visit, rule, "
+        "activity and timed sample, keep the PDF page and section, table or footnote in source. "
+        "Give a verbatim passage where event timing or branching depends on an interpretation. "
+        "For a date shared by the entire study and entered once by its PI, use an ask anchor with scope study. "
+        'For a confirmed booking that must satisfy a stated minimum or maximum interval before dependent visits can be published, use an ask anchor with date_basis "confirmed", its range, and the exact booking question. '
+        'For a protocol input explicitly reserved for the investigator, set question.answer_roles or event.record_roles to ["pi"]. '
+        "A repeat whose next interval depends on what was found at the previous visit and on earlier visits (treat and extend, "
+        "titration by response) gets repeat.adaptive with the protocol's own increments, limits and breakpoint; a fixed visit the "
+        "protocol combines with it gets combine_with. A fact about the whole study that changes participants' schedules (the last "
+        "participant completing a visit, a study-wide closure) is a study_event confirmed by the study team, with the phases it "
+        "needs; never model it as a per-participant event. Report hidden treatment assignment, automatic detection of a "
+        "study-wide event, or logic that this schema cannot execute as cannot_represent open_points, with the affected IDs and source.\n\n"
         f"{_with_note(symbol_note)}PROTOCOL TEXT:\n{text}"
     )
 

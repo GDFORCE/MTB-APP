@@ -19,6 +19,7 @@ from .events import page_words, run_event_check, verify_quote
 from .ledger import cleanup_points, unused_fields
 from .llm import AnalysisError
 from .normalize import add_open_point, arr, build_template_model, default_review_answers, norm_q, normalize
+from .patterns import blockers as pattern_blockers
 from .pdf_input import cross_check_material, hidden_pages_note
 from .prompts import build_prompt, build_review_prompt
 from .summarize import analyze_from_summaries
@@ -102,6 +103,12 @@ def check_quotes(model: dict[str, Any], page_texts: list[str] | None) -> None:
             point["found"] = bool(hit["found"])
             if hit.get("found_on") is not None:
                 point["found_on"] = hit["found_on"]
+    for r in arr(model.get("pattern_rules")):
+        if r.get("quote") and "quote_found" not in r:
+            hit = verify_quote(r.get("page"), r["quote"], pages)
+            r["quote_found"] = bool(hit["found"])
+            if hit.get("found_on") is not None:
+                r["page"] = hit["found_on"]
     for r in arr(model.get("rules")):
         if not r.get("quote") or "quote_found" in r:
             continue
@@ -236,6 +243,7 @@ def _counts(model: dict[str, Any], table_pages: list[int]) -> dict[str, Any]:
         "decisions": sum(1 for q in model["questions"] if q["scope"] == "decision"),
         "events": len(model["events"]),
         "openPoints": len(model.get("open_points") or []),
+        "blockers": len(pattern_blockers(model)),
         "tablePages": table_pages,
     }
 
@@ -331,6 +339,7 @@ def analyze_protocol(
         "baseModel": model, "model": build_template_model(model, answers), "reviewAnswers": answers,
         "corrections": model.get("review"), "eventCheck": model.get("event_check"), "counts": counts,
         "openPoints": model.get("open_points") or [], "warnings": warnings,
+        "blockers": pattern_blockers(model),
     }
 
 

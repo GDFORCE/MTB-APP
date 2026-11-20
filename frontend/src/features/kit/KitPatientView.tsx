@@ -7,9 +7,10 @@ import {
   computeKitSchedule, isoParts, ruleIfText, todayIso, type KitDecisionRow, type KitMeasure, type KitParticipant, type KitSchedule, type KitVisitRow,
 } from "./index";
 import {
-  anchorDateProblems, answer, dmyToIso, enterableAnchors, formatDmyInput, formatTimeInput, isoToDmy, logEvent, parseMeasured, recordCheck, recordVisit,
-  removeCheck, removeEvent, setAnchorDate, setBaseline, setDoseLevel, setVisitTime, validTime,
+  anchorDateProblems, answer, bookVisit, dmyToIso, enterableAnchors, formatDmyInput, formatTimeInput, isoToDmy, logEvent, parseMeasured, recordCheck, recordObservation,
+  recordVisit, removeCheck, removeEvent, setAnchorDate, setBaseline, setDoseLevel, setVisitTime, setWithheld, validTime,
 } from "./participant";
+import { adaptiveInputs } from "./adaptive";
 import { FOCUS as G } from "./focus";
 import { FlowButton, FlowScreen, FlowSheet, flowStyles as f } from "./FlowScreen";
 import { PatientTimeline, usePatientTimeline } from "./PatientTimeline";
@@ -17,9 +18,11 @@ import { PatientTimeline, usePatientTimeline } from "./PatientTimeline";
 type Sheet =
   | { kind: "visit"; row: KitVisitRow }
   | { kind: "decision"; row: KitDecisionRow }
+  | { kind: "answer"; id: string }
   | { kind: "anchor"; id: string }
   | { kind: "baseline"; id: string }
   | { kind: "events" }
+  | { kind: "migration" }
   | { kind: "confirm"; participant: KitParticipant; issues: string[] };
 
 type Issue = KitSchedule["issues"][number];
@@ -58,11 +61,13 @@ function Banner({ tone, title, text, action, onAction }: {
  * record, and every change (visit done, decision, date, event) goes back through `persist` as a new
  * record. `record` null with no `loadError` shows a spinner.
  */
-export function KitPatientView({ record, loadError, canEdit, onBack, persist, moveToLatest }: {
+export function KitPatientView({ record, loadError, canEdit, onBack, persist, moveToLatest, bookStudyEffect }: {
   record: KitPatientRecord | null; loadError?: string; canEdit: boolean; onBack: () => void;
   persist: (participant: KitParticipant) => Promise<void>;
   /** Put the patient on the trial's newer reviewed model (offered when `record.latest` is set). */
   moveToLatest?: () => Promise<void>;
+  /** Book (or clear) the next available date for a visit a confirmed study event added. */
+  bookStudyEffect?: (effectId: string, date: string | null) => Promise<void>;
 }) {
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [saving, setSaving] = useState(false);
@@ -107,7 +112,7 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist, mo
   const endingEvent = p?.events?.find((e) => record?.model.events.find((d) => d.id === e.type)?.ends_schedule);
   const heading = !data ? undefined
     : data.ended ? `Schedule ended ${short(data.ended.date || todayIso())}`
-    : data.next ? `Next: ${data.next.code} on ${short(data.next.date!)}`
+    : data.next ? `Next: ${data.next.code} on ${short(data.next.booked || data.next.date!)}`
     : data.overdue ? `${data.overdue} overdue visit${data.overdue === 1 ? "" : "s"}`
     : data.done === data.total ? "All visits done"
     : data.pendingAnchors.length ? `Waiting for the ${data.pendingAnchors[0].label.toLowerCase()} date` : "No visit dated yet";
@@ -123,14 +128,11 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist, mo
     {record && !data && <Text style={[f.error, { marginTop: 16 }]}>This schedule could not be calculated.</Text>}
     {record && data && p && <>
       <View style={s.banners}>
-        {canEdit && record.latest && <LatestModelBanner record={record} saving={saving}
-          onMove={moveToLatest ? async () => {
-            setSaving(true); setSaveError("");
-            try { await moveToLatest(); } catch (e: any) {
-              const detail = e?.response?.data?.detail;
-              setSaveError(typeof detail === "string" ? detail : "Couldn't move this patient. Try again.");
-            } finally { setSaving(false); }
-          } : undefined} />}
+        {canEdit && record.latest && <Banner tone="violet"
+          title={`Workflow version ${record.latest.version} is available. This patient uses version ${record.model_version ?? 1}.`}
+          text={record.latest.problem || undefined}
+          action={!record.latest.problem && moveToLatest ? "Preview changes" : undefined}
+          onAction={() => open({ kind: "migration" })} />}
         {data.ended && <Banner tone="red" title={`${data.ended.label} logged ${short(data.ended.date || todayIso())}.`}
           text={data.cancelled ? `${data.cancelled} planned visit${data.cancelled === 1 ? " was" : "s were"} cancelled.` : "Later visits were cancelled."}
           action={canEdit && endingEvent ? "Undo" : undefined} onAction={() => endingEvent && save(removeEvent(p, endingEvent.key))} />}
@@ -156,15 +158,43 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist, mo
         onSetAnchor={canEdit ? (anchorId) => open({ kind: "anchor", id: anchorId }) : undefined}
         onPressEvent={canEdit ? () => open({ kind: "events" }) : undefined} />
       {canEdit && <SetDates record={record} schedule={scheduleOf(p)} onSet={(anchorId) => open({ kind: "anchor", id: anchorId })} />}
+      {canEdit && record.workflow_version != null && record.model.questions.filter((q) => q.scope === "participant").map((q) =>
+        <Pressable key={q.id} style={s.check} accessibilityRole="button" onPress={() => open({ kind: "answer", id: q.id })}>
+          <Text style={f.label}>{q.text || q.label}</Text>
+          <Text style={f.hint}>{q.options.find((o) => o.value === p.answers[q.id])?.label || p.answers[q.id] || "Pending input"}</Text>
+        </Pressable>)}
       {canEdit && <Baselines record={record} onSet={(measureId) => open({ kind: "baseline", id: measureId })} />}
     </>}
 
     {sheet?.kind === "visit" && p && <VisitSheet row={sheet.row} saving={saving} error={sheetError} onClose={() => setSheet(null)}
       onSave={(date) => save(recordVisit(p, sheet.row.key, date))}
+      onBook={(date) => save(bookVisit(p, sheet.row.key, date))}
+      version={record?.actual_versions?.[sheet.row.key] ?? record?.model_version}
       onCheck={(date, value, values) => save(recordCheck(p, sheet.row.key, date, value, values))}
       onRemoveCheck={(index) => save(removeCheck(p, sheet.row.key, index))}
       onSetDose={(doseId, level) => save(setDoseLevel(p, sheet.row.key, doseId, level))}
-      onTime={(time) => save(setVisitTime(p, sheet.row.key, time))} />}
+      onTime={(time) => save(setVisitTime(p, sheet.row.key, time))}
+      inputs={canEdit ? adaptiveInputs(record?.model, sheet.row.visitId) : []} observed={p.observations?.[sheet.row.key] || {}}
+      onObserve={(input, value) => save(recordObservation(p, sheet.row.key, input, value))}
+      onWithheld={canEdit && !sheet.row.studyEffect ? (reason) => save(setWithheld(p, sheet.row.key, reason)) : undefined}
+      codeOf={(key) => data?.sections.flatMap((x) => x.rows).find((r) => r.key === key)?.visit?.code || key.split("#")[0]}
+      onBookEffect={sheet.row.studyEffect && bookStudyEffect ? async (date) => {
+        setSaving(true); setSheetError("");
+        try { await bookStudyEffect(sheet.row.studyEffect!.id, date); setSheet(null); }
+        catch (e: any) {
+          const detail = e?.response?.data?.detail;
+          setSheetError(typeof detail === "string" ? detail : "Couldn't save the booking.");
+        } finally { setSaving(false); }
+      } : undefined} />}
+    {sheet?.kind === "migration" && record?.latest && <MigrationSheet record={record} saving={saving} error={sheetError}
+      onClose={() => setSheet(null)} onConfirm={async () => {
+        setSaving(true); setSheetError("");
+        try { await moveToLatest?.(); setSheet(null); }
+        catch (e: any) {
+          const detail = e?.response?.data?.detail;
+          setSheetError(typeof detail === "string" ? detail : "Couldn't move this patient.");
+        } finally { setSaving(false); }
+      }} />}
     {sheet?.kind === "baseline" && p && record && <BaselineSheet measure={record.model.measures?.find((m) => m.id === sheet.id)}
       value={p.baselines?.[sheet.id] ?? null} saving={saving} error={sheetError} onClose={() => setSheet(null)}
       onSave={(value) => save(setBaseline(p, sheet.id, value))} />}
@@ -176,6 +206,18 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist, mo
       <FlowButton label="Clear answer" variant="secondary" disabled={saving} onPress={() => save(answer(p, sheet.row.questionId, null))} />
       {!!sheetError && <Text style={f.error}>{sheetError}</Text>}
     </FlowSheet>}
+    {sheet?.kind === "answer" && p && record && (() => {
+      const q = record.model.questions.find((question) => question.id === sheet.id);
+      if (!q) return null;
+      return <FlowSheet visible title={q.text || q.label} onClose={() => setSheet(null)}>
+        {!!q.help && <Text style={f.hint}>{q.help}</Text>}
+        {q.kind === "number" ? <NumberAnswer value={p.answers[q.id] ?? null} saving={saving}
+          onSave={(value) => save(answer(p, q.id, value))} />
+          : <Chips options={q.kind === "boolean" ? [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }] : q.options}
+            value={p.answers[q.id]} onChange={(value) => save(answer(p, q.id, value))} />}
+        {!!sheetError && <Text style={f.error}>{sheetError}</Text>}
+      </FlowSheet>;
+    })()}
     {sheet?.kind === "confirm" && <FlowSheet visible title="Outside the protocol" onClose={() => setSheet(null)}>
       {sheet.issues.map((text) => <Text key={text} style={[f.hint, { color: G.redInk }]}>{text}</Text>)}
       <Text style={f.hint}>Save it only if this is what actually happened; it will be shown as a deviation.</Text>
@@ -184,8 +226,10 @@ export function KitPatientView({ record, loadError, canEdit, onBack, persist, mo
       <FlowButton label="Go back" variant="secondary" disabled={saving} onPress={() => setSheet(null)} />
     </FlowSheet>}
     {sheet?.kind === "anchor" && p && record && <AnchorSheet label={record.model.anchors.find((a) => a.id === sheet.id)?.label || sheet.id}
+      question={record.model.anchors.find((a) => a.id === sheet.id)?.question}
       effects={(record.model.rules || []).filter((r) => "anchor" in r.when && r.when.anchor === sheet.id && r.effect).map((r) => r.effect)}
-      window={windowText(scheduleOf(p)?.ruleWindows.find((w) => w.anchor === sheet.id))}
+      window={windowText(scheduleOf(p)?.ruleWindows.find((w) => w.anchor === sheet.id))
+        || confirmedBookingWindow(record, sheet.id, scheduleOf(p))}
       date={p.answers["@" + sheet.id] || null} saving={saving} error={sheetError} onClose={() => setSheet(null)}
       onSave={(date) => {
         const next = setAnchorDate(p, sheet.id, date);
@@ -253,6 +297,59 @@ function NumberAnswer({ value, saving, onSave }: { value: string | null; saving:
   </View>;
 }
 
+/** One input confirmed at a visit: a count, a number or Yes/No. The server records who and when. */
+function ObservationField({ input, value, saving, onSave }: {
+  input: { id: string; label: string; kind: string; roles: string[] }; value: string | number | null; saving: boolean;
+  onSave: (value: string | number | null) => void;
+}) {
+  const [text, setText] = useState(value == null ? "" : String(value));
+  const parsed = text.trim() === "" ? null : Number(text);
+  const valid = parsed != null && Number.isFinite(parsed) && parsed >= 0 && (input.kind !== "count" || Number.isInteger(parsed));
+  return <View style={{ gap: 6 }}>
+    <Text style={f.hint}>{input.label} · {input.roles.map((r) => r.toUpperCase()).join(" or ")}{value != null ? ` · recorded ${value}` : ""}</Text>
+    {input.kind === "boolean"
+      ? <Chips options={[{ value: "yes", label: "Yes" }, { value: "no", label: "No" }]} value={value == null ? null : String(value)}
+        onChange={(v) => onSave(v)} />
+      : <>
+        <TextInput value={text} onChangeText={setText} keyboardType="number-pad" placeholder="Value" placeholderTextColor={G.muted}
+          style={f.input} testID={`kit-observation-${input.id}`} />
+        {!!text && !valid && <Text style={f.error}>Enter {input.kind === "count" ? "a whole number" : "a number"} of 0 or more.</Text>}
+        <FlowButton label="Save" variant="secondary" disabled={saving || !valid || parsed === value} onPress={() => valid && onSave(parsed)} />
+      </>}
+    {value != null && <FlowButton label="Clear" variant="secondary" disabled={saving} onPress={() => onSave(null)} />}
+  </View>;
+}
+
+/** "Dose not given at this visit" with its reason: generated calculations and rules read it as not given. */
+function WithheldField({ reason, saving, onSave }: { reason: string | null; saving: boolean; onSave: (reason: string | null) => void }) {
+  const [text, setText] = useState(reason || "");
+  return <View style={s.check}>
+    <Text style={f.label}>{reason ? `Dose not given: ${reason}` : "Dose not given at this visit?"}</Text>
+    <TextInput value={text} onChangeText={setText} placeholder="Reason (e.g. IOP 32 mm Hg)" placeholderTextColor={G.muted}
+      style={f.input} testID="kit-withheld-reason" />
+    <FlowButton label="Record as not given" variant="secondary" disabled={saving || !text.trim() || text.trim() === reason}
+      onPress={() => onSave(text.trim())} />
+    {!!reason && <FlowButton label="It was given" variant="secondary" disabled={saving} onPress={() => onSave(null)} />}
+  </View>;
+}
+
+/** The next available date for a visit a study event added (an early closeout), booked by the site. */
+function EffectBooking({ row, saving, onBook }: { row: KitVisitRow; saving: boolean; onBook: (date: string | null) => void }) {
+  const [date, setDate] = useState(row.booked ? isoToDmy(row.booked) : "");
+  const iso = dmyToIso(date);
+  const review = row.studyEffect?.state === "review";
+  return <View style={s.check}>
+    <Text style={f.label}>{review ? "Booking to review" : "Next available date"}</Text>
+    <Text style={f.hint}>{row.studyEffect?.label} · effective {short(row.studyEffect!.effective)}</Text>
+    {!review && <>
+      <DateField value={date} onChange={setDate} testID="kit-study-booking" />
+      {!!iso && iso < row.studyEffect!.effective && <Text style={f.error}>The date cannot be before the event.</Text>}
+      <FlowButton label="Save booking" loading={saving} disabled={!iso || iso < row.studyEffect!.effective} onPress={() => iso && onBook(iso)} />
+    </>}
+    {!!row.booked && <FlowButton label={review ? "Cancel this booking" : "Clear booking"} variant="secondary" disabled={saving} onPress={() => onBook(null)} />}
+  </View>;
+}
+
 /** Measures whose limits compare with the patient's baseline ("creatinine ≤ 1.5 × baseline"). */
 function baselineMeasures(model: KitPatientRecord["model"]) {
   const used = new Set<string>();
@@ -299,12 +396,22 @@ function BaselineSheet({ measure, value, saving, error, onClose, onSave }: {
   </FlowSheet>;
 }
 
-function VisitSheet({ row, saving, error, onClose, onSave, onCheck, onRemoveCheck, onSetDose, onTime }: {
+function VisitSheet({ row, saving, error, onClose, onSave, onBook, version, onCheck, onRemoveCheck, onSetDose, onTime,
+  inputs = [], observed = {}, onObserve, codeOf = (key) => key, onBookEffect, onWithheld }: {
   row: KitVisitRow; saving: boolean; error: string; onClose: () => void; onSave: (date: string | null) => void;
+  onBook: (date: string | null) => void; version?: number;
+  /** Inputs confirmed at this occurrence (finding, recommendation) and their recorded values. */
+  inputs?: { id: string; label: string; kind: string; roles: string[] }[]; observed?: Record<string, { value: string | number; at?: string }>;
+  onObserve?: (input: string, value: string | number | null) => void; codeOf?: (key: string) => string;
+  onBookEffect?: (date: string | null) => void;
+  /** Record that the dose was not given at this visit (with the reason), or clear it. */
+  onWithheld?: (reason: string | null) => void;
   onCheck: (date: string, value: "yes" | "no" | "skip" | "reduce" | null, values?: Record<string, number>) => void; onRemoveCheck: (index: number) => void;
   onSetDose: (doseId: string, level: string | null) => void; onTime: (time: string | null) => void;
 }) {
   const [date, setDate] = useState(isoToDmy(row.actual || todayIso()));
+  const [booking, setBooking] = useState(row.booked ? isoToDmy(row.booked) : "");
+  const bookingIso = dmyToIso(booking);
   const [time, setTime] = useState(row.time || "");
   const timeOk = validTime(time);
   const [checkDate, setCheckDate] = useState(isoToDmy(todayIso()));
@@ -330,12 +437,35 @@ function VisitSheet({ row, saving, error, onClose, onSave, onCheck, onRemoveChec
   // Values are enough when the limits can be worked out; otherwise (no limits, or a baseline still
   // missing) staff also answer Yes or No.
   const byHand = !measured || (!check?.limits.length && !check?.actions.length) || check.needsBaseline.length > 0;
-  const plan = row.planned ? `Planned ${short(row.planned)}` : row.relative || "";
+  const plan = row.planned ? `Target ${short(row.planned)}` : row.relative || "";
   const window = row.windowStart && row.windowEnd && row.windowStart !== row.windowEnd ? ` · window ${short(row.windowStart)} – ${short(row.windowEnd)}` : "";
   return <FlowSheet visible title={`${row.code} · ${row.name}`} onClose={onClose}>
     {!!(plan + window) && <Text style={f.hint}>{plan + window}</Text>}
     {row.windowStated === false && <Text style={f.hint}>The protocol states no window for this visit.</Text>}
+    <Text style={f.hint}>{[row.rule, row.source, version ? `Version ${version}` : null].filter(Boolean).join(" · ")}</Text>
+    {!!row.needs?.length && <View style={s.check}>
+      <Text style={f.label}>Waiting for</Text>
+      {row.needs.map((n) => <Text key={`${n.input}-${n.at}`} style={f.hint}>
+        {n.label}{n.input === "booking" ? "" : ` at ${codeOf(n.at)}`} · {n.roles.map((r) => r.toUpperCase()).join(" or ")}
+      </Text>)}
+    </View>}
+    {row.deviation === "outside_window" && <Text style={f.error}>Recorded {short(row.actual!)}, outside the window {short(row.windowStart!)} – {short(row.windowEnd!)}.</Text>}
+    {!!onBookEffect && row.status !== "done" && <EffectBooking row={row} saving={saving} onBook={onBookEffect} />}
+    {!onBookEffect && row.status !== "done" && row.planned && <View style={s.check}>
+      <Text style={f.label}>Booked date</Text>
+      <DateField value={booking} onChange={setBooking} />
+      {bookingIso && row.windowStated !== false && row.windowStart && row.windowEnd &&
+        (bookingIso < row.windowStart || bookingIso > row.windowEnd) && <Text style={f.error}>The booking is outside the allowed window.</Text>}
+      <FlowButton label="Save booking" variant="secondary" disabled={saving || !bookingIso} onPress={() => onBook(bookingIso)} />
+      {!!row.booked && <FlowButton label="Clear booking" variant="secondary" disabled={saving} onPress={() => onBook(null)} />}
+    </View>}
     {row.notes.map((note) => <Text key={note} style={[f.hint, { color: G.amberText }]}>{note}</Text>)}
+    {!!onWithheld && row.status !== "waiting" && <WithheldField reason={row.withheld || null} saving={saving} onSave={onWithheld} />}
+    {!!inputs.length && row.status !== "waiting" && <View style={s.check}>
+      <Text style={f.label}>Confirmed at this visit</Text>
+      {inputs.map((input) => <ObservationField key={input.id} input={input} value={observed[input.id]?.value ?? null}
+        saving={saving} onSave={(value) => onObserve?.(input.id, value)} />)}
+    </View>}
     {(row.instructions || []).map((x) => <Text key={x.text} style={[f.hint, { color: G.ink }]}>
       • {x.text}{x.conditional && x.condition ? ` (only if ${x.condition})` : ""}
     </Text>)}
@@ -423,24 +553,35 @@ function VisitSheet({ row, saving, error, onClose, onSave, onCheck, onRemoveChec
  * The trial's model was reviewed again after this patient was enrolled. They stay on their version
  * until staff move them; the banner says how many visit dates the move changes, or why it can't.
  */
-function LatestModelBanner({ record, saving, onMove }: { record: KitPatientRecord; saving: boolean; onMove?: () => void }) {
+function MigrationSheet({ record, saving, error, onConfirm, onClose }: {
+  record: KitPatientRecord; saving: boolean; error: string; onConfirm: () => void; onClose: () => void;
+}) {
   const latest = record.latest!;
-  const changed = (() => {
+  const changes = (() => {
     if (latest.problem) return null;
     try {
       const dated = (m: KitPatientRecord["model"], site: Record<string, string>) => new Map(computeKitSchedule(m, site, record.participant).rows
-        .filter((r): r is KitVisitRow => r.type === "visit").map((r) => [r.key, r.date]));
+        .filter((r): r is KitVisitRow => r.type === "visit" && !record.participant.actuals?.[r.key]).map((r) => [r.key, r]));
       const now = dated(record.model, record.site_answers || {}), next = dated(latest.model, latest.site_answers || {});
-      let n = 0;
-      for (const key of new Set([...now.keys(), ...next.keys()])) if (now.get(key) !== next.get(key)) n++;
-      return n;
+      return [...new Set([...now.keys(), ...next.keys()])].flatMap((key) => {
+        const before = now.get(key), after = next.get(key);
+        return JSON.stringify(before) === JSON.stringify(after) ? [] : [{ key, before, after }];
+      });
     } catch { return null; }
   })();
-  const title = `Protocol model version ${latest.version} is available (this patient uses version ${record.model_version ?? 1}).`;
-  const text = latest.problem ? `Their record doesn't fit it yet: ${latest.problem}`
-    : changed === 0 ? "Moving keeps every visit date." : changed ? `Moving changes ${changed} visit date${changed === 1 ? "" : "s"}.` : "";
-  return <Banner tone="violet" title={title} text={text}
-    action={!latest.problem && onMove && !saving ? "Move" : undefined} onAction={onMove} />;
+  const timing = (row?: KitVisitRow) => row ? (row.planned
+    ? `${row.planned}${row.windowStated !== false ? ` (window ${row.windowStart} to ${row.windowEnd})` : ""}`
+    : "Pending input") : "—";
+  return <FlowSheet visible title={`Preview version ${latest.version}`} onClose={onClose}>
+    {changes === null ? <Text style={f.error}>{latest.problem || "Could not compare the calendars."}</Text>
+      : !changes.length ? <Text style={f.hint}>No changes to open visits.</Text>
+      : changes.map(({ key, before, after }) => <View key={key} style={s.check}>
+        <Text style={f.label}>{(after || before)?.name}</Text>
+        <Text style={f.hint}>{timing(before)} → {timing(after)}</Text>
+      </View>)}
+    {!!error && <Text style={f.error}>{error}</Text>}
+    <FlowButton label={`Move patient to version ${latest.version}`} loading={saving} disabled={changes === null} onPress={onConfirm} />
+  </FlowSheet>;
 }
 
 /** " (if clinically indicated · results from the last 3 days can be used)" for one assessment. */
@@ -463,12 +604,23 @@ function windowText(w: KitSchedule["ruleWindows"][number] | undefined): string |
   return `Allowed ${[range, notOn].filter(Boolean).join(", ")}.`;
 }
 
-function AnchorSheet({ label, effects, window, date, saving, error, onClose, onSave }: {
-  label: string; effects: string[]; window: string | null; date: string | null; saving: boolean; error: string; onClose: () => void; onSave: (date: string | null) => void;
+function confirmedBookingWindow(record: KitPatientRecord, id: string, schedule: KitSchedule | null) {
+  const anchor = record.model.anchors.find((a) => a.id === id);
+  if (anchor?.date_basis !== "confirmed" || !anchor.range) return null;
+  const date = schedule?.anchors.find((a) => a.id === anchor.range?.relative_to)?.date;
+  if (!date) return null;
+  const on = (offset: number) => short(new Date(Date.parse(date + "T00:00:00Z") + offset * 864e5).toISOString().slice(0, 10));
+  const { min_days: min, max_days: max } = anchor.range;
+  return [min == null ? null : `Earliest ${on(min)}`, max == null ? null : `Latest ${on(max)}`].filter(Boolean).join(" · ");
+}
+
+function AnchorSheet({ label, question, effects, window, date, saving, error, onClose, onSave }: {
+  label: string; question?: string | null; effects: string[]; window: string | null; date: string | null;
+  saving: boolean; error: string; onClose: () => void; onSave: (date: string | null) => void;
 }) {
   const [value, setValue] = useState(date ? isoToDmy(date) : "");
   const iso = dmyToIso(value);
-  return <FlowSheet visible title={`${label} date`} onClose={onClose}>
+  return <FlowSheet visible title={question || `${label} date`} onClose={onClose}>
     <Text style={f.hint}>Visits that count from it get their dates from this.</Text>
     {effects.map((text) => <Text key={text} style={[f.hint, { color: G.redInk }]}>{text}</Text>)}
     {!!window && <Text style={[f.hint, { color: G.ink }]}>{window}</Text>}

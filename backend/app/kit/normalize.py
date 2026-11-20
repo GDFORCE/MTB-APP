@@ -6,6 +6,8 @@ import copy
 import math
 from typing import Any
 
+from .patterns import apply_status, norm_pattern_rules
+
 
 def arr(x: Any) -> list:
     return x if isinstance(x, list) else []
@@ -154,10 +156,12 @@ def norm_q(q: Any, scope_default: str) -> dict[str, Any] | None:
     if kind == "choice" and not options:
         return None
     return {
-        **q, "id": _s(q["id"]), "label": _s(q.get("label") or q["id"]), "text": _s(q["text"]),
+        **{key: value for key, value in q.items() if key != "answer_roles"},
+        "id": _s(q["id"]), "label": _s(q.get("label") or q["id"]), "text": _s(q["text"]),
         "help": _s(q["help"]) if q.get("help") else "", "kind": kind, "options": options,
         "scope": q.get("scope") if q.get("scope") in ("study", "decision", "participant") else scope_default,
         "ask_at": q["ask_at"] if isinstance(q.get("ask_at"), dict) else None,
+        **({"answer_roles": ["pi"]} if q.get("answer_roles") == ["pi"] else {}),
     }
 
 
@@ -223,6 +227,7 @@ def norm_visit(v: Any, i: int, prefix: str) -> dict[str, Any] | None:
                 "window_before_min": abs(num(tp.get("window_before_min"))),
                 "window_after_min": abs(num(tp.get("window_after_min"))),
                 "procedures": _procs(tp.get("procedures")),
+                **({"source": _s(tp["source"])} if tp.get("source") else {}),
                 # A time point only some participants have ("PK sub-study only").
                 **({"if": norm_conds(tp["if"])} if arr(tp.get("if")) else {}),
             })
@@ -699,6 +704,10 @@ def normalize(st: Any) -> dict[str, Any]:
     st["anchors"] = anchors
     ids = {a["id"] for a in anchors}
     for a in anchors:
+        if a.get("scope") != "study" or a["kind"] != "ask":
+            a.pop("scope", None)
+        if a.get("date_basis") != "confirmed" or a["kind"] != "ask" or a.get("scope") == "study":
+            a.pop("date_basis", None)
         g = a.get("range") if isinstance(a.get("range"), dict) else None
         lo, hi = (_opt_num(g.get("min_days")), _opt_num(g.get("max_days"))) if g else (None, None)
         rel = _s(g.get("relative_to")) if g else ""
@@ -786,6 +795,8 @@ def normalize(st: Any) -> dict[str, Any]:
             actions = [_s(a).strip() for a in arr(e.get("site_actions")) if _s(a).strip()]
             if actions:
                 ev["site_actions"] = actions
+            if e.get("record_roles") == ["pi"]:
+                ev["record_roles"] = ["pi"]
             if isinstance(e.get("check"), dict):
                 ev["check"] = e["check"]
             events.append(ev)
@@ -797,9 +808,44 @@ def normalize(st: Any) -> dict[str, Any]:
                              q_ids={q["id"] for q in st["questions"]}, notes=st["notes"], questions=st["questions"],
                              doses=st["doses"], stop_ids=v_ids | {v["id"] for e in events for v in e["visits"]},
                              left_out=left_out)
+    # Rules no field can hold, by the name of their shape: kept even when nothing can calculate
+    # them yet (then they block enrolment), never dropped (app/kit/patterns.py).
+    st["pattern_rules"] = norm_pattern_rules(st.get("pattern_rules"), v_ids)
     st["open_points"] = norm_open_points(st.get("open_points"))
     for item in left_out:
         add_open_point(st, rule_left_out_point(item["rule"], item["why"]))
+    # History-based intervals and combined visits (app/kit/adaptive.py): an operation missing a part
+    # the protocol must state is kept, blocked, with an open point; it never runs as a guess.
+    from .adaptive import adaptive_point, norm_adaptive, norm_combine
+    from .study_events import norm_phases, norm_study_events
+    scheduled = {v["id"]: v for v in st["visits"]}
+    for v in st["visits"]:
+        r = v.get("repeat")
+        if r and r.get("adaptive") is not None:
+            r["adaptive"] = norm_adaptive(r["adaptive"], r)
+            if r["adaptive"] is None:
+                r.pop("adaptive")
+            elif r["adaptive"].get("blocked"):
+                add_open_point(st, adaptive_point(v))
+        combine = norm_combine(v.get("combine_with"), v["id"], scheduled)
+        if combine:
+            v["combine_with"] = combine
+        else:
+            v.pop("combine_with", None)
+    for e in events:
+        for v in e["visits"]:
+            if (v.get("repeat") or {}).pop("adaptive", None) is not None or v.pop("combine_with", None):
+                st["notes"].append(f"{e['label']} visit {v['code']}: history-based intervals and combined visits apply "
+                                   "to scheduled visits only; staff date it by hand.")
+    # Participant phases read from recorded facts, and study-wide events confirmed by the study team.
+    st["phases"] = norm_phases(st.get("phases"), {"visit": v_ids, "event": {e["id"] for e in events}, "anchor": a_ids})
+    st["study_events"], study_points = norm_study_events(
+        st.get("study_events"), visit_ids=v_ids, phase_ids={p["id"] for p in st["phases"]})
+    for point in study_points:
+        add_open_point(st, point)
+    for key in ("phases", "study_events"):
+        if not st[key]:
+            del st[key]
     for v in st["visits"] + [v for e in events for v in e["visits"]]:
         v["include_if"] = norm_conds(v["include_if"])
         if v.get("min_gap") and v["min_gap"]["after"] and v["min_gap"]["after"] not in v_ids:
@@ -858,6 +904,20 @@ def normalize(st: Any) -> dict[str, Any]:
     _dates_with_ranges(st)
     if not st["visits"]:
         raise ValueError("no visits")
+    if st["pattern_rules"]:
+        apply_status(st)
+        # A calculation the analysis generated runs only after the study team has read it: one point each.
+        for r in st["pattern_rules"]:
+            if r.get("generated") and not r.get("blocked"):
+                tests = r["generated"]["tests"]
+                add_open_point(st, {
+                    "id": f"generated_{r['id']}", "kind": "generated", "stage": "check", "affects": r["visits"],
+                    "text": f"The app wrote a new calculation for “{r['label']}” ({r['pattern']}): check its logic, inputs and "
+                            f"{len(tests)} test cases in the workflow, then confirm it.",
+                    "quote": r.get("quote") or "", "page": r.get("page"),
+                    "used": f"Runs only in the approved workflow version (calculation {r['generated']['sha256'][:12]})."})
+    else:
+        del st["pattern_rules"]
     # Only models with something to check carry open points.
     if not st.get("open_points"):
         st.pop("open_points", None)
@@ -1020,7 +1080,7 @@ def default_review_answers(model: dict[str, Any]) -> dict[str, str]:
 # leaves open or contradicts itself on, something clean-up removed or changed, a protocol passage
 # that could not be found in the PDF. Each carries the protocol's words and page where there are
 # any, the visits it concerns, and what the schedule does meanwhile. They are saved with the model.
-POINT_KINDS = ("cannot_represent", "approximated", "ambiguous", "conflict", "not_stated", "cleanup", "unverified")
+POINT_KINDS = ("cannot_represent", "approximated", "ambiguous", "conflict", "not_stated", "cleanup", "unverified", "generated")
 POINT_STAGES = ("model", "tables", "events", "cleanup", "check")
 
 
